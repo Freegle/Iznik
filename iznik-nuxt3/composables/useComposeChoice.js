@@ -1,6 +1,7 @@
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { useMobileStore } from '~/stores/mobile'
+import { useConfigStore } from '~/stores/config'
 import { useNuxtApp, useRoute } from '#imports'
 
 // Experiment: on mobile WEB, offer a voice-vs-keyboard choice for composing an
@@ -18,15 +19,15 @@ export const COMPOSE_CHOICE_UID = 'mobile-compose-variant'
 // Method measurement: of those offered the choice, did they pick voice or keyboard?
 export const COMPOSE_METHOD_UID = 'mobile-compose-method'
 
-// Percentage of eligible (mobile) users shown the voice option. Start at 0 and
-// raise to roll the experiment out to a slice of traffic. Per-visit override:
-// ?voice=1 forces the voice variant, ?voice=0 forces control (handy for demos).
-//
-// DISABLED (0): the voice branch's "post it" (pages/voicepost.vue postIt) is a
-// demo stub that never creates a message — members who record, review and tap
-// "post it" saw "post ready!" with no OFFER actually posted. Do NOT raise this
-// above 0 until postIt is wired into real compose completion.
-const ROLLOUT_PCT = 0
+// Percentage of eligible (mobile) users shown the voice option. Read from SERVER
+// config at runtime (key `voicepost_rollout_pct`) so the rollout can be raised or
+// lowered WITHOUT a new frontend build/deploy: loadRollout() fetches it (cached in
+// the config store) and the synchronous assign()/experimentActive() read the
+// cached value. Falls back to DEFAULT_ROLLOUT_PCT when the key isn't set or the
+// fetch fails. Per-visit override: ?voice=1 forces voice, ?voice=0 forces control.
+const ROLLOUT_CONFIG_KEY = 'voicepost_rollout_pct'
+const DEFAULT_ROLLOUT_PCT = 10
+let rolloutPct = DEFAULT_ROLLOUT_PCT
 
 export function useComposeChoice() {
   const miscStore = useMiscStore()
@@ -34,6 +35,23 @@ export function useComposeChoice() {
   const mobileStore = useMobileStore()
   const route = useRoute()
   const { $api } = useNuxtApp()
+  const configStore = useConfigStore()
+
+  // Fetch the runtime rollout % from server config (cached in the config store).
+  // Call before experimentActive()/assign() so they read the live value; keeps
+  // the last-known / default rollout if the fetch fails so it never breaks the
+  // compose entry.
+  async function loadRollout() {
+    try {
+      const rows = await configStore.fetch(ROLLOUT_CONFIG_KEY)
+      if (rows?.length) {
+        const n = parseInt(rows[0].value, 10)
+        if (!Number.isNaN(n)) rolloutPct = Math.max(0, Math.min(100, n))
+      }
+    } catch (e) {
+      // Non-fatal: fall back to the last-known / default rollout.
+    }
+  }
 
   const isMobile = () => ['xs', 'sm', 'md'].includes(miscStore.breakpoint)
 
@@ -58,7 +76,7 @@ export function useComposeChoice() {
     if (mobileStore.isApp) return false
     const q = route?.query?.voice
     if (q === '1' || q === '0') return true
-    return ROLLOUT_PCT > 0
+    return rolloutPct > 0
   }
 
   // Returns 'voice' or 'control'.
@@ -69,7 +87,7 @@ export function useComposeChoice() {
     if (q === '1') return 'voice'
     if (q === '0') return 'control'
     if (!isMobile()) return 'control'
-    return bucket() < ROLLOUT_PCT ? 'voice' : 'control'
+    return bucket() < rolloutPct ? 'voice' : 'control'
   }
 
   // Record that the user was put in a variant (exposure).
@@ -114,6 +132,7 @@ export function useComposeChoice() {
     COMPOSE_CHOICE_UID,
     COMPOSE_METHOD_UID,
     isMobile,
+    loadRollout,
     experimentActive,
     assign,
     recordShown,
