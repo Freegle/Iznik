@@ -751,7 +751,7 @@ Schedule::command('mail:engage')
 // service, not the cron.
 Schedule::command('mail:reengage')
     ->dailyAt('15:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('mail:reengage'))
     ->runInBackground();
 
@@ -760,7 +760,7 @@ Schedule::command('mail:reengage')
 // can be graphed in the sysadmin dashboard. Runs after the day's sends.
 Schedule::command('mail:reengage-outcomes')
     ->dailyAt('16:30')
-    ->withoutOverlapping()
+    ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('mail:reengage-outcomes'))
     ->runInBackground();
 
