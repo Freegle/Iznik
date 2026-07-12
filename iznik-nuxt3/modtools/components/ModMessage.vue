@@ -813,6 +813,7 @@ import { twem } from '~/composables/useTwem'
 import {
   isRippledInToContextGroup as isRippledIn,
   earliestArrivalGroupId,
+  homeGroupId,
 } from '~/composables/rippleStatus'
 
 const props = defineProps({
@@ -977,15 +978,16 @@ const currentGroupid = computed(() => {
       ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
     )
     const pool = pending.length ? pending : mine
-    let pick = pool[0]
-    for (const g of pool) {
-      if (
-        g.arrival &&
-        (!pick.arrival || new Date(g.arrival) > new Date(pick.arrival))
-      )
-        pick = g
-    }
-    return parseInt(pick.groupid)
+    // Anchor to the group the post ORIGINATED on (home), not a copy that rippled in
+    // later. A mod active on both the origin and a group the post rippled into should
+    // act on / reply from the origin, so a Blank reply appends to the member's existing
+    // chat with the origin group's volunteers rather than starting a fresh one from the
+    // rippled-in group (Discourse 9808/565). rippled_in is authoritative here; arrival is
+    // not, because the approve path stamps arrival=NOW() on whichever copy was approved -
+    // which is exactly the just-approved rippled-in copy we must NOT pick.
+    const home = homeGroupId(pool)
+    if (home != null) return home
+    return parseInt(pool[0].groupid)
   }
   const gid = parseInt(groupid.value)
   return gid || null

@@ -1471,6 +1471,45 @@ describe('ModMessage', () => {
       expect(wrapper.vm.groupid).toBe(789)
     })
 
+    // Discourse 9808/565: in the all-communities view a mod who is active on BOTH the
+    // origin group and a group the post rippled into must anchor to the ORIGIN, so a
+    // Blank reply appends to the member's existing chat rather than starting a new one
+    // from the rippled-in group. The rippled-in copy was approved most recently, so its
+    // arrival is newest - anchoring must use rippled_in, not most-recent arrival.
+    it('anchors to the origin group, not a newer rippled-in copy, with no contextGroupid', () => {
+      // The mod is active on BOTH the rippled-in group (789, in the default mock) and the
+      // origin group (111) - add the latter to the moderated set for this test.
+      mockMyModGroups.push({ id: 111 })
+      try {
+        const wrapper = mountComponent(
+          {},
+          {
+            groups: [
+              // Rippled-in copy: approved most recently, so its arrival is the NEWEST.
+              {
+                groupid: 789,
+                namedisplay: 'Rippled-in',
+                collection: 'Approved',
+                arrival: rippleLater,
+                rippled_in: 1,
+              },
+              // Origin: where the member's chat with volunteers actually lives.
+              {
+                groupid: 111,
+                namedisplay: 'Origin',
+                collection: 'Approved',
+                arrival: rippleEarlier,
+                rippled_in: 0,
+              },
+            ],
+          }
+        )
+        expect(wrapper.vm.currentGroupid).toBe(111)
+      } finally {
+        mockMyModGroups.pop()
+      }
+    })
+
     it('computes contextGroup from the correct group', () => {
       const wrapper = mountComponent(
         { contextGroupid: 999 },
