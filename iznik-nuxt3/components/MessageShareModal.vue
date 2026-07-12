@@ -158,7 +158,10 @@ const message = computed(() => {
 })
 
 async function doCopy() {
-  await navigator.clipboard.writeText(message.value.url)
+  // Match the "email" ShareNetwork payload (subject/description/url), so Copy
+  // is consistent with the Email share button rather than a bare link.
+  const shareText = `${message.value.subject}\n\n${message.value.textbody}\n\n${message.value.url}`
+  await navigator.clipboard.writeText(shareText)
   copied.value = true
 }
 
