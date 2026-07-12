@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   isRippledInToContextGroup,
   earliestArrivalGroupId,
+  homeGroupId,
   homeGroupFirst,
   isHomeGroup,
   RIPPLE_ORIGIN_WINDOW_MS,
@@ -213,6 +214,44 @@ describe('earliestArrivalGroupId', () => {
       { groupid: 7, arrival: at(10) },
     ]
     expect(earliestArrivalGroupId(groups)).toBe(7)
+  })
+})
+
+describe('homeGroupId', () => {
+  it('prefers a non-rippled origin even when a rippled-in copy has a newer arrival', () => {
+    // The approve path stamps arrival=NOW() on whichever copy was approved, so the
+    // just-approved rippled-in copy has the NEWEST arrival - rippled_in must win over
+    // arrival, or a Blank reply goes from the wrong (rippled-in) group (Discourse 9808/565).
+    const groups = [
+      { groupid: 789, arrival: at(60), rippled_in: 1 }, // rippled-in, newest arrival
+      { groupid: 1, arrival: at(10), rippled_in: 0 }, // origin
+    ]
+    expect(homeGroupId(groups)).toBe(1)
+  })
+
+  it('picks the earliest arrival among several non-rippled groups', () => {
+    const groups = [
+      { groupid: 5, arrival: at(30), rippled_in: 0 },
+      { groupid: 6, arrival: at(10), rippled_in: 0 },
+    ]
+    expect(homeGroupId(groups)).toBe(6)
+  })
+
+  it('falls back to earliest arrival when no rippled_in info is present', () => {
+    const groups = [
+      { groupid: 8, arrival: at(40) },
+      { groupid: 9, arrival: at(5) },
+    ]
+    expect(homeGroupId(groups)).toBe(9)
+  })
+
+  it('returns the only group even if it is rippled in', () => {
+    expect(homeGroupId([{ groupid: 3, arrival: at(0), rippled_in: 1 }])).toBe(3)
+  })
+
+  it('returns null for empty/invalid input', () => {
+    expect(homeGroupId([])).toBeNull()
+    expect(homeGroupId(null)).toBeNull()
   })
 })
 
