@@ -22,6 +22,9 @@ class ItemQuality
         '/^(any|anything|everything|every ?thing|all|stuff|things|items|goods|various|various items|various stuff|free stuff|free items|free things|freebies|something|owt|whatever|unwanted|unwanted items|unwanted stuff|misc|miscellaneous|sundries|no idea|not sure|nothing specific)$/',
         '/^(anything|everything|something) (else|nice|really|useful|good|free|at all)$/',
         '/^(anything|something|stuff|things|items|bits) (for|to) /',
+        // Content-free responses/fillers left in the item box ("Yes", "No thanks",
+        // "Please") — a whole-item match only, so real names are untouched.
+        '/^(yes|yeah|yep|yup|no|nope|nah|ok|okay|okey|yes please|no thanks|please|pls|ta|thanks|thank you|thankyou|cheers)$/',
     ];
 
     /**

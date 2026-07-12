@@ -508,6 +508,9 @@ class ContentCheckTest extends TestCase
             'mid + specific'             => ['Marilyn monroe stuff'],
             'trailing-comma + specific'  => ['Mugs, various'],
             'embedded "stuff"'           => ['stuffed bear toy'],
+            // "yes"/"ok" etc as one word among real nouns must NOT flag.
+            'yes + specific noun'        => ['Yes to Life recovery book'],
+            'ok describing condition'    => ['Sofa in ok condition'],
         ];
     }
 
@@ -529,6 +532,11 @@ class ContentCheckTest extends TestCase
             'vague phrase'               => ['bits and pieces'],
             'free stuff phrase'          => ['free stuff'],
             'numbers + only vague'       => ['4 assorted things'],
+            // Content-free responses/fillers left in the item box.
+            'affirmation yes'            => ['Yes'],
+            'affirmation no'             => ['No'],
+            'filler please'              => ['Please'],
+            'filler thanks'              => ['Thanks'],
         ];
     }
 

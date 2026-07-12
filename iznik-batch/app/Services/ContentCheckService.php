@@ -66,6 +66,11 @@ class ContentCheckService
         'any', 'all', 'everything',
         // Other vocabulary gaps that map to "I haven't told you what it is".
         'goods', 'sundries', 'bric-a-brac', 'odds and ends',
+        // Content-free responses/fillers dropped into the item box ("Yes", "No",
+        // "Please", "Thanks"). A single such token is the whole item; multi-word
+        // names are rescued by any real noun, per the token logic below.
+        'yes', 'yeah', 'yep', 'yup', 'no', 'nope', 'nah', 'ok', 'okay',
+        'please', 'pls', 'ta', 'thanks', 'cheers',
     ];
 
     // Ambiguous single-token entries: each one has many legitimate uses
