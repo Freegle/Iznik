@@ -21,7 +21,12 @@ export const COMPOSE_METHOD_UID = 'mobile-compose-method'
 // Percentage of eligible (mobile) users shown the voice option. Start at 0 and
 // raise to roll the experiment out to a slice of traffic. Per-visit override:
 // ?voice=1 forces the voice variant, ?voice=0 forces control (handy for demos).
-const ROLLOUT_PCT = 10
+//
+// DISABLED (0): the voice branch's "post it" (pages/voicepost.vue postIt) is a
+// demo stub that never creates a message — members who record, review and tap
+// "post it" saw "post ready!" with no OFFER actually posted. Do NOT raise this
+// above 0 until postIt is wired into real compose completion.
+const ROLLOUT_PCT = 0
 
 export function useComposeChoice() {
   const miscStore = useMiscStore()
