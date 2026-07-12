@@ -18,6 +18,15 @@
       }}</span>
     </div>
 
+    <b-alert
+      v-if="photoError"
+      variant="danger"
+      :model-value="true"
+      class="mt-2"
+    >
+      {{ photoError }}
+    </b-alert>
+
     <!-- Featured photo - always shows first photo (the primary one for post) -->
     <!-- Drop target: dragging a thumbnail here makes it the primary photo -->
     <Transition name="fade">
@@ -202,6 +211,7 @@ import OurUploadedImage from '~/components/OurUploadedImage.vue'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
 import { action } from '~/composables/useClientLog'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
+import { cameraErrorMessage } from '~/composables/useCameraErrorMessage'
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
@@ -275,6 +285,10 @@ const dragging = ref(false)
 // modelValue prop) replaces the array mid-drag and vuedraggable reverts the order.
 const suppressModelValueSync = ref(false)
 const showSourceModal = ref(false)
+// Human-readable message shown when a Camera/gallery call fails (e.g. the OS
+// permission prompt was declined) - see useCameraErrorMessage for what does
+// and doesn't count as an error worth telling the user about.
+const photoError = ref(null)
 const showQualityModal = ref(false)
 const qualityModalTitle = ref('')
 const qualityModalMessage = ref('')
@@ -333,6 +347,8 @@ watch(
 
 // Open photo source selection
 function openPhotoOptions() {
+  photoError.value = null
+
   if (isApp.value) {
     // App: show native camera/gallery modal
     showSourceModal.value = true
@@ -358,6 +374,7 @@ async function takePhoto() {
     await processPhoto(image.webPath)
   } catch (e) {
     console.log('Camera cancelled or error:', e.message)
+    photoError.value = cameraErrorMessage(e)
   }
 }
 
@@ -376,6 +393,7 @@ async function chooseFromGallery() {
     }
   } catch (e) {
     console.log('Gallery cancelled or error:', e.message)
+    photoError.value = cameraErrorMessage(e)
   }
 }
 
