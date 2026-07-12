@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => $firstName ? 'Welcome, ' . $firstName . '! Give stuff away or find what you need for free.' : 'Welcome to Freegle! Give stuff away or find what you need for free.'])
+  @include('emails.mjml.partials.head', ['preview' => $firstName ? 'Welcome, ' . $firstName . '! Give stuff away, browse, or find what you need for free.' : 'Welcome to Freegle! Give stuff away, browse, or find what you need for free.'])
   <mj-body>
     <mj-wrapper padding="0px" full-width="full-width">
       {{-- Welcome header --}}
@@ -52,6 +52,13 @@
         <mj-column>
           <mj-button href="{{ $giveUrl }}" mj-class="btn-success" font-size="18px" padding="18px 50px" width="280px">
             🎁 Give stuff away
+          </mj-button>
+        </mj-column>
+      </mj-section>
+      <mj-section background-color="#ffffff" padding="0 20px 15px 20px">
+        <mj-column>
+          <mj-button href="{{ $browseUrl }}" mj-class="btn-secondary" font-size="18px" padding="18px 50px" width="280px">
+            👀 Browse what's on offer
           </mj-button>
         </mj-column>
       </mj-section>
