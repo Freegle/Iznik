@@ -113,13 +113,39 @@ class ReengageMail extends MjmlMailable
 
     public function build(): static
     {
+        // Do the click/open tracking here and pass it into the view as plain
+        // strings. NEVER put $this (the Mailable) into the view data: a Mailable
+        // is a large, self-referential object and extracting it into the Blade
+        // scope segfaults the renderer under PHP 8.4. So pre-wrap the CTA links
+        // with tracked redirects and hand the open pixel over as ready MJML.
+        $content = $this->content;
+
+        $ctas = [
+            'findUrl'     => 'find',
+            'giveUrl'     => 'give',
+            'browseUrl'   => 'browse',
+            'settingsUrl' => 'settings',
+        ];
+        foreach ($ctas as $key => $action) {
+            if (! empty($content[$key]) && is_string($content[$key])) {
+                $content[$key] = $this->trackedUrl($content[$key], 'cta', $action);
+            }
+        }
+
+        // Track click-through on the individual item cards too.
+        if (! empty($content['offers']) && is_array($content['offers'])) {
+            foreach ($content['offers'] as $i => $offer) {
+                if (! empty($offer['url']) && is_string($offer['url'])) {
+                    $content['offers'][$i]['url'] = $this->trackedUrl($offer['url'], 'offer', 'offer');
+                }
+            }
+        }
+
         $data = array_merge([
-            'name'  => $this->recipientName,
-            'email' => $this->recipientEmail,
-            // Expose the mailable so templates can wrap CTAs with $mail->trackedUrl()
-            // and drop in the open pixel via $mail->getTrackingPixelMjml().
-            'mail'  => $this,
-        ], $this->content);
+            'name'              => $this->recipientName,
+            'email'             => $this->recipientEmail,
+            'trackingPixelMjml' => $this->getTrackingPixelMjml(),
+        ], $content);
 
         $this->mjmlView(
             "emails.mjml.reengage.{$this->template}",
