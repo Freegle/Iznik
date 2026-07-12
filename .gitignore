@@ -48,11 +48,6 @@ yesterday/api/node_modules/
 # Capacitor plugins (local development copies)
 capacitor-push-notifications-cap7/
 
-# Sentry integration database (SQLite)
-sentry-issues.db
-sentry-issues.db-shm
-sentry-issues.db-wal
-sentry-issues.db
 /plans/exploratory-testing-state.json
 /iznik-batch/coverage/
 

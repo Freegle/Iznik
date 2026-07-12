@@ -486,34 +486,6 @@ services:
         condition: service_started
         required: false
 
-  # Old status container - replaced by status-nuxt (2026-01-18)
-  # Keeping commented out for reference during transition
-  # status:
-  #   build:
-  #     context: ./status
-  #     network: host
-  #   container_name: ${COMPOSE_PROJECT_NAME:-freegle}-status
-  #   networks:
-  #     - default
-  #   ports:
-  #     - "8081:80"
-  #   labels:
-  #     - "traefik.enable=true"
-  #     - "traefik.http.routers.status.rule=Host(`status.localhost`)"
-  #     - "traefik.http.routers.status.entrypoints=web"
-  #     - "traefik.http.services.status.loadbalancer.server.port=80"
-  #   volumes:
-  #     - /var/run/docker.sock:/var/run/docker.sock:ro
-  #     - ./status/index.html:/app/index.html:ro
-  #     - ./status/logs.html:/app/logs.html:ro
-  #     - ./status/server.js:/app/server.js:ro
-  #     - ./ssl/certs:/app/ssl:ro
-  #     - .:/project:ro
-  #     - ./status/data:/app/data:rw
-  #     - rebuild-requests:/rebuild-requests
-  #   environment:
-  #     - DOCKER_HOST=unix:///var/run/docker.sock
-
   status:
     build:
       context: ./status-nuxt

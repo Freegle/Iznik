@@ -1,10 +1,8 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-12
 owner: Freegle dev team
 covers:
   - docs/ops/reference/logging.md
-  - docs/ops/reference/sentry-integration.md
-  - docs/ops/reference/sentry-autofix.md
 ---
 
 # Monitoring and logging
@@ -31,16 +29,14 @@ the Go wrapper referenced in [./reference/logging.md](./reference/logging.md).
 
 ## Error tracking: Sentry
 
-**Sentry** captures application errors. Freegle also runs tooling around Sentry that can
-propose fixes for recurring issues as pull requests for a human to review. The
-architecture is in [./reference/sentry-integration.md](./reference/sentry-integration.md) and
-[./reference/sentry-autofix.md](./reference/sentry-autofix.md). (Those two overlap and are candidates
-for consolidation; treat them as one system described twice.)
+**Sentry** captures application errors. The **monitor-fsm** (see `monitor-fsm/README.md`)
+scans unresolved Sentry issues each iteration and can propose fixes for recurring issues as
+pull requests for a human to review.
 
 ## Development and test visibility: the status dashboard
 
 The **status dashboard** (`status-nuxt`) is the development-time window into the stack: it
-shows startup progress, runs the test suites, and integrates Sentry. It is a development
+shows startup progress and runs the test suites. It is a development
 and CI tool, not a production monitoring surface. See
 [../developers/03-testing.md](../developers/03-testing.md).
 

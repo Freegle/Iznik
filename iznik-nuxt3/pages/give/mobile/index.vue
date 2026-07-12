@@ -12,14 +12,18 @@ import { useComposeChoice } from '~/composables/useComposeChoice'
 import { useClientLog } from '~/composables/useClientLog'
 
 const router = useRouter()
-const { experimentActive, assign, recordShown, isMobile } = useComposeChoice()
+const { loadRollout, experimentActive, assign, recordShown, isMobile } =
+  useComposeChoice()
 const { action: logEvent } = useClientLog()
 
-onMounted(() => {
-  // Experiment off (default): behave exactly as before - straight to the existing
-  // typed photos flow, with no assignment and no tracking side effects. This is
-  // what makes merging safe: the existing route is unchanged until the rollout is
-  // deliberately raised.
+onMounted(async () => {
+  // Pull the current rollout % from server config first so the decision below
+  // reflects the live value (no rebuild needed to change it).
+  await loadRollout()
+
+  // Experiment off (rollout 0): behave exactly as before - straight to the
+  // existing typed photos flow, with no assignment and no tracking side effects,
+  // so the existing route is unchanged until the rollout is deliberately raised.
   if (!experimentActive()) {
     router.replace('/give/mobile/photos')
     return

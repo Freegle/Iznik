@@ -186,19 +186,6 @@
         </div>
       </div>
 
-      <!-- DONE: demo confirmation -->
-      <div v-else-if="phase === 'done'" class="voicepost__stage">
-        <div class="done-tick" aria-hidden="true">✓</div>
-        <h1 class="voicepost__title voicepost__title--sm">That's your post ready!</h1>
-        <p class="voicepost__lead">
-          <strong>{{ title }}</strong> is ready to go. In the full flow you'd
-          choose your community next - this demo stops here.
-        </p>
-        <b-button variant="primary" size="lg" class="w-100" @click="resetAll">
-          Do another
-        </b-button>
-      </div>
-
       <!-- ERROR -->
       <div v-else-if="phase === 'error'" class="voicepost__stage">
         <p class="voicepost__lead voicepost__error">{{ errorMessage }}</p>
@@ -207,6 +194,26 @@
         </b-button>
       </div>
     </div>
+
+    <!-- Explain the mic permission BEFORE the browser's own prompt, so it isn't
+         a surprise and they know the mic is only used when recording a post. -->
+    <b-modal
+      v-model="showMicExplainer"
+      title="We'll need your microphone"
+      ok-title="OK, ask me"
+      ok-variant="primary"
+      cancel-title="Not now"
+      @ok="confirmMicAndRecord"
+    >
+      <p class="mb-2">
+        To hear your description, your browser will now ask for permission to use
+        your microphone.
+      </p>
+      <p class="mb-0">
+        We only use it while you're recording a post like this - never in the
+        background - and you can stop any time.
+      </p>
+    </b-modal>
   </div>
 </template>
 
@@ -234,8 +241,9 @@ const { recordConversion, recordMethodShown, recordMethodChosen } =
 // Rich, session-correlated analytics for the whole funnel (see useClientLog).
 const { action: logVpEvent } = useClientLog()
 
-const phase = ref('photo') // photo | choose | idle | recording | finishing | review | done | error
+const phase = ref('photo') // photo | choose | idle | recording | finishing | review | error
 const errorMessage = ref('')
+const showMicExplainer = ref(false)
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
 // Instrumentation state: lets us report duration, edit-or-not, re-records and
@@ -347,7 +355,41 @@ function pickMimeType() {
   return ''
 }
 
+// Do we already have microphone permission? Uses the Permissions API so we can
+// tell "granted" from "will be prompted" and only explain in the latter case.
+async function hasMicPermission() {
+  try {
+    if (navigator.permissions?.query) {
+      const status = await navigator.permissions.query({ name: 'microphone' })
+      return status.state === 'granted'
+    }
+  } catch (e) {
+    // Permissions API missing or doesn't recognise 'microphone' - fall through
+    // and explain-then-ask, which is the safe default.
+  }
+  return false
+}
+
+// The mic button. If we don't already have permission, explain up front that the
+// browser is about to ask and that the mic is only ever used while recording a
+// post like this - then start once they're happy. If permission was granted
+// before, go straight to recording.
 async function startRecording() {
+  if (await hasMicPermission()) {
+    await beginRecording()
+    return
+  }
+  logVpEvent('voicepost_mic_explainer_shown', {})
+  showMicExplainer.value = true
+}
+
+async function confirmMicAndRecord() {
+  showMicExplainer.value = false
+  logVpEvent('voicepost_mic_explainer_continued', {})
+  await beginRecording()
+}
+
+async function beginRecording() {
   errorMessage.value = ''
   session.value = null
   chunks = []
@@ -496,8 +538,6 @@ function togglePlay() {
 }
 
 function postIt() {
-  // Demo stops here. The real flow would hand the photo, title, description and
-  // consent (letThemHear.value) to the normal compose step.
   const titleEdited = title.value !== originalTitle.value
   const descEdited = description.value !== originalDescription.value
   posted = true
@@ -518,7 +558,16 @@ function postIt() {
       : null,
   })
   recordConversion('voice')
-  phase.value = 'done'
+
+  // Hand the reviewed words to the compose draft (the photo and type=Offer are
+  // already on it) and continue into the normal final step - postcode, community
+  // and "Freegle it!" - which is what actually creates the post.
+  composeStore.setItem({ id: messageId.value, item: title.value })
+  composeStore.setDescription({
+    id: messageId.value,
+    description: description.value,
+  })
+  router.push('/give/mobile/whereami')
 }
 
 function stopStream() {
@@ -544,15 +593,6 @@ function reRecord() {
   logVpEvent('voicepost_rerecord', { count: rerecordCount })
   clearVoice()
   phase.value = 'idle'
-}
-
-// Full reset back to the start (new item).
-function resetAll() {
-  clearVoice()
-  attachments.value = []
-  rerecordCount = 0
-  posted = false
-  phase.value = 'photo'
 }
 
 function clearVoice() {
