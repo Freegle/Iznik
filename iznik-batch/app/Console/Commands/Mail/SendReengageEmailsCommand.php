@@ -31,6 +31,7 @@ class SendReengageEmailsCommand extends Command
         $this->info("{$prefix}Stage 1 (nearby) sent: {$result['stage1']}");
         $this->info("{$prefix}Stage 2 (impact) sent: {$result['stage2']}");
         $this->info("{$prefix}Stage 3 (preferences) sent: {$result['stage3']}");
+        $this->info("{$prefix}Control (holdout, recorded not sent): {$result['control']}");
         $this->info("{$prefix}Sequences suppressed: {$result['suppressed']}");
 
         return self::SUCCESS;

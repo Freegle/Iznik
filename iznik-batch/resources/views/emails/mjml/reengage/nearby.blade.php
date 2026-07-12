@@ -57,7 +57,7 @@
     {{-- Primary CTA --}}
     <mj-section background-color="#ffffff" padding="18px 0 6px">
       <mj-column>
-        <mj-button mj-class="btn-success" href="{{ $findUrl }}" border-radius="6px" font-size="17px" font-weight="bold" inner-padding="15px 34px">
+        <mj-button mj-class="btn-success" href="{{ (isset($mail) && $mail) ? $mail->trackedUrl($findUrl, 'cta', 'cta') : $findUrl }}" border-radius="6px" font-size="17px" font-weight="bold" inner-padding="15px 34px">
           See what's near you
         </mj-button>
       </mj-column>
@@ -71,6 +71,8 @@
         </mj-text>
       </mj-column>
     </mj-section>
+
+    @isset($mail)<mj-section padding="0"><mj-column>{!! $mail->getTrackingPixelMjml() !!}</mj-column></mj-section>@endisset
 
     @include('emails.mjml.partials.footer', [
       'email'          => $email,

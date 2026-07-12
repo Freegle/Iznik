@@ -186,6 +186,32 @@ return [
         // `engage` AtRisk warning (~175 days) and Inactive sunset take over,
         // so we stop here to avoid double-mailing the same lapse.
         'max_days' => (int) env('FREEGLE_REENGAGE_MAX_DAYS', 175),
+
+        // A/B experiment layer. Stays inert by default: rollout_pct=0 means
+        // nobody is in the experiment, everyone eligible falls through to the
+        // single current 'a' template with NO control holdout — i.e. exactly the
+        // pre-experiment behaviour. Ramp with FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT
+        // (0 → 10 → 50 → 100) *on top of* the allowlist gate above, so two
+        // independent knobs must both be opened.
+        'experiment' => [
+            // Salts the deterministic per-user bucket; bump to reshuffle arms
+            // for a brand-new experiment (do NOT bump mid-experiment).
+            'name' => env('FREEGLE_REENGAGE_EXPERIMENT', 'reengage-v1'),
+            // Fraction of eligible users pulled into the experiment (0-100).
+            // Those outside it get the default 'a' arm with no holdout.
+            'rollout_pct' => (int) env('FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT', 0),
+            // Arm split over the 0-99 bucket space (inclusive, must tile 0-99).
+            // 'control' is a REAL holdout: recorded but never mailed, so lift is
+            // measurable. 'a' = current copy, 'b' = alternate copy variant.
+            'arms' => [
+                'control' => ['from' => 0, 'to' => 19],   // 20% holdout
+                'a' => ['from' => 20, 'to' => 59],        // 40% current copy
+                'b' => ['from' => 60, 'to' => 99],        // 40% alternate copy
+            ],
+            // Window (days after a send) in which a login/reply/post counts as
+            // re-engagement caused by the mail, written by mail:reengage-outcomes.
+            'outcome_window_days' => (int) env('FREEGLE_REENGAGE_OUTCOME_WINDOW_DAYS', 14),
+        ],
     ],
 
     'digest' => [

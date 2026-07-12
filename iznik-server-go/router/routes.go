@@ -1428,6 +1428,20 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
 
+		// Re-engagement Email Effectiveness (authenticated, admin only)
+		// @Router /email/stats/reengage [get]
+		// @Summary Get re-engagement email effectiveness
+		// @Description Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/reengage", emailtracking.ReengageEffectiveness)
+
 		// Browse-feed scroll-depth curve for the sysadmin "Scrolling" tab (Support/Admin).
 		// @Router /modtools/scroll/depth [get]
 		// @Summary Browse-feed scroll-depth curve

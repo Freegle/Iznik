@@ -755,6 +755,15 @@ Schedule::command('mail:reengage')
     ->sendOutputTo(cronLog('mail:reengage'))
     ->runInBackground();
 
+// Record real re-engagement outcomes (login/reply/post within the window) for
+// reengage sends, so per-stage/arm/segment effectiveness and control-arm lift
+// can be graphed in the sysadmin dashboard. Runs after the day's sends.
+Schedule::command('mail:reengage-outcomes')
+    ->dailyAt('16:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:reengage-outcomes'))
+    ->runInBackground();
+
 // Ask eligible users with outcomes/offers to share their Freegle story.
 // V1: cron/stories.php (weekly Saturday 11:00)
 Schedule::command('stories:ask')
