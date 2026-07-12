@@ -77,6 +77,14 @@
     <div v-else-if="chatmessage?.type === 'Reminder'">
       <chat-message-reminder :id="id" :chatid="chatid" :pov="pov" />
     </div>
+    <!-- Synthetic system notices, e.g. "the item you replied about has now been
+         taken" posted when a replied-to post is taken/withdrawn. Just the text. -->
+    <div
+      v-else-if="chatmessage?.type === 'System'"
+      class="system-message text-center text-muted small px-3 py-2"
+    >
+      <span class="preline forcebreak">{{ chatmessage?.message }}</span>
+    </div>
     <div v-else>
       Unknown chat message type {{ chatmessage?.type }}, {{ chat }}
       {{ chatmessage }}
