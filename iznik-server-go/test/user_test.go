@@ -3098,6 +3098,68 @@ func TestGetUserMembershipsPostingStatus(t *testing.T) {
 	}
 }
 
+// TestGetUserMembershipsPostingStatusReviewed verifies that a moderator can tell
+// apart a membership whose posting status was never explicitly reviewed (NULL,
+// resolved to MODERATED for display) from one where a moderator actually chose
+// MODERATED. Without this distinction, a member auto-joined by rippling out -
+// whose arriving post required no moderator review at all - looks in ModTools
+// exactly like a member a moderator deliberately flagged as needing review
+// (Discourse 9890/9886).
+func TestGetUserMembershipsPostingStatusReviewed(t *testing.T) {
+	prefix := uniquePrefix("fetchmt_psr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, modToken := CreateTestSession(t, modID)
+
+	// A rippled-in membership: ExpandService::addPosterMembershipToRippledGroups
+	// inserts (role, collection, ...) but never sets ourPostingStatus, and marks
+	// rippled=1. NULL is the default - don't set ourPostingStatus.
+	rippledUser := CreateTestUser(t, prefix+"_rippled", "User")
+	CreateTestMembership(t, rippledUser, groupID, "Member")
+	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", rippledUser, groupID)
+
+	// A membership a moderator has actually reviewed and explicitly set to MODERATED.
+	reviewedUser := CreateTestUser(t, prefix+"_reviewed", "User")
+	CreateTestMembership(t, reviewedUser, groupID, "Member")
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", reviewedUser, groupID)
+
+	for _, tc := range []struct {
+		name             string
+		uid              uint64
+		expectedStatus   string
+		expectedReviewed bool
+	}{
+		{"rippled, never reviewed", rippledUser, "MODERATED", false},
+		{"explicitly reviewed by a moderator", reviewedUser, "MODERATED", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", tc.uid, modToken)
+			resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+			assert.NoError(t, err)
+			assert.Equal(t, 200, resp.StatusCode)
+
+			var result map[string]interface{}
+			json.NewDecoder(resp.Body).Decode(&result)
+			memberships := result["memberships"].([]interface{})
+
+			found := false
+			for _, m := range memberships {
+				mem := m.(map[string]interface{})
+				if uint64(mem["groupid"].(float64)) == groupID {
+					found = true
+					assert.Equal(t, tc.expectedStatus, mem["ourpostingstatus"], "ourpostingstatus should be %s", tc.expectedStatus)
+					assert.Equal(t, tc.expectedReviewed, mem["ourpostingstatusreviewed"], "ourpostingstatusreviewed should be %v", tc.expectedReviewed)
+					break
+				}
+			}
+			assert.True(t, found, "Should find group membership")
+		})
+	}
+}
+
 // TestFetchMTModmailsCount verifies that the modmails count is returned in fetchmt responses
 // and filters by the viewing mod's groups.
 func TestFetchMTModmailsCount(t *testing.T) {

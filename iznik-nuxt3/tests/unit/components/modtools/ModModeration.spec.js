@@ -223,6 +223,30 @@ describe('ModModeration', () => {
     })
   })
 
+  describe('unreviewed posting status notice', () => {
+    it('shows a notice when the membership has never been reviewed by a moderator', () => {
+      // e.g. a member auto-joined by rippling out: ourpostingstatus resolves
+      // to MODERATED server-side, but no moderator ever set it (Discourse 9890/9886).
+      const wrapper = mountComponent({
+        membership: createMembership({
+          ourpostingstatus: 'MODERATED',
+          ourpostingstatusreviewed: false,
+        }),
+      })
+      expect(wrapper.text()).toContain('Not yet reviewed by a moderator')
+    })
+
+    it('does not show the notice when a moderator has explicitly set the status', () => {
+      const wrapper = mountComponent({
+        membership: createMembership({
+          ourpostingstatus: 'MODERATED',
+          ourpostingstatusreviewed: true,
+        }),
+      })
+      expect(wrapper.text()).not.toContain('Not yet reviewed by a moderator')
+    })
+  })
+
   describe('options computed', () => {
     it('returns correct posting status options', () => {
       const wrapper = mountComponent()

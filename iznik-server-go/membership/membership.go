@@ -315,6 +315,10 @@ type GetMembershipsMember struct {
 	Engagement          *string                 `json:"engagement"`
 	Lastmodmail         *string                 `json:"lastmodmail,omitempty"`
 	Bouncing            bool                    `json:"bouncing" gorm:"column:bouncing"`
+	// OurPostingStatusReviewed is true only when a moderator has actually stored a posting
+	// status for this membership - see the identical field on user.Membership for why this
+	// matters (Discourse 9890/9886).
+	OurPostingStatusReviewed bool `json:"ourpostingstatusreviewed" gorm:"-"`
 }
 
 // GetMemberships handles GET /memberships - list group members (moderator use).
@@ -592,6 +596,7 @@ func enrichMembers(members []GetMembershipsMember) {
 
 		// NULL ourPostingStatus defaults to MODERATED.
 		// DEFAULT stays as DEFAULT — it's an explicit status (Group.php line 967).
+		m.OurPostingStatusReviewed = m.OurPostingStatus != nil && *m.OurPostingStatus != ""
 		if m.OurPostingStatus == nil || *m.OurPostingStatus == "" {
 			moderated := utils.POSTING_STATUS_MODERATED
 			m.OurPostingStatus = &moderated

@@ -155,6 +155,13 @@ type Membership struct {
 	Type                     string `json:"type"`
 	Bbox                     string `json:"bbox"`
 	Microvolunteeringallowed int    `json:"microvolunteeringallowed"`
+	// OurPostingStatusReviewed is true only when a moderator has actually stored a posting
+	// status for this membership. A NULL column (e.g. every rippling auto-join - see
+	// ExpandService::addPosterMembershipToRippledGroups) is resolved to MODERATED below for
+	// display, which is indistinguishable from an explicit moderator decision unless this flag
+	// is also sent - otherwise a member nobody has ever reviewed looks, in ModTools, exactly
+	// like one a moderator deliberately flagged (Discourse 9890/9886).
+	OurPostingStatusReviewed bool `json:"ourpostingstatusreviewed"`
 }
 
 type UserMessageHistory struct {
@@ -1356,6 +1363,7 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	if modtools {
 		for i := range memberships {
 			m := &memberships[i]
+			m.OurPostingStatusReviewed = m.OurPostingStatus != nil && *m.OurPostingStatus != ""
 			if m.OurPostingStatus == nil || *m.OurPostingStatus == "" {
 				v := utils.POSTING_STATUS_MODERATED
 				m.OurPostingStatus = &v

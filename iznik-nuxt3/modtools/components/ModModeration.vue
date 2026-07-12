@@ -1,11 +1,14 @@
 <template>
-  <div class="d-inline d-flex justify-content-start flex-wrap">
+  <div class="d-inline d-flex justify-content-start flex-wrap align-items-center">
     <b-form-select
       v-model="postingStatus"
       :options="options"
       class="sel"
       :size="size"
     />
+    <small v-if="!membership.ourpostingstatusreviewed" class="text-muted ms-1">
+      Not yet reviewed by a moderator - this is just the default
+    </small>
     <b-form-select v-model="trustlevel" class="sel" :size="size" readyonly>
       <option :value="null">Volunteering - not asked</option>
       <option value="Basic">Volunteering - basic</option>
