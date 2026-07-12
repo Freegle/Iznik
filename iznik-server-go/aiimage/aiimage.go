@@ -254,10 +254,28 @@ func subjectForName(name string) string {
 // boundaries stop it matching inside words like "Android".
 var andSplitRe = regexp.MustCompile(`(?i)\s+and\s+`)
 
-// splitItems splits a name into its component items on "and". Returns a single-element slice
-// unchanged when there is no "and" separator (the common case).
+// newItemStartRe matches the start of a new item after an "and": an article/quantifier
+// ("a", "an", "some", "another") or a digit. Go's RE2 has no lookahead, so splitItems()
+// applies this to each piece rather than baking it into andSplitRe.
+var newItemStartRe = regexp.MustCompile(`(?i)^(a|an|some|another|\d)\b`)
+
+// splitItems splits a name into its component items on "and" - but only when every piece
+// after an "and" starts like a new item (article/quantifier/digit). This keeps genuine
+// multi-item posts splitting ("sofa and a bed", "3 chairs and a table") while leaving a
+// single item whose name merely contains "and" intact: "Black and Decker drill", "Pride and
+// Prejudice", "salt and pepper set", "Marks and Spencer jumper". Returns a single-element
+// slice for the common no-"and" case.
 func splitItems(subject string) []string {
 	parts := andSplitRe.Split(subject, -1)
+	if len(parts) < 2 {
+		return []string{subject}
+	}
+	for _, p := range parts[1:] {
+		if !newItemStartRe.MatchString(strings.TrimSpace(p)) {
+			// "and" is inside a single item's name (brand/title/set), not a separator.
+			return []string{subject}
+		}
+	}
 	items := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
