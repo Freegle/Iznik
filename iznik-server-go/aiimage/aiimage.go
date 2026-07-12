@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -249,10 +250,44 @@ func subjectForName(name string) string {
 	return name
 }
 
+// andSplitRe splits a compound item name (e.g. "sofa and a bed") on the word "and". The word
+// boundaries stop it matching inside words like "Android".
+var andSplitRe = regexp.MustCompile(`(?i)\s+and\s+`)
+
+// splitItems splits a name into its component items on "and". Returns a single-element slice
+// unchanged when there is no "and" separator (the common case).
+func splitItems(subject string) []string {
+	parts := andSplitRe.Split(subject, -1)
+	items := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			items = append(items, p)
+		}
+	}
+	if len(items) == 0 {
+		return []string{subject}
+	}
+	return items
+}
+
 // buildImagePrompt constructs the AI image generation prompt.
 // For job titles, subjectForName() maps them to their canonical object first.
+// Names listing multiple items joined by "and" (e.g. "sofa and a bed") get a prompt that
+// asks for every item to be shown together, instead of the single-object prompt below, which
+// otherwise leads the model to draw only the first item and drop the rest.
 func buildImagePrompt(name string) string {
 	subject := subjectForName(name)
+	items := splitItems(subject)
+
+	if len(items) > 1 {
+		return "Product illustration: " + strings.Join(items, " and ") + " shown together, arranged neatly side by side on plain dark green background. " +
+			"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
+			"Every one of these items must be clearly visible in the illustration, sitting on a simple surface or floating in space. " +
+			"Simple illustration style, clean lines. " +
+			"These are common UK household or everyday items. " +
+			"Use American English terminology."
+	}
+
 	return "Product illustration: single isolated " + subject + " centered on plain dark green background. " +
 		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
 		"The object sits alone on a simple surface or floats in space. " +

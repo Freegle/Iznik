@@ -273,3 +273,24 @@ func TestBuildImagePrompt_UsesAmericanEnglish(t *testing.T) {
 	assert.Contains(t, prompt, "American English",
 		"prompt must instruct the model to use American English terminology")
 }
+
+func TestBuildImagePrompt_MultiItemName_DoesNotForceSingleObjectOnly(t *testing.T) {
+	// Regression test for Discourse topic 9630/53: a post for "a sofa and a bed" stores
+	// ai_images.name = "sofa and a bed" verbatim. Regenerate (aiimage.Regenerate) calls
+	// buildImagePrompt() with that stored name, so a fix must live here — parsing "and" to
+	// detect multiple items and dropping the self-contradictory "single object only"
+	// instruction, which otherwise makes the model draw only the first item every time,
+	// including on Regenerate.
+	prompt := buildImagePrompt("sofa and a bed")
+	assert.NotContains(t, prompt, "single object only",
+		"a compound item name must not be forced into a 'single object only' prompt")
+	assert.Contains(t, prompt, "sofa")
+	assert.Contains(t, prompt, "bed")
+}
+
+func TestBuildImagePrompt_SingleItemName_StillForcesSingleObjectOnly(t *testing.T) {
+	// Single-item names are unaffected — the existing "single object only" constraint
+	// still applies so ordinary items keep their focused, uncluttered illustration.
+	prompt := buildImagePrompt("sofa")
+	assert.Contains(t, prompt, "single object only")
+}
