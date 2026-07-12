@@ -191,15 +191,16 @@ describe('MessageShareModal', () => {
       expect(wrapper.text()).toContain('Copy')
     })
 
-    it('copies URL to clipboard on click', async () => {
+    it('copies link and descriptive text to clipboard on click, matching the Email payload', async () => {
       const wrapper = createWrapper()
       const copyBtn = wrapper
         .findAll('.b-button')
         .find((b) => b.text().includes('Copy'))
       await copyBtn.trigger('click')
-      expect(mockClipboard.writeText).toHaveBeenCalledWith(
-        'https://freegle.org/message/1'
-      )
+      expect(mockClipboard.writeText).toHaveBeenCalledTimes(1)
+      const copiedText = mockClipboard.writeText.mock.calls[0][0]
+      expect(copiedText).toContain(mockMessage.textbody)
+      expect(copiedText).toContain(mockMessage.url)
     })
 
     it('shows check icon after copy', async () => {
