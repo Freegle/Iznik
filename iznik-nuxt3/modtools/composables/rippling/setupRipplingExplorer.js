@@ -59,7 +59,7 @@ export async function setupRipplingExplorer({
 
   map = L.map('rippling-map', { zoomControl: true }).setView([52.5, -1.8], 7)
   L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     {
       attribution: '© OpenStreetMap © CartoDB',
       subdomains: 'abcd',
