@@ -39,7 +39,6 @@ Read these directly; the pages above link into them rather than copy them:
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
-| Sentry integration and auto-fix | [../ops/reference/sentry-integration.md](../ops/reference/sentry-integration.md), [../ops/reference/sentry-autofix.md](../ops/reference/sentry-autofix.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

@@ -77,7 +77,7 @@ Logs on `localhost:3100`. Use `-G` with `--data-urlencode` for queries. Timestam
 
 ## Sentry
 
-Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See `SENTRY-INTEGRATION.md`.
+The monitor-fsm scans Sentry for unresolved issues and can open fix PRs for review. Set `SENTRY_AUTH_TOKEN` in `.env`. See `monitor-fsm/README.md`.
 
 ## Miscellaneous
 
