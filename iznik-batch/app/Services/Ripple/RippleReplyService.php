@@ -239,6 +239,28 @@ class RippleReplyService
         $this->recordEvent('released');
     }
 
+    /**
+     * Release a single still-held reply by its rippling_held_replies id (row-level, as
+     * opposed to the per-post releaseAll/releaseCovered). Used by the scoped backfill in
+     * ripple:release-replies --release-open --since-hours. No-op if the row is not 'held'.
+     * Returns 1 if released, 0 otherwise.
+     */
+    public function releaseHeldRow(int $ripplingRowId): int
+    {
+        $isHeld = DB::table('rippling_held_replies')
+            ->where('id', $ripplingRowId)
+            ->where('status', 'held')
+            ->exists();
+
+        if (! $isHeld) {
+            return 0;
+        }
+
+        $this->release($ripplingRowId);
+
+        return 1;
+    }
+
     private function hasReach(int $msgid): bool
     {
         try {

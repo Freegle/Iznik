@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // Compact email tracking URLs
@@ -264,21 +265,24 @@ func ClickCompact(c *fiber.Ctx) error {
 	now := time.Now()
 
 	if tracking.OpenedAt == nil {
-		openedVia := "click"
-		db.Model(tracking).Updates(map[string]interface{}{
+		// Conditional in SQL so only the first concurrent hit rewrites the row (see
+		// the matching note in ImageCompact).
+		db.Model(tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
 			"opened_at":  now,
-			"opened_via": openedVia,
+			"opened_via": "click",
 		})
 	}
 
 	if tracking.ClickedAt == nil {
-		db.Model(tracking).Updates(map[string]interface{}{
+		db.Model(tracking).Where("clicked_at IS NULL").Updates(map[string]interface{}{
 			"clicked_at":   now,
 			"clicked_link": destinationURL,
 		})
 	}
 
-	db.Model(tracking).UpdateColumn("links_clicked", tracking.LinksClicked+1)
+	// Atomic increment rather than read-modify-write, to avoid lost updates and
+	// minimise how long the row lock is held.
+	db.Model(tracking).UpdateColumn("links_clicked", gorm.Expr("links_clicked + 1"))
 
 	click := EmailTrackingClick{
 		EmailTrackingID: tracking.ID,
@@ -337,10 +341,13 @@ func ImageCompact(c *fiber.Ctx) error {
 		now := time.Now()
 
 		if tracking.OpenedAt == nil {
-			openedVia := "image"
-			db.Model(tracking).Updates(map[string]interface{}{
+			// Guard the write in SQL, not just on the stale Go read: when an email is
+			// opened its client loads many tracking images at once, and they all see
+			// OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of them
+			// UPDATEs the same row and they serialise on its lock.
+			db.Model(tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
 				"opened_at":  now,
-				"opened_via": openedVia,
+				"opened_via": "image",
 			})
 		}
 
@@ -351,7 +358,11 @@ func ImageCompact(c *fiber.Ctx) error {
 		}
 		db.Create(&imageLoad)
 
-		db.Model(tracking).UpdateColumn("images_loaded", tracking.ImagesLoaded+1)
+		// Atomic increment. The N images of one email load near-simultaneously, so a
+		// read-modify-write (ImagesLoaded+1 from the stale read above) both lost
+		// updates and held the row lock across a round trip long enough to hit
+		// lock-wait timeouts. Let the DB increment in a single statement.
+		db.Model(tracking).UpdateColumn("images_loaded", gorm.Expr("images_loaded + 1"))
 	}
 
 	return c.Redirect(imageURL)

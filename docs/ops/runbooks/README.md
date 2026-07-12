@@ -37,6 +37,17 @@ being brought into the same Compose stack as batch processing, one step at a tim
 - Roll changes forward one at a time and verify each before the next, so any single step
   can be undone cleanly.
 
+## Deployment spend optimisation
+
+A recurring, mostly disk-focused sweep to keep hosting spend down: reclaim wasted space,
+right-size volumes, and move data to a cheaper storage class. It covers the estate-wide
+audit, the waste patterns that keep recurring, the storage cost model, and the safety
+gates (Galera rules, the "do not full-prune the edge host" trap, and verifying the mail
+host after any change).
+
+- Full steps: **[deployment-spend-optimisation.md](deployment-spend-optimisation.md)**.
+- Run roughly monthly, or when a host crosses ~75% disk use.
+
 ## Adding a runbook
 
 Keep summaries here **non-confidential**: describe impact, what pauses, what stays up, and

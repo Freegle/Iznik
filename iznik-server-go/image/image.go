@@ -303,7 +303,9 @@ type legacyAttachment struct {
 	Archived     int
 }
 
-func defaultProfileURL() string {
+// siteURL returns the public user-facing site root, e.g. https://www.ilovefreegle.org,
+// with any trailing slash removed.
+func siteURL() string {
 	site := os.Getenv("USER_SITE")
 
 	if site == "" {
@@ -314,7 +316,20 @@ func defaultProfileURL() string {
 		site = "https://" + site
 	}
 
-	return strings.TrimSuffix(site, "/") + "/defaultprofile.png"
+	return strings.TrimSuffix(site, "/")
+}
+
+// defaultImageURL is the fallback served when an image can't be resolved (unknown id,
+// missing row, or legacy data-column bytes we no longer serve). Group images fall back to
+// the Freegle logo: the person silhouette (/defaultprofile.png) wrongly implies the
+// community is a person and leaves communities whose icon is missing looking broken on the
+// explore list. Every other type keeps V1's default profile image.
+func defaultImageURL(imgType string) string {
+	if imgType == "Group" {
+		return siteURL() + "/icon.png"
+	}
+
+	return siteURL() + "/defaultprofile.png"
 }
 
 // Get handles GET /image - resolves a legacy image reference to a redirect.
@@ -341,7 +356,7 @@ func Get(c *fiber.Ctx) error {
 	cfg, ok := typeConfigs[imgType]
 	if id == 0 || !ok {
 		// Seen in the wild (e.g. gimg_0.jpg); V1 sent the default profile image.
-		return c.Redirect(defaultProfileURL(), fiber.StatusFound)
+		return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
 	}
 
 	// Every image table has externaluid/externalmods/archived; only
@@ -356,7 +371,7 @@ func Get(c *fiber.Ctx) error {
 	db.Raw("SELECT "+cols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&rows)
 
 	if len(rows) == 0 {
-		return c.Redirect(defaultProfileURL(), fiber.StatusFound)
+		return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
 	}
 	row := rows[0]
 
@@ -382,7 +397,7 @@ func Get(c *fiber.Ctx) error {
 	// those bytes straight from the DB; we deliberately don't (migration plan
 	// Stage 4 decision) - they are ancient, mostly profile thumbnails, so the
 	// default profile image is served rather than keeping blob-serving alive.
-	return c.Redirect(defaultProfileURL(), fiber.StatusFound)
+	return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
 }
 
 // isTruthy checks if a value from JSON is truthy (bool true or non-zero number).

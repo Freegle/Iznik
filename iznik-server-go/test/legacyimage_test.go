@@ -107,13 +107,30 @@ func TestLegacyImageArchived(t *testing.T) {
 func TestLegacyImageArchivedGroupNotArchivable(t *testing.T) {
 	// Group images were never archived to Azure in V1 (no prefix in the
 	// Attachment::canRedirect switch), so an archived flag on one must fall
-	// through to the default rather than fabricate an archive URL.
+	// through to the default rather than fabricate an archive URL. Group defaults
+	// are the Freegle logo, not the person silhouette (see TestLegacyImageGroupFallsBackToLogo).
 	id := insertLegacyRow(t,
 		"INSERT INTO groups_images (archived, contenttype) VALUES (1, ?)", "image/jpeg")
 
 	status, loc := legacyImageGet(t, fmt.Sprintf("?id=%d&group=1", id))
 	assert.Equal(t, fiber.StatusFound, status)
-	assert.Contains(t, loc, "/defaultprofile.png")
+	assert.Contains(t, loc, "/icon.png")
+	assert.NotContains(t, loc, "/defaultprofile.png")
+}
+
+func TestLegacyImageGroupFallsBackToLogo(t *testing.T) {
+	// A group whose image can't be served (here: a legacy data-column row with no
+	// external upload) must fall back to the Freegle logo, NOT the person silhouette.
+	// Serving /defaultprofile.png made communities with a stale profile id show a
+	// grey person on the explore list (the image 200s, so the front-end's broken-image
+	// fallback to the logo never fired). Communities are not people.
+	id := insertLegacyRow(t,
+		"INSERT INTO groups_images (contenttype) VALUES (?)", "image/jpeg")
+
+	status, loc := legacyImageGet(t, fmt.Sprintf("?id=%d&group=1", id))
+	assert.Equal(t, fiber.StatusFound, status)
+	assert.Contains(t, loc, "/icon.png")
+	assert.NotContains(t, loc, "/defaultprofile.png")
 }
 
 func TestLegacyImageBytesRowFallsBack(t *testing.T) {
