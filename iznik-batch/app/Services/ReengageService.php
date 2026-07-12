@@ -12,26 +12,31 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 /**
- * Drives the localised 3-stage re-engagement sequence for lapsed users.
+ * Drives the FIRST-WEEK ONBOARDING tip sequence for NEW members: one short,
+ * friendly tip a day for the first five days, following the welcome mail. Kept
+ * under the historical "reengage" name (table/classes/effectiveness dashboard)
+ * because the sequencing, tracking and experiment machinery are identical; only
+ * the trigger and content changed from the earlier lapsed-user idea.
  *
- * Cadence (research-backed for a weekly-digest community sender):
- *   - candidate once inactive >= trigger_days and < max_days
- *   - stage 1 "nearby"  → stage 2 "impact" → stage 3 "preferences"
- *   - stages spaced >= stage_gap_days apart
- *   - the sequence stops (Suppressed) after stage 3 with no re-engagement
- *   - it also stops, and resets, the moment the user logs in: any auto-login
- *     CTA (or any site visit) bumps users.lastaccess past our sends, so the
- *     "rows newer than lastaccess" view of the sequence empties out.
+ * Cadence:
+ *   - a member becomes a candidate once their account is >= start_day old and
+ *     while it is young enough to still be in (or start) the sequence;
+ *   - tip N is sent when the account reaches (start_day + (N-1)*gap) days old,
+ *     one tip per day, up to `stages` tips;
+ *   - a fresh member gets tip 1 only if the account is <= max_start_days old, so
+ *     first enabling the feature can't back-blast everyone who joined last month.
  *
- * Experiment layer (dark until FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT > 0):
- *   - each user gets a stable arm ('control' | 'a' | 'b') from a deterministic
- *     CRC32 bucket, held constant across all three stages
- *   - 'control' is a true holdout — a reengage row is recorded (so it progresses
- *     and is provably drawn from the same eligible pool) but NO mail is sent,
- *     making the lift of the treatment arms measurable
- *   - the journey segment (offer/wanted/replier/other — the user's first action
- *     when they joined) is recorded per send so copy and effectiveness can be
- *     cut by it.
+ * Excluded: TrashNothing and LoveJunk proxy accounts (they onboard through their
+ * own platform), plus the usual bounce / holiday / marketing-opt-out gates.
+ *
+ * Personalised: every tip is signed off by a real local volunteer from a
+ * community the member genuinely joined (see ReengageContentService), or the
+ * plain Freegle voice when there's no such volunteer.
+ *
+ * Experiment/instrumentation layer (dark until rollout_pct > 0): each member
+ * gets a stable arm ('control'|'a'|'b') and a journey segment, recorded per send
+ * so tip effectiveness (opens/clicks/actions) is measurable in the sysadmin
+ * dashboard, joined back via the email_tracking id.
  *
  * Dark by default: gated by BOTH the FREEGLE_MAIL_ENABLED_TYPES kill-switch
  * (type "Reengage") and FREEGLE_REENGAGE_ALLOWLIST (empty = nobody).
@@ -42,15 +47,20 @@ class ReengageService
 
     public const EMAIL_TYPE = 'Reengage';
 
+    /** Number of tips in the onboarding sequence (day 1..N). */
+    public const TIPS = 5;
+
     /**
-     * Stage number → arm → template basename. The 'a' arm is the current copy;
-     * 'b' is the alternate variant. Control users record the position but nothing
-     * is rendered/sent for them.
+     * Stage (day) number → arm → template basename. Every day shares the one
+     * `tip` template, whose per-day copy comes from ReengageContentService. The
+     * 'a'/'b' arms exist for future copy experiments; today both render `tip`.
      */
     private const STAGE_TEMPLATE = [
-        1 => ['a' => 'nearby', 'b' => 'nearby'],
-        2 => ['a' => 'impact', 'b' => 'impact'],
-        3 => ['a' => 'preferences', 'b' => 'preferences'],
+        1 => ['a' => 'tip', 'b' => 'tip'],
+        2 => ['a' => 'tip', 'b' => 'tip'],
+        3 => ['a' => 'tip', 'b' => 'tip'],
+        4 => ['a' => 'tip', 'b' => 'tip'],
+        5 => ['a' => 'tip', 'b' => 'tip'],
     ];
 
     public function __construct(
@@ -59,13 +69,13 @@ class ReengageService
     }
 
     /**
-     * Process the whole candidate cohort.
+     * Process the whole candidate cohort of new members.
      *
-     * @return array{stage1: int, stage2: int, stage3: int, control: int, suppressed: int}
+     * @return array{sent: int, completed: int, control: int, skipped: int}
      */
     public function processReengageEmails(bool $dryRun = false): array
     {
-        $counts = ['stage1' => 0, 'stage2' => 0, 'stage3' => 0, 'control' => 0, 'suppressed' => 0];
+        $counts = ['sent' => 0, 'completed' => 0, 'control' => 0, 'skipped' => 0];
 
         $allowlist = $this->allowlist();
 
@@ -75,21 +85,30 @@ class ReengageService
             return $counts;
         }
 
-        $triggerDays = (int) config('freegle.reengage.trigger_days', 30);
-        $maxDays = (int) config('freegle.reengage.max_days', 175);
-        $gapDays = (int) config('freegle.reengage.stage_gap_days', 45);
+        $startDay = (int) config('freegle.reengage.start_day', 1);
+        $gapDays = max(1, (int) config('freegle.reengage.stage_gap_days', 1));
+        $maxStartDays = (int) config('freegle.reengage.max_start_days', 7);
 
-        // Inactive between max_days (oldest) and trigger_days (newest) ago.
-        $oldest = now()->subDays($maxDays)->toDateTimeString();
-        $newest = now()->subDays($triggerDays)->toDateTimeString();
+        // The window of account ages that can still be in the sequence: young
+        // enough to have started (>= start_day) up to old enough to be finishing
+        // the last tip (or a late first-start capped by max_start_days).
+        $windowDays = $maxStartDays + (self::TIPS - 1) * $gapDays;
+        $oldest = now()->subDays($windowDays)->toDateTimeString();
+        $newest = now()->subDays($startDay)->toDateTimeString();
 
         $candidateIds = DB::table('users')
             ->whereNull('deleted')
             ->where('bouncing', 0)
-            // Honour the win-back / "relevant" marketing opt-out, exactly as the
-            // sibling engage flow does (EngageEmailService).
+            // Honour the marketing opt-out, exactly as the sibling flows do.
             ->where('relevantallowed', 1)
-            ->whereBetween('lastaccess', [$oldest, $newest])
+            // New members only: keyed off account creation date.
+            ->whereBetween('added', [$oldest, $newest])
+            // TrashNothing / LoveJunk proxy accounts onboard through their own
+            // platform - never send them Freegle onboarding tips. (Emails live in
+            // users_emails, not users.email, so the domain case for a TN account
+            // without tnuserid set is caught per-user by isTN() in processUser.)
+            ->whereNull('tnuserid')
+            ->whereNull('ljuserid')
             ->where(function ($q) {
                 $q->whereNull('onholidaytill')->orWhere('onholidaytill', '<', now());
             })
@@ -105,7 +124,7 @@ class ReengageService
         $lowerAllowlist = $allowlist === ['*'] ? ['*'] : array_map('strtolower', $allowlist);
 
         foreach ($candidateIds as $userId) {
-            $result = $this->processUser((int) $userId, $lowerAllowlist, $gapDays, $dryRun);
+            $result = $this->processUser((int) $userId, $lowerAllowlist, $startDay, $gapDays, $maxStartDays, $dryRun);
             if ($result !== null && isset($counts[$result])) {
                 $counts[$result]++;
             }
@@ -115,11 +134,11 @@ class ReengageService
     }
 
     /**
-     * Decide and (unless dry-run) send the next stage for one user.
+     * Decide and (unless dry-run) send the next due tip for one new member.
      *
-     * @return string|null 'stage1'|'stage2'|'stage3'|'control'|'suppressed', or null if skipped.
+     * @return string|null 'sent'|'completed'|'control'|'skipped', or null if not a candidate.
      */
-    private function processUser(int $userId, array $lowerAllowlist, int $gapDays, bool $dryRun): ?string
+    private function processUser(int $userId, array $lowerAllowlist, int $startDay, int $gapDays, int $maxStartDays, bool $dryRun): ?string
     {
         $user = User::find($userId);
         if (! $user) {
@@ -135,7 +154,13 @@ class ReengageService
             return null;
         }
 
-        // Must belong to a real Freegle group (approved member).
+        // Belt-and-braces: skip TN/LJ even if they slipped through the SQL gate
+        // (e.g. a domain the query didn't catch).
+        if ($user->isTN() || $user->isLJ()) {
+            return null;
+        }
+
+        // Must have genuinely joined a real Freegle group (approved member).
         $hasMembership = DB::table('memberships')
             ->join('groups', 'groups.id', '=', 'memberships.groupid')
             ->where('memberships.userid', $userId)
@@ -148,8 +173,6 @@ class ReengageService
         }
 
         // Respect the per-group engagement opt-out (same key the engage flow uses).
-        // Scope to APPROVED memberships so a stale non-approved row can't flip the
-        // MAX() back to enabled and silently override a deliberate opt-out.
         $engagementEnabled = DB::table('memberships')
             ->join('groups', 'groups.id', '=', 'memberships.groupid')
             ->where('memberships.userid', $userId)
@@ -162,33 +185,43 @@ class ReengageService
             return null;
         }
 
-        // Sends made during the *current* lapse = those newer than lastaccess.
-        // (A login resets lastaccess past them, naturally ending the sequence.)
+        // How far through the sequence this member is: one reengage row per tip.
         $rows = DB::table('reengage')
             ->where('userid', $userId)
-            ->where('sentat', '>', $user->lastaccess)
             ->orderBy('sentat')
             ->get();
 
         $stagesSent = $rows->count();
-        $lastSentAt = $rows->max('sentat');
 
-        // Don't send two stages closer than the configured gap.
-        if ($lastSentAt && now()->diffInDays($lastSentAt, false) > -$gapDays) {
-            return null;
-        }
-
-        // Sequence already ran its course → suppress (record terminal state once).
-        if ($stagesSent >= count(self::STAGE_TEMPLATE)) {
+        // Sequence already ran its course → record the terminal state once.
+        if ($stagesSent >= self::TIPS) {
             $latest = $rows->last();
             if ($latest && $latest->outcome === null && ! $dryRun) {
                 DB::table('reengage')->where('id', $latest->id)->update(['outcome' => 'Suppressed']);
             }
 
-            return 'suppressed';
+            return 'completed';
         }
 
         $stage = $stagesSent + 1;
+        $ageDays = $user->added ? now()->diffInDays($user->added, false) * -1 : 0;
+
+        // Not yet due for this tip (account too young for its day threshold).
+        $requiredAge = $startDay + ($stage - 1) * $gapDays;
+        if ($ageDays < $requiredAge) {
+            return 'skipped';
+        }
+
+        // Don't start the sequence for an account that's already too old.
+        if ($stage === 1 && $ageDays > $maxStartDays) {
+            return 'skipped';
+        }
+
+        // Never send two tips the same day.
+        $lastSentAt = $rows->max('sentat');
+        if ($lastSentAt && now()->diffInDays($lastSentAt, false) > -$gapDays) {
+            return 'skipped';
+        }
 
         // Stable experiment assignment + journey segment, recorded on every row.
         [$experiment, $arm, $bucket] = $this->assignArm($userId);
@@ -214,8 +247,7 @@ class ReengageService
 
         $template = self::STAGE_TEMPLATE[$stage][$arm] ?? self::STAGE_TEMPLATE[$stage]['a'];
 
-        $content = $this->content->buildContent($user, self::STAGE_TEMPLATE[$stage]['a']);
-        // Drive per-arm / per-journey copy differences inside the shared template.
+        $content = $this->content->buildContent($user, $stage);
         $content['arm'] = $arm;
         $content['segment'] = $segment;
         $subject = $this->subjectFor($stage, $content, $arm, $segment);
@@ -230,8 +262,6 @@ class ReengageService
                 content: $content,
             );
 
-            // The tracking row is created in the mailable's constructor; capture
-            // its id so opens/clicks join back to this exact send.
             $trackingId = $mail->getTrackingId();
 
             app(EmailSpoolerService::class)->spool($mail, $email, 'reengage');
@@ -249,16 +279,14 @@ class ReengageService
             ]);
         }
 
-        return 'stage' . $stage;
+        return 'sent';
     }
 
     /**
-     * Resolve the stable experiment arm for a user.
-     *
-     * Two independent gates, both dark by default:
-     *   - rollout_pct decides whether the user is in the experiment at all;
-     *     outside it they get arm 'a' (today's single-template behaviour, no holdout).
-     *   - within the experiment, a second stable bucket picks control/a/b.
+     * Resolve the stable experiment arm for a user. Two independent gates, both
+     * dark by default: rollout_pct decides whether the user is in the experiment
+     * at all (outside it they get arm 'a', no holdout); within it a second stable
+     * bucket picks control/a/b.
      *
      * @return array{0: string, 1: string, 2: int} [experimentName, arm, bucket]
      */
@@ -268,7 +296,6 @@ class ReengageService
         $rolloutPct = (int) config('freegle.reengage.experiment.rollout_pct', 0);
         $arms = (array) config('freegle.reengage.experiment.arms', []);
 
-        // Not in the experiment → default arm 'a', no holdout, no experiment tag.
         if ($rolloutPct <= 0 || $arms === []) {
             return ['', 'a', ExperimentBucket::bucket($userId, $name)];
         }
@@ -278,7 +305,6 @@ class ReengageService
             return ['', 'a', $inBucket];
         }
 
-        // Second, decorrelated bucket for the arm split within the experiment.
         $resolved = ExperimentBucket::resolveArm($userId, $name . ':arm', $arms);
         $arm = $resolved['arm'] !== '' ? $resolved['arm'] : 'a';
 
@@ -286,12 +312,12 @@ class ReengageService
     }
 
     /**
-     * Classify the user by their FIRST action on Freegle (used to tailor copy
-     * and to cut effectiveness by journey). Cheap: two indexed point queries.
+     * Classify the member by their FIRST action on Freegle (to cut effectiveness
+     * by journey, and available to tailor copy later). Cheap indexed lookups.
      *   - first post was an Offer  → 'offer'
      *   - first post was a Wanted  → 'wanted'
      *   - first action was a chat reply (no earlier post) → 'replier'
-     *   - never posted or chatted   → 'other'
+     *   - nothing yet (common for brand-new members) → 'other'
      */
     public function journeySegment(int $userId): string
     {
@@ -320,12 +346,11 @@ class ReengageService
     }
 
     /**
-     * Detect and record REAL re-engagement per send, from the precise event trail
-     * (logs Login/Replied + a new post) rather than the mutable `lastaccess`.
-     * Writes reengaged_at / reengaged_via and sets outcome='Reengaged' for any
-     * reengage row (treatment OR control-holdout) whose user came back within the
-     * outcome window. Idempotent: skips rows already resolved. This is what makes
-     * per-stage/arm/segment effectiveness (and control lift) measurable.
+     * Detect and record whether a tip drove a real ACTION (login/reply/post)
+     * within the outcome window, for any reengage row (treatment OR control
+     * holdout). Writes reengaged_at / reengaged_via and outcome='Reengaged'.
+     * Idempotent. This is what makes per-tip/arm/segment effectiveness (and the
+     * control lift) measurable.
      *
      * @return array{checked: int, reengaged: int}
      */
@@ -339,7 +364,6 @@ class ReengageService
             ->where(function ($q) {
                 $q->whereNull('outcome')->orWhere('outcome', '!=', 'Reengaged');
             })
-            // Only rows recent enough that their window is open or recently closed.
             ->where('sentat', '>=', now()->subDays($windowDays + 60)->toDateTimeString())
             ->select('id', 'userid', 'sentat')
             ->orderBy('id')
@@ -363,7 +387,7 @@ class ReengageService
                 continue;
             }
 
-            asort($candidates); // earliest datetime string first
+            asort($candidates);
             $via = (string) array_key_first($candidates);
 
             DB::table('reengage')->where('id', $row->id)->update([
@@ -378,64 +402,45 @@ class ReengageService
     }
 
     /**
-     * Send one of each stage to a single address with sample data, for visual
-     * review in mailpit. Bypasses the dark-ship gates (operator-triggered).
-     * Renders both the 'a' and 'b' variant of every stage so both are reviewable.
+     * Send every tip in the sequence to a single address with sample data, for
+     * visual review in mailpit. Bypasses the dark-ship gates (operator-triggered).
      */
     public function sendPreview(string $email): int
     {
         $sent = 0;
 
-        foreach (self::STAGE_TEMPLATE as $stage => $arms) {
-            foreach ($arms as $arm => $template) {
-                $content = $this->content->previewContent(self::STAGE_TEMPLATE[$stage]['a'], $email);
-                $subject = '[Preview ' . strtoupper((string) $arm) . '] ' . $this->subjectFor($stage, $content, (string) $arm, 'offer');
+        for ($day = 1; $day <= self::TIPS; $day++) {
+            $content = $this->content->previewContent($day, $email);
+            $subject = '[Preview] ' . $this->subjectFor($day, $content, 'a', 'other');
 
-                Mail::to($email)->send(new ReengageMail(
-                    recipientName: $content['name'] ?? 'there',
-                    recipientEmail: $email,
-                    emailSubject: $subject,
-                    template: $template,
-                    userId: 0,
-                    content: $content,
-                ));
+            Mail::to($email)->send(new ReengageMail(
+                recipientName: $content['name'] ?? 'there',
+                recipientEmail: $email,
+                emailSubject: $subject,
+                template: self::STAGE_TEMPLATE[$day]['a'],
+                userId: 0,
+                content: $content,
+            ));
 
-                $sent++;
-            }
+            $sent++;
         }
 
         return $sent;
     }
 
     /**
-     * Build the (semi-localised) subject line for a stage, varying by experiment
-     * arm and journey segment. The 'b' arm leads with a warmer, more personal
-     * framing; the segment tweaks the framing for how the user first used Freegle.
+     * Subject line for a given day's tip. Mirrors the tip heading so the inbox
+     * and the email agree.
      */
     public function subjectFor(int $stage, array $c, string $arm = 'a', string $segment = 'other'): string
     {
-        $count = (int) ($c['offerCount'] ?? 0);
-        $noun = $count === 1 ? 'thing' : 'things';
-
-        if ($arm === 'b') {
-            return match ($stage) {
-                1 => $count > 0
-                    ? 'Your neighbours are giving away ' . number_format($count) . " {$noun} nearby"
-                    : 'Your Freegle neighbourhood is busy again',
-                2 => 'The people near you have been freegling',
-                3 => 'Before we lose touch…',
-                default => 'We miss you on Freegle',
-            };
-        }
-
-        // Arm 'a' (current copy), with the singular fixed.
         return match ($stage) {
-            1 => $count > 0
-                ? number_format($count) . " free {$noun} near you this week"
-                : "See what's being given away near you",
-            2 => "See who's been freegling near you",
-            3 => 'Shall we stay in touch?',
-            default => 'We miss you on Freegle',
+            1 => 'Welcome to Freegle - your first tip',
+            2 => 'The stuff you think nobody wants',
+            3 => 'Need something? Just ask',
+            4 => 'Did you know you can search Freegle?',
+            5 => "You're a freegler now 🎉",
+            default => 'Getting started on Freegle',
         };
     }
 

@@ -6,112 +6,114 @@ use App\Mail\Reengage\ReengageMail;
 use App\Services\ReengageContentService;
 use Tests\TestCase;
 
+/**
+ * Renders the first-week onboarding tip template. (Kept under the historical
+ * "reengage" file/class names; the feature is onboarding.)
+ */
 class ReengageMailRenderTest extends TestCase
 {
-    private function data(string $template): array
+    private function data(int $day): array
     {
-        return (new ReengageContentService())->previewContent($template, 'alex@example.com');
+        return (new ReengageContentService())->previewContent($day, 'alex@example.com');
     }
 
     // ── Blade/MJML source rendering (cheap; no MJML compile) ─────────────────
 
-    public function test_nearby_template_renders_localised_content(): void
+    public function test_day1_sets_expectation_and_shows_good_offer_tip(): void
     {
-        $html = view('emails.mjml.reengage.nearby', $this->data('nearby'))->render();
+        $html = view('emails.mjml.reengage.tip', $this->data(1))->render();
 
-        $this->assertStringContainsString('47', $html);                 // nearby count
-        $this->assertStringContainsString('near you', $html);           // generic, no place name
-        $this->assertStringContainsString("See what's near you", $html); // primary CTA
-        $this->assertStringContainsString('Dining chairs', $html);       // a nearby card
-        $this->assertStringContainsString('alex@example.com', $html);     // footer recipient line
+        $this->assertStringContainsString('Welcome to Freegle', $html);
+        $this->assertStringContainsString('one short tip a day', $html);   // expectation-setting
+        $this->assertStringContainsString('Day 1 of 5', $html);            // progress
+        $this->assertStringContainsString('What makes a good offer', $html);
+        $this->assertStringContainsString('Offer something', $html);       // CTA
+        $this->assertStringContainsString('alex@example.com', $html);      // footer recipient
     }
 
-    public function test_impact_template_renders_people_collage(): void
+    public function test_day2_challenges_the_nobody_wants_it_instinct(): void
     {
-        $html = view('emails.mjml.reengage.impact', $this->data('impact'))->render();
+        $html = view('emails.mjml.reengage.tip', $this->data(2))->render();
 
-        // Neighbour names + avatars (the collage), not stat counters.
-        $this->assertStringContainsString('Jane', $html);
-        $this->assertStringContainsString('i.pravatar.cc', $html);     // an avatar image
-        $this->assertStringContainsString('Dining chairs', $html);     // an item photo caption/alt
-        $this->assertStringContainsString('Join back in', $html);
-        // The old abstract stat counters should be gone.
-        $this->assertStringNotContainsString('kept out of landfill near you', $html);
+        $this->assertStringContainsString('nobody', $html);
+        $this->assertStringContainsString('cupboard', $html);
+        $this->assertStringContainsString('Offer something', $html);
     }
 
-    public function test_impact_collage_omits_face_row_without_avatars(): void
+    public function test_day3_encourages_a_wanted_post(): void
     {
-        $data = array_merge($this->data('impact'), ['faces' => []]);
+        $html = view('emails.mjml.reengage.tip', $this->data(3))->render();
 
-        $html = view('emails.mjml.reengage.impact', $data)->render();
-
-        // Still a valid email with the CTA, just no neighbour row.
-        $this->assertStringContainsString('<mjml>', $html);
-        $this->assertStringContainsString('Join back in', $html);
-        $this->assertStringNotContainsString('i.pravatar.cc', $html);
+        $this->assertStringContainsString('Post a wanted', $html);
+        $this->assertStringContainsString('/find', $html);   // wanted CTA target
     }
 
-    public function test_preferences_template_offers_downgrade_and_unsubscribe(): void
+    public function test_day4_promotes_search(): void
     {
-        $html = view('emails.mjml.reengage.preferences', $this->data('preferences'))->render();
+        $html = view('emails.mjml.reengage.tip', $this->data(4))->render();
 
-        $this->assertStringContainsString('Keep me freegling', $html);
-        $this->assertStringContainsString('Email me less often', $html);
-        $this->assertStringContainsString('Unsubscribe', $html);
+        $this->assertStringContainsString('search', $html);
+        $this->assertStringContainsString('Search Freegle', $html);
     }
 
-    public function test_templates_escape_user_supplied_content(): void
+    public function test_every_tip_carries_a_volunteer_signoff(): void
     {
-        $data = $this->data('nearby');
-        $data['offers'][0]['subject'] = '<script>alert(1)</script>';
+        for ($day = 1; $day <= ReengageContentService::TIPS; $day++) {
+            $html = view('emails.mjml.reengage.tip', $this->data($day))->render();
 
-        $html = view('emails.mjml.reengage.nearby', $data)->render();
+            $this->assertStringContainsString('Priya', $html, "day {$day} volunteer name");
+            $this->assertStringContainsString('Your local Freegle volunteer', $html, "day {$day} sign-off");
+            $this->assertStringContainsString('Edinburgh Freegle', $html, "day {$day} group");
+        }
+    }
+
+    public function test_signoff_falls_back_to_freegle_team_without_a_volunteer(): void
+    {
+        $data = array_merge($this->data(1), ['volunteerName' => null, 'volunteerGroup' => null]);
+
+        $html = view('emails.mjml.reengage.tip', $data)->render();
+
+        $this->assertStringContainsString('The Freegle team', $html);
+        $this->assertStringNotContainsString('Your local Freegle volunteer', $html);
+    }
+
+    public function test_template_escapes_user_supplied_content(): void
+    {
+        $data = array_merge($this->data(1), ['name' => '<script>alert(1)</script>']);
+
+        $html = view('emails.mjml.reengage.tip', $data)->render();
 
         $this->assertStringContainsString('&lt;script&gt;', $html);
         $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
     }
 
-    public function test_handles_empty_nearby_and_impact_gracefully(): void
-    {
-        $data = array_merge($this->data('nearby'), [
-            'offers' => [],
-            'offerCount' => 0,
-            'hasLocation' => false,
-        ]);
-
-        $html = view('emails.mjml.reengage.nearby', $data)->render();
-
-        // Still a valid, non-empty MJML document with the fallback copy + CTA.
-        $this->assertStringContainsString('<mjml>', $html);
-        $this->assertStringContainsString("See what's near you", $html);
-    }
-
     // ── Full MJML compile + Mailable wiring ──────────────────────────────────
 
-    public function test_nearby_mailable_compiles_to_html(): void
+    public function test_tip_mailable_compiles_to_html(): void
     {
-        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'nearby', 0, $this->data('nearby'));
+        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'tip', 0, $this->data(1));
 
         $html = $mail->render();
 
-        $this->assertStringContainsString("See what's near you", $html);
+        $this->assertStringContainsString('Offer something', $html);
         $this->assertStringContainsString('<html', strtolower($html)); // compiled, not raw MJML
         $this->assertStringNotContainsString('<mjml>', strtolower($html));
     }
 
     public function test_email_type_is_reengage(): void
     {
-        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'nearby', 5, $this->data('nearby'));
+        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'tip', 5, $this->data(1));
 
         $this->assertSame('Reengage', $mail->getEmailType());
     }
 
     public function test_plain_text_alternative_renders(): void
     {
-        $text = view('emails.text.reengage.preferences', $this->data('preferences'))->render();
+        $text = view('emails.text.reengage.tip', $this->data(1))->render();
 
-        $this->assertStringContainsString('Keep me freegling', $text);
-        $this->assertStringContainsString('Unsubscribe', $text);
+        $this->assertStringContainsString('Welcome to Freegle', $text);
+        $this->assertStringContainsString('Offer something', $text);
+        $this->assertStringContainsString('Your local Freegle volunteer', $text);
         $this->assertStringNotContainsString('<mj-', $text);
     }
 }

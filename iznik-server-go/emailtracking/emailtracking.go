@@ -1564,7 +1564,7 @@ type ReengageFunnel struct {
 	Reengaged int64 `json:"reengaged"`
 }
 
-// ReengageStageStat represents funnel counts for a single stage (1-3) of
+// ReengageStageStat represents funnel counts for a single stage (day 1-5) of
 // the re-engagement sequence.
 type ReengageStageStat struct {
 	Stage     uint8 `json:"stage"`
@@ -1663,7 +1663,7 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 		WHERE r.sentat BETWEEN ? AND ?
 	`, startDate, endDateTime).Scan(&funnel)
 
-	// Funnel broken down by stage (1-3).
+	// Funnel broken down by stage (day 1-5).
 	byStage := make([]ReengageStageStat, 0)
 	db.Raw(`
 		SELECT

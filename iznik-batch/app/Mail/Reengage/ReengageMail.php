@@ -9,9 +9,8 @@ use Illuminate\Mail\Mailables\Envelope;
 use Symfony\Component\Mime\Email;
 
 /**
- * One email in the localised re-engagement sequence. The template is one of
- * 'nearby'/'nearby-b' (stage 1), 'impact'/'impact-b' (stage 2) or
- * 'preferences'/'preferences-b' (stage 3). All the per-user content is resolved
+ * One email in the first-week onboarding tip sequence. Every day shares the one
+ * 'tip' template; the per-day copy (and the local-volunteer sign-off) is resolved
  * up front by ReengageContentService and passed in as $content, so the Mailable
  * itself stays dumb and serialisable.
  *

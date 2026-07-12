@@ -11,6 +11,9 @@ use Illuminate\Support\Facades\Mail;
 use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
+/**
+ * First-week onboarding tip sequence (kept under the "reengage" name).
+ */
 class ReengageEmailsCommandTest extends TestCase
 {
     use IsolatedSpoolDirectory;
@@ -35,18 +38,16 @@ class ReengageEmailsCommandTest extends TestCase
         config([
             'freegle.reengage.allowlist' => $allowlist,
             'freegle.mail.enabled_types' => 'Reengage',
-            'freegle.reengage.trigger_days' => 30,
-            'freegle.reengage.max_days' => 175,
-            // Small gap keeps the progression tests' timings simple; production
-            // graduates wider (see config/freegle.php).
-            'freegle.reengage.stage_gap_days' => 10,
+            'freegle.reengage.start_day' => 1,
+            'freegle.reengage.stage_gap_days' => 1,
+            'freegle.reengage.max_start_days' => 7,
         ]);
     }
 
     private function createFreegleGroup(): Group
     {
         return Group::create([
-            'nameshort' => 'TestReng_' . uniqid(),
+            'nameshort' => 'TestOnb_' . uniqid(),
             'type'      => Group::TYPE_FREEGLE,
             'publish'   => 1,
             'onmap'     => 1,
@@ -57,9 +58,9 @@ class ReengageEmailsCommandTest extends TestCase
     }
 
     /**
-     * A lapsed user: member of a Freegle group, last seen $daysInactive ago.
+     * A new member: joined a Freegle group, account created $ageDays ago, active.
      */
-    private function createLapsedUser(int $daysInactive = 100, array $attrs = []): object
+    private function createNewMember(int $ageDays = 2, array $attrs = []): object
     {
         $user = $this->createTestUser($attrs);
         $group = $this->createFreegleGroup();
@@ -68,19 +69,23 @@ class ReengageEmailsCommandTest extends TestCase
             'groupid'    => $group->id,
             'collection' => Membership::COLLECTION_APPROVED,
             'role'       => Membership::ROLE_MEMBER,
-            'added'      => now(),
+            'added'      => now()->subDays($ageDays),
         ]);
-        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subDays($daysInactive)]);
+        DB::table('users')->where('id', $user->id)->update([
+            'added'           => now()->subDays($ageDays),
+            'lastaccess'      => now(),
+            'relevantallowed' => 1,
+        ]);
 
         return $user->fresh();
     }
 
-    private function insertSend(int $userId, int $stage, string $template, $sentat): void
+    private function insertTip(int $userId, int $stage, $sentat): void
     {
         DB::table('reengage')->insert([
             'userid'   => $userId,
             'stage'    => $stage,
-            'template' => $template,
+            'template' => 'tip',
             'sentat'   => $sentat,
         ]);
     }
@@ -89,174 +94,169 @@ class ReengageEmailsCommandTest extends TestCase
 
     public function test_dark_when_allowlist_empty(): void
     {
-        $this->createLapsedUser(100);
-        $this->enable('');                          // type enabled, but nobody allow-listed
+        $this->createNewMember(2);
+        $this->enable('');
         config(['freegle.mail.enabled_types' => 'Reengage']);
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
         Mail::assertNothingSent();
     }
 
     public function test_dark_when_type_not_enabled(): void
     {
-        $this->createLapsedUser(100);
+        $this->createNewMember(2);
         config(['freegle.reengage.allowlist' => '*', 'freegle.mail.enabled_types' => '']);
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
     }
 
     public function test_skips_user_not_on_allowlist(): void
     {
-        $this->createLapsedUser(100);
+        $this->createNewMember(2);
         $this->enable('someoneelse@example.com');
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
     }
 
-    // ── Stage 1 ──────────────────────────────────────────────────────────────
+    // ── Tip 1 ────────────────────────────────────────────────────────────────
 
-    public function test_sends_stage1_to_lapsed_user(): void
+    public function test_sends_first_tip_to_new_member(): void
     {
-        $user = $this->createLapsedUser(100);
+        $user = $this->createNewMember(2);
         $this->enable('*');
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(1, $result['stage1']);
-        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 1, 'template' => 'nearby']);
+        $this->assertSame(1, $result['sent']);
+        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 1, 'template' => 'tip']);
 
-        // The send is spooled, not Mail::send-ed directly — flush + assert.
         $stats = app(EmailSpoolerService::class)->processSpool();
         $this->assertSame(1, $stats['sent']);
     }
 
-    public function test_does_not_send_to_recently_active_user(): void
+    public function test_does_not_send_to_account_too_young(): void
     {
-        $this->createLapsedUser(14);          // inside the trigger window — not lapsed yet
+        $this->createNewMember(0);      // joined today — welcome mail's day
         $this->enable('*');
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
     }
 
-    public function test_does_not_send_to_user_past_max_inactivity(): void
+    public function test_does_not_start_sequence_for_account_too_old(): void
     {
-        $this->createLapsedUser(200);         // beyond max_days — engage sunset owns this
+        $this->createNewMember(10);     // older than max_start_days, no prior tips
         $this->enable('*');
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
+    }
+
+    public function test_excludes_trashnothing_member(): void
+    {
+        $user = $this->createNewMember(2);
+        DB::table('users')->where('id', $user->id)->update(['tnuserid' => 987654]);
+        $this->enable('*');
+
+        $result = (new ReengageService())->processReengageEmails(false);
+
+        $this->assertSame(0, $result['sent']);
+    }
+
+    public function test_excludes_lovejunk_member(): void
+    {
+        $user = $this->createNewMember(2);
+        DB::table('users')->where('id', $user->id)->update(['ljuserid' => 987655]);
+        $this->enable('*');
+
+        $result = (new ReengageService())->processReengageEmails(false);
+
+        $this->assertSame(0, $result['sent']);
     }
 
     public function test_skips_user_without_freegle_membership(): void
     {
         $user = $this->createTestUser();
-        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subDays(100)]);
+        DB::table('users')->where('id', $user->id)->update([
+            'added' => now()->subDays(2), 'lastaccess' => now(), 'relevantallowed' => 1,
+        ]);
         $this->enable('*');
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
     }
 
     public function test_skips_user_on_holiday(): void
     {
-        $user = $this->createLapsedUser(100);
+        $user = $this->createNewMember(2);
         DB::table('users')->where('id', $user->id)->update(['onholidaytill' => now()->addDays(5)]);
         $this->enable('*');
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage1']);
+        $this->assertSame(0, $result['sent']);
     }
 
-    // ── Stage progression ────────────────────────────────────────────────────
+    // ── Daily cadence ─────────────────────────────────────────────────────────
 
-    public function test_respects_stage_gap(): void
+    public function test_does_not_send_two_tips_same_day(): void
     {
-        $user = $this->createLapsedUser(100);
+        $user = $this->createNewMember(3);
         $this->enable('*');
-        $this->insertSend($user->id, 1, 'nearby', now());   // just sent stage 1
+        $this->insertTip($user->id, 1, now());          // tip 1 already sent today
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(0, $result['stage2']);
+        $this->assertSame(0, $result['sent']);
     }
 
-    public function test_advances_to_stage2_after_gap(): void
+    public function test_advances_to_next_tip_the_following_day(): void
     {
-        $user = $this->createLapsedUser(100);
+        $user = $this->createNewMember(3);
         $this->enable('*');
-        $this->insertSend($user->id, 1, 'nearby', now()->subDays(11));
+        $this->insertTip($user->id, 1, now()->subHours(25));  // tip 1 sent > a day ago
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(1, $result['stage2']);
-        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 2, 'template' => 'impact']);
+        $this->assertSame(1, $result['sent']);
+        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 2]);
     }
 
-    public function test_advances_to_stage3_after_two_sends(): void
+    public function test_completes_after_five_tips(): void
     {
-        $user = $this->createLapsedUser(100);
+        $user = $this->createNewMember(7);
         $this->enable('*');
-        $this->insertSend($user->id, 1, 'nearby', now()->subDays(22));
-        $this->insertSend($user->id, 2, 'impact', now()->subDays(11));
+        for ($s = 1; $s <= 5; $s++) {
+            $this->insertTip($user->id, $s, now()->subDays(6 - $s));
+        }
 
         $result = (new ReengageService())->processReengageEmails(false);
 
-        $this->assertSame(1, $result['stage3']);
-        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 3, 'template' => 'preferences']);
-    }
-
-    public function test_suppresses_after_full_sequence(): void
-    {
-        $user = $this->createLapsedUser(100);
-        $this->enable('*');
-        $this->insertSend($user->id, 1, 'nearby', now()->subDays(33));
-        $this->insertSend($user->id, 2, 'impact', now()->subDays(22));
-        $this->insertSend($user->id, 3, 'preferences', now()->subDays(11));
-
-        $result = (new ReengageService())->processReengageEmails(false);
-
-        $this->assertSame(1, $result['suppressed']);
-        $this->assertSame(0, $result['stage1'] + $result['stage2'] + $result['stage3']);
-        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 3, 'outcome' => 'Suppressed']);
-    }
-
-    public function test_old_sequence_before_lastaccess_is_ignored(): void
-    {
-        // User re-engaged after a previous sequence (sends older than their
-        // lastaccess), then lapsed again. The old sends must not block a fresh
-        // stage-1 send.
-        $user = $this->createLapsedUser(100);
-        $this->enable('*');
-        $this->insertSend($user->id, 1, 'nearby', now()->subDays(160));
-        $this->insertSend($user->id, 2, 'impact', now()->subDays(150));
-
-        $result = (new ReengageService())->processReengageEmails(false);
-
-        $this->assertSame(1, $result['stage1']);
+        $this->assertSame(1, $result['completed']);
+        $this->assertSame(0, $result['sent']);
+        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 5, 'outcome' => 'Suppressed']);
     }
 
     // ── Dry run ──────────────────────────────────────────────────────────────
 
     public function test_dry_run_does_not_send_or_record(): void
     {
-        $user = $this->createLapsedUser(100);
+        $user = $this->createNewMember(2);
         $this->enable('*');
 
         $result = (new ReengageService())->processReengageEmails(true);
 
-        $this->assertSame(1, $result['stage1']);   // counted...
-        $this->assertDatabaseMissing('reengage', ['userid' => $user->id]); // ...but not recorded
+        $this->assertSame(1, $result['sent']);
+        $this->assertDatabaseMissing('reengage', ['userid' => $user->id]);
         Mail::assertNothingSent();
     }
 

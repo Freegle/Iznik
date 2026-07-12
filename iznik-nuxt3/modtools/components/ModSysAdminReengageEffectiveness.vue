@@ -65,8 +65,8 @@
       <!-- Per-stage breakdown -->
       <h3 class="ms-2 mt-2">By stage</h3>
       <p class="text-muted small ms-2">
-        Stage 1 is the first reengagement attempt; later stages are sent to
-        people who didn't come back after an earlier one.
+        Each stage is one day's onboarding tip (day 1-5) sent to a new member;
+        later stages go to people still early in their first week.
       </p>
       <b-table-simple hover responsive small class="mb-4">
         <b-thead>

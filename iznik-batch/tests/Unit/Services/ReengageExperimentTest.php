@@ -50,30 +50,21 @@ class ReengageExperimentTest extends TestCase
         $this->assertGreaterThan(0, $seen['control']);
     }
 
-    public function test_subject_uses_singular_for_one_item(): void
+    public function test_subject_matches_each_tip_day(): void
     {
         $service = new ReengageService();
 
-        $one = $service->subjectFor(1, ['offerCount' => 1], 'a');
-        $this->assertStringContainsString('1 free thing near you', $one);
-        $this->assertStringNotContainsString('1 free things', $one);
-
-        $many = $service->subjectFor(1, ['offerCount' => 5], 'a');
-        $this->assertStringContainsString('5 free things near you', $many);
+        $this->assertStringContainsString('Welcome to Freegle', $service->subjectFor(1, []));
+        $this->assertStringContainsString('nobody wants', $service->subjectFor(2, []));
+        $this->assertStringContainsString('Just ask', $service->subjectFor(3, []));
+        $this->assertStringContainsString('search Freegle', $service->subjectFor(4, []));
+        $this->assertStringContainsString('freegler now', $service->subjectFor(5, []));
     }
 
-    public function test_arm_b_subject_differs_from_arm_a(): void
+    public function test_subjects_are_distinct_per_day(): void
     {
         $service = new ReengageService();
-        $a = $service->subjectFor(1, ['offerCount' => 5], 'a');
-        $b = $service->subjectFor(1, ['offerCount' => 5], 'b');
-        $this->assertNotSame($a, $b, 'The b arm must ship a different subject line to make the A/B measurable');
-    }
-
-    public function test_subject_zero_count_has_no_number(): void
-    {
-        $service = new ReengageService();
-        $s = $service->subjectFor(1, ['offerCount' => 0], 'a');
-        $this->assertStringNotContainsString('0 free', $s);
+        $subjects = array_map(fn ($d) => $service->subjectFor($d, []), range(1, 5));
+        $this->assertCount(5, array_unique($subjects), 'Each day should have its own subject line');
     }
 }

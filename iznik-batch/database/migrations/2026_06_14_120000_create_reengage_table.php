@@ -22,16 +22,16 @@ return new class extends Migration
         }
 
         Schema::create('reengage', function (Blueprint $table) {
-            $table->comment('Localised re-engagement sequence sends (stage 1-3)');
+            $table->comment('First-week onboarding tip sends (one row per tip, day 1-5)');
             $table->bigIncrements('id');
             $table->unsignedBigInteger('userid')->index('userid');
-            // 1 = nearby activity, 2 = local impact, 3 = preferences/opt-in.
+            // The tip/day number (1..5) in the onboarding sequence.
             $table->unsignedTinyInteger('stage');
-            $table->string('template', 32);
+            $table->string('template', 32)->nullable();
             $table->timestamp('sentat')->useCurrent()->index('sentat');
-            // Terminal state for analytics: Suppressed once the 3-mail sequence
-            // ends with no re-engagement. (Re-engagement is detected implicitly
-            // via lastaccess, so it does not need to be written here.)
+            // Terminal/analytics state: 'Reengaged' once a tip drove a real action
+            // (login/reply/post) in the outcome window; 'Suppressed' once the
+            // sequence completes with no such action.
             $table->enum('outcome', ['Reengaged', 'Suppressed'])->nullable();
 
             $table->index(['userid', 'sentat'], 'userid_sentat');

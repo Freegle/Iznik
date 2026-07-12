@@ -2,218 +2,261 @@
 
 namespace App\Services;
 
-use App\Models\Message;
+use App\Models\Group;
+use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Builds the semi-localised content for the re-engagement sequence: what's
- * been freegled near the user, the local community's recent impact, and the
- * auto-login CTAs. Every piece degrades gracefully — a user with no location
- * still gets a sensible (non-localised) email rather than a broken one.
+ * Builds the content for the first-week ONBOARDING tip sequence (one short,
+ * friendly tip a day for a new member's first five days, following the welcome
+ * mail). Kept under the historical "reengage" name (table/classes/dashboard) but
+ * the purpose is onboarding, not lapsed-user win-back.
+ *
+ * Every tip is signed off by a REAL local volunteer where we can find one: an
+ * active, publicly-shown moderator/owner of a community the member genuinely
+ * joined (nearest first, rippled-in memberships excluded). If there's no such
+ * volunteer we fall back to the plain Freegle voice rather than inventing one.
  */
 class ReengageContentService
 {
-    /** Radius (km) for the "items near you" count and cards. */
-    private const NEARBY_RADIUS_KM = 10;
-
-    /** How many recent days count as "near you this week". */
-    private const NEARBY_DAYS = 7;
-
-    /** How far back the local-impact totals look. */
-    private const IMPACT_DAYS = 30;
-
-    public function __construct(
-        private readonly NearbyOffersService $nearbyOffers = new NearbyOffersService(),
-    ) {
-    }
+    /** Total tips in the sequence (day 1..N). */
+    public const TIPS = 5;
 
     /**
-     * Build the full template data array for a given user and sequence stage.
+     * Build the full template data for a given new member and day (1..TIPS).
      *
      * @return array<string, mixed> Plain strings/ints/arrays, safe to serialise
      *                              onto a queued Mailable.
      */
-    public function buildContent(User $user, string $template): array
+    public function buildContent(User $user, int $day): array
     {
         $userSite = rtrim((string) config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
-        $src = 'reengage-' . $template;
+        $src = 'onboard-' . $day;
+
+        $volunteer = $this->resolveVolunteer($user);
 
         $base = [
-            'name'           => $this->firstName($user),
-            'email'          => $user->email_preferred,
-            'userSite'       => $userSite,
-            'findUrl'        => $user->loginLink('/find', $src),
-            'giveUrl'        => $user->loginLink('/give', $src),
-            'browseUrl'      => $user->loginLink('/browse', $src),
-            'settingsUrl'    => $user->loginLink('/settings', $src),
-            'unsubscribeUrl' => $user->listUnsubscribeUrl(),
+            'name'            => $this->firstName($user),
+            'email'           => $user->email_preferred,
+            'userSite'        => $userSite,
+            // /give = offer something, /find = post a wanted, /browse = search
+            // and see what's already been offered nearby.
+            'giveUrl'         => $user->loginLink('/give', $src),
+            'findUrl'         => $user->loginLink('/find', $src),
+            'browseUrl'       => $user->loginLink('/browse', $src),
+            'settingsUrl'     => $user->loginLink('/settings', $src),
+            'unsubscribeUrl'  => $user->listUnsubscribeUrl(),
+            'volunteerName'   => $volunteer['name'] ?? null,
+            'volunteerGroup'  => $volunteer['group'] ?? null,
         ];
 
-        return match ($template) {
-            'nearby'      => array_merge($base, $this->nearbyContent($user)),
-            // Stage 2 is a people-and-items collage, not stat counters: item
-            // photos (offers) + neighbour avatars/first names (faces).
-            'impact'      => array_merge($base, $this->nearbyContent($user, 4), ['faces' => $this->nearbyFaces($user)]),
-            'preferences' => array_merge($base, $this->nearbyContent($user, 0)),
-            default       => $base,
-        };
+        return array_merge($base, $this->tip($day, $base));
     }
 
     /**
-     * Sample content for the operator preview (`mail:reengage --preview=`),
-     * so the templates can be eyeballed in mailpit without real DB users.
+     * Sample content for the operator preview (`mail:reengage --preview=`), so
+     * each day's tip can be eyeballed in mailpit without a real DB user. Renders
+     * with a sample local-volunteer sign-off.
      *
      * @return array<string, mixed>
      */
-    public function previewContent(string $template, string $email): array
+    public function previewContent(int $day, string $email): array
     {
         $userSite = rtrim((string) config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
-        $placeholder = (string) config('freegle.images.offer_placeholder', $userSite . '/placeholder-offer.png');
-
-        $sampleOffers = collect([
-            ['subject' => 'Dining chairs (x4)', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/1'],
-            ['subject' => 'Children\'s books', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/2'],
-            ['subject' => 'Garden planters', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/3'],
-            ['subject' => 'Bookshelf', 'thumbnail_url' => $placeholder, 'url' => $userSite . '/message/4'],
-        ]);
 
         $base = [
             'name'           => 'Alex',
             'email'          => $email,
             'userSite'       => $userSite,
-            'findUrl'        => $userSite . '/find',
             'giveUrl'        => $userSite . '/give',
+            'findUrl'        => $userSite . '/find',
             'browseUrl'      => $userSite . '/browse',
             'settingsUrl'    => $userSite . '/settings',
             'unsubscribeUrl' => $userSite . '/unsubscribe',
+            'volunteerName'  => 'Priya',
+            'volunteerGroup' => 'Edinburgh Freegle',
         ];
 
-        $nearby = [
-            'offers'      => $sampleOffers->all(),
-            'offerCount'  => 47,
-            'hasLocation' => true,
-        ];
-
-        $sampleFaces = [
-            ['name' => 'Jane',  'avatar' => 'https://i.pravatar.cc/150?img=5'],
-            ['name' => 'Mo',    'avatar' => 'https://i.pravatar.cc/150?img=12'],
-            ['name' => 'Priya', 'avatar' => 'https://i.pravatar.cc/150?img=32'],
-            ['name' => 'Tom',   'avatar' => 'https://i.pravatar.cc/150?img=45'],
-        ];
-
-        return match ($template) {
-            'nearby'      => array_merge($base, $nearby),
-            'impact'      => array_merge($base, ['offers' => $sampleOffers->all(), 'offerCount' => 47, 'hasLocation' => true, 'faces' => $sampleFaces]),
-            'preferences' => array_merge($base, ['offers' => [], 'offerCount' => 47, 'hasLocation' => true]),
-            default       => $base,
-        };
+        return array_merge($base, $this->tip($day, $base));
     }
 
     /**
-     * Nearby OFFER activity: a count of items posted near the user this week
-     * plus a handful of cards. Falls back to recent offers if no location.
+     * The tip copy for a given day. Each returns a heading, a short intro, one or
+     * more body paragraphs, an optional highlight box (title + bullet list), a
+     * preheader (inbox preview line) and a single clear call to action.
      *
-     * @return array{offers: array, offerCount: int, hasLocation: bool}
+     * @param  array<string, mixed>  $base
+     * @return array<string, mixed>
      */
-    private function nearbyContent(User $user, int $cardLimit = 4): array
+    private function tip(int $day, array $base): array
+    {
+        $day = max(1, min(self::TIPS, $day));
+        $total = self::TIPS;
+
+        $tips = [
+            1 => [
+                'preheader' => "One short tip a day for your first five days - here's the first.",
+                'heading'   => 'Welcome to Freegle!',
+                'intro'     => "Over the next five days we'll send you one short tip a day to help you get the hang of things. Here's the first.",
+                'body'      => [
+                    "The heart of Freegle is offering things you no longer need to neighbours who do. A good post gets snapped up fast, and it only takes a moment.",
+                ],
+                'highlight' => [
+                    'title' => 'What makes a good offer',
+                    'items' => [
+                        'A clear title - just say what it is ("Single duvet", "Pine bookshelf").',
+                        'A photo - even a quick phone snap makes all the difference.',
+                        "The condition - honest is perfect. Well-loved and working is very welcome.",
+                        'Roughly where you are, so people know if they can collect.',
+                    ],
+                ],
+                'ctaLabel' => 'Offer something',
+                'ctaUrl'   => $base['giveUrl'],
+            ],
+            2 => [
+                'preheader' => "Don't assume nobody wants it - on Freegle, they nearly always do.",
+                'heading'   => 'The stuff you think nobody wants',
+                'intro'     => "Today's tip is the one that surprises people most.",
+                'body'      => [
+                    "Have a look in that drawer you never open, the back of the cupboard, the shed. The half-tin of paint, the odd cables, the jam jars, the fabric offcuts, the clothes the kids grew out of.",
+                    "It's tempting to think \"nobody would want this\". On Freegle, they nearly always do. The things sitting neglected are exactly what someone nearby is hunting for - and it's genuinely surprising what gets claimed within the hour.",
+                ],
+                'highlight' => [
+                    'title' => 'Often snapped up in no time',
+                    'items' => [
+                        'Half-used craft, hobby and DIY bits',
+                        'Spare cables, chargers, pots and jars',
+                        'Curtains, offcuts and odd balls of wool',
+                        "Kids' clothes and toys they've outgrown",
+                    ],
+                ],
+                'ctaLabel' => 'Offer something',
+                'ctaUrl'   => $base['giveUrl'],
+            ],
+            3 => [
+                'preheader' => "Freegle isn't only for giving - you can ask for what you need, too.",
+                'heading'   => 'Need something? Just ask',
+                'intro'     => "Freegle isn't only for giving - it's for getting, too.",
+                'body'      => [
+                    "If there's something you're after, post a wanted and let your neighbours know. People love helping out, and it saves usable things from heading to landfill.",
+                ],
+                'highlight' => [
+                    'title' => 'What makes a good wanted',
+                    'items' => [
+                        "Say clearly what you're after.",
+                        'Add a line of why - it helps someone think "I\'ve got just the thing".',
+                        'Roughly where you are.',
+                        "Stay open on brand and condition - you'll get more offers.",
+                    ],
+                ],
+                'ctaLabel' => 'Post a wanted',
+                'ctaUrl'   => $base['findUrl'],
+            ],
+            4 => [
+                'preheader' => 'You can search for things that are already being offered nearby.',
+                'heading'   => 'You can search for things',
+                'intro'     => "Waiting and hoping isn't the only option.",
+                'body'      => [
+                    "Freegle has a search. Type in what you need - a desk, a travel cot, a particular book - and see what's already been offered near you right now.",
+                    "New things are posted all the time, so it's worth a look, and worth saving a search so the right one doesn't pass you by.",
+                ],
+                'ctaLabel' => 'Search Freegle',
+                'ctaUrl'   => $base['browseUrl'],
+            ],
+            5 => [
+                'preheader' => "That's the lot - you're a freegler now.",
+                'heading'   => "You're a freegler now",
+                'intro'     => "That's the lot - you've got the hang of it.",
+                'body'      => [
+                    "A quick recap: offer the things you're not using, ask for what you need, and search for anything specific. Then keep an eye on what's popping up nearby.",
+                    "One last thing. Freegle works because of neighbours being kind to each other - reply promptly, arrange an easy doorstep pickup, and say thanks. That's really all there is to it.",
+                ],
+                'highlight' => [
+                    'title' => 'Your Freegle in a nutshell',
+                    'items' => [
+                        'Offer the things you no longer need',
+                        'Ask for the things you do',
+                        'Search for anything specific',
+                        'Be a good neighbour',
+                    ],
+                ],
+                'ctaLabel' => 'See what\'s near you',
+                'ctaUrl'   => $base['browseUrl'],
+            ],
+        ];
+
+        return array_merge($tips[$day], ['day' => $day, 'totalDays' => $total]);
+    }
+
+    /**
+     * Find a real local volunteer to sign the tip off. Mirrors BirthdayService's
+     * "local volunteer" rule so the two stay consistent:
+     *   - only communities the member GENUINELY joined (collection Approved,
+     *     rippled = 0 - never a Rippling-Out auto-join);
+     *   - nearest to the member first (haversine on the group centroid), so the
+     *     sign-off feels local rather than from the far side of the country;
+     *   - the volunteer must be an active (accessed within a year), publicly
+     *     shown (users.settings.showmod, default true) Moderator/Owner.
+     *
+     * Returns null when there's no such volunteer, so the caller falls back to
+     * the plain Freegle voice.
+     *
+     * @return array{name: string, group: string}|null
+     */
+    public function resolveVolunteer(User $user): ?array
     {
         [$lat, $lng] = $this->resolveLatLng($user);
-        $hasLocation = $lat !== null && $lng !== null;
 
-        $offers = $cardLimit > 0
-            ? ($hasLocation
-                ? $this->nearbyOffers->getOffersNearLocation((float) $lat, (float) $lng, $cardLimit)
-                : $this->nearbyOffers->getRandomOffers($cardLimit))
-            : collect();
+        $groupsQuery = DB::table('memberships')
+            ->join('groups', 'groups.id', '=', 'memberships.groupid')
+            ->where('memberships.userid', $user->id)
+            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
+            ->where('memberships.rippled', 0)
+            ->where('groups.type', Group::TYPE_FREEGLE)
+            ->select('groups.id', 'groups.nameshort', 'groups.namefull');
 
-        return [
-            'offers'      => $offers->all(),
-            'offerCount'  => $hasLocation ? $this->countNearbyOffers((float) $lat, (float) $lng) : 0,
-            'hasLocation' => $hasLocation,
-        ];
-    }
-
-    /**
-     * Count recent approved OFFERs within the nearby box (same bounding-box
-     * approximation NearbyOffersService uses).
-     */
-    private function countNearbyOffers(float $lat, float $lng): int
-    {
-        $deg = self::NEARBY_RADIUS_KM / 111.0;
-
-        return (int) Message::query()
-            ->offers()
-            ->approved()
-            ->notDeleted()
-            ->withLocation()
-            ->recent(self::NEARBY_DAYS)
-            ->whereBetween('lat', [$lat - $deg, $lat + $deg])
-            ->whereBetween('lng', [$lng - $deg, $lng + $deg])
-            ->count();
-    }
-
-    /**
-     * Real neighbours for the stage-2 collage: recent nearby posters who have
-     * uploaded a profile photo, returned as first name + avatar URL. This is
-     * the same public wall data freeglers already see in-app; we only include
-     * users who chose to add an avatar, and show first names only.
-     *
-     * @return array<int, array{name: string, avatar: string}>
-     */
-    private function nearbyFaces(User $user, int $limit = 6): array
-    {
-        [$lat, $lng] = $this->resolveLatLng($user);
-        if ($lat === null || $lng === null) {
-            return [];
+        if ($lat !== null && $lng !== null) {
+            // Nearest genuine community first; groups with no centroid sort last.
+            $groupsQuery->orderByRaw(
+                'groups.lat IS NULL, haversine(?, ?, groups.lat, groups.lng) ASC',
+                [$lat, $lng]
+            );
         }
 
-        $deg = self::NEARBY_RADIUS_KM / 111.0;
+        $groups = $groupsQuery->limit(8)->get();
+        $oneYearAgo = now()->subYear()->toDateTimeString();
 
-        $userIds = Message::query()
-            ->offers()
-            ->approved()
-            ->notDeleted()
-            ->withLocation()
-            ->recent(self::IMPACT_DAYS)
-            ->whereBetween('lat', [$lat - $deg, $lat + $deg])
-            ->whereBetween('lng', [$lng - $deg, $lng + $deg])
-            ->whereNotNull('fromuser')
-            ->orderByDesc('arrival')
-            ->limit($limit * 5)
-            ->pluck('fromuser')
-            ->unique()
-            ->take($limit * 3)
-            ->all();
+        foreach ($groups as $group) {
+            $mod = DB::table('memberships')
+                ->join('users', 'users.id', '=', 'memberships.userid')
+                ->where('memberships.groupid', $group->id)
+                ->where('memberships.collection', Membership::COLLECTION_APPROVED)
+                ->whereIn('memberships.role', ['Moderator', 'Owner'])
+                ->whereNull('users.deleted')
+                ->where('users.lastaccess', '>=', $oneYearAgo)
+                ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
+                ->inRandomOrder()
+                ->select('users.fullname', 'users.firstname')
+                ->first();
 
-        if (empty($userIds)) {
-            return [];
-        }
+            if ($mod) {
+                $display = trim((string) ($mod->fullname ?: $mod->firstname ?: 'Volunteer'));
+                $first = $display !== '' ? explode(' ', $display)[0] : 'Volunteer';
 
-        $faces = [];
-        foreach (User::whereIn('id', $userIds)->get() as $poster) {
-            $avatar = $poster->getProfileImageUrl();
-            if (!$avatar) {
-                continue;
-            }
-
-            $first = trim((string) explode(' ', trim((string) $poster->display_name))[0]);
-            if ($first === '' || $first === 'Freegle') {
-                continue;
-            }
-
-            $faces[] = ['name' => $first, 'avatar' => $avatar];
-            if (count($faces) >= $limit) {
-                break;
+                return [
+                    'name'  => $first,
+                    'group' => (string) ($group->namefull ?: $group->nameshort),
+                ];
             }
         }
 
-        return $faces;
+        return null;
     }
 
     /**
-     * Lat/lng waterfall matching NewsfeedDigestService::resolveLatLng:
-     * the saved 'mylocation' setting first, then the user's lastlocation.
+     * Lat/lng waterfall matching NewsfeedDigestService::resolveLatLng: the saved
+     * 'mylocation' setting first, then the user's lastlocation.
      *
      * @return array{0: float|null, 1: float|null}
      */
@@ -234,7 +277,6 @@ class ReengageContentService
             return $first;
         }
 
-        // Fall back to the first word of the sanitised display name.
         $display = trim((string) $user->display_name);
 
         return $display !== '' ? explode(' ', $display)[0] : 'there';

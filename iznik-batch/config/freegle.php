@@ -158,34 +158,25 @@ return [
         'zip_url' => env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
     ],
 
-    // Localised re-engagement sequence (mail:reengage). A 3-email win-back
-    // flow for users who have drifted away (lapsed) but are not yet at the
-    // 182-day sunset that the older `engage` AtRisk/Inactive mails own.
+    // First-week ONBOARDING tip sequence (mail:reengage). One short tip a day
+    // for a new member's first five days, after the welcome mail. Kept under the
+    // "reengage" key/table/dashboard name; the trigger and content are onboarding.
     'reengage' => [
         // Dark-ship gate (mirrors FREEGLE_DIGEST_DAILY_ALLOWLIST):
         //   ''            → send to nobody (default — feature is dark)
         //   '*'           → send to everyone eligible
         //   'a@x,b@y'     → only these recipient addresses (rollout pilot)
         'allowlist' => env('FREEGLE_REENGAGE_ALLOWLIST', ''),
-        // First touch fires after this many days with no access. Evidence
-        // favours intervening EARLY and graduating across the lifecycle:
-        // re-engaging at 30-60 days reactivates ~3x better than waiting for a
-        // 6-month dormant user, and most early lapses are accidental. 30 days
-        // suits Freegle's episodic, ~monthly usage (product-type guidance:
-        // monthly-use → 30-45 days). With stage_gap_days below this places the
-        // three stages at roughly 30 / 75 / 120 days inactive.
-        // NB: this triggers on LOGIN inactivity (users.lastaccess). Many happy
-        // freeglers read digests without logging in, so login-gap overstates
-        // disengagement — ideally refine to an email-engagement signal before
-        // ramping; tune via the env var meanwhile.
-        'trigger_days' => (int) env('FREEGLE_REENGAGE_TRIGGER_DAYS', 30),
-        // Minimum gap between successive stages — wide, so the sequence is
-        // graduated across the lifecycle rather than a burst (30 → 75 → 120).
-        'stage_gap_days' => (int) env('FREEGLE_REENGAGE_STAGE_GAP_DAYS', 45),
-        // Upper bound on inactivity for this sequence. Beyond this the older
-        // `engage` AtRisk warning (~175 days) and Inactive sunset take over,
-        // so we stop here to avoid double-mailing the same lapse.
-        'max_days' => (int) env('FREEGLE_REENGAGE_MAX_DAYS', 175),
+        // Day the FIRST tip lands (account age in days). 1 leaves day 0 for the
+        // welcome mail, so tip 1 arrives the day after joining.
+        'start_day' => (int) env('FREEGLE_ONBOARD_START_DAY', 1),
+        // Gap between tips — one a day. Tip N lands on day start_day+(N-1)*gap,
+        // i.e. days 1..5 with the defaults.
+        'stage_gap_days' => (int) env('FREEGLE_ONBOARD_STAGE_GAP_DAYS', 1),
+        // Never START the sequence for an account already older than this. Stops
+        // a first enable from back-blasting everyone who joined recently; a member
+        // mid-sequence keeps getting the rest regardless.
+        'max_start_days' => (int) env('FREEGLE_ONBOARD_MAX_START_DAYS', 7),
 
         // A/B experiment layer. Stays inert by default: rollout_pct=0 means
         // nobody is in the experiment, everyone eligible falls through to the
