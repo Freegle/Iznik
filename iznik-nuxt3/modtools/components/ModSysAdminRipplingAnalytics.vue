@@ -452,8 +452,8 @@ const bull = ref([])
 // The drive-time metrics are a slow sampled routing pass, fetched separately from the KPIs; this
 // tracks that second request so the drive panels can show their own spinner without blocking the tab.
 const driveLoading = ref(false)
-// The pass runs as a background job on the server (it can't complete in one request without
-// hitting the gateway 504). We poll it and surface how far through the sample it is.
+// The pass is driven from the client, scoring the sample one chunk after another so no single
+// request 504s. driveProgress / driveTotal surface how far through the sample we are.
 const driveProgress = ref(0)
 const driveTotal = ref(0)
 const drivePct = computed(() =>
@@ -461,8 +461,9 @@ const drivePct = computed(() =>
     ? Math.min(100, Math.round((driveProgress.value / driveTotal.value) * 100))
     : 0
 )
-const DRIVE_POLL_MS = 2500
-const DRIVE_MAX_POLLS = 160 // ~6-7 min ceiling before we give up polling
+// Posts scored per /score call. Small enough that each call stays well under the gateway timeout,
+// large enough to keep the number of round-trips (and the progress bar's granularity) sensible.
+const DRIVE_CHUNK = 5
 // Folded in from the retired dashboard: reply-source attribution + geographic hotspots
 // (fetched in parallel from the metrics endpoint, which already computes them).
 const replySource = ref([])
@@ -743,30 +744,40 @@ async function loadDriveTimes() {
   driveProgress.value = 0
   driveTotal.value = 0
   try {
-    // The server runs the routing pass as a background job (it can't finish inside one request
-    // without the gateway 504ing). Poll it, showing progress, until it reports done.
-    for (let i = 0; i < DRIVE_MAX_POLLS; i++) {
-      const d = await apiInstance.rippling.fetchAnalyticsDriveTimes(
-        forStratum,
-        forStart,
-        forEnd
+    // The routing pass is driven from here, one call after another, so no single request runs
+    // long enough to hit the gateway 504. Step 1: fetch the random sample of posts to score.
+    const sample = await apiInstance.rippling.fetchAnalyticsDriveTimes(
+      forStratum,
+      forStart,
+      forEnd
+    )
+    if (isStale()) return
+    const posts = sample?.posts || []
+    driveTotal.value = sample?.total || posts.length
+    // No sample — leave the drive panels in their "no sample" state.
+    if (!posts.length) return
+
+    // Step 2: score the sample one chunk after another (serial), showing progress. Each call does
+    // only a few routing evals, so it returns well within the gateway timeout.
+    const obs = []
+    for (let i = 0; i < posts.length; i += DRIVE_CHUNK) {
+      const r = await apiInstance.rippling.scoreAnalyticsDriveTimes(
+        posts.slice(i, i + DRIVE_CHUNK)
       )
       if (isStale()) return
-      if (d?.status === 'computing') {
-        driveProgress.value = d.progress || 0
-        driveTotal.value = d.total || 0
-        await new Promise((resolve) => setTimeout(resolve, DRIVE_POLL_MS))
-        continue
-      }
-      // Done (status 'done', or a legacy full payload with no status field).
-      if (s1.value && d?.reply_drive_min)
-        s1.value.reply_drive_min = d.reply_drive_min
-      if (s3.value && d?.ripple_drive_min)
-        s3.value.ripple_drive_min = d.ripple_drive_min
-      s2.value = { ...s2.value, drive_time: d?.drive_time || [] }
-      bull.value = d?.bullseye || []
-      return
+      if (r?.obs?.length) obs.push(...r.obs)
+      driveProgress.value = Math.min(i + DRIVE_CHUNK, posts.length)
     }
+
+    // Step 3: aggregate the accumulated observations into the drive-time stats.
+    const d = await apiInstance.rippling.aggregateAnalyticsDriveTimes(obs)
+    if (isStale()) return
+    if (s1.value && d?.reply_drive_min)
+      s1.value.reply_drive_min = d.reply_drive_min
+    if (s3.value && d?.ripple_drive_min)
+      s3.value.ripple_drive_min = d.ripple_drive_min
+    s2.value = { ...s2.value, drive_time: d?.drive_time || [] }
+    bull.value = d?.bullseye || []
   } catch (e) {
     // Non-fatal: the KPIs are already shown. Leave the drive panels in their "no sample" state.
   } finally {

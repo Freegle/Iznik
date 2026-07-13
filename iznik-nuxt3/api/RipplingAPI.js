@@ -22,14 +22,25 @@ export default class RipplingAPI extends BaseAPI {
     return this.$getv2('/rippling/analytics', params)
   }
 
-  // The SLOW half of the analytics tab: the sampled drive-time routing pass (reply/rippled mean
-  // drive-times, the per-day trend and the reliability bullseye). ~250 isochrone calls, so this
-  // can take tens of seconds — callers fetch it after the KPIs and fill the drive panels in
-  // progressively, with a long timeout.
+  // The SLOW half of the analytics tab is done in three steps so no single request runs long
+  // enough to hit the gateway 504. Step 1: fetch the random SAMPLE of posts to score (fast, no
+  // routing) — returns { posts, total }.
   fetchAnalyticsDriveTimes(stratum = 'all', start = '', end = '') {
     const params = { stratum }
     if (start) params.start = start
     if (end) params.end = end
     return this.$getv2('/rippling/analytics/drivetime', params)
+  }
+
+  // Step 2: score a chunk of the sample. One routing call per post, serial on the server. The
+  // client calls this repeatedly (one chunk after another), showing progress — returns { obs }.
+  scoreAnalyticsDriveTimes(posts) {
+    return this.$postv2('/rippling/analytics/drivetime/score', { posts })
+  }
+
+  // Step 3: aggregate all the accumulated observations into the drive-time stats (reply/rippled
+  // mean, per-day trend, reliability bullseye). Pure — no routing.
+  aggregateAnalyticsDriveTimes(obs) {
+    return this.$postv2('/rippling/analytics/drivetime/aggregate', { obs })
   }
 }

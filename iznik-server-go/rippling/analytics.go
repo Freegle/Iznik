@@ -8,8 +8,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -131,71 +129,45 @@ type DriveStat struct {
 	Available bool    `json:"available"`
 }
 
-// scoreSample runs one ripple-eval per sampled post (bounded concurrency) and returns the scored
-// replies. Best-effort: routing/parse failures drop that post. This is the ONLY routing pass -
-// every drive-time figure (overall, rippled-only, per-day trend) is derived from its output.
-func scoreSample(posts []samplePost) []driveObs { return scoreSampleCb(posts, nil) }
-
-// scoreSampleCb is scoreSample with an optional onEach callback fired as each post finishes
-// (success or failure), for progress reporting on the background drive-time job. The callback
-// runs from the worker goroutines, so it must be concurrency-safe. Concurrency is unchanged
-// (driveConcurrency()); this only observes progress, it does not add parallelism.
-func scoreSampleCb(posts []samplePost, onEach func()) []driveObs {
-	var mu sync.Mutex
-	obs := []driveObs{}
-
-	sem := make(chan struct{}, driveConcurrency())
-	var wg sync.WaitGroup
-	for i := range posts {
-		p := posts[i]
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if onEach != nil {
-				defer onEach()
-			}
-			body, _ := json.Marshal(rippleEvalReq{
-				Lat: p.lat, Lng: p.lng, Mode: "drive", MaxMinutes: driveMaxMinutes, Points: p.points,
-			})
-			resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval",
-				"application/json", bytes.NewReader(body))
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return
-			}
-			var r rippleEvalResp
-			if json.NewDecoder(resp.Body).Decode(&r) != nil || len(r.Results) != len(p.points) {
-				return
-			}
-			local := []driveObs{}
-			for j, res := range r.Results {
-				if res.DriveMin == nil {
-					continue
-				}
-				o := driveObs{min: *res.DriveMin}
-				if j < len(p.rippled) {
-					o.rippled = p.rippled[j]
-				}
-				if j < len(p.days) {
-					o.day = p.days[j]
-				}
-				if j < len(p.takers) {
-					o.taker = p.takers[j]
-				}
-				local = append(local, o)
-			}
-			mu.Lock()
-			obs = append(obs, local...)
-			mu.Unlock()
-		}()
+// scoreOnePost runs ONE ripple-eval for a single sampled post and returns its scored replies.
+// Serial and best-effort: a routing/parse failure yields no observations for that post. The whole
+// sample is scored one post at a time by the client calling /drivetime/score repeatedly, so a
+// single request never runs long enough to hit the gateway timeout (the 504 this replaces).
+func scoreOnePost(p samplePost) []driveObs {
+	body, _ := json.Marshal(rippleEvalReq{
+		Lat: p.lat, Lng: p.lng, Mode: "drive", MaxMinutes: driveMaxMinutes, Points: p.points,
+	})
+	resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval",
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil
 	}
-	wg.Wait()
-	return obs
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var r rippleEvalResp
+	if json.NewDecoder(resp.Body).Decode(&r) != nil || len(r.Results) != len(p.points) {
+		return nil
+	}
+	out := []driveObs{}
+	for j, res := range r.Results {
+		if res.DriveMin == nil {
+			continue
+		}
+		o := driveObs{min: *res.DriveMin}
+		if j < len(p.rippled) {
+			o.rippled = p.rippled[j]
+		}
+		if j < len(p.days) {
+			o.day = p.days[j]
+		}
+		if j < len(p.takers) {
+			o.taker = p.takers[j]
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // statFromObs is the mean drive-time (+95% CI) over the observations, optionally restricted to
@@ -540,148 +512,108 @@ func Analytics(c *fiber.Ctx) error {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
-// The ~250-call routing pass takes tens of seconds — longer than the production gateway's
-// timeout — so running it inside the request 504s (which surfaces on the client as a misleading
-// CORS error, since the gateway's 504 has no Access-Control-Allow-Origin). Instead this is a
-// JOB: a request kicks off (or reclaims, or reads) a background pass and returns immediately.
+// The ~250-post routing pass takes tens of seconds — longer than the production gateway's
+// timeout — so scoring the whole sample inside one request 504s (which surfaces on the client as
+// a misleading CORS error, since the gateway's 504 has no Access-Control-Allow-Origin). So the
+// work is driven by the CLIENT, one post at a time, and no server-side state (the old
+// rippling_drivetime_cache job table) is needed. prod apiv2 is multi-node, but each request is
+// self-contained, so there is no shared state to keep either:
 //
-//	{ "status": "computing", "progress": 37, "total": 250 }   -> client shows a loading bar, re-polls
-//	{ "status": "done", "reply_drive_min": ..., "bullseye": ... }   -> render
+//	1. GET  /rippling/analytics/drivetime            -> the random sample to score { posts, total }
+//	2. POST /rippling/analytics/drivetime/score      -> score a chunk serially     { obs }   (repeat)
+//	3. POST /rippling/analytics/drivetime/aggregate  -> obs -> the drive-time stats { reply_drive_min, ... }
 //
-// The job's progress + result live in the rippling_drivetime_cache table (NOT in-memory): prod
-// apiv2 is multi-node behind a load balancer, so an in-memory job would let polls hit a node
-// without it and each node would recompute — hammering the routing server. The DB row is the
-// single source of truth; exactly one caller wins the claim and runs the pass, everyone else
-// (any node) just reports its progress. Completed results are served from cache for driveDoneTTL.
-const (
-	driveDoneTTLSec = 900 // serve a completed result for 15 min before recomputing
-	driveStallSec   = 120 // a 'computing' job silent this long is treated as dead and reclaimed
-)
+// The client loops step 2 over the sample (one call after another), showing a progress bar, then
+// aggregates. Each request does at most a few routing calls, so none runs long enough to 504.
 
+// AnalyticsDriveTimes returns the random drive-time SAMPLE for the client to score serially.
+// Fast (one sampling query, no routing).
 func AnalyticsDriveTimes(c *fiber.Ctx) error {
 	stratum, start, end, stratumSQL := analyticsWindow(c)
-	key := stratum + "|" + start + "|" + end
-	target := driveSampleSize()
-
-	row := getDriveCache(key)
-	fresh := row != nil &&
-		((row.Status == "done" && row.AgeSec < driveDoneTTLSec) ||
-			(row.Status == "computing" && row.AgeSec < driveStallSec))
-
-	if !fresh {
-		// No usable row (missing, stale-done, or a stalled compute). Claim it and kick off the
-		// background pass. claimDriveJob is atomic, so exactly one caller runs the pass.
-		if claimDriveJob(key, target) {
-			go computeDriveJob(key, stratum, start, end, stratumSQL)
-		}
-		return c.JSON(fiber.Map{
-			"status": "computing", "progress": 0, "total": target,
-			"stratum": stratum, "start": start, "end": end, "sample_target": target,
-		})
-	}
-
-	if row.Status == "computing" {
-		return c.JSON(fiber.Map{
-			"status": "computing", "progress": row.Progress, "total": row.Total,
-			"stratum": stratum, "start": start, "end": end, "sample_target": target,
-		})
-	}
-
-	// Fresh completed result — the stored payload is already the full JSON response.
-	c.Set("Content-Type", "application/json")
-	return c.SendString(row.Result)
-}
-
-// driveCacheRow is one rippling_drivetime_cache row plus the derived age of its last update.
-type driveCacheRow struct {
-	Status   string `gorm:"column:status"`
-	Progress int    `gorm:"column:progress"`
-	Total    int    `gorm:"column:total"`
-	Result   string `gorm:"column:result"`
-	AgeSec   int    `gorm:"column:age_sec"`
-}
-
-// getDriveCache returns the cache row for key, or nil if absent.
-func getDriveCache(key string) *driveCacheRow {
-	rows := []driveCacheRow{}
-	database.DBConn.Raw(`
-		SELECT status, progress, total, COALESCE(result, '') AS result,
-		       TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS age_sec
-		FROM rippling_drivetime_cache WHERE cache_key = ? LIMIT 1`, key).Scan(&rows)
-	if len(rows) == 0 {
-		return nil
-	}
-	return &rows[0]
-}
-
-// claimDriveJob atomically becomes the single computing owner for key: it inserts a fresh
-// 'computing' row if none exists, else reclaims one only if the existing result is past its TTL
-// or a compute has stalled. Returns true iff THIS caller should run the pass.
-func claimDriveJob(key string, total int) bool {
-	db := database.DBConn
-	ins := db.Exec(`
-		INSERT IGNORE INTO rippling_drivetime_cache (cache_key, status, progress, total, started_at, updated_at)
-		VALUES (?, 'computing', 0, ?, NOW(), NOW())`, key, total)
-	if ins.RowsAffected == 1 {
-		return true
-	}
-	upd := db.Exec(`
-		UPDATE rippling_drivetime_cache
-		SET status = 'computing', progress = 0, total = ?, result = NULL, started_at = NOW(), updated_at = NOW()
-		WHERE cache_key = ?
-		  AND ( (status = 'done'      AND updated_at < NOW() - INTERVAL ? SECOND)
-		     OR (status = 'computing' AND updated_at < NOW() - INTERVAL ? SECOND) )`,
-		total, key, driveDoneTTLSec, driveStallSec)
-	return upd.RowsAffected == 1
-}
-
-func updateDriveProgress(key string, progress, total int) {
-	database.DBConn.Exec(`
-		UPDATE rippling_drivetime_cache SET progress = ?, total = ?, updated_at = NOW()
-		WHERE cache_key = ? AND status = 'computing'`, progress, total, key)
-}
-
-func storeDriveResult(key, result string, total int) {
-	database.DBConn.Exec(`
-		UPDATE rippling_drivetime_cache SET status = 'done', progress = ?, total = ?, result = ?, updated_at = NOW()
-		WHERE cache_key = ?`, total, total, result, key)
-}
-
-// computeDriveJob runs the sampled routing pass in the background (unchanged concurrency),
-// writing progress to the cache as it goes and the full response payload on completion. A panic
-// here must not crash apiv2 — if it dies the job simply stalls and is reclaimed after driveStall.
-func computeDriveJob(key, stratum, start, end, stratumSQL string) {
-	defer func() { _ = recover() }()
-
 	posts := fetchDriveSample(start, end, stratumSQL, driveSampleSize())
-	total := len(posts)
-	updateDriveProgress(key, 0, total)
-
-	var done int64
-	obs := scoreSampleCb(posts, func() {
-		n := atomic.AddInt64(&done, 1)
-		// Throttle DB writes: every few posts and on the final one.
-		if n%5 == 0 || int(n) == total {
-			updateDriveProgress(key, int(n), total)
-		}
+	wire := make([]samplePostWire, len(posts))
+	for i, p := range posts {
+		wire[i] = samplePostWire{Lat: p.lat, Lng: p.lng, Points: p.points, Rippled: p.rippled, Days: p.days, Takers: p.takers}
+	}
+	return c.JSON(fiber.Map{
+		"posts": wire, "total": len(wire),
+		"stratum": stratum, "start": start, "end": end, "sample_target": driveSampleSize(),
 	})
+}
 
-	payload := fiber.Map{
+// samplePostWire is samplePost over the wire (exported JSON). The sample is random per fetch, so
+// it cannot be re-derived server-side by offset — the client holds one run's sample and sends
+// each post back to /score.
+type samplePostWire struct {
+	Lat     float64      `json:"lat"`
+	Lng     float64      `json:"lng"`
+	Points  [][2]float64 `json:"points"`
+	Rippled []bool       `json:"rippled"`
+	Days    []string     `json:"days"`
+	Takers  []bool       `json:"takers"`
+}
+
+// driveObsWire is one scored observation over the wire.
+type driveObsWire struct {
+	Min     float64 `json:"min"`
+	Rippled bool    `json:"rippled"`
+	Day     string  `json:"day"`
+	Taker   bool    `json:"taker"`
+}
+
+// AnalyticsDriveScore scores a chunk of the sample SERIALLY (one routing call per post) and
+// returns the observations. The client calls this repeatedly, one chunk after another.
+//
+// @Router /rippling/analytics/drivetime/score [post]
+// @Summary Score a chunk of the drive-time sample (sysadmin)
+// @Tags rippling
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+func AnalyticsDriveScore(c *fiber.Ctx) error {
+	var req struct {
+		Posts []samplePostWire `json:"posts"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "bad body")
+	}
+	out := []driveObsWire{}
+	for _, w := range req.Posts {
+		p := samplePost{lat: w.Lat, lng: w.Lng, points: w.Points, rippled: w.Rippled, days: w.Days, takers: w.Takers}
+		for _, o := range scoreOnePost(p) {
+			out = append(out, driveObsWire{Min: o.min, Rippled: o.rippled, Day: o.day, Taker: o.taker})
+		}
+	}
+	return c.JSON(fiber.Map{"obs": out})
+}
+
+// AnalyticsDriveAggregate turns the client's accumulated observations into the drive-time stats
+// (overall mean, rippled-only mean, per-day trend, reply->take bullseye). Pure — no routing.
+//
+// @Router /rippling/analytics/drivetime/aggregate [post]
+// @Summary Aggregate scored drive-time observations (sysadmin)
+// @Tags rippling
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+func AnalyticsDriveAggregate(c *fiber.Ctx) error {
+	var req struct {
+		Obs []driveObsWire `json:"obs"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "bad body")
+	}
+	obs := make([]driveObs, len(req.Obs))
+	for i, w := range req.Obs {
+		obs[i] = driveObs{min: w.Min, rippled: w.Rippled, day: w.Day, taker: w.Taker}
+	}
+	return c.JSON(fiber.Map{
 		"status":           "done",
-		"stratum":          stratum,
-		"start":            start,
-		"end":              end,
-		"sample_target":    driveSampleSize(),
-		"reply_drive_min":  statFromObs(obs, false), // Section 1 overall mean
-		"ripple_drive_min": statFromObs(obs, true),  // Section 3 rippled-out mean
-		"drive_time":       driveTrendFromObs(obs),  // Section 2 per-day trend
-		"bullseye":         bullseyeFromObs(obs),    // reply->take conversion by drive-time ring
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	storeDriveResult(key, string(b), total)
+		"reply_drive_min":  statFromObs(obs, false),
+		"ripple_drive_min": statFromObs(obs, true),
+		"drive_time":       driveTrendFromObs(obs),
+		"bullseye":         bullseyeFromObs(obs),
+	})
 }
 
 // TrendRow is one arrival-day point for the Section 2 time series.
