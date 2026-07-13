@@ -323,7 +323,7 @@
                 at
                 {{ datetimeshort(message.outcomes[0].timestamp) }}
               </NoticeMessage>
-              <div v-if="message.heldby">
+              <div v-if="heldbyId">
                 <NoticeMessage variant="warning" class="mb-2">
                   <p v-if="me.id === heldbyId">
                     You held this. Other people will see a warning to check with
@@ -721,7 +721,7 @@
         </b-row>
       </b-card-body>
       <b-card-footer v-if="!noactions && expanded">
-        <div v-if="message.heldby && heldbyId !== myid">
+        <div v-if="heldbyId && heldbyId !== myid">
           This message is held by someone else. The buttons are hidden so you
           don't click them by accident. Please check with them before releasing
           the message.
@@ -734,11 +734,7 @@
           This message needs editing so that we know where it is.
         </NoticeMessage>
         <div
-          v-if="
-            pending &&
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="pending && (!heldbyId || heldbyId === myid) && !editing"
           class="text-end mb-1"
         >
           <b-button variant="danger" @click="spamReport">
@@ -746,10 +742,7 @@
           </b-button>
         </div>
         <ModMessageButtons
-          v-if="
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="(!heldbyId || heldbyId === myid) && !editing"
           :messageid="message.id"
           :groupid="currentGroupid"
           :modconfigid="configid"
@@ -1113,7 +1106,9 @@ const isRippledInToContextGroup = computed(() =>
 // (both fields non-null) when the routing server said quicker=true at ripple-in time.
 const rippleProximity = computed(() => {
   const gid = currentGroupid.value
-  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  const g = (message.value?.groups || []).find(
+    (row) => parseInt(row.groupid) === gid
+  )
   if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
     return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
   }
@@ -1177,17 +1172,21 @@ const eBody = computed(() => {
   return twem(message.value.textbody)
 })
 
-// Handle heldby as either numeric ID (Go API) or object (PHP API).
+// Handle heldby as either numeric ID (Go API) or object (PHP API). Sourced from
+// contextGroup (the per-group messages_groups.heldby), NOT message.heldby: that
+// top-level field is a legacy cross-group value that gets set whenever ANY group
+// holds ANY copy of a rippled post, so reading it here would show "held by X,
+// check with them before releasing" on a copy that is Approved (and not held at
+// all) on the group being administered, just because a different rippled-to group
+// happens to be holding its own copy (Discourse 9904).
 const heldbyId = computed(() => {
-  if (!message.value) return null
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return null
   return Number.isInteger(h) ? h : h.id
 })
 
 const heldbyName = computed(() => {
-  if (!message.value) return ''
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return ''
   if (Number.isInteger(h)) {
     const user = userStore.byId(h)
@@ -1443,9 +1442,9 @@ onMounted(() => {
       : []
     findHomeGroup()
 
-    // Fetch heldby user if message is held (Go API returns numeric ID).
-    if (message.value.heldby && Number.isInteger(message.value.heldby)) {
-      userStore.fetch(message.value.heldby)
+    // Fetch heldby user if this copy is held (heldbyId is always numeric).
+    if (heldbyId.value) {
+      userStore.fetch(heldbyId.value)
     }
   }
 })

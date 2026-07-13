@@ -452,7 +452,11 @@ describe('ModMessage', () => {
         {
           spamreason: 'Flagged as spam',
           groups: [
-            { groupid: 789, collection: 'Pending', spamreason: 'Flagged as spam' },
+            {
+              groupid: 789,
+              collection: 'Pending',
+              spamreason: 'Flagged as spam',
+            },
           ],
         }
       )
@@ -831,7 +835,13 @@ describe('ModMessage', () => {
           summary: false,
         },
         {
-          heldby: { id: 999, displayname: 'Test Mod' },
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              heldby: { id: 999, displayname: 'Test Mod' },
+            },
+          ],
         }
       )
       await wrapper1.vm.$nextTick()
@@ -842,11 +852,80 @@ describe('ModMessage', () => {
           summary: false,
         },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()
       expect(wrapper2.text()).toContain('Held by')
+    })
+  })
+
+  describe('Cross-group ripple hold (Discourse 9904)', () => {
+    // A rippled post lives in messages_groups once per group. When a DIFFERENT group
+    // (one this post rippled into) holds its own copy, that must not affect how the
+    // post displays on MY group where it is Approved and not held at all - the
+    // "Held by X, check with them before releasing" banner only makes sense for the
+    // copy that is actually held, and this copy has already been released (Approved).
+    function mountRippledApprovedButHeldElsewhere() {
+      return mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          heldby: 888, // legacy message-level field, set globally by the OTHER group's hold
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Home Group',
+              collection: 'Approved',
+              heldby: null, // my own group's copy is not held
+            },
+            {
+              groupid: 999,
+              namedisplay: 'Rippled Group',
+              collection: 'Pending',
+              heldby: 888, // held on the OTHER group
+            },
+          ],
+        }
+      )
+    }
+
+    it('does not show the held-by-someone-else banner for an Approved message merely because a different rippled-to group holds its own copy', async () => {
+      const wrapper = mountRippledApprovedButHeldElsewhere()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('Held by')
+      expect(wrapper.text()).not.toContain('before releasing it')
+    })
+
+    it('does not hide the mod action buttons for an Approved message merely because a different rippled-to group holds its own copy', async () => {
+      const wrapper = mountRippledApprovedButHeldElsewhere()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(true)
+    })
+
+    it('still shows the banner when THIS group is the one actually held', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Home Group',
+              collection: 'Pending',
+              heldby: 888, // held on MY own group
+            },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Held by')
+      expect(wrapper.text()).toContain('before releasing it')
     })
   })
 
@@ -1238,7 +1317,13 @@ describe('ModMessage', () => {
       const wrapper2 = mountComponent(
         { summary: false },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()
@@ -1408,7 +1493,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1433,7 +1523,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1446,9 +1541,9 @@ describe('ModMessage', () => {
         }
       )
       expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
-      expect(
-        wrapper.find('[data-test="ripple-proximity-note"]').exists()
-      ).toBe(false)
+      expect(wrapper.find('[data-test="ripple-proximity-note"]').exists()).toBe(
+        false
+      )
     })
 
     it('does not warn when the post has not rippled in', () => {

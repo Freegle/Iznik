@@ -233,15 +233,33 @@ describe('ModMessageButtons', () => {
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
     })
 
-    it('hides hold button when message is held', () => {
+    it('hides hold button when message is held on this group', () => {
       const wrapper = mountComponent(
-        {},
+        { groupid: 456 },
         {
-          groups: [{ groupid: 456, collection: 'Pending' }],
+          groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
           heldby: { id: 1 },
         }
       )
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(false)
+    })
+
+    // Discourse 9904: a rippled post's copy on a DIFFERENT group being held must not
+    // turn THIS (unheld) copy's Hold button into a Release button. message.heldby is a
+    // legacy cross-group field set whenever ANY group holds ANY copy.
+    it('still shows hold button when a DIFFERENT group holds its own copy of a rippled post', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          heldby: { id: 1 }, // legacy message-level field, set by the OTHER group's hold
+          groups: [
+            { groupid: 456, collection: 'Pending', heldby: null },
+            { groupid: 999, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(false)
     })
 
     it('shows spam button for pending messages', () => {

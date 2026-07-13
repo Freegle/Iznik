@@ -55,7 +55,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="!message.heldby"
+        v-if="!heldByThisGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="warning"
@@ -256,6 +256,20 @@ function hasCollection(coll) {
 
   return ret
 }
+
+// Per-group hold state for the group being administered (props.groupid). The
+// message-level heldby is a legacy cross-group field set whenever ANY group holds
+// ANY copy of a rippled post, so using it here would offer "Release" (instead of
+// "Hold") on a copy that isn't held at all, just because a different rippled-to
+// group happens to be holding its own copy (Discourse 9904).
+const heldByThisGroup = computed(() => {
+  const groups = message.value?.groups
+  if (!groups || !props.groupid) return false
+  const g = groups.find(
+    (grp) => parseInt(grp.groupid) === parseInt(props.groupid)
+  )
+  return !!g?.heldby
+})
 
 const pending = computed(() => {
   return hasCollection('Pending')
