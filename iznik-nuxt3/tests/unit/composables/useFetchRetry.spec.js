@@ -329,7 +329,6 @@ describe('useFetchRetry', () => {
   describe('retry delay calculation', () => {
     it('should use exponential delay: attempt * 1000', async () => {
       const responseData = { success: true }
-      const delayCalls = []
 
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
@@ -363,10 +362,109 @@ describe('useFetchRetry', () => {
       })
 
       const retryFetch = fetchRetry(mockFetch)
-      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }
       await retryFetch('http://test.com/api', init)
 
       expect(mockFetch).toHaveBeenCalledWith('http://test.com/api', init)
+    })
+  })
+
+  describe('mutating requests are not retried on an ambiguous outcome (#9913)', () => {
+    // A POST (e.g. sending a chat message) is not idempotent. If the request actually
+    // reached the server and created the row, but the client sees a network error, a
+    // 5xx, or a 200 it can't parse, we can't tell whether the write already happened.
+    // Retrying anyway resends the same create and produces a second, real, duplicate
+    // row (Discourse #9913 - two copies of a just-sent chat message appear until a
+    // batch job later dedupes chat_messages). GET has no such side effect and should
+    // keep retrying as before.
+
+    it('does not retry a POST on a network error - it rejects after the first attempt', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'))
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+      const errorPromise = promise.catch((e) => e)
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      await errorPromise
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      vi.useRealTimers()
+    })
+
+    it('does not retry a POST that returns a 200 it cannot parse as JSON - the write may already have happened', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: vi.fn().mockRejectedValueOnce(new Error('Invalid JSON')),
+      })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+      const errorPromise = promise.catch((e) => e)
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      await errorPromise
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      vi.useRealTimers()
+    })
+
+    it('does not retry a POST on a 500 - a genuine GET retry is unaffected', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 500,
+          statusText: 'Internal Server Error',
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+      const errorPromise = promise.catch((e) => e)
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      await errorPromise
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      vi.useRealTimers()
+    })
+
+    it('still retries a GET on a network error, unaffected by the mutating-request fix', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1', { method: 'GET' })
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
     })
   })
 })

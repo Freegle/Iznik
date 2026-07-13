@@ -14,7 +14,7 @@ export function fetchRetry(fetch) {
     return attempt * 1000
   }
 
-  const retryOn = async function (attempt, error, response) {
+  const retryOn = async function (attempt, error, response, method) {
     // No point retrying until we know we are back online.
     const miscStore = useMiscStore()
     await miscStore.waitForOnline()
@@ -36,6 +36,17 @@ export function fetchRetry(fetch) {
       return [false, false, null, new Error('Unloading, no retry')]
     }
 
+    // GET has no side effects, so retrying it is always safe. A mutating request
+    // (POST/PUT/PATCH/DELETE - e.g. sending a chat message) may already have been
+    // applied server-side even though the client sees an ambiguous outcome (network
+    // error, 5xx, or a 2xx it can't parse) - we simply can't tell. Retrying it anyway
+    // resends the same create/update and can silently duplicate it (Discourse #9913:
+    // a chat message send retried after a dropped response created a second, real,
+    // chat_messages row - both shown to the sender until a batch job later deduped
+    // them). So only GET auto-retries on those ambiguous outcomes; everything else
+    // surfaces the failure to the caller instead.
+    const retryable = !method || method.toUpperCase() === 'GET'
+
     // Some browsers don't return much info from fetch(), deliberately, and just say "Load failed".  So retry those.
     // When fetch() throws (e.g. network failure), the message is in error.message, not response.statusText.
     // https://stackoverflow.com/questions/71280168/javascript-typeerror-load-failed-error-when-calling-fetch-on-ios
@@ -44,15 +55,26 @@ export function fetchRetry(fetch) {
       blandErrors.includes(response?.statusText?.toLowerCase()) ||
       blandErrors.includes(error?.message?.toLowerCase())
     ) {
-      console.log('Load failed - retry')
-      return [true, false]
+      if (retryable) {
+        console.log('Load failed - retry')
+        return [true, false]
+      }
+      return [false, false, null, error || new Error('Load failed')]
     }
 
     // Retry on network errors or server errors (5xx).  Don't retry client errors (4xx) - these are legitimate
     // API responses (e.g. 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict).
     if (error !== null || response?.status >= 500) {
-      console.log('Error - retry', error, response?.status)
-      return [true, false]
+      if (retryable) {
+        console.log('Error - retry', error, response?.status)
+        return [true, false]
+      }
+      return [
+        false,
+        false,
+        null,
+        error || new Error('Request failed with ' + response?.status),
+      ]
     }
 
     if (response?.status >= 200 && response?.status < 300) {
@@ -61,8 +83,11 @@ export function fetchRetry(fetch) {
 
         if (!data) {
           // We've seen 200 responses with no data, which is never valid for us, so retry.
-          console.log('Success but no data - retry')
-          return [true, false]
+          if (retryable) {
+            console.log('Success but no data - retry')
+            return [true, false]
+          }
+          return [false, false, null, new Error('Success but no data')]
         } else {
           return [false, true, data]
         }
@@ -73,7 +98,10 @@ export function fetchRetry(fetch) {
         }
 
         // JSON parse failed on a response that should have had a body.  Retry.
-        return [true, false]
+        if (retryable) {
+          return [true, false]
+        }
+        return [false, false, null, e]
       }
     } else {
       // Client error (4xx) that we aren't supposed to retry.  Parse the response body if available
@@ -119,7 +147,8 @@ export function fetchRetry(fetch) {
         ;[doRetry, success, data, error] = await retryOn(
           attempt,
           error,
-          response
+          response,
+          init?.method
         )
 
         if (success) {
