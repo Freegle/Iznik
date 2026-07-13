@@ -84,6 +84,7 @@ class WelcomeMail extends MjmlMailable
                 'firstName' => $firstName,
                 'userSite' => $userSite,
                 'giveUrl' => $this->trackedUrl("{$userSite}/give", 'cta_give', 'cta'),
+                'browseUrl' => $this->trackedUrl("{$userSite}/browse", 'cta_browse', 'cta'),
                 'findUrl' => $this->trackedUrl("{$userSite}/find", 'cta_find', 'cta'),
                 'termsUrl' => $this->trackedUrl("{$userSite}/terms", 'rule_free', 'info'),
                 'helpUrl' => $this->trackedUrl("{$userSite}/help", 'rule_nice', 'info'),

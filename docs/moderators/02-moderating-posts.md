@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -107,6 +107,11 @@ re-approving a copy does **not** re-notify members or re-ripple from scratch. Re
 rippled-in copy simply removes it from your community; the poster is not told, and other
 communities are unaffected. There is a full walk-through in
 [./rippling-out.md](./rippling-out.md).
+
+When a post reappears in your Pending queue this way - even one you had already approved -
+the pending post now shows the reason (for example *"A moderator moved this post back to
+pending for review."*), so you can see why it is back rather than assuming your Approve did
+not work.
 
 ## Next steps
 
