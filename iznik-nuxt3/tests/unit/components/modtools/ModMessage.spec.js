@@ -416,6 +416,52 @@ describe('ModMessage', () => {
     })
   })
 
+  describe('Back to Pending explanation', () => {
+    // A "Back to Pending" on any community pulls every copy of a rippled post back to
+    // Pending for per-group review, and stores the reason on THAT group's copy
+    // (contextGroup.spamreason). Without surfacing it, a mod who already approved the post
+    // sees it reappear in Pending with no explanation and clicks Approve repeatedly
+    // (Discourse 9909). We show the per-group reason so they understand what happened.
+    it('surfaces the per-group reason when a copy is back in Pending', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              spamreason:
+                'A moderator moved this post back to pending for review.',
+            },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.contextGroup.spamreason).toBe(
+        'A moderator moved this post back to pending for review.'
+      )
+      expect(wrapper.text()).toContain(
+        'A moderator moved this post back to pending for review.'
+      )
+    })
+
+    it('does not duplicate the message-level spamreason', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          spamreason: 'Flagged as spam',
+          groups: [
+            { groupid: 789, collection: 'Pending', spamreason: 'Flagged as spam' },
+          ],
+        }
+      )
+      await flushPromises()
+      const count = wrapper.text().split('Flagged as spam').length - 1
+      expect(count).toBe(1)
+    })
+  })
+
   describe('Computed: alreadyOnHomeGroup', () => {
     // Regression: a post must not be told it "Possibly should be on" a group it is ALREADY
     // on (its origin, or a group it has rippled onto). The hint previously fired whenever the

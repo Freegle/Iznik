@@ -383,6 +383,24 @@
             >
               {{ message.spamreason }}
             </NoticeMessage>
+            <!-- When a post is back in Pending because a moderator moved it there (e.g. a
+                 "Back to Pending" on any community pulls every copy back for per-group
+                 review), the reason is stored on THIS group's copy (contextGroup.spamreason),
+                 not the message-level spamreason. Surface it so a mod who approved the post
+                 understands why it has reappeared and isn't left clicking Approve with no
+                 explanation. -->
+            <NoticeMessage
+              v-if="
+                contextGroup &&
+                contextGroup.collection === 'Pending' &&
+                contextGroup.spamreason &&
+                contextGroup.spamreason !== message.spamreason
+              "
+              variant="info"
+              class="mb-2"
+            >
+              {{ contextGroup.spamreason }}
+            </NoticeMessage>
             <NoticeMessage
               v-if="
                 pending &&
