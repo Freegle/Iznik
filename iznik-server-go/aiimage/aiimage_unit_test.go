@@ -273,3 +273,48 @@ func TestBuildImagePrompt_UsesAmericanEnglish(t *testing.T) {
 	assert.Contains(t, prompt, "American English",
 		"prompt must instruct the model to use American English terminology")
 }
+
+func TestBuildImagePrompt_MultiItemName_DoesNotForceSingleObjectOnly(t *testing.T) {
+	// Regression test for Discourse topic 9630/53: a post for "a sofa and a bed" stores
+	// ai_images.name = "sofa and a bed" verbatim. Regenerate (aiimage.Regenerate) calls
+	// buildImagePrompt() with that stored name, so a fix must live here — parsing "and" to
+	// detect multiple items and dropping the self-contradictory "single object only"
+	// instruction, which otherwise makes the model draw only the first item every time,
+	// including on Regenerate.
+	prompt := buildImagePrompt("sofa and a bed")
+	assert.NotContains(t, prompt, "single object only",
+		"a compound item name must not be forced into a 'single object only' prompt")
+	assert.Contains(t, prompt, "sofa")
+	assert.Contains(t, prompt, "bed")
+}
+
+func TestBuildImagePrompt_SingleItemName_StillForcesSingleObjectOnly(t *testing.T) {
+	// Single-item names are unaffected — the existing "single object only" constraint
+	// still applies so ordinary items keep their focused, uncluttered illustration.
+	prompt := buildImagePrompt("sofa")
+	assert.Contains(t, prompt, "single object only")
+}
+
+func TestBuildImagePrompt_BrandOrTitleName_NotSplitAsMultiItem(t *testing.T) {
+	// Regression: a single item whose name merely contains "and" (a brand name, a title, or
+	// a set) must NOT be treated as multiple items - that made the model draw two separate
+	// objects side by side. Only an "and" that introduces a new item (article/quantifier/
+	// digit) is a separator.
+	for _, name := range []string{
+		"Black and Decker drill",
+		"Pride and Prejudice",
+		"salt and pepper set",
+		"Marks and Spencer jumper",
+	} {
+		prompt := buildImagePrompt(name)
+		assert.Contains(t, prompt, "single object only",
+			name+" is one item and must keep the single-object prompt")
+	}
+}
+
+func TestBuildImagePrompt_GenuineMultiItem_StillSplits(t *testing.T) {
+	for _, name := range []string{"sofa and a bed", "3 chairs and a table"} {
+		prompt := buildImagePrompt(name)
+		assert.NotContains(t, prompt, "single object only", name+" lists multiple items")
+	}
+}

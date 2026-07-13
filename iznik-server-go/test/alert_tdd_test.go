@@ -127,6 +127,67 @@ func TestAlert_CreateAlert_Success(t *testing.T) {
 	assert.Greater(t, result["id"], float64(0))
 }
 
+// TestAlert_CreateAlert_AllFreegle covers the ModTools "Contact group" composer's
+// all-groups option, which sends groupid as the string "AllFreegle". The handler
+// must accept it (storing NULL groupid = all Freegle groups) rather than 400ing on
+// the type mismatch with the numeric groupid field.
+func TestAlert_CreateAlert_AllFreegle(t *testing.T) {
+	prefix := uniquePrefix("alert_all_freegle")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Body","groupid":"AllFreegle"}`, prefix)
+	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/modtools/alert?jwt=%s", token), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.Greater(t, result["id"], float64(0))
+
+	// "AllFreegle" is stored as a NULL groupid (= all Freegle groups).
+	idVal, ok := result["id"].(float64)
+	if !ok {
+		assert.Fail(t, "id field missing or not a number in response")
+		return
+	}
+	var createdAlert alert.Alert
+	database.DBConn.Raw("SELECT id, groupid FROM alerts WHERE id = ?", uint64(idVal)).Scan(&createdAlert)
+	assert.Nil(t, createdAlert.Groupid)
+}
+
+// TestAlert_CreateAlert_NumericGroupid confirms a real numeric group id is still
+// accepted and stored against that group.
+func TestAlert_CreateAlert_NumericGroupid(t *testing.T) {
+	prefix := uniquePrefix("alert_numeric_group")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	groupID := CreateTestGroup(t, prefix)
+
+	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Body","groupid":%d}`, prefix, groupID)
+	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/modtools/alert?jwt=%s", token), bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	idVal, ok := result["id"].(float64)
+	if !ok {
+		assert.Fail(t, "id field missing or not a number in response")
+		return
+	}
+	var createdAlert alert.Alert
+	database.DBConn.Raw("SELECT id, groupid FROM alerts WHERE id = ?", uint64(idVal)).Scan(&createdAlert)
+	if assert.NotNil(t, createdAlert.Groupid) {
+		assert.Equal(t, groupID, *createdAlert.Groupid)
+	}
+}
+
 func TestAlert_CreateAlert_DefaultTo(t *testing.T) {
 	prefix := uniquePrefix("alert_default_to")
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
