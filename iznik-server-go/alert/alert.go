@@ -2,6 +2,7 @@ package alert
 
 import (
 	"encoding/json"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,23 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
+
+var htmlTagRE = regexp.MustCompile(`(?s)<[^>]*>`)
+
+// htmlIsBlank reports whether an HTML fragment carries no visible text. The ModTools alert
+// composer has a plain-text textarea AND a separate Quill editor, and only the textarea is
+// required. An untouched Quill editor does not serialise to "" — it emits an empty-document
+// sentinel like "<p><br></p>". A bare `html == ""` check therefore lets that through, and the
+// alert mails out with the boilerplate wrapper and no message in it (hit live 2026-07-13 on a
+// Freegle-wide alert to every mod). Strip tags and blank entities and see if anything is left,
+// so any editor's flavour of "empty" falls back to the text body.
+func htmlIsBlank(s string) bool {
+	t := htmlTagRE.ReplaceAllString(s, "")
+	t = strings.ReplaceAll(t, "&nbsp;", " ")
+	t = strings.ReplaceAll(t, "&#160;", " ")
+	t = strings.ReplaceAll(t, "\u00a0", " ")
+	return strings.TrimSpace(t) == ""
+}
 
 type Alert struct {
 	ID        uint64  `json:"id" gorm:"primary_key"`
@@ -200,7 +218,7 @@ func CreateAlert(c *fiber.Ctx) error {
 	if req.To == "" {
 		req.To = "Mods"
 	}
-	if req.Html == "" {
+	if htmlIsBlank(req.Html) {
 		req.Html = strings.ReplaceAll(req.Text, "\n", "<br>")
 	}
 
