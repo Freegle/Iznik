@@ -15,9 +15,27 @@ export function fetchRetry(fetch) {
   }
 
   const retryOn = async function (attempt, error, response, method) {
-    // No point retrying until we know we are back online.
+    // GET has no side effects, so retrying it is always safe. A mutating request
+    // (POST/PUT/PATCH/DELETE - e.g. sending a chat message) may already have been
+    // applied server-side even though the client sees an ambiguous outcome (network
+    // error, 5xx, or a 2xx it can't parse) - we simply can't tell. Retrying it anyway
+    // resends the same create/update and can silently duplicate it (Discourse #9913:
+    // a chat message send retried after a dropped response created a second, real,
+    // chat_messages row - both shown to the sender until a batch job later deduped
+    // them). So only GET auto-retries on those ambiguous outcomes; everything else
+    // surfaces the failure to the caller instead. `method` is already normalised
+    // (uppercased, defaulted to GET) by the caller.
+    const retryable = method === 'GET'
+
     const miscStore = useMiscStore()
-    await miscStore.waitForOnline()
+
+    // No point waiting for connectivity if we're not going to retry anyway - a
+    // mutating request should fail fast, not block until the device reconnects
+    // and only then reject (that would be worse than today: a long hang followed
+    // by a lost write, on the exact flaky-mobile chat-send case this guards).
+    if (retryable) {
+      await miscStore.waitForOnline()
+    }
 
     if (attempt >= 10) {
       return [false, false, null, new Error('Too many retries, give up')]
@@ -35,17 +53,6 @@ export function fetchRetry(fetch) {
       console.log("Unloading - don't retry")
       return [false, false, null, new Error('Unloading, no retry')]
     }
-
-    // GET has no side effects, so retrying it is always safe. A mutating request
-    // (POST/PUT/PATCH/DELETE - e.g. sending a chat message) may already have been
-    // applied server-side even though the client sees an ambiguous outcome (network
-    // error, 5xx, or a 2xx it can't parse) - we simply can't tell. Retrying it anyway
-    // resends the same create/update and can silently duplicate it (Discourse #9913:
-    // a chat message send retried after a dropped response created a second, real,
-    // chat_messages row - both shown to the sender until a batch job later deduped
-    // them). So only GET auto-retries on those ambiguous outcomes; everything else
-    // surfaces the failure to the caller instead.
-    const retryable = !method || method.toUpperCase() === 'GET'
 
     // Some browsers don't return much info from fetch(), deliberately, and just say "Load failed".  So retry those.
     // When fetch() throws (e.g. network failure), the message is in error.message, not response.statusText.
@@ -128,6 +135,13 @@ export function fetchRetry(fetch) {
   }
 
   return function (input, init) {
+    // The method can come from `init` (the common case) or, when the caller passes a
+    // Request object as `input` with no `init` (or an init that doesn't set method),
+    // from `input` itself - fetch() falls back to the Request's own method in that
+    // case, and defaults to GET when neither specifies one. Get this wrong and a
+    // mutating request misclassifies as a retryable GET, reopening #9913.
+    const method = String(init?.method ?? input?.method ?? 'GET').toUpperCase()
+
     return new Promise(function (resolve, reject) {
       const wrappedFetch = async function (attempt) {
         let response = null
@@ -148,7 +162,7 @@ export function fetchRetry(fetch) {
           attempt,
           error,
           response,
-          init?.method
+          method
         )
 
         if (success) {

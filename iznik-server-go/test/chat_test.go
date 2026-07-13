@@ -475,6 +475,69 @@ func TestCreateChatMessageModnote(t *testing.T) {
 	assert.Equal(t, "ModMail", modnoteType, "Modnote message should be ModMail type")
 }
 
+// TestCreateChatMessageIdempotentRetry verifies the #9913 fix: a client retrying this
+// endpoint (e.g. after a dropped response left it unsure whether the first attempt's
+// write landed) must not create a second, genuinely duplicate row - it should get back
+// the id of the message already created. Mirrors the existing double-nudge idempotency
+// test for /api/chatrooms (TestPostChatRoomDoubleNudge).
+func TestCreateChatMessageIdempotentRetry(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("chatmsgretry")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	body := `{"message":"Retried message body"}`
+
+	sendOnce := func() uint64 {
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		var rspData struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &rspData)
+		return rspData.Id
+	}
+
+	firstID := sendOnce()
+	assert.Greater(t, firstID, uint64(0))
+
+	// Simulate the client retrying the same logical send (identical body, same chat,
+	// same sender, seconds later) - it must come back as the SAME message, not a new one.
+	secondID := sendOnce()
+	assert.Equal(t, firstID, secondID, "a retried send should return the existing message id, not create a duplicate")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND message = ?", chatid, "Retried message body").Scan(&count)
+	assert.Equal(t, int64(1), count, "only one row should exist for the retried message")
+
+	// A genuinely different message from the same sender must still be created normally.
+	thirdID := sendOnce2(t, token, chatid, "A different message")
+	assert.NotEqual(t, firstID, thirdID)
+}
+
+func sendOnce2(t *testing.T, token string, chatid uint64, message string) uint64 {
+	body, _ := json2.Marshal(map[string]string{"message": message})
+	req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var rspData struct {
+		Id uint64 `json:"id"`
+	}
+	json2.Unmarshal(rsp(resp), &rspData)
+	return rspData.Id
+}
+
 func TestCreateChatMessageLoveJunk(t *testing.T) {
 	// Create test data for LoveJunk integration test
 	prefix := uniquePrefix("lovejunk")
@@ -1708,7 +1771,6 @@ func TestReferToSupportMissingChatID(t *testing.T) {
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
-
 // Helper to set up a moderator with a group and User2Mod chat containing messages.
 func setupModChatData(t *testing.T, prefix string) (modID uint64, userID uint64, groupID uint64, chatID uint64, token string) {
 	modID = CreateTestUser(t, prefix+"_mod", "Moderator")
@@ -2017,14 +2079,14 @@ func TestReviewChatMessagesSenderOnlyExcluded(t *testing.T) {
 	prefix := uniquePrefix("ReviewSenderOnly")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix + "_other")
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	recipientID := CreateTestUser(t, prefix+"_recip", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")    // sender in mod's group
+	CreateTestMembership(t, senderID, groupID, "Member")         // sender in mod's group
 	CreateTestMembership(t, recipientID, otherGroupID, "Member") // recipient in different group
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")

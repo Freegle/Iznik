@@ -538,6 +538,33 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// Idempotency guard (Discourse #9913): a caller may retry this endpoint after an
+	// ambiguous outcome (network error, 5xx, or a 2xx it couldn't parse) without knowing
+	// whether the first attempt's write already landed - retrying blindly can create a
+	// second, genuinely duplicate chat_messages row that both show to the sender. If an
+	// identical message (same chat, sender, type and content) was created in the last
+	// minute, treat this as that same logical send and return the existing id rather than
+	// inserting again. The window covers the client's worst-case retry backoff (up to ten
+	// attempts at attempt*1000ms - see composables/useFetchRetry.js - so a retry can land
+	// up to ~55s after the original). `<=>` is MySQL's NULL-safe equality, needed because
+	// refmsgid/refchatid/imageid are nullable. Deliberately narrow (exact content match)
+	// so two genuinely distinct messages a user sends in quick succession are never
+	// conflated.
+	var dupeId uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND type = ? "+
+		"AND message <=> ? AND refmsgid <=> ? AND refchatid <=> ? AND imageid <=> ? "+
+		"AND date >= ? ORDER BY id LIMIT 1",
+		id, myid, chattype, payload.Message, payload.Refmsgid, payload.Refchatid, payload.Imageid,
+		time.Now().Add(-60*time.Second)).Scan(&dupeId)
+
+	if dupeId > 0 {
+		ret := struct {
+			Id int64 `json:"id"`
+		}{}
+		ret.Id = int64(dupeId)
+		return c.JSON(ret)
+	}
+
 	// Rippling-out reply gate (#5): an in-app reply to a post (CHAT_MESSAGE_INTERESTED) the
 	// viewer can see but whose reach has not yet reached them (replyeligible=false in the read
 	// path) must be rejected on the WRITE path too — the UI gate alone is bypassable by a stale
