@@ -16,8 +16,27 @@ const fs = require('fs')
 
 const app = express()
 app.use(express.json())
+
+// CORS: allow ModTools origins only. Dev uses *.localhost (traefik); prod/edge
+// lists its ModTools origin in ALLOWED_ORIGINS (comma-separated). Requests with
+// no Origin header (non-browser / same-origin) are allowed — the real access
+// control is the Support/Admin JWT gate on /api/log-analysis, not CORS.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+function corsOrigin(origin, cb) {
+  if (!origin) return cb(null, true)
+  try {
+    const host = new URL(origin).hostname
+    if (host === 'localhost' || host.endsWith('.localhost')) return cb(null, true)
+  } catch (_) {
+    /* malformed origin -> fall through to deny */
+  }
+  return cb(null, ALLOWED_ORIGINS.includes(origin))
+}
 app.use(cors({
-  origin: true,
+  origin: corsOrigin,
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'sentry-trace', 'baggage'],
@@ -101,7 +120,7 @@ app.get('/health', (req, res) => {
  * Body: { query: string, userId?: number, claudeSessionId?: string, sanitizerSessionId?: string }
  * Returns: { analysis: string, costUsd: number, usage: object, claudeSessionId: string, isNewSession: boolean }
  */
-const { runLogAnalysis } = require('./log-analysis')
+const { runSupportQuery, driverMode } = require('./support-agent')
 const { verifyModerator } = require('./auth')
 
 app.post('/api/log-analysis', async (req, res) => {
@@ -109,24 +128,29 @@ app.post('/api/log-analysis', async (req, res) => {
   // analyses production logs and incurs Anthropic API cost, so it must not be
   // open to unauthenticated callers — having ANTHROPIC_API_KEY set on the
   // server is not authorisation. Identity + role are resolved by the Go API.
-  const role = await verifyModerator(req)
-  if (!role) {
+  const mod = await verifyModerator(req)
+  if (!mod) {
     return res.status(403).json({
       error: 'FORBIDDEN',
-      message: 'Moderator authentication required.',
+      message: 'Support or Admin authentication required.',
     })
   }
 
   checkAuth()
 
-  if (!authStatus.valid) {
+  // Auth for Claude: 'api' mode needs ANTHROPIC_API_KEY; 'session' mode uses a
+  // mounted ~/.claude (Max subscription) and needs no key.
+  if (driverMode() === 'api' && !authStatus.valid) {
     return res.status(503).json({
       error: 'AUTH_NOT_CONFIGURED',
       message: authStatus.message,
     })
   }
 
-  const { query, claudeSessionId, sanitizerSessionId } = req.body
+  const { query, userId, claudeSessionId } = req.body
+  // The caller's JWT is used for get_user_dump against the Go API. Header only —
+  // never accept it as a URL query param (which would leak into access logs).
+  const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
 
   if (!query) {
     return res.status(400).json({ error: 'Query is required' })
@@ -144,11 +168,17 @@ app.post('/api/log-analysis', async (req, res) => {
     res.flushHeaders()
 
     try {
-      const result = await runLogAnalysis(query, sanitizerSessionId, claudeSessionId,
-        (type, message) => {
+      const result = await runSupportQuery({
+        query,
+        userId: userId || 0,
+        jwt,
+        agentSessionId: claudeSessionId,
+        modId: mod.id,
+        modEmail: mod.email,
+        onProgress: (type, message) => {
           res.write(`data: ${JSON.stringify({ type, message })}\n\n`)
-        }
-      )
+        },
+      })
       res.write(`data: ${JSON.stringify({ type: 'result', ...result })}\n\n`)
       res.end()
     } catch (error) {
@@ -161,7 +191,7 @@ app.post('/api/log-analysis', async (req, res) => {
 
   // Non-streaming fallback
   try {
-    const result = await runLogAnalysis(query, sanitizerSessionId, claudeSessionId)
+    const result = await runSupportQuery({ query, userId: userId || 0, jwt, agentSessionId: claudeSessionId, modId: mod.id, modEmail: mod.email })
     res.json(result)
   } catch (error) {
     console.error('[LogAnalysis] Error:', error)

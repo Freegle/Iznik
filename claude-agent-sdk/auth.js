@@ -1,14 +1,19 @@
 'use strict'
 
 // Base URL of the Freegle Go API used to validate sessions. The AI support
-// helper has no database access, so it delegates identity + role resolution to
-// the main API (the source of truth for sessions and systemroles). Override via
-// the FREEGLE_API_URL env var per environment.
+// helper delegates identity + role resolution to the main API (the source of
+// truth for sessions and systemroles). Override via FREEGLE_API_URL per env.
 const FREEGLE_API_URL = process.env.FREEGLE_API_URL || 'http://apiv2.localhost:8192'
 
-// Freegle systemroles permitted to use the AI support helper. A plain "User"
-// (or an unauthenticated caller) is never allowed.
-const MODERATOR_ROLES = new Set(['Moderator', 'Support', 'Admin'])
+// Freegle systemroles permitted to use the AI support helper. Support and Admin
+// are the trusted roles that may already access confidential member data; a
+// plain "Moderator" (or "User", or an unauthenticated caller) is NOT allowed to
+// drive the de-anonymised support tooling. This is the guard against other mods
+// obtaining support-level access.
+const SUPPORT_ROLES = new Set(['Support', 'Admin'])
+
+// How long to wait for the session-verification call before failing closed.
+const VERIFY_TIMEOUT_MS = 5000
 
 /**
  * Extract a bearer JWT from a request's Authorization header.
@@ -23,13 +28,13 @@ function extractJWT(req) {
 }
 
 /**
- * Verify that the caller is a logged-in Freegle moderator/support/admin by
+ * Verify that the caller is a logged-in Freegle Support or Admin user by
  * validating their JWT against the Go API session endpoint.
  *
  * @param {object} req - the incoming Express request.
  * @param {function} [fetchImpl] - fetch implementation (injectable for tests).
- * @returns {Promise<string|null>} the caller's systemrole on success, or null
- *   when the caller is unauthenticated or not a moderator.
+ * @returns {Promise<{role:string,id:number,email:string}|null>} the caller's
+ *   identity on success, or null when unauthenticated / not Support-or-Admin.
  */
 async function verifyModerator(req, fetchImpl = fetch) {
   const jwt = extractJWT(req)
@@ -39,9 +44,14 @@ async function verifyModerator(req, fetchImpl = fetch) {
 
   let resp
   try {
+    // Fail closed if the API is slow/unreachable rather than hanging the request.
+    const signal =
+      typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+        ? AbortSignal.timeout(VERIFY_TIMEOUT_MS)
+        : undefined
     resp = await fetchImpl(
       `${FREEGLE_API_URL}/api/session?jwt=${encodeURIComponent(jwt)}`,
-      { headers: { Accept: 'application/json' } }
+      { headers: { Accept: 'application/json' }, signal }
     )
   } catch (e) {
     console.error('[Auth] session verification request failed:', e.message)
@@ -59,8 +69,12 @@ async function verifyModerator(req, fetchImpl = fetch) {
     return null
   }
 
-  const role = data && data.me && data.me.systemrole
-  return MODERATOR_ROLES.has(role) ? role : null
+  const me = (data && data.me) || null
+  const role = me && me.systemrole
+  if (!SUPPORT_ROLES.has(role)) {
+    return null
+  }
+  return { role, id: Number(me.id) || 0, email: me.email || '' }
 }
 
-module.exports = { verifyModerator, extractJWT, FREEGLE_API_URL, MODERATOR_ROLES }
+module.exports = { verifyModerator, extractJWT, FREEGLE_API_URL, SUPPORT_ROLES }

@@ -81,10 +81,6 @@ services:
     ports:
       - "${PORT_POSTFIX_SMTP:-25}:25"
 
-  mcp-query-sanitizer:
-    ports:
-      - "${PORT_MCP_SANITIZER:-8084}:8080"
-
   embedding-sidecar:
     ports:
       - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"

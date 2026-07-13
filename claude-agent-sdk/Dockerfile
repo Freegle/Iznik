@@ -1,10 +1,15 @@
 FROM node:20-slim
 
-# Install dependencies for codebase search
+# Install dependencies: git/curl/grep for codebase search + ripgrep for the SDK's
+# Grep tool; python3/make/g++ to build better-sqlite3's native binding.
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     grep \
+    ripgrep \
+    python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for running the application
@@ -26,6 +31,12 @@ RUN npm install
 
 # Copy application code
 COPY --chown=claude:claude . .
+
+# Create the audit directory owned by claude BEFORE the ai-support-audit named
+# volume mounts over it, so the fresh volume inherits claude ownership. Otherwise
+# Docker mounts it root-owned and the durable audit append (AUDIT_LOG_PATH)
+# silently fails for the non-root claude user.
+RUN mkdir -p /app/audit && chown claude:claude /app/audit
 
 # Copy entrypoint script
 COPY --chown=claude:claude entrypoint.sh /entrypoint.sh

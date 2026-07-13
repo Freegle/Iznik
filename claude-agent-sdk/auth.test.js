@@ -2,7 +2,7 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { verifyModerator, extractJWT, MODERATOR_ROLES } = require('./auth')
+const { verifyModerator, extractJWT, SUPPORT_ROLES } = require('./auth')
 
 // Build a fake fetch returning the given status + JSON body.
 function fakeFetch(status, body) {
@@ -26,29 +26,37 @@ test('extractJWT pulls the bearer token, else empty', () => {
 
 test('verifyModerator returns null with no JWT and never calls the API', async () => {
   let called = false
-  const role = await verifyModerator({ headers: {} }, async () => {
+  const mod = await verifyModerator({ headers: {} }, async () => {
     called = true
   })
-  assert.strictEqual(role, null)
+  assert.strictEqual(mod, null)
   assert.strictEqual(called, false)
 })
 
-test('verifyModerator allows Moderator, Support and Admin', async () => {
-  for (const r of ['Moderator', 'Support', 'Admin']) {
-    assert.ok(MODERATOR_ROLES.has(r))
-    const role = await verifyModerator(modReq(), fakeFetch(200, { me: { systemrole: r } }))
-    assert.strictEqual(role, r)
+test('verifyModerator allows Support and Admin, and returns identity for the audit', async () => {
+  for (const r of ['Support', 'Admin']) {
+    assert.ok(SUPPORT_ROLES.has(r))
+    const mod = await verifyModerator(
+      modReq(),
+      fakeFetch(200, { me: { id: 42, email: 'mod@example.com', systemrole: r } })
+    )
+    assert.deepStrictEqual(mod, { role: r, id: 42, email: 'mod@example.com' })
   }
 })
 
+test('verifyModerator rejects a plain Moderator (not support-level)', async () => {
+  const mod = await verifyModerator(modReq(), fakeFetch(200, { me: { id: 7, systemrole: 'Moderator' } }))
+  assert.strictEqual(mod, null)
+})
+
 test('verifyModerator rejects a plain User', async () => {
-  const role = await verifyModerator(modReq(), fakeFetch(200, { me: { systemrole: 'User' } }))
-  assert.strictEqual(role, null)
+  const mod = await verifyModerator(modReq(), fakeFetch(200, { me: { systemrole: 'User' } }))
+  assert.strictEqual(mod, null)
 })
 
 test('verifyModerator rejects when the session API returns 401 (not logged in)', async () => {
-  const role = await verifyModerator(modReq(), fakeFetch(401, { ret: 1, status: 'Not logged in' }))
-  assert.strictEqual(role, null)
+  const mod = await verifyModerator(modReq(), fakeFetch(401, { ret: 1, status: 'Not logged in' }))
+  assert.strictEqual(mod, null)
 })
 
 test('verifyModerator rejects when me/systemrole is missing', async () => {
@@ -57,8 +65,8 @@ test('verifyModerator rejects when me/systemrole is missing', async () => {
 })
 
 test('verifyModerator rejects when the API call throws', async () => {
-  const role = await verifyModerator(modReq(), async () => {
+  const mod = await verifyModerator(modReq(), async () => {
     throw new Error('network down')
   })
-  assert.strictEqual(role, null)
+  assert.strictEqual(mod, null)
 })

@@ -1,198 +1,109 @@
+---
+last_reviewed: 2026-07-13
+owner: Freegle dev team
+covers:
+  - claude-agent-sdk/support-agent.js
+  - claude-agent-sdk/tools.js
+  - claude-agent-sdk/server.js
+  - claude-agent-sdk/auth.js
+  - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
+---
+
 # AI Support Helper
 
-This document explains the architecture of the AI Support Helper feature in ModTools.
+The AI Support Helper lets **Support** and **Admin** volunteers investigate a member's
+problem by asking questions in natural language, in the ModTools support section. It
+drives the Claude Code harness (`@anthropic-ai/claude-agent-sdk`'s `query()`) with a set
+of direct-access tools over Freegle's production data, and streams the thinking, tool
+calls and answer back to the browser.
 
-## Overview
-
-The AI Support Helper allows support staff to investigate user issues by asking questions in natural language. It uses Claude with codebase access to understand how Freegle works, while preserving user privacy by keeping PII in the browser.
+> **Design note — no anonymisation.** An earlier version kept PII in the browser and only
+> sent counts/booleans to Claude. That was removed. Support volunteers can already access
+> confidential member data and reading chats/logs is legitimate debugging, so the tool has
+> **direct, de-anonymised** read access. The controls below instead guard against
+> *accidental* damage, against *other* (non-support) mods gaining access, and against
+> hostile **member data** (prompt injection), and record an **audit trail** of every
+> investigation.
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                     ModTools Browser                              │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ Chat interface shows transparent dialogue:                  │  │
-│  │                                                             │  │
-│  │ Container asks: "count_errors(userid=12345, timerange=1h)" │  │
-│  │ Browser returns: 7                                          │  │
-│  │                                                             │  │
-│  │ Container asks: "has_recent_activity(userid=12345)"        │  │
-│  │ Browser returns: true                                       │  │
-│  │                                                             │  │
-│  │ Answer: "User 12345 has 7 errors in the last hour..."      │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                              │                                    │
-│  Has user's JWT auth         │ HTTP polling                       │
-│  Executes real API calls     │ (fact queries only)                │
-│  Returns ONLY sanitized data ▼                                    │
-└──────────────────────────────┼────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼────────────────────────────────────┐
-│                Docker Container: freegle-claude-agent             │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │ Claude Agent SDK                                             │  │
-│  │ - Has /app/codebase (checkout of iznik-nuxt3, iznik-server) │  │
-│  │ - Can READ code to understand how Freegle works             │  │
-│  │ - Requests fact queries via HTTP                            │  │
-│  │ - Receives ONLY counts/booleans/summaries (no PII)         │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                               │                                    │
-│  Uses Claude Code CLI auth    │ Calls Anthropic API               │
-│  (~/.claude mounted from host)│ (only sees facts + codebase)      │
-└───────────────────────────────┼────────────────────────────────────┘
-                                ▼
-                        Anthropic Cloud
-                   (sees codebase context +
-                    sanitized facts only,
-                    NEVER sees user PII)
+ModTools (support section)                 Backend container (ai-support-helper)
+ModSupportAIAssistant.vue                  server.js  → support-agent.js → tools.js
+  │  identify member first                   │
+  │  POST /api/log-analysis  (SSE) ──────────┤ verify caller is Support/Admin (auth.js
+  │  Authorization: Bearer <mod JWT>         │   → Go API /api/session)
+  │  { query, userId }                       │ audit(session) then run query():
+  │                                          │   Claude Agent SDK, read-only tools,
+  │  ◄── data: {type:'thinking'|'tool'|      │   codebase checkout at /app/codebase
+  │        'status'|'result'|'error'} ───────┘
+  ▼
+  renders streamed transcript + cost/tokens (answer sanitised with DOMPurify)
 ```
 
-## Privacy Design
+One `query()` code path serves both auth modes (see below); everything else is identical.
 
-### What Anthropic Sees
+## Claude auth: two modes, one code path
 
-- Codebase context (public on GitHub anyway)
-- User's support question
-- Sanitized facts: counts, yes/no answers, error codes, group names
+`support-agent.js` (`driverMode()`) picks the mode from the environment:
 
-### What Anthropic Never Sees
+- **api** — `ANTHROPIC_API_KEY` set. Production/edge. No `~/.claude` mount.
+- **session** — a read-only `~/.claude` credential mount (a logged-in Claude subscription).
+  Testing only. `docker-compose.yml` mounts **just** `.credentials.json`, not the whole
+  `~/.claude` (so a prompt-injected read cannot reach memory/transcripts).
 
-- Email addresses
-- Chat message content
-- User names
-- IP addresses
-- Any personally identifiable information (PII)
+`entrypoint.sh` reports which mode is active on startup.
 
-## How It Works
+## Tools
 
-1. **User opens AI Support Helper tab** in ModTools support page.
-2. **Browser connects** to Docker container via HTTP polling (`http://ai-support-helper.localhost`).
-3. **User asks question** (e.g., "Why is user 12345 having problems?").
-4. **Container receives question**, uses Claude Agent SDK with codebase context.
-5. **Claude reads code** to understand how Freegle works.
-6. **Claude requests fact queries** (displayed transparently in UI).
-7. **Browser executes** API calls with user's JWT, returns only sanitized answers.
-8. **UI shows each exchange** - what container asked, what browser returned.
-9. **Claude analyzes** and provides answer.
-10. **User can continue the conversation** with follow-up questions.
+Built in `tools.js` (`buildTools(ctx)`), exposed as an in-process MCP server, plus the
+SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 
-## Available Fact Queries
+| Tool | Purpose |
+|------|---------|
+| `identify_user` | resolve an email / name / id to a member (must be done first) |
+| `get_user_dump` + `query_dump` | pull a per-user SQLite dump (~69 tables + Loki + Sentry, secrets redacted) via the Go API and run SQL against it locally |
+| `db_query` | ad-hoc **read-only** SQL against the live DB (guarded — see below) |
+| `loki_search` | 3-pass `user_id` JSON-field search, or raw LogQL (window capped) |
+| `sentry_search` | recent Sentry issues across the nuxt3/go/capacitor/modtools projects |
+| `discourse_search` | search the community forum (bug reports cite topic numbers) |
+| `code_history_search` / `git_fixed_already` | grep git history to see if an issue is already fixed |
 
-The container can only request these predefined queries:
+The investigation playbook (held chat replies, duplicate conversations, purged accounts,
+rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
+`support-agent.js`.
 
-| Query | Parameters | Returns | Description |
-|-------|------------|---------|-------------|
-| `count_api_calls` | userid, timerange | number | Count API calls for a user |
-| `count_errors` | userid, timerange | number | Count errors for a user |
-| `count_logins` | userid, timerange | number | Count successful logins |
-| `has_recent_activity` | userid, timerange | boolean | Check if user has recent activity |
-| `has_errors` | userid, timerange | boolean | Check if user has errors |
-| `get_error_summary` | userid, timerange | array | Summary of errors by status code |
-| `get_user_role` | userid | string | User's system role |
-| `find_user_by_email` | email | object | Find user ID by email (no PII returned) |
-| `get_group_info` | groupid | object | Public group information |
-| `search_groups` | search | array | Search groups by name |
+## Security controls
 
-### Timerange Format
-
-- `1h` - last 1 hour
-- `24h` - last 24 hours
-- `7d` - last 7 days
-- `30d` - last 30 days
-
-## Suggesting New Queries
-
-If Claude needs information that isn't available through existing fact queries, it will suggest new query types. These suggestions appear in the UI and help iteratively improve the available queries.
-
-Suggested queries include:
-- A clear name for the proposed query
-- What parameters it would need
-- What it would return (counts, booleans, or sanitized summaries only)
-- Why it would be useful for support investigations
-
-## Authentication
-
-### Caller authentication (who may use it)
-
-`POST /api/log-analysis` requires the caller to be an authenticated Freegle
-**moderator, support or admin**. ModTools forwards the logged-in user's JWT as
-`Authorization: Bearer <jwt>`; the container validates it against the Go API
-(`GET ${FREEGLE_API_URL}/api/session?jwt=…`) and rejects (403) anyone whose
-`systemrole` is not Moderator/Support/Admin. Having `ANTHROPIC_API_KEY` set on
-the server is **not** authorisation — the endpoint analyses production logs and
-incurs Anthropic API cost, so it must not be open to unauthenticated callers.
-Set `FREEGLE_API_URL` (default `http://apiv2.localhost:8192`) per environment.
-
-### Claude/Anthropic authentication (how it calls Claude)
-
-The container uses Claude Code CLI authentication:
-
-1. **On host machine**: Run `claude` command once to authenticate.
-2. **Session persists** in `~/.claude/` directory (typically weeks).
-3. **Container mounts** `~/.claude:/root/.claude:ro` to share auth.
-4. **If session expires**: Container returns auth error, UI shows friendly message.
-
-This uses the Claude Max subscription - no additional API costs.
-
-### Re-authenticating
-
-When the authentication expires, the UI displays:
-
-> Claude authentication has expired. Please ask an administrator to run 'claude' on the server to re-authenticate.
-
-To re-authenticate:
-```bash
-claude
-```
-Follow the browser authentication flow.
+- **Caller gate (`auth.js`)** — only `Support` and `Admin` systemroles may use it; a plain
+  `Moderator` or `User` gets 403. The JWT is validated against the Go API `/api/session`
+  with a fail-closed timeout, and the caller's id/email are threaded through for the audit.
+- **Read-only DB, fail closed (`tools.js` `dbSelect`)** — a dedicated connection runs
+  `SET SESSION TRANSACTION READ ONLY, max_execution_time = 15000` **before** the query;
+  no root fallback outside localhost/percona.
+- **Query guard (`guardSelect`)** — `SELECT`/`WITH` only, single statement, SQL comments
+  stripped first (defeats `INTO/**/OUTFILE`), a denylist of write/DoS keywords, a denylist
+  of auth-secret **tables** (`sessions`, `users_logins`, `config`, …) and **columns**
+  (`credentials`, `token`, `password`, …), and a hard cap on the `LIMIT` value.
+- **Prompt-injection defence (`support-agent.js`)** — the system prompt marks everything
+  tools return (chat text, names, log lines) as **data, never instructions**; tools are
+  read-only (`disallowedTools: Write/Edit/Bash`), file reads are confined to
+  `additionalDirectories: [CODEBASE]`.
+- **XSS defence (`ModSupportAIAssistant.vue`)** — the answer is markdown that may quote
+  member-supplied text verbatim, so `marked()` output is run through `DOMPurify.sanitize`
+  before `v-html`.
+- **Narrowed credential mount (`docker-compose.yml`)** — session mode exposes only the
+  Claude OAuth credential file, not the whole `~/.claude`.
+- **Audit trail (`tools.js` `audit()`)** — every session and every `db_query` /
+  `get_user_dump` / `query_dump` logs who (mod id/email) investigated whom (target user)
+  with what, to stdout (`SUPPORT_AUDIT …`, shippable to Loki) and, durably, to
+  `AUDIT_LOG_PATH` on the `ai-support-audit` volume.
 
 ## Files
 
-### Docker Container
-
-- `claude-agent-sdk/Dockerfile` - Container setup
-- `claude-agent-sdk/package.json` - Dependencies
-- `claude-agent-sdk/server.js` - HTTP polling server
-- `claude-agent-sdk/agent.js` - Claude Agent SDK wrapper
-
-### ModTools Component
-
-- `modtools/components/ModSupportAIAssistant.vue` - Chat interface
-
-### Docker Compose
-
-The ai-support-helper service is defined in `docker-compose.yml`:
-
-```yaml
-ai-support-helper:
-  build:
-    context: ./claude-agent-sdk
-  container_name: freegle-ai-support-helper
-  ports:
-    - "8083:3000"
-  volumes:
-    - ~/.claude:/root/.claude:ro
-  labels:
-    - "traefik.enable=true"
-    - "traefik.http.routers.ai-support-helper.rule=Host(`ai-support-helper.localhost`)"
-```
-
-The container clones its own copy of the Freegle codebase at build time (from GitHub) and updates it every 30 minutes via `git pull`. This keeps the codebase isolated from the host system.
-
-## Security Summary
-
-1. **Access Control**: Only Support/Admin users see AI Support Helper tab.
-2. **Data Isolation**: PII stays in browser, only sanitized facts go to container.
-3. **Transparency**: All exchanges visible in chat UI.
-4. **User Control**: Stop button to halt at any time.
-5. **Auth Sharing**: Host's Claude CLI auth mounted read-only.
-6. **Codebase Access**: Read-only for system knowledge only.
-
-## Example Questions
-
-- "Why is user 12345 having problems?"
-- "What errors is this user seeing?"
-- "How many logins did user 67890 have today?"
-- "Is this user a mod or admin?"
-- "What groups match 'Cambridge'?"
+- **Backend**: `claude-agent-sdk/` — `server.js` (SSE endpoint + CORS + auth gate),
+  `support-agent.js` (`query()` orchestration + system-prompt playbook), `tools.js`
+  (direct-access tools + guards + audit), `auth.js` (Support/Admin verification),
+  `Dockerfile` / `entrypoint.sh`.
+- **Frontend**: `iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue`.
+- **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).
