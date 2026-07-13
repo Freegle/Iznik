@@ -71,6 +71,7 @@ import (
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/visualise"
+	"github.com/freegle/iznik-server-go/voicepost"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
 )
@@ -4696,6 +4697,35 @@ type housekeeperTasksResponse struct {
 //
 //	200: successResponse
 
+// swagger:route GET /town/near location getTownNear
+// Get nearby towns reachable by drive-time
+//
+// Returns up to 5 town names reachable within the browse/feed distance slider's
+// travel time (minutes) from (lat,lng), by real drive-time (not crow-flies), plus
+// reach_radius_miles for the client to store as the feed's fast distance-filter
+// cap. Best-effort: any routing/DB failure returns an empty town list.
+//
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude
+//     required: true
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Longitude
+//     required: true
+//     type: number
+//   + name: minutes
+//     in: query
+//     description: Travel time budget in minutes
+//     required: true
+//     type: number
+//
+// Responses:
+//
+//	200: successResponse
+
 // swagger:route GET /message/{id}/reach message getMessageReach
 // Get rippling reach for a message
 //
@@ -4818,6 +4848,38 @@ type housekeeperTasksResponse struct {
 // Responses:
 //
 //	200: successResponse
+
+// swagger:route GET /rippling/analytics rippling getRipplingAnalytics
+// Get rippling analytics
+//
+// On-the-fly sysadmin rippling analytics KPIs: reply/take rates, trends and
+// rippled-out-vs-home comparisons. Reads stratum, start and end query params
+// (defaults to the last 30 days). Support/Admin only.
+//
+// Parameters:
+//   + name: stratum
+//     in: query
+//     description: Stratum filter (default "all")
+//     required: false
+//     type: string
+//   + name: start
+//     in: query
+//     description: Start date
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date
+//     required: false
+//     type: string
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
 
 // swagger:route GET /user/{id}/applied user getUserApplied
 // Get user applied jobs/events
@@ -4960,3 +5022,55 @@ type housekeeperTasksResponse struct {
 // Responses:
 //
 //	200: successResponse
+
+// ============================================================================
+// VoicePost
+// ============================================================================
+
+// swagger:route POST /voicepost/chunk voicepost postVoicepostChunk
+// Stream a chunk of voice-post audio
+//
+// Streams a chunk of voice-post audio into the server-side buffer while the
+// user is still talking, so there is nothing left to upload once they stop.
+// No authentication: like image upload, this happens during the give/post
+// flow before the user has necessarily logged in.
+//
+// Parameters:
+//   + name: session
+//     in: query
+//     description: Session id (omit on first chunk)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	503: errorResponse
+
+// swagger:route POST /voicepost/finish voicepost postVoicepostFinish
+// Finalise a voice post
+//
+// Transcribes the whole buffered recording once the user has stopped talking
+// and returns the transcript verbatim as the description, plus a short item
+// title extracted by the LLM from the transcript.
+//
+// Parameters:
+//   + name: session
+//     in: query
+//     description: Session id
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: voicepostFinishResponse
+//	400: errorResponse
+//	404: errorResponse
+//	503: errorResponse
+//
+// voicepostFinishResponse is the response for finalising a voice post
+// swagger:response voicepostFinishResponse
+type voicepostFinishResponse struct {
+	// in: body
+	Body voicepost.FinishResult `json:"body"`
+}
