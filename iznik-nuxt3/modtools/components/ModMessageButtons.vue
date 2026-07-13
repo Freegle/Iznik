@@ -150,6 +150,7 @@
         :stdmsgid="stdmsg.id"
         :messageid="message.id"
         :groupid="groupid"
+        :is-home-group="isHomeGroup"
         :autosend="Boolean(stdmsg.autosend && allowAutoSend)"
       />
       <b-button

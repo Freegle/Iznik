@@ -59,8 +59,8 @@
           community where it was first posted.
         </p>
         <p class="mb-0">
-          The freegler won't be told, because they don't need to know unless it's
-          rejected on their home community. So there's no message to send.
+          The freegler won't be told, because they don't need to know unless
+          it's rejected on their home community. So there's no message to send.
         </p>
       </template>
     </ConfirmModal>
@@ -347,7 +347,20 @@ async function click(callback) {
       stdmsgAction.value = 'Leave'
     } else if (props.stdmsgid) {
       // We have a standard message.  Fetch it into the store.
-      await stdmsgStore.fetch(props.stdmsgid)
+      const fetched = await stdmsgStore.fetch(props.stdmsgid)
+
+      if (fetched?.action === 'Reject' && !props.isHomeGroup) {
+        // A Reject-type standard message on a rippled-in (non-home) copy hits the
+        // same silent-to-the-poster path as the plain Reject button server-side -
+        // the Go API drops the notification for a secondary group (handleReject),
+        // so composing and "sending" one here looks successful but leaves no
+        // record anywhere (Discourse 9862/13). Show the same no-message
+        // confirmation as the plain Reject button instead of the compose modal.
+        showRejectNoMsgModal.value = true
+        if (callback) callback()
+        return
+      }
+
       stdmsgId.value = props.stdmsgid
     }
 
