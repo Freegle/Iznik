@@ -344,9 +344,13 @@
       </div>
       <div v-else-if="driveLoading" class="text-center py-4">
         <b-spinner small />
-        <p class="text-muted small mt-2 mb-0">
+        <p class="text-muted small mt-2 mb-1">
           Sampling drive-times from the routing graph…
+          <span v-if="driveTotal">{{ driveProgress }} / {{ driveTotal }}</span>
         </p>
+        <div v-if="driveTotal" class="drive-progress mx-auto">
+          <div class="drive-progress-bar" :style="{ width: drivePct + '%' }" />
+        </div>
       </div>
       <p v-else class="text-muted small">
         No drive-time sample for the bullseye in this window.
@@ -448,6 +452,17 @@ const bull = ref([])
 // The drive-time metrics are a slow sampled routing pass, fetched separately from the KPIs; this
 // tracks that second request so the drive panels can show their own spinner without blocking the tab.
 const driveLoading = ref(false)
+// The pass runs as a background job on the server (it can't complete in one request without
+// hitting the gateway 504). We poll it and surface how far through the sample it is.
+const driveProgress = ref(0)
+const driveTotal = ref(0)
+const drivePct = computed(() =>
+  driveTotal.value > 0
+    ? Math.min(100, Math.round((driveProgress.value / driveTotal.value) * 100))
+    : 0
+)
+const DRIVE_POLL_MS = 2500
+const DRIVE_MAX_POLLS = 160 // ~6-7 min ceiling before we give up polling
 // Folded in from the retired dashboard: reply-source attribution + geographic hotspots
 // (fetched in parallel from the metrics endpoint, which already computes them).
 const replySource = ref([])
@@ -725,19 +740,33 @@ async function loadDriveTimes() {
     forStart !== startDate.value ||
     forEnd !== endDate.value
   driveLoading.value = true
+  driveProgress.value = 0
+  driveTotal.value = 0
   try {
-    const d = await apiInstance.rippling.fetchAnalyticsDriveTimes(
-      forStratum,
-      forStart,
-      forEnd
-    )
-    if (isStale()) return
-    if (s1.value && d?.reply_drive_min)
-      s1.value.reply_drive_min = d.reply_drive_min
-    if (s3.value && d?.ripple_drive_min)
-      s3.value.ripple_drive_min = d.ripple_drive_min
-    s2.value = { ...s2.value, drive_time: d?.drive_time || [] }
-    bull.value = d?.bullseye || []
+    // The server runs the routing pass as a background job (it can't finish inside one request
+    // without the gateway 504ing). Poll it, showing progress, until it reports done.
+    for (let i = 0; i < DRIVE_MAX_POLLS; i++) {
+      const d = await apiInstance.rippling.fetchAnalyticsDriveTimes(
+        forStratum,
+        forStart,
+        forEnd
+      )
+      if (isStale()) return
+      if (d?.status === 'computing') {
+        driveProgress.value = d.progress || 0
+        driveTotal.value = d.total || 0
+        await new Promise((resolve) => setTimeout(resolve, DRIVE_POLL_MS))
+        continue
+      }
+      // Done (status 'done', or a legacy full payload with no status field).
+      if (s1.value && d?.reply_drive_min)
+        s1.value.reply_drive_min = d.reply_drive_min
+      if (s3.value && d?.ripple_drive_min)
+        s3.value.ripple_drive_min = d.ripple_drive_min
+      s2.value = { ...s2.value, drive_time: d?.drive_time || [] }
+      bull.value = d?.bullseye || []
+      return
+    }
   } catch (e) {
     // Non-fatal: the KPIs are already shown. Leave the drive panels in their "no sample" state.
   } finally {
@@ -764,6 +793,19 @@ $green: #28a745;
 $ink: #1a1c1a;
 $muted: #6b756c;
 $line: #e4e8e3;
+
+.drive-progress {
+  max-width: 220px;
+  height: 6px;
+  background: $line;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.drive-progress-bar {
+  height: 100%;
+  background: $green;
+  transition: width 0.3s ease;
+}
 
 .rip-analytics {
   --card-bg: #ffffff;

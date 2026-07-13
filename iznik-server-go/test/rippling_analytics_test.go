@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/stretchr/testify/assert"
@@ -103,13 +104,36 @@ func TestRipplingAnalyticsDriveTimeEndpoint(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET",
-		fmt.Sprintf("/api/rippling/analytics/drivetime?jwt=%s", token), nil), -1)
-	assert.Equal(t, 200, resp.StatusCode, "drivetime route must be registered (was 404)")
+	url := fmt.Sprintf("/api/rippling/analytics/drivetime?jwt=%s", token)
 
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-	bullseye, ok := result["bullseye"].([]interface{})
-	assert.True(t, ok, "drivetime response carries a bullseye array")
+	// The ~250-call routing pass takes tens of seconds - longer than the prod gateway timeout - so
+	// it runs as a background JOB: the request returns immediately with a pollable
+	// {status,progress,total}, NEVER blocking on the routing pass (which used to 504, surfacing as a
+	// misleading CORS error). An 8s per-request cap fails loudly rather than hanging if that regresses.
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil), 8000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "drivetime route must be registered (was 404) and answer promptly")
+
+	var first map[string]interface{}
+	json.Unmarshal(rsp(resp), &first)
+	assert.Contains(t, []interface{}{"computing", "done"}, first["status"], "drivetime is a pollable job")
+	assert.NotNil(t, first["total"], "job reports a sample total for the client progress bar")
+
+	// Poll to completion (routing is unreachable in the test env, so the pass finishes fast with an
+	// empty sample) and assert the done payload still carries the 6 fixed bullseye rings.
+	var done map[string]interface{}
+	for i := 0; i < 60; i++ {
+		r, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 8000)
+		var m map[string]interface{}
+		json.Unmarshal(rsp(r), &m)
+		if m["status"] == "done" {
+			done = m
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	assert.NotNil(t, done, "the drivetime job reaches done")
+	bullseye, ok := done["bullseye"].([]interface{})
+	assert.True(t, ok, "done drivetime response carries a bullseye array")
 	assert.Len(t, bullseye, 6, "bullseye always has the 6 fixed drive-time rings")
 }
