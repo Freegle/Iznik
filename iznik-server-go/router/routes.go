@@ -542,6 +542,7 @@ func SetupRoutes(app *fiber.App) {
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
 		ripplingAdmin.Get("/analytics", rippling.Analytics)
+		ripplingAdmin.Get("/analytics/drivetime", rippling.AnalyticsDriveTimes)
 
 		// Create a protected route group for admin endpoints
 		adminConfig := rg.Group("/config/admin")

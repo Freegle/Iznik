@@ -1,6 +1,9 @@
 package test
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -87,4 +90,26 @@ func TestBullseye(t *testing.T) {
 	empty := rippling.Bullseye(nil, nil)
 	assert.Len(t, empty, 6)
 	assert.Equal(t, 0, empty[0].NReplies)
+}
+
+// The sysadmin analytics UI loads drive-times from a SEPARATE endpoint
+// (/rippling/analytics/drivetime) so the slow routing pass doesn't block the fast panels. This
+// guards that the route is actually registered: it was added as a handler but not wired into the
+// router, so the live UI got a 404 and silently hid the whole bullseye panel. The routing pass is
+// best-effort (unreachable routing just yields an empty sample), so the response is a well-formed
+// 200 carrying the 6 fixed bullseye rings regardless of the graph being reachable here.
+func TestRipplingAnalyticsDriveTimeEndpoint(t *testing.T) {
+	prefix := uniquePrefix("rippledrivetime")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/rippling/analytics/drivetime?jwt=%s", token), nil), -1)
+	assert.Equal(t, 200, resp.StatusCode, "drivetime route must be registered (was 404)")
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	bullseye, ok := result["bullseye"].([]interface{})
+	assert.True(t, ok, "drivetime response carries a bullseye array")
+	assert.Len(t, bullseye, 6, "bullseye always has the 6 fixed drive-time rings")
 }
