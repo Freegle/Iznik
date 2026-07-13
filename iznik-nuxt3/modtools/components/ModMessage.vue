@@ -825,6 +825,8 @@ import {
   isRippledInToContextGroup as isRippledIn,
   earliestArrivalGroupId,
   homeGroupId,
+  findMessageGroupRow,
+  messageGroupHeldBy,
 } from '~/composables/rippleStatus'
 
 const props = defineProps({
@@ -1005,11 +1007,13 @@ const currentGroupid = computed(() => {
 })
 
 // Get the group info for the group being administered (multi-group support).
+// Falls back to groups[0] when currentGroupid doesn't match any row - fine for the
+// general display purposes this feeds (collection, name, spam reason etc.), but NOT
+// safe for the heldby check, which needs its own fail-safe fallback (see heldbyId).
 const contextGroup = computed(() => {
   if (!message.value?.groups?.length) return null
-  const gid = currentGroupid.value
   return (
-    message.value.groups.find((g) => parseInt(g.groupid) === gid) ||
+    findMessageGroupRow(message.value.groups, currentGroupid.value) ||
     message.value.groups[0]
   )
 })
@@ -1105,10 +1109,7 @@ const isRippledInToContextGroup = computed(() =>
 // Task #23: the P/Q "quicker to get to" note for the copy on currentGroupid - only present
 // (both fields non-null) when the routing server said quicker=true at ripple-in time.
 const rippleProximity = computed(() => {
-  const gid = currentGroupid.value
-  const g = (message.value?.groups || []).find(
-    (row) => parseInt(row.groupid) === gid
-  )
+  const g = findMessageGroupRow(message.value?.groups, currentGroupid.value)
   if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
     return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
   }
@@ -1173,20 +1174,21 @@ const eBody = computed(() => {
 })
 
 // Handle heldby as either numeric ID (Go API) or object (PHP API). Sourced from
-// contextGroup (the per-group messages_groups.heldby), NOT message.heldby: that
-// top-level field is a legacy cross-group value that gets set whenever ANY group
-// holds ANY copy of a rippled post, so reading it here would show "held by X,
-// check with them before releasing" on a copy that is Approved (and not held at
-// all) on the group being administered, just because a different rippled-to group
-// happens to be holding its own copy (Discourse 9904).
+// messageGroupHeldBy (the per-group messages_groups.heldby for currentGroupid, with
+// a fail-safe fallback to "is ANY copy held" if that row can't be pinned down), NOT
+// message.heldby: that top-level field is a legacy cross-group value that gets set
+// whenever ANY group holds ANY copy of a rippled post, so reading it here would show
+// "held by X, check with them before releasing" on a copy that is Approved (and not
+// held at all) on the group being administered, just because a different rippled-to
+// group happens to be holding its own copy (Discourse 9904).
 const heldbyId = computed(() => {
-  const h = contextGroup.value?.heldby
+  const h = messageGroupHeldBy(message.value?.groups, currentGroupid.value)
   if (!h) return null
   return Number.isInteger(h) ? h : h.id
 })
 
 const heldbyName = computed(() => {
-  const h = contextGroup.value?.heldby
+  const h = messageGroupHeldBy(message.value?.groups, currentGroupid.value)
   if (!h) return ''
   if (Number.isInteger(h)) {
     const user = userStore.byId(h)

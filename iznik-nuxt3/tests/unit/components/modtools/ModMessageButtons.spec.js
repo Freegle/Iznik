@@ -262,6 +262,24 @@ describe('ModMessageButtons', () => {
       expect(wrapper.find('.mod-message-button.release').exists()).toBe(false)
     })
 
+    // Review blocker: must not fail OPEN when props.groupid can't be matched to any
+    // row (stale/mismatched context) - fall back to "is ANY copy held" instead of
+    // silently treating the message as unheld, which would offer Hold/Release
+    // wrongly and let a mod act on a copy someone else is holding elsewhere.
+    it('fails safe (offers release, not hold) when groupid matches no row but another group holds its copy', () => {
+      const wrapper = mountComponent(
+        { groupid: 555 }, // matches neither group below
+        {
+          groups: [
+            { groupid: 456, collection: 'Pending', heldby: null },
+            { groupid: 999, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(false)
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(true)
+    })
+
     it('shows spam button for pending messages', () => {
       const wrapper = mountComponent(
         {},

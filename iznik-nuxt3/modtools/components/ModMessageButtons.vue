@@ -186,6 +186,7 @@ import { ref, computed, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useModConfigStore } from '~/stores/modconfig'
 import { copyStdMsgs, icon, variant } from '~/composables/useStdMsgs'
+import { messageGroupHeldBy } from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -261,14 +262,10 @@ function hasCollection(coll) {
 // message-level heldby is a legacy cross-group field set whenever ANY group holds
 // ANY copy of a rippled post, so using it here would offer "Release" (instead of
 // "Hold") on a copy that isn't held at all, just because a different rippled-to
-// group happens to be holding its own copy (Discourse 9904).
+// group happens to be holding its own copy (Discourse 9904). Shares
+// messageGroupHeldBy with ModMessage's held-by banner so the two can't drift.
 const heldByThisGroup = computed(() => {
-  const groups = message.value?.groups
-  if (!groups || !props.groupid) return false
-  const g = groups.find(
-    (grp) => parseInt(grp.groupid) === parseInt(props.groupid)
-  )
-  return !!g?.heldby
+  return !!messageGroupHeldBy(message.value?.groups, props.groupid)
 })
 
 const pending = computed(() => {

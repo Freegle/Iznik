@@ -13,6 +13,9 @@ const mockView = vi.fn()
 const mockMarkSeen = vi.fn()
 const mockCount = vi.fn()
 const mockNearbyMarkSeen = vi.fn()
+const mockHold = vi.fn()
+const mockRelease = vi.fn()
+const mockFetchMT = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -25,6 +28,9 @@ vi.mock('~/api', () => ({
       view: mockView,
       markSeen: mockMarkSeen,
       count: mockCount,
+      hold: mockHold,
+      release: mockRelease,
+      fetchMT: mockFetchMT,
     },
   }),
 }))
@@ -134,6 +140,58 @@ describe('message store - patch()', () => {
     expect(store.byUserList[99].length).toBe(1)
 
     fetchSpy.mockRestore()
+  })
+})
+
+// Blocker: ModMessage/ModMessageButtons read the per-group messages_groups.heldby
+// (groups[i].heldby) instead of the legacy message-level field (Discourse 9904). That
+// read path only stays correct if hold()/release() actually refresh groups[i].heldby
+// afterwards - otherwise the Hold/Release button and the held-by banner would be stuck
+// showing stale state until an unrelated full page refetch happened to occur.
+describe('message store - hold()/release() refresh per-group heldby', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('hold() replaces the store entry with a refetch carrying the new per-group heldby', async () => {
+    const store = useMessageStore()
+    store.list[1001] = {
+      id: 1001,
+      groups: [{ groupid: 456, collection: 'Pending', heldby: null }],
+    }
+
+    mockHold.mockResolvedValue({})
+    mockFetchMT.mockResolvedValue({
+      id: 1001,
+      groups: [{ groupid: 456, collection: 'Pending', heldby: 999 }],
+    })
+
+    await store.hold({ id: 1001, groupid: 456 })
+
+    expect(mockHold).toHaveBeenCalledWith(1001, 456)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 1001 })
+    expect(store.byId(1001).groups[0].heldby).toBe(999)
+  })
+
+  it('release() replaces the store entry with a refetch carrying the cleared per-group heldby', async () => {
+    const store = useMessageStore()
+    store.list[1001] = {
+      id: 1001,
+      groups: [{ groupid: 456, collection: 'Pending', heldby: 999 }],
+    }
+
+    mockRelease.mockResolvedValue({})
+    mockFetchMT.mockResolvedValue({
+      id: 1001,
+      groups: [{ groupid: 456, collection: 'Pending', heldby: null }],
+    })
+
+    await store.release({ id: 1001, groupid: 456 })
+
+    expect(mockRelease).toHaveBeenCalledWith(1001, 456)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 1001 })
+    expect(store.byId(1001).groups[0].heldby).toBeNull()
   })
 })
 
@@ -481,7 +539,10 @@ describe('message store - markSeen()', () => {
 
   it('refreshes the count for the member browse view and distance, not the default', async () => {
     useAuthStore.mockReturnValue({
-      user: { id: 1, settings: { browseView: 'mygroups', browseMaxDistance: 10 } },
+      user: {
+        id: 1,
+        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+      },
     })
     const store = useMessageStore()
     store.init({})
@@ -595,9 +656,10 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
   it('treats Spam and PendingOther as still in the review queue', async () => {
     const store = useMessageStore()
     store.list[500] = { id: 500 }
-    store.fetchMT = vi
-      .fn()
-      .mockResolvedValue({ id: 500, groups: [{ groupid: 1, collection: 'Spam' }] })
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [{ groupid: 1, collection: 'Spam' }],
+    })
 
     await store.refreshOrRemoveFromMTList(500)
 

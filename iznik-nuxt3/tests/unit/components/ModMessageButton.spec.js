@@ -99,4 +99,34 @@ describe('ModMessageButton', () => {
 
     expect(mockUserStore.fetch).not.toHaveBeenCalled()
   })
+
+  describe('confirmButton (Discourse 9904 follow-up)', () => {
+    // Other call site: confirmButton used to read the legacy message-level heldby,
+    // set whenever ANY group holds ANY copy of a rippled post - so it would demand
+    // an extra confirmation for an action on a copy that isn't held at all on the
+    // group this button acts on, just because a different group happens to be
+    // holding its own copy.
+    it('does not require confirmation when a DIFFERENT group holds its own copy', () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        heldby: { id: 1 }, // legacy message-level field, set by the OTHER group's hold
+        groups: [
+          { groupid: 10, collection: 'Pending', heldby: null },
+          { groupid: 20, collection: 'Pending', heldby: { id: 1 } },
+        ],
+      })
+      const wrapper = mountButton({ approve: true, groupid: 10 })
+      expect(wrapper.vm.confirmButton).toBe(false)
+    })
+
+    it('still requires confirmation when THIS group is the one actually held', () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        heldby: { id: 1 },
+        groups: [{ groupid: 10, collection: 'Pending', heldby: { id: 1 } }],
+      })
+      const wrapper = mountButton({ approve: true, groupid: 10 })
+      expect(wrapper.vm.confirmButton).toBe(true)
+    })
+  })
 })

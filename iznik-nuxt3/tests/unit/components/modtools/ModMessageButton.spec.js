@@ -186,24 +186,63 @@ describe('ModMessageButton', () => {
   })
 
   describe('confirmButton computed', () => {
+    // confirmButton is scoped to the group this button acts on (the per-group
+    // messages_groups.heldby), not the legacy message-level heldby - so these
+    // fixtures set heldby on the group row itself (groupid 456, matched via the
+    // default groupid fallback to message.groups[0]), not just the legacy field.
     it('returns true when message is held and action is not spam or delete', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent(
+        { approve: true },
+        {
+          heldby: { id: 1 },
+          groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
+        }
+      )
       expect(wrapper.vm.confirmButton).toBe(true)
     })
 
     it('returns false when message is held but action is spam', () => {
-      const wrapper = mountComponent({ spam: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent(
+        { spam: true },
+        {
+          heldby: { id: 1 },
+          groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
+        }
+      )
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns false when message is held but action is delete', () => {
-      const wrapper = mountComponent({ delete: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent(
+        { delete: true },
+        {
+          heldby: { id: 1 },
+          groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
+        }
+      )
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns falsy when message is not held', () => {
       const wrapper = mountComponent({ approve: true }, { heldby: null })
       expect(wrapper.vm.confirmButton).toBeFalsy()
+    })
+
+    // Other call site fixed alongside the read path (Discourse 9904 follow-up):
+    // must not require confirmation just because a DIFFERENT group holds its own
+    // copy of a rippled post.
+    it('returns false when a DIFFERENT group holds its own copy of a rippled post', () => {
+      const wrapper = mountComponent(
+        { approve: true },
+        {
+          heldby: { id: 1 }, // legacy message-level field, set by the OTHER group's hold
+          groups: [
+            { groupid: 456, collection: 'Pending', heldby: null },
+            { groupid: 999, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
+      expect(wrapper.vm.confirmButton).toBe(false)
     })
   })
 
@@ -254,7 +293,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.hold when hold prop is true', async () => {
       const wrapper = mountComponent({ hold: true }, { id: 555 })
       await wrapper.vm.click()
-      expect(mockMessageStore.hold).toHaveBeenCalledWith({ id: 555, groupid: 456 })
+      expect(mockMessageStore.hold).toHaveBeenCalledWith({
+        id: 555,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after hold', async () => {
@@ -268,7 +310,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.release when release prop is true', async () => {
       const wrapper = mountComponent({ release: true }, { id: 666 })
       await wrapper.vm.click()
-      expect(mockMessageStore.release).toHaveBeenCalledWith({ id: 666, groupid: 456 })
+      expect(mockMessageStore.release).toHaveBeenCalledWith({
+        id: 666,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after release', async () => {

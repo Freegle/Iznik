@@ -148,3 +148,51 @@ export function isHomeGroup(group, groups) {
   const gid = group.groupid ?? group.id
   return gid != null && parseInt(gid) === homeId
 }
+
+/**
+ * Find the messages_groups row for a specific group, tolerant of a numeric or
+ * numeric-string groupid on either side (API rows and component props aren't
+ * guaranteed to agree on type). Centralised so the coercion can't drift between
+ * components and have them silently disagree about which row is "the" group
+ * being administered.
+ *
+ * @param {Array<{groupid:number|string}>} groups message.groups
+ * @param {number|string} groupid
+ * @returns {object|undefined}
+ */
+export function findMessageGroupRow(groups, groupid) {
+  if (!Array.isArray(groups) || groupid === null || groupid === undefined) {
+    return undefined
+  }
+  const gid = parseInt(groupid)
+  if (Number.isNaN(gid)) return undefined
+  return groups.find((g) => g && parseInt(g.groupid) === gid)
+}
+
+/**
+ * The per-group hold state (messages_groups.heldby) for the group being
+ * administered - NOT messages.heldby, the legacy message-level field that gets
+ * set whenever ANY group holds ANY copy of a rippled post (Discourse 9904).
+ * Returns the raw heldby value: a numeric user id (Go API) or a
+ * {id, displayname} object (legacy PHP API), or null if this copy isn't held.
+ *
+ * Fails SAFE: if the specific group row can't be pinned down (message still
+ * loading, or groupid doesn't match any row this post is on), falls back to
+ * "is ANY copy of this post held" rather than silently reporting unheld - a
+ * false "not held" would let a mod release/reject a copy someone else is
+ * actively holding on another group, which is worse than an unnecessary
+ * confirmation.
+ *
+ * @param {Array<{groupid:number|string, heldby?:*}>} groups message.groups
+ * @param {number|string} groupid the group being administered
+ * @returns {*} heldby value, or null
+ */
+export function messageGroupHeldBy(groups, groupid) {
+  if (!Array.isArray(groups) || !groups.length) return null
+
+  const exact = findMessageGroupRow(groups, groupid)
+  if (exact) return exact.heldby || null
+
+  const heldRow = groups.find((g) => g && g.heldby)
+  return heldRow ? heldRow.heldby : null
+}

@@ -927,6 +927,37 @@ describe('ModMessage', () => {
       expect(wrapper.text()).toContain('Held by')
       expect(wrapper.text()).toContain('before releasing it')
     })
+
+    // Review blocker: heldbyId must not fail OPEN when the group being administered
+    // can't be pinned down exactly (contextGroupid doesn't match any row this post is
+    // on - e.g. stale/mismatched context). Falling back to null-heldby there would
+    // hide a real hold on another group and let a mod release/reject a message
+    // someone else is actively holding - so it must fail SAFE instead, by treating
+    // any held copy as reason to hide the buttons and show the banner.
+    it('fails safe (still shows the banner, still hides the buttons) when the context group cannot be matched to any row', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 555 }, // matches neither group below
+        {
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Home Group',
+              collection: 'Approved',
+              heldby: null,
+            },
+            {
+              groupid: 999,
+              namedisplay: 'Rippled Group',
+              collection: 'Pending',
+              heldby: 888,
+            },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Held by')
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(false)
+    })
   })
 
   describe('Spammer indicator', () => {

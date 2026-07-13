@@ -5,6 +5,8 @@ import {
   homeGroupId,
   homeGroupFirst,
   isHomeGroup,
+  findMessageGroupRow,
+  messageGroupHeldBy,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
 
@@ -359,5 +361,89 @@ describe('isHomeGroup', () => {
     expect(isHomeGroup(null, groups)).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, [])).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, null)).toBe(false)
+  })
+})
+
+// Shared row lookup used by ModMessage's held-by banner and ModMessageButtons' /
+// ModMessageButton's hold/release/confirm gating, so the numeric/string groupid
+// coercion can't drift between them (Discourse 9904 follow-up).
+describe('findMessageGroupRow', () => {
+  const groups = [
+    { groupid: 789, heldby: null },
+    { groupid: 999, heldby: 888 },
+  ]
+
+  it('finds the row by numeric groupid', () => {
+    expect(findMessageGroupRow(groups, 999)).toBe(groups[1])
+  })
+
+  it('finds the row when groupid is a numeric string (route params etc)', () => {
+    expect(findMessageGroupRow(groups, '999')).toBe(groups[1])
+  })
+
+  it('finds the row when the row groupid is a numeric string', () => {
+    const strGroups = [{ groupid: '999', heldby: 888 }]
+    expect(findMessageGroupRow(strGroups, 999)).toBe(strGroups[0])
+  })
+
+  it('returns undefined when no row matches', () => {
+    expect(findMessageGroupRow(groups, 555)).toBeUndefined()
+  })
+
+  it('returns undefined for empty/missing groups or groupid', () => {
+    expect(findMessageGroupRow([], 789)).toBeUndefined()
+    expect(findMessageGroupRow(null, 789)).toBeUndefined()
+    expect(findMessageGroupRow(groups, null)).toBeUndefined()
+    expect(findMessageGroupRow(groups, undefined)).toBeUndefined()
+  })
+})
+
+describe('messageGroupHeldBy', () => {
+  it('returns null when the exact group row is not held', () => {
+    const groups = [{ groupid: 789, heldby: null }]
+    expect(messageGroupHeldBy(groups, 789)).toBeNull()
+  })
+
+  it('returns the exact group row heldby (numeric, Go API) when held', () => {
+    const groups = [{ groupid: 789, heldby: 888 }]
+    expect(messageGroupHeldBy(groups, 789)).toBe(888)
+  })
+
+  it('returns the exact group row heldby (object, legacy PHP API) when held', () => {
+    const heldby = { id: 888, displayname: 'Other Mod' }
+    const groups = [{ groupid: 789, heldby }]
+    expect(messageGroupHeldBy(groups, 789)).toBe(heldby)
+  })
+
+  it('ignores a DIFFERENT group holding its own copy when the exact row is found and unheld', () => {
+    const groups = [
+      { groupid: 789, heldby: null },
+      { groupid: 999, heldby: 888 },
+    ]
+    expect(messageGroupHeldBy(groups, 789)).toBeNull()
+  })
+
+  // Blocker: fails SAFE (falls back to "is ANY copy held") rather than fail OPEN
+  // (silently null) when the exact group row can't be identified at all.
+  it('falls back to any held copy when the groupid matches no row', () => {
+    const groups = [
+      { groupid: 789, heldby: null },
+      { groupid: 999, heldby: 888 },
+    ]
+    expect(messageGroupHeldBy(groups, 555)).toBe(888)
+  })
+
+  it('falls back to null when no row is held and groupid matches no row', () => {
+    const groups = [
+      { groupid: 789, heldby: null },
+      { groupid: 999, heldby: null },
+    ]
+    expect(messageGroupHeldBy(groups, 555)).toBeNull()
+  })
+
+  it('returns null for empty/missing groups', () => {
+    expect(messageGroupHeldBy([], 789)).toBeNull()
+    expect(messageGroupHeldBy(null, 789)).toBeNull()
+    expect(messageGroupHeldBy(undefined, 789)).toBeNull()
   })
 })
