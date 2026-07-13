@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MessageHistory from '~/components/MessageHistory.vue'
 
-const { mockMessage, mockGroup, mockUser } = vi.hoisted(() => {
+const { mockMessage, mockGroup, mockUser, mockMod } = vi.hoisted(() => {
   return {
+    mockMod: ref(false),
     mockMessage: {
       id: 1,
       subject: 'OFFER: Sofa',
@@ -85,7 +86,7 @@ vi.mock('~/composables/useTimeFormat', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    mod: ref(false),
+    mod: mockMod,
   }),
 }))
 
@@ -104,6 +105,7 @@ describe('MessageHistory', () => {
     mockGroupStore.get.mockReturnValue(mockGroup)
     mockAuthStore.user = { id: 1, systemrole: 'User' }
     mockMiscStore.breakpoint = 'lg'
+    mockMod.value = false
   })
 
   function createWrapper(props = {}) {
@@ -264,6 +266,47 @@ describe('MessageHistory', () => {
       mockUserStore.fetch.mockClear()
       createWrapper()
       expect(mockUserStore.fetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('rippled-in copy attribution (Discourse 9890)', () => {
+    // A post approved by a human mod (200) on its origin group (100) rippled
+    // into group 300, where it was auto-approved (approvedby is null there -
+    // no moderator on 300 has ever seen or approved it).
+    const rippledMessage = {
+      ...mockMessage,
+      groups: [
+        {
+          groupid: 100,
+          arrival: '2024-01-15T10:00:00Z',
+          collection: 'Approved',
+          approvedby: 200,
+          rippled_in: 0,
+        },
+        {
+          groupid: 300,
+          arrival: '2024-01-15T10:05:00Z',
+          collection: 'Approved',
+          approvedby: null,
+          rippled_in: 1,
+        },
+      ],
+    }
+
+    beforeEach(() => {
+      mockAuthStore.user = { id: 1, systemrole: 'Moderator' }
+      mockMod.value = true
+      mockMessageStore.byId.mockReturnValue(rippledMessage)
+    })
+
+    it('does not attribute the rippled-in copy to the origin group approving mod', () => {
+      const wrapper = createWrapper({ modinfo: true, onlyGroupid: 300 })
+      expect(wrapper.text()).not.toContain('Approved by')
+    })
+
+    it('still attributes the origin group copy to its own approving mod', () => {
+      const wrapper = createWrapper({ modinfo: true, onlyGroupid: 100 })
+      expect(wrapper.text()).toContain('Approved by Mod User')
     })
   })
 

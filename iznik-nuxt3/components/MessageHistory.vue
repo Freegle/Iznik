@@ -67,8 +67,11 @@
         </span>
         <span v-else> IP unavailable. </span>
       </span>
-      <span v-if="approvedby && showSummaryDetails" class="text-faded small">
-        Approved by {{ approvedby }}
+      <span
+        v-if="approvedByFor(group) && showSummaryDetails"
+        class="text-faded small"
+      >
+        Approved by {{ approvedByFor(group) }}
       </span>
     </div>
     <div
@@ -190,27 +193,23 @@ const showSummaryDetails = computed(() => {
   )
 })
 
-const approvedby = computed(() => {
-  let result = ''
+// Approving mod for one specific group row, never borrowed from a sibling group on the
+// same message - a rippled-in copy is auto-approved (approvedby is null) independently of
+// whatever human approval happened on the post's origin group, so each row must only ever
+// reflect its own group's approvedby (Discourse 9890: a rippled-in copy was mis-shown as
+// approved by the origin group's moderator).
+function approvedByFor(group) {
+  if (!mod.value || !group?.approvedby) return ''
 
-  if (mod.value) {
-    for (const group of message.value?.groups || []) {
-      if (group.approvedby) {
-        // Handle both Go API (numeric ID) and PHP API (object with displayname)
-        if (Number.isInteger(group.approvedby)) {
-          // Go API returns numeric ID - look up in userStore
-          const user = userStore.byId(group.approvedby)
-          result = user?.displayname || ''
-        } else {
-          // PHP API returns object with displayname
-          result = group.approvedby.displayname
-        }
-      }
-    }
+  // Handle both Go API (numeric ID) and PHP API (object with displayname)
+  if (Number.isInteger(group.approvedby)) {
+    // Go API returns numeric ID - look up in userStore
+    const user = userStore.byId(group.approvedby)
+    return user?.displayname || ''
   }
-
-  return result
-})
+  // PHP API returns object with displayname
+  return group.approvedby.displayname
+}
 
 const groups = computed(() => {
   const ret = {}
