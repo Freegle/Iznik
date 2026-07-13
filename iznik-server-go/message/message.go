@@ -3262,6 +3262,21 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 			req.Locationid = &locID
 		}
 	}
+	// A caller that supplies fresh coordinates without an explicit location name/id
+	// (the TN partner only ever knows GPS coordinates for a post, never Freegle's
+	// internal location rows) would otherwise leave locationid untouched. Since the
+	// subject's derived "vague postcode" (constructLocationString) and the mod/owner
+	// -facing location object are both read from locationid rather than lat/lng, that
+	// left the displayed postcode permanently pinned to whatever it was before the
+	// edit — uncorrectable, because every subsequent TN edit repeats the same gap
+	// (Discourse 9908). Re-derive the nearest postcode from the new coordinates,
+	// mirroring the same lat/lng fallback already used when reading a message back.
+	if req.Lat != nil && req.Lng != nil && (req.Locationid == nil || *req.Locationid == 0) {
+		nearest := location.ClosestPostcode(float32(*req.Lat), float32(*req.Lng))
+		if nearest.ID > 0 {
+			req.Locationid = &nearest.ID
+		}
+	}
 	if req.Locationid != nil {
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
