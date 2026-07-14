@@ -79,6 +79,18 @@ func SubmitMessage(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// The group must actually exist. Without this an invalid/deleted groupid sails
+	// past the (groupid != 0) check above; the FK-constrained auto-join and
+	// messages_groups inserts below then fail silently (their errors are not checked)
+	// while the messages row - which has no group FK - is still created, so we would
+	// report success for a post linked to no group and invisible everywhere. Reject
+	// it up front, before find-or-creating a user for a submit that cannot succeed.
+	var groupExists int64
+	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", req.Groupid).Scan(&groupExists)
+	if groupExists == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Group not found")
+	}
+
 	// Unauthenticated: an email find-or-creates the user and yields a JWT so the
 	// single call works for logged-out posters too.
 	var jwtString string
@@ -205,10 +217,15 @@ func SubmitMessage(c *fiber.Ctx) error {
 		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgid)
 	}
 
-	// Item + messages_items.
-	db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
-	var itemID uint64
-	db.Raw("SELECT id FROM items WHERE name = ? LIMIT 1", req.Item).Scan(&itemID)
+	// Item + messages_items. Take the item id from the write connection via
+	// ExecInsertGetID: a separate "SELECT id FROM items WHERE name = ?" can be routed
+	// to a lagging read replica under the DB read/write split and return 0 rows,
+	// silently skipping the messages_items link so the post never shows in
+	// browse/search-by-item (the Discourse 9832 "mixed up offers" class of bug). The
+	// message-row insert above already uses LastInsertId for exactly this reason, and
+	// message.go:3160/3915 use ExecInsertGetID for this identical items INSERT.
+	itemID, _ := database.ExecInsertGetID(db,
+		"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
 	if itemID > 0 {
 		db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", msgid, itemID)
 	}
@@ -240,9 +257,13 @@ func SubmitMessage(c *fiber.Ctx) error {
 	}
 
 	// Post it: into the group with the collection decided above, plus posting +
-	// history records and the internal fromaddr.
-	db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
-		msgid, req.Groupid, collection)
+	// history records and the internal fromaddr. Check the group link actually
+	// landed - it is what makes the post visible, so a failure here must be a real
+	// error to the client, not a silently-swallowed one behind a Success response.
+	if res := db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
+		msgid, req.Groupid, collection); res.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to post message to group")
+	}
 	db.Exec("INSERT INTO messages_postings (msgid, groupid) VALUES (?, ?)", msgid, req.Groupid)
 
 	fromaddr := user.GetOrCreateInternalEmail(db, myid)

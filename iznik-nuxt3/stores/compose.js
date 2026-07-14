@@ -58,6 +58,12 @@ export const useComposeStore = defineStore('compose', {
     max: 4,
     uploading: false,
     lastSubmitted: 0,
+    // True while a submit (a normal freegleIt or a login-deferred resume) is in
+    // flight. Guards against a second concurrent submit of the same drafts - e.g.
+    // the user clicking "Freegle it!" while the detached resume-after-login submit
+    // is still running - which would otherwise double-post. Reset in init() too, in
+    // case a hard crash mid-submit persisted it truthy.
+    submitting: false,
     // In-progress bulk "clearance" (pages/give/clearance.vue). Held here so it
     // survives a refresh via this store's localStorage persistence — a clearance
     // holds far more (many items + photos) than a normal post, so losing it hurts.
@@ -75,6 +81,9 @@ export const useComposeStore = defineStore('compose', {
     init(config) {
       this.config = config
       this.$api = api(config)
+      // Never start a session mid-submit: clear a stale flag that a crash between
+      // setting submitting=true and the finally could have persisted to localStorage.
+      this.submitting = false
     },
     // Save / clear the in-progress clearance draft (persisted to localStorage).
     saveClearanceDraft(draft) {
@@ -347,20 +356,30 @@ export const useComposeStore = defineStore('compose', {
       if (pending.at && Date.now() - pending.at > PENDING_SUBMIT_TTL) {
         return null
       }
-      const ret = await this.submitSingle(
-        pending.message,
-        pending.email,
-        pending.options
-      )
-      // Only reached on success (submitSingle throws otherwise — and we deliberately
-      // do NOT clear the draft on failure, so the user can retry rather than lose it).
-      // Clear just the submitted type so a parallel draft of the other type survives,
-      // then land on My Posts.
-      this.clearMessagesOfType(pending.message?.type)
-      if (ret?.id) {
-        navigateTo({ name: 'myposts' })
+      // A submit is already running (e.g. the user also clicked "Freegle it!" while
+      // this deferred resume was firing). Never post the same draft twice.
+      if (this.submitting) {
+        return null
       }
-      return ret
+      this.submitting = true
+      try {
+        const ret = await this.submitSingle(
+          pending.message,
+          pending.email,
+          pending.options
+        )
+        // Only reached on success (submitSingle throws otherwise — and we deliberately
+        // do NOT clear the draft on failure, so the user can retry rather than lose it).
+        // Clear just the submitted type so a parallel draft of the other type survives,
+        // then land on My Posts.
+        this.clearMessagesOfType(pending.message?.type)
+        if (ret?.id) {
+          navigateTo({ name: 'myposts' })
+        }
+        return ret
+      } finally {
+        this.submitting = false
+      }
     },
     async submitDraft(id, email, options = {}) {
       console.log('Submit draft', id, email, options)
@@ -642,6 +661,21 @@ export const useComposeStore = defineStore('compose', {
       }
     },
     async submit(params) {
+      if (this.submitting) {
+        // A submit is already running (typically the login-deferred resume fired
+        // from setUser()). Firing a second one for the same not-yet-submitted
+        // drafts would create a duplicate post, so bail out cleanly - the in-flight
+        // submit will complete and navigate to My Posts on its own.
+        return []
+      }
+      this.submitting = true
+      try {
+        return await this._submitInner(params)
+      } finally {
+        this.submitting = false
+      }
+    },
+    async _submitInner(params) {
       // This is the most important bit of code in the client :-).  We have our messages in the compose store.
       //
       // For messages we've just created, the server has a two stage process - create a draft and submit it, so that's
@@ -723,11 +757,14 @@ export const useComposeStore = defineStore('compose', {
               const hasRealPhoto = message.attachments.some(
                 (a) =>
                   !(a.externalmods && a.externalmods.ai) &&
-                  ((a.id && typeof a.id === 'number') || a.ouruid || a.externaluid)
+                  ((a.id && typeof a.id === 'number') ||
+                    a.ouruid ||
+                    a.externaluid)
               )
 
               for (const attachment of message.attachments) {
-                const isAi = attachment.externalmods && attachment.externalmods.ai
+                const isAi =
+                  attachment.externalmods && attachment.externalmods.ai
                 // Suppress the AI illustration when a real photo is present.
                 if (isAi && hasRealPhoto) {
                   continue
@@ -846,7 +883,12 @@ export const useComposeStore = defineStore('compose', {
         return
       }
       this.messages = this.messages.filter(
-        (m) => m && !m.submitted && m.type !== type
+        // Keep un-submitted drafts of a different type, and also keep an un-submitted
+        // repost of this type: a login-deferred resume submits only the single
+        // captured draft, so a parallel repost-in-progress of the same type must not
+        // be silently wiped. (After a normal submit() every processed message - reposts
+        // included - is already marked submitted, so this never leaves a stub behind.)
+        (m) => m && !m.submitted && (m.type !== type || m.repostof)
       )
     },
   },

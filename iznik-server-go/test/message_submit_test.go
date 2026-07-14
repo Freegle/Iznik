@@ -337,3 +337,69 @@ func TestSubmitMessageExistingEmailLoggedOutRejected(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages WHERE fromuser = ?", existingUID).Scan(&msgCount)
 	assert.Equal(t, int64(0), msgCount, "must not post on the existing account's behalf")
 }
+
+// TestSubmitMessageNonexistentGroup covers the guard against a stale/invalid groupid.
+// Previously (groupid != 0) was the only check, so a nonexistent group sailed through:
+// the FK-constrained memberships/messages_groups inserts failed silently (their errors
+// were not checked) while the messages row - which has no group FK - was still created,
+// and the endpoint returned Success for a post linked to no group and invisible
+// everywhere. The endpoint must now reject with 400 and create no orphan message.
+func TestSubmitMessageNonexistentGroup(t *testing.T) {
+	prefix := uniquePrefix("submit_nogroup")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	var maxGroup uint64
+	db.Raw("SELECT COALESCE(MAX(id), 0) FROM `groups`").Scan(&maxGroup)
+	badGroup := maxGroup + 1000000 // guaranteed not to exist
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "Offer", "item": "Orphan Sofa " + prefix, "groupid": badGroup, "availablenow": 1,
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode, "a nonexistent groupid must be rejected, not silently orphaned")
+
+	// No orphan message may have been created for this user.
+	var msgCount int64
+	db.Raw("SELECT COUNT(*) FROM messages WHERE fromuser = ?", userID).Scan(&msgCount)
+	assert.Equal(t, int64(0), msgCount, "must not create an orphan message for a nonexistent group")
+}
+
+// TestSubmitMessageLinksNewItem covers the item link for a brand-new item name. The
+// endpoint must resolve the freshly-inserted items.id from the WRITE connection
+// (database.ExecInsertGetID) and link it via messages_items - not via a separate
+// "SELECT id FROM items WHERE name = ?" that the read/write split can route to a
+// lagging replica returning 0, which would silently drop the link and hide the post
+// from browse/search-by-item (the Discourse 9832 "mixed up offers" class of bug).
+func TestSubmitMessageLinksNewItem(t *testing.T) {
+	prefix := uniquePrefix("submit_item")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	itemName := "Freshitem " + prefix // unique, does not pre-exist in items
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "Offer", "item": itemName, "groupid": groupID, "availablenow": 1,
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	msgID := uint64(result["id"].(float64))
+	assert.Greater(t, msgID, uint64(0))
+
+	db := database.DBConn
+	var linkedItemID, itemsRowID uint64
+	db.Raw("SELECT itemid FROM messages_items WHERE msgid = ? LIMIT 1", msgID).Scan(&linkedItemID)
+	db.Raw("SELECT id FROM items WHERE name = ? LIMIT 1", itemName).Scan(&itemsRowID)
+	assert.Greater(t, linkedItemID, uint64(0), "messages_items link must be created for a new item")
+	assert.Equal(t, itemsRowID, linkedItemID, "messages_items must link the correct items.id")
+}
