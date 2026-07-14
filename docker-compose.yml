@@ -569,8 +569,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - SUPPORT_AI_MODEL=${SUPPORT_AI_MODEL:-claude-sonnet-4-20250514}
       # Go API: verifies the caller is a mod/support/admin AND serves get_user_dump.
-      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
-      - API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      - API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
       # Read-only DB. Local: the whole-stack percona. Edge: a read-only grant on a read replica.
       - DB_HOST=${SUPPORT_DB_HOST:-percona}
       - DB_PORT=${SUPPORT_DB_PORT:-3306}
