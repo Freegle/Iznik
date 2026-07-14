@@ -8751,6 +8751,60 @@ func TestListMessagesGroupsIncludesHeldby(t *testing.T) {
 	assert.True(t, found, "Message should appear in list")
 }
 
+// Regression: a moderator's already-approved copy of a rippled post must not show as held
+// just because a DIFFERENT group's copy of the same post is held. The GET /api/message/:id
+// payload used to include the legacy cross-group messages.heldby field, which is set
+// whenever ANY group holds ANY copy - so a mod on the (unheld, approved) origin group saw
+// their copy displayed as held by a moderator on the group that rippled it in and held it
+// there. The fix removes that field from the payload; every caller must use the per-group
+// groups[].heldby, which is correctly scoped (Discourse 9904).
+func TestGetMessageOmitsLegacyCrossGroupHeldby(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msg_crossheld")
+
+	groupA := CreateTestGroup(t, prefix+"_a") // mine: approved, unheld
+	groupB := CreateTestGroup(t, prefix+"_b") // rippled-to: held
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	otherModID := CreateTestUser(t, prefix+"_othermod", "Moderator")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := CreateTestMessage(t, posterID, groupA, prefix+" Test Item", 55.9533, -3.1883)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, heldby) "+
+		"VALUES (?, ?, NOW(), 'Pending', 0, ?)", msgID, groupB, otherModID)
+	// handleHold also mirrors the hold onto the legacy message-level field - simulate that.
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", otherModID, msgID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	json2.Unmarshal(rsp(resp), &raw)
+
+	_, hasHeldby := raw["heldby"]
+	assert.False(t, hasHeldby, "response must not expose the legacy cross-group messages.heldby field")
+
+	groups, ok := raw["groups"].([]interface{})
+	require.True(t, ok, "response should include groups")
+	var sawA, sawB bool
+	for _, gi := range groups {
+		g := gi.(map[string]interface{})
+		switch uint64(g["groupid"].(float64)) {
+		case groupA:
+			sawA = true
+			assert.Nil(t, g["heldby"], "group A's own copy is not held and must not appear held")
+		case groupB:
+			sawB = true
+			assert.Equal(t, float64(otherModID), g["heldby"], "group B's copy is held by otherModID")
+		}
+	}
+	assert.True(t, sawA, "group A should be present")
+	assert.True(t, sawB, "group B should be present")
+}
+
 // Cross-group authorization tests: a mod of group A must not be able to
 // perform moderation actions on a message that's only on group B, even
 // though the message is visible to them (because they mod one of its groups).

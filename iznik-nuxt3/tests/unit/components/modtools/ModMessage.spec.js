@@ -452,7 +452,11 @@ describe('ModMessage', () => {
         {
           spamreason: 'Flagged as spam',
           groups: [
-            { groupid: 789, collection: 'Pending', spamreason: 'Flagged as spam' },
+            {
+              groupid: 789,
+              collection: 'Pending',
+              spamreason: 'Flagged as spam',
+            },
           ],
         }
       )
@@ -826,12 +830,23 @@ describe('ModMessage', () => {
 
   describe('Held message', () => {
     it('shows release button when held, warning when held by someone else', async () => {
+      // Held state is scoped to THIS group's own row (groupid 789, matching
+      // authStore/myModGroups) - not the legacy top-level message.heldby
+      // (Discourse 9904).
       const wrapper1 = mountComponent(
         {
           summary: false,
         },
         {
-          heldby: { id: 999, displayname: 'Test Mod' },
+          heldby: 999,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              heldby: 999,
+            },
+          ],
         }
       )
       await wrapper1.vm.$nextTick()
@@ -842,11 +857,66 @@ describe('ModMessage', () => {
           summary: false,
         },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()
       expect(wrapper2.text()).toContain('Held by')
+    })
+
+    it('does not show a held banner when this group is unheld even though the legacy cross-group message.heldby is set by a rippled-to group holding its own copy (Discourse 9904)', async () => {
+      const wrapper = mountComponent(
+        {
+          summary: false,
+        },
+        {
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Approved',
+              heldby: null,
+            },
+            {
+              groupid: 790,
+              namedisplay: 'Other Group',
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('Held by')
+      expect(wrapper.text()).not.toContain('Held on another group')
+    })
+
+    it('fails safe with generic wording (no named mod) when this group cannot be identified at all but the legacy field says it is held somewhere', async () => {
+      // Defensive fallback only: no group rows to match against (e.g. still loading), but
+      // the legacy cross-group field says SOME copy is held. We must not guess which mod -
+      // they may not be on a group this reader can act on.
+      const wrapper = mountComponent(
+        {
+          summary: false,
+        },
+        {
+          heldby: 888,
+          groups: [],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Held on another group')
+      expect(wrapper.text()).not.toContain('Held by')
+      expect(wrapper.text()).not.toContain('Other Mod')
     })
   })
 
@@ -1238,7 +1308,15 @@ describe('ModMessage', () => {
       const wrapper2 = mountComponent(
         { summary: false },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()
@@ -1408,7 +1486,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1433,7 +1516,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1446,9 +1534,9 @@ describe('ModMessage', () => {
         }
       )
       expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
-      expect(
-        wrapper.find('[data-test="ripple-proximity-note"]').exists()
-      ).toBe(false)
+      expect(wrapper.find('[data-test="ripple-proximity-note"]').exists()).toBe(
+        false
+      )
     })
 
     it('does not warn when the post has not rippled in', () => {

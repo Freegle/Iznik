@@ -59,8 +59,8 @@
           community where it was first posted.
         </p>
         <p class="mb-0">
-          The freegler won't be told, because they don't need to know unless it's
-          rejected on their home community. So there's no message to send.
+          The freegler won't be told, because they don't need to know unless
+          it's rejected on their home community. So there's no message to send.
         </p>
       </template>
     </ConfirmModal>
@@ -74,6 +74,7 @@ import { useMessageStore } from '~/stores/message'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { useUserStore } from '~/stores/user'
 import { useModMe } from '~/composables/useModMe'
+import { messageGroupHeldById } from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -239,7 +240,13 @@ const spinclass = computed(() => {
 
 const confirmButton = computed(() => {
   // We confirm any actions on held messages, except where we have a separate confirm.
-  return message.value?.heldby && !props.spam && !props.delete
+  // Scoped to THIS group's own row - never the legacy cross-group message.heldby, which
+  // is set whenever ANY group holds ANY copy of a rippled post (Discourse 9904).
+  return (
+    typeof messageGroupHeldById(message.value, groupid.value) === 'number' &&
+    !props.spam &&
+    !props.delete
+  )
 })
 
 async function approveIt() {

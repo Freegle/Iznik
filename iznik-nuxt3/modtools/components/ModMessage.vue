@@ -323,7 +323,7 @@
                 at
                 {{ datetimeshort(message.outcomes[0].timestamp) }}
               </NoticeMessage>
-              <div v-if="message.heldby">
+              <div v-if="heldByThisGroup">
                 <NoticeMessage variant="warning" class="mb-2">
                   <p v-if="me.id === heldbyId">
                     You held this. Other people will see a warning to check with
@@ -342,6 +342,13 @@
                     release
                     label="Release"
                   />
+                </NoticeMessage>
+              </div>
+              <div v-else-if="heldByUnknownGroup">
+                <NoticeMessage variant="warning" class="mb-2">
+                  <p>
+                    Held on another group. Please check before releasing it.
+                  </p>
                 </NoticeMessage>
               </div>
             </div>
@@ -721,7 +728,7 @@
         </b-row>
       </b-card-body>
       <b-card-footer v-if="!noactions && expanded">
-        <div v-if="message.heldby && heldbyId !== myid">
+        <div v-if="heldAndNotByMe">
           This message is held by someone else. The buttons are hidden so you
           don't click them by accident. Please check with them before releasing
           the message.
@@ -734,11 +741,7 @@
           This message needs editing so that we know where it is.
         </NoticeMessage>
         <div
-          v-if="
-            pending &&
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="pending && !heldAndNotByMe && !editing"
           class="text-end mb-1"
         >
           <b-button variant="danger" @click="spamReport">
@@ -746,10 +749,7 @@
           </b-button>
         </div>
         <ModMessageButtons
-          v-if="
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="!heldAndNotByMe && !editing"
           :messageid="message.id"
           :groupid="currentGroupid"
           :modconfigid="configid"
@@ -832,6 +832,7 @@ import {
   isRippledInToContextGroup as isRippledIn,
   earliestArrivalGroupId,
   homeGroupId,
+  messageGroupHeldById,
 } from '~/composables/rippleStatus'
 
 const props = defineProps({
@@ -1113,7 +1114,9 @@ const isRippledInToContextGroup = computed(() =>
 // (both fields non-null) when the routing server said quicker=true at ripple-in time.
 const rippleProximity = computed(() => {
   const gid = currentGroupid.value
-  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  const g = (message.value?.groups || []).find(
+    (row) => parseInt(row.groupid) === gid
+  )
   if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
     return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
   }
@@ -1177,23 +1180,43 @@ const eBody = computed(() => {
   return twem(message.value.textbody)
 })
 
-// Handle heldby as either numeric ID (Go API) or object (PHP API).
+// Held state for the group this copy is being administered on - i.e. this group's own
+// messages_groups row, never the legacy cross-group messages.heldby, which is set whenever
+// ANY group holds ANY copy of a rippled post. Reading that legacy field leaked a hold placed
+// on one group's copy into every other group's (already-approved, unheld) view of the same
+// message (Discourse 9904).
+const heldByThisGroupResult = computed(() =>
+  messageGroupHeldById(message.value, currentGroupid.value)
+)
+
+const heldByThisGroup = computed(
+  () => typeof heldByThisGroupResult.value === 'number'
+)
+
+// Fail-safe fallback: we couldn't identify this group's own row at all (message still
+// loading, or currentGroupid doesn't correspond to any group on the post), but the legacy
+// field says it's held somewhere. We deliberately don't name a holder here - they may be a
+// moderator on a group this reader can't act on or even see.
+const heldByUnknownGroup = computed(
+  () =>
+    heldByThisGroupResult.value === undefined && Boolean(message.value?.heldby)
+)
+
 const heldbyId = computed(() => {
-  if (!message.value) return null
-  const h = message.value.heldby
-  if (!h) return null
-  return Number.isInteger(h) ? h : h.id
+  return heldByThisGroup.value ? heldByThisGroupResult.value : null
 })
 
 const heldbyName = computed(() => {
-  if (!message.value) return ''
-  const h = message.value.heldby
-  if (!h) return ''
-  if (Number.isInteger(h)) {
-    const user = userStore.byId(h)
-    return user?.displayname || ''
-  }
-  return h.displayname || ''
+  if (!heldByThisGroup.value) return ''
+  const user = userStore.byId(heldbyId.value)
+  return user?.displayname || ''
+})
+
+// Should action buttons be hidden because this group's own copy is held by somebody
+// else (or, in the fail-safe fallback, might be)?
+const heldAndNotByMe = computed(() => {
+  if (heldByThisGroup.value) return heldbyId.value !== myid.value
+  return heldByUnknownGroup.value
 })
 
 const membership = computed(() => {
@@ -1443,9 +1466,9 @@ onMounted(() => {
       : []
     findHomeGroup()
 
-    // Fetch heldby user if message is held (Go API returns numeric ID).
-    if (message.value.heldby && Number.isInteger(message.value.heldby)) {
-      userStore.fetch(message.value.heldby)
+    // Fetch heldby user if this group's own copy is held (Go API returns numeric ID).
+    if (heldByThisGroup.value) {
+      userStore.fetch(heldbyId.value)
     }
   }
 })

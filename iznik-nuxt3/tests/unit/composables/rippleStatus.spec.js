@@ -6,6 +6,7 @@ import {
   homeGroupFirst,
   isHomeGroup,
   RIPPLE_ORIGIN_WINDOW_MS,
+  messageGroupHeldById,
 } from '~/composables/rippleStatus'
 
 // Helper: an ISO arrival N minutes after a fixed base.
@@ -359,5 +360,64 @@ describe('isHomeGroup', () => {
     expect(isHomeGroup(null, groups)).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, [])).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, null)).toBe(false)
+  })
+})
+
+describe('messageGroupHeldById (Discourse 9904)', () => {
+  it("returns null when this group's own row is not held, even though another group holds its copy", () => {
+    // The exact 9904 scenario: my group's copy was approved (heldby null), but the post
+    // rippled to another group whose copy is held. The legacy message.heldby is set (some
+    // copy is held somewhere) but must never leak into my group's result.
+    const message = {
+      heldby: 1,
+      groups: [
+        { groupid: 10, heldby: null },
+        { groupid: 20, heldby: 1 },
+      ],
+    }
+    expect(messageGroupHeldById(message, 10)).toBeNull()
+  })
+
+  it("returns the holder id when this group's own row is held", () => {
+    const message = {
+      heldby: 1,
+      groups: [
+        { groupid: 10, heldby: null },
+        { groupid: 20, heldby: 1 },
+      ],
+    }
+    expect(messageGroupHeldById(message, 20)).toBe(1)
+  })
+
+  it('coerces a numeric-string groupid and a numeric-string heldby identically', () => {
+    const message = {
+      groups: [{ groupid: '20', heldby: '7' }],
+    }
+    expect(messageGroupHeldById(message, '20')).toBe(7)
+    expect(messageGroupHeldById(message, 20)).toBe(7)
+  })
+
+  it('coerces an object-shaped heldby ({id}) to its numeric id', () => {
+    const message = {
+      groups: [{ groupid: 20, heldby: { id: 5 } }],
+    }
+    expect(messageGroupHeldById(message, 20)).toBe(5)
+  })
+
+  it('returns undefined (not a guessed holder) when no row matches the groupid', () => {
+    const message = {
+      heldby: 1,
+      groups: [{ groupid: 20, heldby: 1 }],
+    }
+    expect(messageGroupHeldById(message, 30)).toBeUndefined()
+  })
+
+  it('returns undefined for missing/empty groups or unresolvable groupid', () => {
+    expect(messageGroupHeldById({ groups: [] }, 10)).toBeUndefined()
+    expect(messageGroupHeldById({}, 10)).toBeUndefined()
+    expect(messageGroupHeldById(null, 10)).toBeUndefined()
+    expect(
+      messageGroupHeldById({ groups: [{ groupid: 10, heldby: 1 }] }, null)
+    ).toBeUndefined()
   })
 })

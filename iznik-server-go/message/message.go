@@ -224,7 +224,14 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby           *uint64    `json:"heldby"`
+	// Heldby is the legacy cross-group hold field: it's set whenever ANY group holds ANY
+	// copy of a rippled post, so it can't tell a moderator whether THEIR group's copy is
+	// held. It's deliberately not serialised - callers must use groups[].heldby (this
+	// message's per-group MessageGroup rows), which is scoped to the exact group. Serving
+	// this field let a hold placed on one group's copy leak into every other group's view
+	// of the same message, showing an already-approved copy as held by an unrelated
+	// moderator on an unrelated group (Discourse 9904).
+	Heldby           *uint64    `json:"-"`
 	Source           *string    `json:"source"`
 	Sourceheader     *string    `json:"sourceheader"`
 	Fromaddr         *string    `json:"fromaddr"`
