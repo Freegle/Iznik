@@ -281,6 +281,14 @@ class AutoRepostService
             ->where('messages_groups.arrival', '>', $mindate)
             ->where('messages_groups.groupid', $groupid)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            // The membership itself must be live. Rippling's "removed on origin removal" (and
+            // group-leave retraction) soft-deletes a rippled-in messages_groups row with
+            // deleted=1 while leaving collection=Approved and the parent messages.deleted NULL.
+            // Without this filter autorepost reposts that dead membership, stamping arrival=NOW()
+            // and resurrecting a copy rippling had already pulled — which then leaks back into
+            // browse and the spatial index (and races purge:messages there). messages.deleted
+            // below only covers the parent message, not the per-group membership.
+            ->where('messages_groups.deleted', 0)
             ->whereNull('messages_outcomes.msgid')
             ->whereNull('messages_promises.msgid')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
