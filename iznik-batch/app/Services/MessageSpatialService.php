@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Message;
 use App\Models\MessageGroup;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -78,25 +79,48 @@ class MessageSpatialService
             ->get();
 
         $count = 0;
+        $skippedVanished = 0;
         foreach ($msgs as $msg) {
             if (!$dryRun) {
                 // Coordinates come from DB, not user input — safe to embed in WKT.
                 $wkt = "POINT({$msg->lng} {$msg->lat})";
                 $srid = self::SRID;
 
-                DB::statement(
-                    "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-                     VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
-                     ON DUPLICATE KEY UPDATE
-                       point = ST_GeomFromText('$wkt', $srid),
-                       groupid = ?,
-                       msgtype = ?,
-                       arrival = ?",
-                    [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
-                     $msg->groupid, $msg->msgtype, $msg->arrival]
-                );
+                try {
+                    DB::statement(
+                        "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+                         VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
+                         ON DUPLICATE KEY UPDATE
+                           point = ST_GeomFromText('$wkt', $srid),
+                           groupid = ?,
+                           msgtype = ?,
+                           arrival = ?",
+                        [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
+                         $msg->groupid, $msg->msgtype, $msg->arrival]
+                    );
+                } catch (QueryException $e) {
+                    // errno 1452 = the messages_spatial->messages(id) FK failed: the parent
+                    // message no longer exists. The candidate list is SELECTed on the read
+                    // node (db2) but this INSERT runs on the write node (db3), and the split
+                    // is not sticky with wsrep_sync_wait=0, so Galera can still be applying a
+                    // delete on db2's queue that db3 has already committed. When purge:messages
+                    // (02:30 daily) hard-deletes a message, this reconciler — running every 5
+                    // minutes — can read the stale db2 row and then fail the insert on db3.
+                    // That message simply shouldn't be indexed: skip it and carry on. Aborting
+                    // here would drop every later upsert AND skip the four cleanup passes in
+                    // updateSpatialIndex() for a whole run. Re-throw anything that isn't 1452.
+                    if (($e->errorInfo[1] ?? null) !== 1452) {
+                        throw $e;
+                    }
+                    $skippedVanished++;
+                    continue;
+                }
             }
             $count++;
+        }
+
+        if ($skippedVanished > 0) {
+            Log::info("MessageSpatialIndex: skipped {$skippedVanished} recent upsert(s) whose message was deleted between the read-node snapshot and the write-node insert");
         }
 
         return $count;

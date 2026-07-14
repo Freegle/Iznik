@@ -92,6 +92,85 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $message->id)->count());
     }
 
+    public function test_message_deleted_between_snapshot_and_insert_is_skipped_not_fatal(): void
+    {
+        // upsertRecentMessages SELECTs its candidates on the read node (db2) and INSERTs on the
+        // write node (db3). The split is not sticky and Galera runs with wsrep_sync_wait=0, so a
+        // delete committed on db3 can still be in db2's apply queue when the SELECT reads. When
+        // purge:messages (02:30 daily) hard-deletes a message, this every-5-minute reconciler can
+        // read the stale still-present row and then fail the insert on the FK to messages(id)
+        // (errno 1452). That one vanished message must NOT abort the run — otherwise every later
+        // upsert is dropped and all four cleanup passes are skipped. It must be skipped, and a
+        // valid sibling must still be indexed.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // The message that will be deleted mid-run.
+        $doomed = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: vanishing (London)',
+            'textbody' => 'Gone before insert.',
+            'source' => 'Platform',
+            'date' => now()->subDays(3),
+            'arrival' => now()->subDays(3),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $doomed->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(3),
+        ]);
+
+        // A valid sibling that must still be indexed despite the sibling's disappearance.
+        $survivor = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: survivor (London)',
+            'textbody' => 'Still here.',
+            'source' => 'Platform',
+            'date' => now()->subDays(3),
+            'arrival' => now()->subDays(3),
+            'lat' => 51.6,
+            'lng' => -0.2,
+        ]);
+        MessageGroup::create([
+            'msgid' => $survivor->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(3),
+        ]);
+
+        // Reproduce the race deterministically: the candidate SELECT is the only query carrying an
+        // ST_X() term (its change-detection WHERE). DB::listen fires after a query completes, which
+        // is exactly the snapshot->insert gap — hard-delete the doomed message there, before the
+        // per-row inserts run. Scoped to $doomed->id so it is a harmless no-op if it ever re-fires.
+        $done = false;
+        DB::listen(function ($query) use ($doomed, &$done) {
+            if (!$done && stripos($query->sql, 'st_x(') !== false) {
+                $done = true;
+                DB::table('messages_groups')->where('msgid', $doomed->id)->delete();
+                DB::table('messages')->where('id', $doomed->id)->delete();
+            }
+        });
+
+        // Must not throw, even though the doomed message's parent row is gone at insert time.
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $doomed->id)->count(),
+            'the deleted message is not indexed'
+        );
+        $this->assertEquals(
+            1,
+            DB::table('messages_spatial')->where('msgid', $survivor->id)->count(),
+            'the valid sibling is still indexed — the loop was not aborted by the vanished message'
+        );
+    }
+
     public function test_pending_rippled_in_row_keeps_approved_origin_spatial_row(): void
     {
         // #6 regression: removeNonApprovedMessages keys on (msgid, groupid), not msgid alone.
