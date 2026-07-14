@@ -300,7 +300,11 @@ async function report() {
   for (const groupid of targetIds) {
     try {
       const chatid = await chatStore.openChatToMods(groupid)
-      await chatStore.send(chatid, reportMessage, null, null, props.id)
+      await chatStore.send({
+        chatid,
+        message: reportMessage,
+        refmsgid: props.id,
+      })
       anySucceeded = true
     } catch (error) {
       console.error('Failed to submit report to group ' + groupid, error)

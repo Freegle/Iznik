@@ -256,7 +256,10 @@ describe('ChatMessageAddress', () => {
       const wrapper = createWrapper()
       wrapper.vm.showAddress = true
       await wrapper.vm.sendAddress(456)
-      expect(mockChatStore.send).toHaveBeenCalledWith(1, null, 456)
+      expect(mockChatStore.send).toHaveBeenCalledWith({
+        chatid: 1,
+        addressid: 456,
+      })
       expect(wrapper.vm.showAddress).toBe(false)
     })
   })

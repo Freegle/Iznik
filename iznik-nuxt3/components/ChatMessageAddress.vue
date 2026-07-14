@@ -196,7 +196,7 @@ const addressClosed = async () => {
 }
 
 const sendAddress = async (id) => {
-  await chatStore.send(props.chatid, null, id)
+  await chatStore.send({ chatid: props.chatid, addressid: id })
   showAddress.value = false
 }
 

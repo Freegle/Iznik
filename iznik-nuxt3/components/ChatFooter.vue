@@ -369,7 +369,7 @@ import { Dropdown } from 'floating-vue'
 import { storeToRefs } from 'pinia'
 import { FAR_AWAY, TYPING_TIME_INVERVAL } from '../constants'
 import SpinButton from './SpinButton'
-import { setupChat } from '~/composables/useChat'
+import { setupChat, getSendIdempotencyKey } from '~/composables/useChat'
 import { useMiscStore } from '~/stores/misc'
 import { useMessageStore } from '~/stores/message'
 import { useChatDraftStore } from '~/stores/chatdraft'
@@ -453,6 +453,11 @@ const showProfileModal = ref(false)
 const showAddress = ref(false)
 const sendmessage = ref(null)
 const sendError = ref(null)
+// The { message, key } of the last unconfirmed send attempt, so a "tap Send to retry"
+// of the same not-yet-sent text reuses the idempotency key (Discourse #9913) - see
+// getSendIdempotencyKey. Cleared on success, on a definitive 404 (the send never
+// reached the server - see below), and when switching to a different chat.
+const pendingSend = ref(null)
 // Composing-draft persistence: how long after the last keystroke the draft is saved.
 const DRAFT_SAVE_DEBOUNCE = 500
 let draftSaveTimer = null
@@ -805,13 +810,22 @@ const send = async (callback) => {
       // Encode up any emojis.
       msg = untwem(msg)
 
+      // Reuse the idempotency key from a previous failed attempt to send this exact
+      // pending text (a "tap Send to retry"), so that if that earlier request
+      // actually landed server-side despite the client seeing a failure, the server
+      // returns the existing message instead of creating a duplicate (Discourse
+      // #9913). Editing the text before retrying counts as a new logical send and
+      // gets a fresh key.
+      const idempotencyKey = getSendIdempotencyKey(pendingSend.value, msg)
+      pendingSend.value = { message: msg, key: idempotencyKey }
+
       // Send it. A failed send (e.g. a post that's since been purged -> 404) must not throw to the
       // global error.vue page: catch it, keep the typed text so they don't lose it, and show an
       // inline explanation instead. Note: a rippled post outside our reach no longer 403s — the
       // reply is now accepted and held server-side — so the 403 branch is a generic backstop.
       try {
         sendError.value = null
-        await chatStore.send(props.id, msg)
+        await chatStore.send({ chatid: props.id, message: msg, idempotencyKey })
       } catch (e) {
         sending.value = false
         const status = e?.response?.status
@@ -819,6 +833,10 @@ const send = async (callback) => {
           sendError.value =
             "Sorry, your message couldn't be sent just now. Please try again."
         } else if (status === 404) {
+          // A definitive rejection - the server never inserted a row (the refmsg-gone
+          // check runs before any insert), so there is nothing to dedupe against.
+          // Clear the pending key: a further attempt is a genuinely fresh send.
+          pendingSend.value = null
           sendError.value =
             "Sorry, this post is no longer available, so your message couldn't be sent."
         } else {
@@ -829,6 +847,7 @@ const send = async (callback) => {
       }
 
       // Clear the message now it's sent - and drop the saved draft so it can't be restored.
+      pendingSend.value = null
       sendmessage.value = ''
       if (draftSaveTimer) clearTimeout(draftSaveTimer)
       chatDraftStore.clearDraft(props.id)
@@ -855,7 +874,7 @@ const fetchMessages = async () => {
 }
 
 const sendAddress = async (id) => {
-  await chatStore.send(props.id, null, id)
+  await chatStore.send({ chatid: props.id, addressid: id })
   await _updateAfterSend()
 
   // If we've sent an address to someone who has recently replied to an offer, then it's quite likely that we
@@ -914,6 +933,10 @@ watch(
     if (saved && !sendmessage.value) {
       sendmessage.value = saved
     }
+
+    // A pending idempotency key is scoped to the chat it was created for - reusing it
+    // in a different chat would be meaningless (the server key is per chatid/userid).
+    pendingSend.value = null
   },
   { immediate: true }
 )
@@ -959,7 +982,7 @@ watch(
 
       newVal.forEach((att) => {
         console.log('Send', att.id, props.id)
-        promises.push(chatStore.send(props.id, null, null, att.id))
+        promises.push(chatStore.send({ chatid: props.id, imageid: att.id }))
       })
 
       await Promise.all(promises)

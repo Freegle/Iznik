@@ -105,4 +105,11 @@ export function useTrace() {
 }
 
 // Also export individual functions for use outside composable context.
-export { getSessionId, getTraceId, newTraceId, getTraceHeaders, onTraceChange }
+export {
+  getSessionId,
+  getTraceId,
+  newTraceId,
+  getTraceHeaders,
+  onTraceChange,
+  generateUUID,
+}

@@ -160,14 +160,11 @@ describe('ModChatNoteModal', () => {
 
       await wrapper.vm.addit()
 
-      expect(mockSend).toHaveBeenCalledWith(
-        123, // chatid
-        'Test mod note\n\nTest Group Volunteer', // message with group suffix
-        null, // addressid
-        null, // imageid
-        null, // refmsgid
-        true // modnote
-      )
+      expect(mockSend).toHaveBeenCalledWith({
+        chatid: 123,
+        message: 'Test mod note\n\nTest Group Volunteer', // message with group suffix
+        modnote: true,
+      })
     })
   })
 })

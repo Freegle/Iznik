@@ -217,15 +217,22 @@ describe('chat store', () => {
   })
 
   describe('send', () => {
+    // Every send now carries a server-enforced idempotency key (Discourse #9913), and
+    // the value is random (crypto.randomUUID), so assertions below check the fields
+    // that matter individually rather than a single toHaveBeenCalledWith literal.
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
     it('updates snippet in listByChatId immediately after sending', async () => {
       const store = useChatStore()
       store.config = {}
       store.listByChatId[10] = { id: 10, snippet: 'old message' }
       mockFetchMessages.mockResolvedValue([])
 
-      await store.send(10, 'new message')
+      await store.send({ chatid: 10, message: 'new message' })
 
-      expect(mockSend).toHaveBeenCalledWith({
+      expect(mockSend).toHaveBeenCalledTimes(1)
+      expect(mockSend.mock.calls[0][0]).toMatchObject({
         roomid: 10,
         message: 'new message',
       })
@@ -238,9 +245,17 @@ describe('chat store', () => {
       store.listByChatId[10] = { id: 10 }
       mockFetchMessages.mockResolvedValue([])
 
-      await store.send(10, 'hi', 1, 2, 3, true, 'browse')
+      await store.send({
+        chatid: 10,
+        message: 'hi',
+        addressid: 1,
+        imageid: 2,
+        refmsgid: 3,
+        modnote: true,
+        replysource: 'browse',
+      })
 
-      expect(mockSend).toHaveBeenCalledWith({
+      expect(mockSend.mock.calls[0][0]).toMatchObject({
         roomid: 10,
         message: 'hi',
         addressid: 1,
@@ -256,12 +271,15 @@ describe('chat store', () => {
       store.config = {}
       mockFetchMessages.mockResolvedValue([])
 
-      await store.send(10, 'hi', null, null, null, false)
+      await store.send({ chatid: 10, message: 'hi', modnote: false })
 
-      expect(mockSend).toHaveBeenCalledWith({
-        roomid: 10,
-        message: 'hi',
-      })
+      const sentData = mockSend.mock.calls[0][0]
+      expect(sentData.addressid).toBeUndefined()
+      expect(sentData.imageid).toBeUndefined()
+      expect(sentData.refmsgid).toBeUndefined()
+      expect(sentData.modnote).toBeUndefined()
+      expect(sentData.replysource).toBeUndefined()
+      expect(sentData).toMatchObject({ roomid: 10, message: 'hi' })
     })
 
     it('only sends replysource alongside a refmsgid (reply provenance, not chat chatter)', async () => {
@@ -269,12 +287,53 @@ describe('chat store', () => {
       store.config = {}
       mockFetchMessages.mockResolvedValue([])
 
-      await store.send(10, 'hi', null, null, null, false, 'browse')
+      await store.send({ chatid: 10, message: 'hi', replysource: 'browse' })
 
-      expect(mockSend).toHaveBeenCalledWith({
-        roomid: 10,
+      const sentData = mockSend.mock.calls[0][0]
+      expect(sentData.replysource).toBeUndefined()
+      expect(sentData).toMatchObject({ roomid: 10, message: 'hi' })
+    })
+
+    // Discourse #9913: the server dedupes on (chatid, userid, idempotencykey), so
+    // every send must carry a key - either the caller's (a retry reusing the same
+    // key) or a freshly generated one.
+    it('generates a fresh idempotency key when the caller does not supply one', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send({ chatid: 10, message: 'hi' })
+
+      expect(mockSend.mock.calls[0][0].idempotencykey).toMatch(UUID_RE)
+    })
+
+    it('passes a caller-supplied idempotency key through unchanged, so a retry of the same attempt dedupes server-side', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send({
+        chatid: 10,
         message: 'hi',
+        idempotencyKey: 'caller-retry-key',
       })
+
+      expect(mockSend.mock.calls[0][0].idempotencykey).toBe('caller-retry-key')
+    })
+
+    it('generates a different key for each independent send call', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send({ chatid: 10, message: 'hi' })
+      await store.send({ chatid: 10, message: 'bye' })
+
+      const key1 = mockSend.mock.calls[0][0].idempotencykey
+      const key2 = mockSend.mock.calls[1][0].idempotencykey
+      expect(key1).toMatch(UUID_RE)
+      expect(key2).toMatch(UUID_RE)
+      expect(key1).not.toBe(key2)
     })
   })
 

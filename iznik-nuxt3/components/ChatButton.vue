@@ -147,15 +147,12 @@ const openChat = async (
       if (firstmessage) {
         console.log('First message to send', firstmessage)
         try {
-          await chatStore.send(
+          await chatStore.send({
             chatid,
-            firstmessage,
-            null,
-            null,
-            firstmsgid,
-            false,
-            replySource
-          )
+            message: firstmessage,
+            refmsgid: firstmsgid,
+            replysource: replySource,
+          })
           console.log('Sent')
 
           action('chat_message_sent', {

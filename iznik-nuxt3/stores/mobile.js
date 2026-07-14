@@ -665,11 +665,12 @@ export const useMobileStore = defineStore({
           return
         }
 
-        // Send the reply via API
-        await api(this.config).chat.send({
-          roomid: chatId,
-          message: replyText,
-        })
+        // Send the reply via the chat store, not the API directly, so it gets an
+        // idempotency key like every other send path (Discourse #9913) - a
+        // notification-action reply is just as susceptible to being retried/
+        // double-fired as a ChatFooter send.
+        const chatStore = useChatStore()
+        await chatStore.send({ chatid: chatId, message: replyText })
         console.log('handleReplyAction: message sent successfully')
       } catch (e) {
         console.error('handleReplyAction error:', e.message)

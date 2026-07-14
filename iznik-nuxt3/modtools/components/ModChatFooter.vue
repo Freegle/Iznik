@@ -820,7 +820,7 @@ const send = async (callback) => {
       msg = untwem(msg)
 
       // Send it
-      await chatStore.send(props.id, msg)
+      await chatStore.send({ chatid: props.id, message: msg })
 
       // Clear the message now it's sent.
       sendmessage.value = ''
@@ -847,7 +847,7 @@ const fetchMessages = async () => {
 }
 
 const sendAddress = async (id) => {
-  await chatStore.send(props.id, null, id)
+  await chatStore.send({ chatid: props.id, addressid: id })
   await _updateAfterSend()
 
   // If we've sent an address to someone who has recently replied to an offer, then it's quite likely that we
@@ -942,7 +942,7 @@ watch(
 
       newVal.forEach((att) => {
         console.log('Send', att.id, props.id)
-        promises.push(chatStore.send(props.id, null, null, att.id))
+        promises.push(chatStore.send({ chatid: props.id, imageid: att.id }))
       })
 
       await Promise.all(promises)

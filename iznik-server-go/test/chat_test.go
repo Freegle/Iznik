@@ -417,6 +417,120 @@ func TestCreateChatMessage(t *testing.T) {
 	assert.Greater(t, chatrsp.Id, (uint64)(1))
 }
 
+// TestCreateChatMessageIdempotencyKeyDedup: two POSTs carrying the SAME idempotency
+// key must collapse onto a single row. This is the server-side half of the Discourse
+// #9913 fix - a client retry of an ambiguous fetch outcome (network blip, 5xx) must
+// not create a duplicate that briefly shows twice to the sender.
+func TestCreateChatMessageIdempotencyKeyDedup(t *testing.T) {
+	prefix := uniquePrefix("chatidem")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	key := "aaaaaaaa-1111-4111-8111-111111111111"
+	body := fmt.Sprintf(`{"message":"Retried send","idempotencykey":"%s"}`, key)
+
+	postSend := func() uint64 {
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		var r struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &r)
+		assert.Greater(t, r.Id, uint64(0))
+		return r.Id
+	}
+
+	firstID := postSend()
+	retryID := postSend()
+	assert.Equal(t, firstID, retryID, "retried send with the same idempotency key must return the same, non-zero id")
+
+	db := database.DBConn
+	var count int
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND idempotencykey = ?", chatid, key).Scan(&count)
+	assert.Equal(t, 1, count, "retried send with the same idempotency key must not create a duplicate row")
+}
+
+// TestCreateChatMessageIdempotencyKeyDeliberateResendCreatesNewRow: a deliberate
+// resend (a genuinely new message, given a fresh key) must never be swallowed by the
+// dedup guard - only a retry of the exact same key collapses.
+func TestCreateChatMessageIdempotencyKeyDeliberateResendCreatesNewRow(t *testing.T) {
+	prefix := uniquePrefix("chatidem2")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	send := func(key string) uint64 {
+		body := fmt.Sprintf(`{"message":"Deliberate resend","idempotencykey":"%s"}`, key)
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		var r struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &r)
+		return r.Id
+	}
+
+	id1 := send("bbbbbbbb-2222-4222-8222-222222222222")
+	id2 := send("cccccccc-3333-4333-8333-333333333333")
+	assert.NotEqual(t, id1, id2, "a deliberate resend with a fresh key must create a new row, not be swallowed")
+}
+
+// TestCreateChatMessageNoIdempotencyKeyBackwardCompatible: older clients that send no
+// idempotency key are completely unaffected - MySQL never treats two NULLs as equal
+// in a unique index, so two key-less sends of identical content both create their own
+// row exactly as before this fix.
+func TestCreateChatMessageNoIdempotencyKeyBackwardCompatible(t *testing.T) {
+	prefix := uniquePrefix("chatidem3")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	body := `{"message":"No key send"}`
+
+	var ids []uint64
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		var r struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &r)
+		ids = append(ids, r.Id)
+	}
+	assert.NotEqual(t, ids[0], ids[1], "sends without an idempotency key are unaffected and each create their own row")
+}
+
+// TestCreateChatMessageIdempotencyKeyInvalidRejected: a malformed key must be rejected
+// outright, never truncated/sanitised and used for dedup - a truncated key could make
+// two DIFFERENT sends collide on the unique index and silently swallow a real message.
+func TestCreateChatMessageIdempotencyKeyInvalidRejected(t *testing.T) {
+	prefix := uniquePrefix("chatidem4")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	body := `{"message":"Bad key send","idempotencykey":"not-a-uuid"}`
+	req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode, "a malformed idempotency key must be rejected, never truncated/used for dedup")
+}
+
 func TestCreateChatMessageModnote(t *testing.T) {
 	// modnote=true should create a ModMail type message.
 	prefix := uniquePrefix("chatmodnote")
@@ -1708,7 +1822,6 @@ func TestReferToSupportMissingChatID(t *testing.T) {
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
-
 // Helper to set up a moderator with a group and User2Mod chat containing messages.
 func setupModChatData(t *testing.T, prefix string) (modID uint64, userID uint64, groupID uint64, chatID uint64, token string) {
 	modID = CreateTestUser(t, prefix+"_mod", "Moderator")
@@ -2017,14 +2130,14 @@ func TestReviewChatMessagesSenderOnlyExcluded(t *testing.T) {
 	prefix := uniquePrefix("ReviewSenderOnly")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix + "_other")
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	recipientID := CreateTestUser(t, prefix+"_recip", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")    // sender in mod's group
+	CreateTestMembership(t, senderID, groupID, "Member")         // sender in mod's group
 	CreateTestMembership(t, recipientID, otherGroupID, "Member") // recipient in different group
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")

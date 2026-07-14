@@ -59,9 +59,22 @@ type ChatMessage struct {
 	// rippling attribution capture - sanitised there, stored in rippling_reply_attribution,
 	// never a chat_messages column.
 	Replysource *string `json:"replysource" gorm:"-"`
-	Archived    int     `json:"-" gorm:"-"`
-	Deleted     bool    `json:"-"`
+	// Idempotencykey is a client-generated key (expected: a UUID) that lets a retried
+	// or double-submitted POST for the SAME logical send collapse onto the same row
+	// instead of creating a duplicate (Discourse #9913). Enforced via a unique
+	// (chatid, userid, idempotencykey) DB index; validated in CreateChatMessage before
+	// use (see idempotencyKeyRe) so a malformed/truncated value can never be used for
+	// dedup and silently collide two DIFFERENT sends.
+	Idempotencykey *string `json:"idempotencykey" gorm:"-"`
+	Archived       int     `json:"-" gorm:"-"`
+	Deleted        bool    `json:"-"`
 }
+
+// idempotencyKeyRe matches a canonical UUID (the only shape the client ever sends -
+// see composables/useTrace.js generateUUID). Anything else is rejected outright rather
+// than truncated/sanitised, so a malformed key can never be used for dedup and collide
+// with a different send that happens to share a truncated prefix.
+var idempotencyKeyRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the
 // fields into the ChatMessage struct, GORM will try to set them when we create a new message.
@@ -478,6 +491,14 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid parameters")
 	}
 
+	// Reject a malformed idempotency key outright rather than truncating/sanitising it -
+	// a truncated key could make two DIFFERENT sends collide on the unique index and
+	// silently swallow a real message. Absent is fine (older clients); present-but-invalid
+	// is not (see idempotencyKeyRe).
+	if payload.Idempotencykey != nil && !idempotencyKeyRe.MatchString(*payload.Idempotencykey) {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid idempotency key")
+	}
+
 	chattype := utils.CHAT_MESSAGE_DEFAULT
 
 	// modnote flag creates a ModMail message (visible as group volunteer message).
@@ -599,15 +620,71 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
-	if result := db.Create(&payload); result.Error != nil {
-		// Don't swallow the underlying DB error: without this, FK violations (e.g. a purged
-		// refmsgid/chatid) and any other insert failure vanish — the access log drops 500s and
-		// nothing reaches Sentry, leaving the user's "Oh Dear" undiagnosable.
-		stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
-			id, myid, payload.Refmsgid, result.Error)
-		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+
+	var newid uint64
+
+	if payload.Idempotencykey != nil {
+		// A retried/double-submitted send (client retry on an ambiguous fetch outcome,
+		// double-click, second tab) carries the SAME key, so this collapses onto the
+		// existing row via the unique (chatid, userid, idempotencykey) index instead of
+		// creating a duplicate (Discourse #9913). Mirrors GetOrCreateUser2UserChat's
+		// established atomic pattern for this codebase. Uses the write connection
+		// directly (db.DB()) so there's no separate SELECT to race a lagging read
+		// replica.
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			stdlog.Printf("Failed to get sql.DB for chat message insert: %v", dbErr)
+			return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+		}
+
+		sqlResult, insErr := sqlDB.Exec(
+			`INSERT INTO chat_messages
+				(chatid, userid, type, reportreason, refmsgid, refchatid, imageid, date, message,
+				 seenbyall, mailedtoall, reviewrequired, reviewrejected, replyexpected, replyreceived,
+				 processingrequired, processingsuccessful, deleted, idempotencykey)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+			payload.Chatid, payload.Userid, payload.Type, payload.Reportreason, payload.Refmsgid,
+			payload.Refchatid, payload.Imageid, payload.Date, payload.Message,
+			payload.Seenbyall, payload.Mailedtoall, payload.Reviewrequired, payload.Reviewrejected,
+			payload.Replyexpected, payload.Replyreceived,
+			payload.Processingrequired, payload.Processingsuccessful, payload.Deleted,
+			*payload.Idempotencykey)
+		if insErr != nil {
+			stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
+				id, myid, payload.Refmsgid, insErr)
+			return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+		}
+
+		lastID, idErr := sqlResult.LastInsertId()
+		if idErr != nil || lastID == 0 {
+			stdlog.Printf("Failed to get last insert id for chat message in chat %d for user %d: %v",
+				id, myid, idErr)
+			return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+		}
+
+		if affected, _ := sqlResult.RowsAffected(); affected == 0 {
+			// ON DUPLICATE KEY UPDATE with a no-op UPDATE (id = LAST_INSERT_ID(id)) reports
+			// 0 rows affected when it hit an EXISTING row rather than inserting a new one -
+			// i.e. this was a genuine retry, not a fresh send. Log so duplicate-key hits are
+			// visible without having to infer them from row counts.
+			stdlog.Printf("Duplicate chat message idempotency key hit: chat %d user %d key %s -> existing id %d",
+				id, myid, *payload.Idempotencykey, lastID)
+		}
+
+		newid = uint64(lastID)
+		payload.ID = newid
+	} else {
+		if result := db.Create(&payload); result.Error != nil {
+			// Don't swallow the underlying DB error: without this, FK violations (e.g. a purged
+			// refmsgid/chatid) and any other insert failure vanish — the access log drops 500s and
+			// nothing reaches Sentry, leaving the user's "Oh Dear" undiagnosable.
+			stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
+				id, myid, payload.Refmsgid, result.Error)
+			return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+		}
+		newid = payload.ID
 	}
-	newid := payload.ID
 
 	if newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")

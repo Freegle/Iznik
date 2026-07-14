@@ -6,6 +6,7 @@ import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
 import { useUserStore } from '~/stores/user'
+import { generateUUID } from '~/composables/useTrace'
 
 export const useChatStore = defineStore({
   id: 'chat',
@@ -335,15 +336,16 @@ export const useChatStore = defineStore({
     async typing(chatid) {
       await api(this.config).chat.typing(chatid)
     },
-    async send(
+    async send({
       chatid,
       message,
       addressid,
       imageid,
       refmsgid,
       modnote,
-      replysource
-    ) {
+      replysource,
+      idempotencyKey,
+    }) {
       const data = {
         roomid: chatid,
       }
@@ -376,6 +378,15 @@ export const useChatStore = defineStore({
         data.replysource = replysource
       }
 
+      // Idempotency key (Discourse #9913): the server dedupes on (chatid, userid,
+      // idempotencykey) via an atomic INSERT ... ON DUPLICATE KEY UPDATE, so a
+      // retried send of this exact call - e.g. a caller passing the SAME key back in
+      // after a failed/ambiguous attempt - returns the already-created row instead of
+      // a genuine duplicate. Callers that don't pass one (most of them: address
+      // sends, photo attachments, mod notes) just get a fresh one here, which still
+      // protects them from double-submission at no extra cost.
+      data.idempotencykey = idempotencyKey || generateUUID()
+
       await api(this.config).chat.send(data)
 
       // Update the snippet in the chat list entry so it shows immediately.
@@ -397,6 +408,7 @@ export const useChatStore = defineStore({
         reportreason: reason,
         message: comments,
         refchatid,
+        idempotencykey: generateUUID(),
       })
       this.fetchMessages(chatid)
     },

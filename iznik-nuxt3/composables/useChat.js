@@ -7,6 +7,20 @@ import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { twem } from '~/composables/useTwem'
+import { generateUUID } from '~/composables/useTrace'
+
+// A manual retry of a not-yet-confirmed message (e.g. after a failed/ambiguous send)
+// must reuse the SAME idempotency key, so the server's unique-key guard
+// (chat_messages.idempotencykey) can return the already-created row instead of a
+// genuine duplicate if the earlier request actually landed despite the client seeing
+// a failure. A different message - or a first attempt - always gets a fresh key
+// (Discourse #9913). `pending` is the { message, key } of the last attempt, or null.
+export function getSendIdempotencyKey(pending, message) {
+  if (pending && pending.message === message) {
+    return pending.key
+  }
+  return generateUUID()
+}
 
 export function chatCollate(msgs) {
   const ret = []

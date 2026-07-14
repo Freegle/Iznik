@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 let mockPlatform = 'web'
@@ -45,10 +45,12 @@ vi.mock('~/stores/auth', () => ({
 
 const mockFetchChats = vi.fn()
 const mockFetchMessages = vi.fn()
+const mockChatStoreSend = vi.fn()
 vi.mock('~/stores/chat', () => ({
   useChatStore: () => ({
     fetchChats: mockFetchChats,
     fetchMessages: mockFetchMessages,
+    send: mockChatStoreSend,
   }),
 }))
 
@@ -173,17 +175,13 @@ describe('mobile store', () => {
 
     it('returns false when no query string', () => {
       const store = useMobileStore()
-      const result = store.extractQueryStringParams(
-        'https://example.com/path'
-      )
+      const result = store.extractQueryStringParams('https://example.com/path')
       expect(result).toBe(false)
     })
 
     it('handles empty query string', () => {
       const store = useMobileStore()
-      const result = store.extractQueryStringParams(
-        'https://example.com?'
-      )
+      const result = store.extractQueryStringParams('https://example.com?')
       expect(result).toEqual({})
     })
 
@@ -311,11 +309,7 @@ describe('mobile store', () => {
 
     it('ignores legacy notifications without channel_id', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      await store.handleNotification(
-        { data: { route: '/chats/1' } },
-        {},
-        {}
-      )
+      await store.handleNotification({ data: { route: '/chats/1' } }, {}, {})
       expect(store.route).toBe(false)
       logSpy.mockRestore()
     })
@@ -366,19 +360,16 @@ describe('mobile store', () => {
   })
 
   describe('handleReplyAction', () => {
-    it('sends reply via API', async () => {
+    it('sends reply via the chat store (so it gets an idempotency key, #9913)', async () => {
       const store = useMobileStore()
       store.config = { public: {} }
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      mockChatSend.mockResolvedValue({})
+      mockChatStoreSend.mockResolvedValue({})
 
-      await store.handleReplyAction(
-        { data: { chatids: '42' } },
-        'Hello!'
-      )
+      await store.handleReplyAction({ data: { chatids: '42' } }, 'Hello!')
 
-      expect(mockChatSend).toHaveBeenCalledWith({
-        roomid: 42,
+      expect(mockChatStoreSend).toHaveBeenCalledWith({
+        chatid: 42,
         message: 'Hello!',
       })
       logSpy.mockRestore()
@@ -391,7 +382,7 @@ describe('mobile store', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       await store.handleReplyAction(null, 'Hello!')
-      expect(mockChatSend).not.toHaveBeenCalled()
+      expect(mockChatStoreSend).not.toHaveBeenCalled()
 
       logSpy.mockRestore()
       errorSpy.mockRestore()
@@ -404,7 +395,7 @@ describe('mobile store', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       await store.handleReplyAction({ data: {} }, 'Hello!')
-      expect(mockChatSend).not.toHaveBeenCalled()
+      expect(mockChatStoreSend).not.toHaveBeenCalled()
 
       logSpy.mockRestore()
       errorSpy.mockRestore()
