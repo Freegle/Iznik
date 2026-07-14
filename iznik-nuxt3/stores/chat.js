@@ -6,6 +6,7 @@ import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
 import { useUserStore } from '~/stores/user'
+import { generateUUID } from '~/composables/useTrace'
 
 export const useChatStore = defineStore({
   id: 'chat',
@@ -342,7 +343,8 @@ export const useChatStore = defineStore({
       imageid,
       refmsgid,
       modnote,
-      replysource
+      replysource,
+      idempotencyKey
     ) {
       const data = {
         roomid: chatid,
@@ -376,6 +378,14 @@ export const useChatStore = defineStore({
         data.replysource = replysource
       }
 
+      // Idempotency key (Discourse #9913): the server dedupes on (chatid, userid,
+      // idempotencykey), so a retried send of this exact call - e.g. a caller-side
+      // "tap to retry" passing the SAME key back in - returns the already-created
+      // row instead of a genuine duplicate. Callers that don't care about retry
+      // safety (most of them: address sends, photo attachments, mod notes) just
+      // get a fresh one here, which still protects them at no extra cost.
+      data.idempotencykey = idempotencyKey || generateUUID()
+
       await api(this.config).chat.send(data)
 
       // Update the snippet in the chat list entry so it shows immediately.
@@ -397,6 +407,7 @@ export const useChatStore = defineStore({
         reportreason: reason,
         message: comments,
         refchatid,
+        idempotencykey: generateUUID(),
       })
       this.fetchMessages(chatid)
     },

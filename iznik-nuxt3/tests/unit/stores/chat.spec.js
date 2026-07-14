@@ -228,6 +228,7 @@ describe('chat store', () => {
       expect(mockSend).toHaveBeenCalledWith({
         roomid: 10,
         message: 'new message',
+        idempotencykey: expect.any(String),
       })
       expect(store.listByChatId[10].snippet).toBe('new message')
     })
@@ -248,6 +249,7 @@ describe('chat store', () => {
         refmsgid: 3,
         modnote: true,
         replysource: 'browse',
+        idempotencykey: expect.any(String),
       })
     })
 
@@ -261,6 +263,7 @@ describe('chat store', () => {
       expect(mockSend).toHaveBeenCalledWith({
         roomid: 10,
         message: 'hi',
+        idempotencykey: expect.any(String),
       })
     })
 
@@ -274,6 +277,34 @@ describe('chat store', () => {
       expect(mockSend).toHaveBeenCalledWith({
         roomid: 10,
         message: 'hi',
+        idempotencykey: expect.any(String),
+      })
+    })
+
+    it('generates a fresh idempotency key on each call when none is provided', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send(10, 'hi')
+      await store.send(10, 'hi')
+
+      const firstKey = mockSend.mock.calls[0][0].idempotencykey
+      const secondKey = mockSend.mock.calls[1][0].idempotencykey
+      expect(firstKey).not.toBe(secondKey)
+    })
+
+    it('reuses a caller-supplied idempotency key instead of generating a new one', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send(10, 'hi', null, null, null, false, null, 'retry-key-123')
+
+      expect(mockSend).toHaveBeenCalledWith({
+        roomid: 10,
+        message: 'hi',
+        idempotencykey: 'retry-key-123',
       })
     })
   })

@@ -329,7 +329,6 @@ describe('useFetchRetry', () => {
   describe('retry delay calculation', () => {
     it('should use exponential delay: attempt * 1000', async () => {
       const responseData = { success: true }
-      const delayCalls = []
 
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
@@ -363,10 +362,185 @@ describe('useFetchRetry', () => {
       })
 
       const retryFetch = fetchRetry(mockFetch)
-      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }
       await retryFetch('http://test.com/api', init)
 
       expect(mockFetch).toHaveBeenCalledWith('http://test.com/api', init)
+    })
+  })
+
+  describe('mutating requests are not retried on an ambiguous outcome (#9913)', () => {
+    // A POST (e.g. sending a chat message) is not idempotent. If the request actually
+    // reached the server and created the row, but the client sees a network error, a
+    // 5xx, or a 200 it can't parse, we can't tell whether the write already happened.
+    // Retrying anyway resends the same create and can produce a second, real,
+    // duplicate row. GET/HEAD/OPTIONS have no such side effect and keep retrying.
+
+    it('does not retry a POST on a network error - rejects with the underlying error after one attempt', async () => {
+      const networkError = new Error('Network error')
+      mockFetch.mockRejectedValueOnce(networkError)
+
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+
+      await expect(promise).rejects.toThrow('Network error')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not retry a POST that returns a 200 it cannot parse as JSON - the write may already have happened', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: vi.fn().mockRejectedValueOnce(new Error('Invalid JSON')),
+      })
+
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+
+      await expect(promise).rejects.toThrow('Invalid JSON')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not retry a POST on a 500', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 500,
+        statusText: 'Internal Server Error',
+      })
+
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+
+      await expect(promise).rejects.toThrow('Request failed with 500')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('still retries a GET on a network error, unaffected by the mutating-request restriction', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1', { method: 'GET' })
+
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it.each(['HEAD', 'OPTIONS'])(
+      'treats %s as a safe method too - it retries like GET',
+      async (method) => {
+        const responseData = { success: true }
+
+        mockFetch
+          .mockRejectedValueOnce(new Error('Network error'))
+          .mockResolvedValueOnce({
+            status: 200,
+            json: vi.fn().mockResolvedValueOnce(responseData),
+          })
+
+        vi.useFakeTimers()
+        const retryFetch = fetchRetry(mockFetch)
+        const promise = retryFetch('http://test.com/thing/1', { method })
+
+        await vi.advanceTimersByTimeAsync(1000)
+
+        const result = await promise
+        expect(result).toEqual([200, responseData])
+        expect(mockFetch).toHaveBeenCalledTimes(2)
+        vi.useRealTimers()
+      }
+    )
+
+    it.each(['PUT', 'PATCH', 'DELETE'])(
+      'does not retry a %s on a network error',
+      async (method) => {
+        mockFetch.mockRejectedValueOnce(new Error('Network error'))
+
+        const retryFetch = fetchRetry(mockFetch)
+        const promise = retryFetch('http://test.com/thing/1', { method })
+
+        await expect(promise).rejects.toThrow('Network error')
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it('treats a lower-case method string as mutating too - does not retry "post"', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'))
+
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'post',
+      })
+
+      await expect(promise).rejects.toThrow('Network error')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('derives the method from a Request-like `input` when `init` has none - a POST Request is not retried', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'))
+
+      const retryFetch = fetchRetry(mockFetch)
+      // No `init` at all, and `input` is not a string URL but a Request-shaped
+      // object - fetch() would take the method from `input.method` in this case.
+      const promise = retryFetch({
+        url: 'http://test.com/chat/1/message',
+        method: 'POST',
+      })
+
+      await expect(promise).rejects.toThrow('Network error')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not block on connectivity before rejecting a mutating request - fails fast instead of hanging until reconnect', async () => {
+      miscStore.waitForOnline.mockReturnValue(new Promise(() => {})) // never resolves
+      mockFetch.mockRejectedValueOnce(new Error('Network error'))
+
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1/message', {
+        method: 'POST',
+      })
+
+      await expect(promise).rejects.toThrow('Network error')
+      expect(miscStore.waitForOnline).not.toHaveBeenCalled()
+    })
+
+    it('GET still awaits waitForOnline before retrying, unaffected by the mutating-request restriction', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/chat/1', { method: 'GET' })
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await promise
+
+      expect(miscStore.waitForOnline).toHaveBeenCalled()
+      vi.useRealTimers()
     })
   })
 })

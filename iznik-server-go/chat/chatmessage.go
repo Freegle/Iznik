@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	stdlog "log"
@@ -46,6 +47,15 @@ type ChatMessage struct {
 	Reviewrejected       bool            `json:"reviewrejected"`
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
+	// IdempotencyKey is a client-generated token (Discourse #9913): the same logical
+	// send (e.g. a caller-side "tap to retry" after an ambiguous response) always
+	// carries the same key, so the unique (chatid, userid, idempotency_key) index lets
+	// CreateChatMessage return the already-created row instead of inserting a genuine
+	// duplicate. A deliberate resend (a fresh key from the client) is never swallowed -
+	// unlike the previous, rejected, content-hash dedupe. Scrubbed from every read path
+	// (FetchChatMessages) - it's a write-dedup token, never useful to a reader, and the
+	// create response already returns only {id} (see CreateChatMessage).
+	IdempotencyKey *string `json:"idempotencykey,omitempty" gorm:"column:idempotency_key"`
 	// HeldByRippling is true when this message is held by the rippling reply-hold engine
 	// (a non-released row exists in rippling_held_replies). Populated for moderators (any
 	// message) and for a normal caller on their OWN held reply, so the sender can show a
@@ -248,6 +258,10 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 	// Process images and deleted messages
 	for ix, a := range messages {
+		// The idempotency key is a write-dedup token (see CreateChatMessage) - never
+		// useful to a reader, mod or not, so it's never returned from any read path.
+		messages[ix].IdempotencyKey = nil
+
 		if a.Imageid != nil {
 			path, paththumb := misc.BuildChatImageUrl(*a.Imageid, a.Imageuid, string(a.Imagemods), a.Archived)
 			messages[ix].Image = &ChatAttachment{
@@ -478,6 +492,10 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid parameters")
 	}
 
+	if payload.IdempotencyKey != nil && len(*payload.IdempotencyKey) > 64 {
+		return fiber.NewError(fiber.StatusBadRequest, "Idempotency key too long")
+	}
+
 	chattype := utils.CHAT_MESSAGE_DEFAULT
 
 	// modnote flag creates a ModMail message (visible as group volunteer message).
@@ -599,19 +617,72 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	payload.Type = chattype
 	payload.Processingrequired = true
 	payload.Date = time.Now()
-	if result := db.Create(&payload); result.Error != nil {
+
+	// Idempotent, atomic create (Discourse #9913): a caller-supplied idempotency key
+	// (stores/chat.js generates one per logical send, and reuses it across a caller-side
+	// "tap to retry" of the same not-yet-confirmed message) lets a retried POST come back
+	// as the SAME row instead of a genuine duplicate. INSERT ... ON DUPLICATE KEY UPDATE
+	// against the unique (chatid, userid, idempotency_key) index is atomic - unlike a
+	// SELECT-then-INSERT, two concurrent requests with the same key can't both see "no
+	// existing row" and both insert. id = LAST_INSERT_ID(id) makes
+	// sqlResult.LastInsertId() return the EXISTING row's id on conflict, exactly as
+	// GetOrCreateUser2UserChat already relies on for chat_rooms. A caller with no key
+	// (older/cached client) falls back to a plain INSERT, unaffected: MySQL never treats
+	// NULL as equal to NULL in a unique index. db.DB() always returns the source (write)
+	// *sql.DB even when a read replica is configured (see database/database.go), so this
+	// never races a lagging replica the way a separate SELECT would (unlike the rejected
+	// content-hash dedupe this replaces).
+	sqlDB, err := db.DB()
+	if err != nil {
+		stdlog.Printf("Failed to get sql.DB for chat message insert in chat %d for user %d: %v", id, myid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	}
+
+	var sqlResult sql.Result
+	if payload.IdempotencyKey != nil && *payload.IdempotencyKey != "" {
+		sqlResult, err = sqlDB.Exec(
+			"INSERT INTO chat_messages "+
+				"(chatid, userid, idempotency_key, type, refmsgid, refchatid, imageid, date, message, "+
+				"seenbyall, mailedtoall, replyexpected, replyreceived, reportreason, "+
+				"reviewrequired, reviewrejected, processingrequired, processingsuccessful, deleted) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "+
+				"ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+			payload.Chatid, payload.Userid, *payload.IdempotencyKey, payload.Type, payload.Refmsgid,
+			payload.Refchatid, payload.Imageid, payload.Date, payload.Message, payload.Seenbyall,
+			payload.Mailedtoall, payload.Replyexpected, payload.Replyreceived, payload.Reportreason,
+			payload.Reviewrequired, payload.Reviewrejected, payload.Processingrequired,
+			payload.Processingsuccessful, payload.Deleted,
+		)
+	} else {
+		sqlResult, err = sqlDB.Exec(
+			"INSERT INTO chat_messages "+
+				"(chatid, userid, type, refmsgid, refchatid, imageid, date, message, "+
+				"seenbyall, mailedtoall, replyexpected, replyreceived, reportreason, "+
+				"reviewrequired, reviewrejected, processingrequired, processingsuccessful, deleted) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			payload.Chatid, payload.Userid, payload.Type, payload.Refmsgid, payload.Refchatid,
+			payload.Imageid, payload.Date, payload.Message, payload.Seenbyall, payload.Mailedtoall,
+			payload.Replyexpected, payload.Replyreceived, payload.Reportreason, payload.Reviewrequired,
+			payload.Reviewrejected, payload.Processingrequired, payload.Processingsuccessful, payload.Deleted,
+		)
+	}
+
+	if err != nil {
 		// Don't swallow the underlying DB error: without this, FK violations (e.g. a purged
 		// refmsgid/chatid) and any other insert failure vanish — the access log drops 500s and
 		// nothing reaches Sentry, leaving the user's "Oh Dear" undiagnosable.
 		stdlog.Printf("Failed to create chat message in chat %d for user %d (refmsgid=%v): %v",
-			id, myid, payload.Refmsgid, result.Error)
+			id, myid, payload.Refmsgid, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
-	newid := payload.ID
 
-	if newid == 0 {
+	lastID, err := sqlResult.LastInsertId()
+	if err != nil || lastID <= 0 {
+		stdlog.Printf("Failed to get id of chat message in chat %d for user %d: %v", id, myid, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
+	newid := uint64(lastID)
+	payload.ID = newid
 
 	// Rippling-out reply HOLD: the replier is outside the post's current reach, so the reply was
 	// created but must not reach the poster yet. Record a rippling_held_replies row (source='web')

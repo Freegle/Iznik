@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	url2 "net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -473,6 +474,193 @@ func TestCreateChatMessageModnote(t *testing.T) {
 	var modnoteType string
 	db.Raw("SELECT type FROM chat_messages WHERE id = ?", modnoteMsgID).Scan(&modnoteType)
 	assert.Equal(t, "ModMail", modnoteType, "Modnote message should be ModMail type")
+}
+
+// TestCreateChatMessageIdempotencyKeyReturnsExistingRow verifies the #9913 fix: a
+// retried send carrying the SAME client-generated idempotency key (e.g. a caller-side
+// "tap to retry" of the same not-yet-confirmed message) gets back the id of the
+// message already created, instead of a second, genuinely duplicate row.
+func TestCreateChatMessageIdempotencyKeyReturnsExistingRow(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("chatmsgidem")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	sendWithKey := func(key string) uint64 {
+		body := fmt.Sprintf(`{"message":"Retried message body","idempotencykey":%q}`, key)
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		var rspData struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &rspData)
+		return rspData.Id
+	}
+
+	key := prefix + "-key-1"
+	firstID := sendWithKey(key)
+	assert.Greater(t, firstID, uint64(0))
+
+	// A retry carrying the same key must come back as the SAME message, not a new one.
+	secondID := sendWithKey(key)
+	assert.Equal(t, firstID, secondID, "a retried send with the same idempotency key should return the existing message id")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND message = ?", chatid, "Retried message body").Scan(&count)
+	assert.Equal(t, int64(1), count, "only one row should exist for the retried message")
+}
+
+// TestCreateChatMessageDeliberateResendCreatesNewRow verifies the fix for the
+// previous, rejected, content-hash dedupe: a deliberate identical resend (a user
+// genuinely typing "ok" twice) - which the client gives a FRESH idempotency key,
+// since it's a new logical send - must create a second row, not be silently
+// swallowed.
+func TestCreateChatMessageDeliberateResendCreatesNewRow(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("chatmsgresend")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	sendWithKey := func(key string) uint64 {
+		body := fmt.Sprintf(`{"message":"ok","idempotencykey":%q}`, key)
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		var rspData struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &rspData)
+		return rspData.Id
+	}
+
+	firstID := sendWithKey(prefix + "-key-a")
+	secondID := sendWithKey(prefix + "-key-b")
+	assert.NotEqual(t, firstID, secondID, "a deliberate resend with a fresh key must not be swallowed as a duplicate")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND message = ?", chatid, "ok").Scan(&count)
+	assert.Equal(t, int64(2), count, "two identical-content sends with different keys should both be created")
+}
+
+// TestCreateChatMessageIdempotencyKeyConcurrent verifies the atomicity the previous
+// attempt lacked (a non-atomic SELECT-then-INSERT left a race window where two
+// concurrent requests could both see "no existing row" and both insert). Two
+// simultaneous requests carrying the SAME idempotency key must collapse to a single
+// row, mirroring the existing TestPutChatRoomConcurrent pattern for chat_rooms.
+func TestCreateChatMessageIdempotencyKeyConcurrent(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("chatmsgidemconc")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	key := prefix + "-concurrent-key"
+	body := fmt.Sprintf(`{"message":"Concurrent send","idempotencykey":%q}`, key)
+
+	done := make(chan uint64, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := getApp().Test(req, -1)
+			if err != nil || resp.StatusCode != fiber.StatusOK {
+				done <- 0
+				return
+			}
+			var rspData struct {
+				Id uint64 `json:"id"`
+			}
+			json2.NewDecoder(resp.Body).Decode(&rspData)
+			done <- rspData.Id
+		}()
+	}
+
+	id1 := <-done
+	id2 := <-done
+
+	assert.Greater(t, id1, uint64(0), "First concurrent request should succeed")
+	assert.Greater(t, id2, uint64(0), "Second concurrent request should succeed")
+	assert.Equal(t, id1, id2, "Both concurrent requests should return the same message id")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND message = ?", chatid, "Concurrent send").Scan(&count)
+	assert.Equal(t, int64(1), count, "Only one message row should exist despite two concurrent requests")
+}
+
+// TestCreateChatMessageNoIdempotencyKeyStillCreatesEachTime verifies backward
+// compatibility with a caller that sends no key at all (older/cached client): each
+// send is a plain insert, and MySQL's unique index never treats two NULLs as equal,
+// so two such sends are never accidentally collapsed into one.
+func TestCreateChatMessageNoIdempotencyKeyStillCreatesEachTime(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("chatmsgnokey")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	send := func() uint64 {
+		body := `{"message":"No key message"}`
+		req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+		var rspData struct {
+			Id uint64 `json:"id"`
+		}
+		json2.Unmarshal(rsp(resp), &rspData)
+		return rspData.Id
+	}
+
+	firstID := send()
+	secondID := send()
+	assert.NotEqual(t, firstID, secondID, "without a key, each send is a plain insert - no accidental dedupe")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND message = ?", chatid, "No key message").Scan(&count)
+	assert.Equal(t, int64(2), count)
+}
+
+// TestCreateChatMessageIdempotencyKeyTooLong verifies the length guard on the
+// client-supplied key (column is VARCHAR(64)).
+func TestCreateChatMessageIdempotencyKeyTooLong(t *testing.T) {
+	prefix := uniquePrefix("chatmsgidemlong")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Hello")
+	_, token := CreateTestSession(t, user1ID)
+
+	tooLong := strings.Repeat("x", 65)
+	body := fmt.Sprintf(`{"message":"Too long key","idempotencykey":%q}`, tooLong)
+	req := httptest.NewRequest("POST", "/api/chat/"+fmt.Sprint(chatid)+"/message?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
 func TestCreateChatMessageLoveJunk(t *testing.T) {
