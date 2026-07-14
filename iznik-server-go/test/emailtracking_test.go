@@ -189,14 +189,11 @@ func TestEmailTrackingImage(t *testing.T) {
 	assert.Equal(t, "image", *updated.OpenedVia)
 	assert.Equal(t, uint8(75), *updated.ScrollDepthPercent)
 
-	// The per-load record in email_tracking_images is the source of truth for
-	// how many (and which positioned) images loaded. The denormalised
-	// email_tracking.images_loaded counter is retired: incrementing it on every
-	// hit meant an exclusive-lock UPDATE on the parent row for each of a
-	// digest's many near-simultaneous image loads, which serialised on the row
-	// lock. The count is derivable from these child rows, so it is no longer
-	// maintained.
-	assert.Equal(t, uint16(0), updated.ImagesLoaded)
+	// The per-load record in email_tracking_images is the source of truth for how
+	// many (and which positioned) images loaded. The denormalised
+	// email_tracking.images_loaded counter is retired and the column dropped: it
+	// caused hot-row lock contention on the parent row and was derivable from these
+	// child rows anyway.
 
 	// Verify image load record was created
 	var images []emailtracking.EmailTrackingImage
@@ -234,24 +231,22 @@ func TestEmailTrackingImageCompactSourceOfTruth(t *testing.T) {
 	assert.NotNil(t, updated.OpenedAt)
 	assert.Equal(t, "image", *updated.OpenedVia)
 
-	// One child row per load; parent counter not incremented.
+	// One child row per load (the source of truth; there is no parent counter).
 	var imgCount int64
 	db.Model(&emailtracking.EmailTrackingImage{}).Where("email_tracking_id = ?", updated.ID).Count(&imgCount)
 	assert.Equal(t, int64(1), imgCount)
-	assert.Equal(t, uint16(0), updated.ImagesLoaded)
 
 	var img emailtracking.EmailTrackingImage
 	db.Where("email_tracking_id = ?", updated.ID).First(&img)
 	assert.Equal(t, "i1", img.ImagePosition)
 
-	// A second load adds another child row (the per-load record) and still does
-	// not touch the parent counter - the count is derived from these rows.
+	// A second load adds another child row (the per-load record); the count is
+	// derived from these rows.
 	resp2, _ := getApp().Test(httptest.NewRequest("GET", path, nil), -1)
 	assert.Equal(t, http.StatusFound, resp2.StatusCode)
 	db.Where("tracking_id = ?", tracking.TrackingID).First(&updated)
 	db.Model(&emailtracking.EmailTrackingImage{}).Where("email_tracking_id = ?", updated.ID).Count(&imgCount)
 	assert.Equal(t, int64(2), imgCount)
-	assert.Equal(t, uint16(0), updated.ImagesLoaded)
 }
 
 func TestEmailTrackingMDN(t *testing.T) {

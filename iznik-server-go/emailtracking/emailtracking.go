@@ -36,7 +36,6 @@ type EmailTracking struct {
 	ClickedAt          *time.Time `json:"clicked_at" gorm:"column:clicked_at"`
 	ClickedLink        *string    `json:"clicked_link" gorm:"column:clicked_link"`
 	ScrollDepthPercent *uint8     `json:"scroll_depth_percent" gorm:"column:scroll_depth_percent"`
-	ImagesLoaded       uint16     `json:"images_loaded" gorm:"column:images_loaded"`
 	LinksClicked       uint16     `json:"links_clicked" gorm:"column:links_clicked"`
 	UnsubscribedAt     *time.Time `json:"unsubscribed_at" gorm:"column:unsubscribed_at"`
 	HasAMP             bool       `json:"has_amp" gorm:"column:has_amp"`
