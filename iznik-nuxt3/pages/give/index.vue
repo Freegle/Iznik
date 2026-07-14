@@ -23,7 +23,7 @@
 
           <!-- Clear form - subtle link, shown only when there's content -->
           <div v-if="notblank" class="clear-form-section">
-            <a href="#" class="clear-link" @click.prevent="deleteItem(ids[0])">
+            <a href="#" class="clear-link" @click.prevent="clearAndStartOver">
               <v-icon icon="times" /> Clear and start over
             </a>
           </div>
@@ -59,7 +59,7 @@
 import { buildHead } from '~/composables/useBuildHead'
 import NoticeMessage from '~/components/NoticeMessage'
 import WizardProgressCompact from '~/components/WizardProgressCompact'
-import { setup, deleteItem } from '~/composables/useCompose'
+import { setup, clearItem } from '~/composables/useCompose'
 import { onMounted, computed, watch, nextTick, useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 
@@ -122,6 +122,10 @@ useHead(
 )
 
 const { me, ids, messageValid, uploadingPhoto, notblank } = await setup('Offer')
+
+function clearAndStartOver() {
+  clearItem(ids.value[0])
+}
 
 // The 'Give an Item' conversion event fires on actual post completion in
 // freegleIt() (composables/useCompose.js), not on page mount - mounting the
