@@ -11,18 +11,29 @@ const { mockMessageStore, mockStdmsgStore, mockCheckWorkDeferGetMessages } =
       spam: vi.fn().mockResolvedValue(),
       hold: vi.fn().mockResolvedValue(),
       release: vi.fn().mockResolvedValue(),
+      reject: vi.fn().mockResolvedValue(),
       approveedits: vi.fn().mockResolvedValue(),
       revertedits: vi.fn().mockResolvedValue(),
       byId: vi.fn(),
       fetch: vi.fn().mockResolvedValue(),
     }
 
+    // Neutral default action ('Leave', not 'Reject') - a mock that always resolved
+    // 'Reject' masked the rippled-in guard's fail-open bug in a prior attempt at
+    // this fix (Discourse 9862/13): every test looked like a Reject regardless of
+    // what the guard actually checked.
     const mockStdmsgStore = {
       fetch: vi.fn().mockResolvedValue({
         id: 1,
         title: 'Test Standard Message',
         body: 'Test body',
-        action: 'Reject',
+        action: 'Leave',
+      }),
+      byId: vi.fn().mockReturnValue({
+        id: 1,
+        title: 'Test Standard Message',
+        body: 'Test body',
+        action: 'Leave',
       }),
     }
 
@@ -117,6 +128,21 @@ describe('ModMessageButton', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // vi.clearAllMocks() clears call history but not a mockReturnValue set by a
+    // previous test, so re-pin the neutral default here to stop one test's
+    // override (e.g. action: 'Reject' or undefined) leaking into the next.
+    mockStdmsgStore.byId.mockReturnValue({
+      id: 1,
+      title: 'Test Standard Message',
+      body: 'Test body',
+      action: 'Leave',
+    })
+    mockStdmsgStore.fetch.mockResolvedValue({
+      id: 1,
+      title: 'Test Standard Message',
+      body: 'Test body',
+      action: 'Leave',
+    })
   })
 
   describe('rendering', () => {
@@ -333,14 +359,14 @@ describe('ModMessageButton', () => {
   })
 
   describe('reject action (standard message modal)', () => {
-    it('sets stdmsgAction to Reject when reject prop is true', async () => {
-      const wrapper = mountComponent({ reject: true })
+    it('sets stdmsgAction to Reject when reject prop is true on the home group', async () => {
+      const wrapper = mountComponent({ reject: true, isHomeGroup: true })
       await wrapper.vm.click()
       expect(wrapper.vm.stdmsgAction).toBe('Reject')
     })
 
-    it('shows stdmsg modal when reject prop is true', async () => {
-      const wrapper = mountComponent({ reject: true })
+    it('shows stdmsg modal when reject prop is true on the home group', async () => {
+      const wrapper = mountComponent({ reject: true, isHomeGroup: true })
       await wrapper.vm.click()
       expect(wrapper.vm.showStdMsgModal).toBe(true)
     })
@@ -383,6 +409,126 @@ describe('ModMessageButton', () => {
     })
   })
 
+  describe('rippled-in (non-home) reject guard (Discourse 9862/13)', () => {
+    it('shows the no-message confirm instead of the compose modal for the plain Reject button on a non-home group', async () => {
+      const wrapper = mountComponent({ reject: true, isHomeGroup: false })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('fails CLOSED: shows the no-message confirm when isHomeGroup is omitted entirely', async () => {
+      // A call site that forgets to wire :is-home-group must not silently fall
+      // through to composing and sending a message the server discards - the
+      // exact gap that let a prior fix attempt ship with only one wired site.
+      const wrapper = mountComponent({ reject: true })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('composes normally for the plain Reject button on the home group', async () => {
+      const wrapper = mountComponent({ reject: true, isHomeGroup: true })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
+
+    it('shows the no-message confirm for a Reject-action standard message on a non-home group', async () => {
+      mockStdmsgStore.byId.mockReturnValue({ id: 2, action: 'Reject' })
+      const wrapper = mountComponent({ stdmsgid: 2, isHomeGroup: false })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('composes normally for a Reject-action standard message on the home group', async () => {
+      mockStdmsgStore.byId.mockReturnValue({ id: 2, action: 'Reject' })
+      const wrapper = mountComponent({ stdmsgid: 2, isHomeGroup: true })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.stdmsgId).toBe(2)
+    })
+
+    it('composes normally for a non-Reject standard message even on a non-home group', async () => {
+      mockStdmsgStore.byId.mockReturnValue({ id: 3, action: 'Leave' })
+      const wrapper = mountComponent({ stdmsgid: 3, isHomeGroup: false })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
+
+    it('fails CLOSED: shows the no-message confirm when the standard message action cannot be resolved (store miss/race)', async () => {
+      // byId() returning undefined - e.g. the fetch failed or hasn't landed yet -
+      // must not be treated as "safe to compose". This is the exact hole that let
+      // a rippled-in standard-message Reject silently vanish with no chat record.
+      mockStdmsgStore.byId.mockReturnValue(undefined)
+      const wrapper = mountComponent({ stdmsgid: 4, isHomeGroup: false })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('guards even when autosend is true - autosend must not bypass the rippled-in check', async () => {
+      mockStdmsgStore.byId.mockReturnValue({ id: 5, action: 'Reject' })
+      const wrapper = mountComponent({
+        stdmsgid: 5,
+        isHomeGroup: false,
+        autosend: true,
+      })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('rejectFromGroupConfirmed dispatches messageStore.reject with no subject/body/stdmsg', async () => {
+      const wrapper = mountComponent(
+        { groupid: 456, reject: true, isHomeGroup: false },
+        { id: 123 }
+      )
+      await wrapper.vm.rejectFromGroupConfirmed()
+      expect(mockMessageStore.reject).toHaveBeenCalledWith(
+        123,
+        456,
+        '',
+        null,
+        ''
+      )
+    })
+
+    it("rejectFromGroupConfirmed targets the CLICKED button's own groupid prop, not message.groups[0], on a multi-group rippled-in post", async () => {
+      const wrapper = mountComponent(
+        { groupid: 999, reject: true, isHomeGroup: false },
+        {
+          id: 555,
+          // groups[0] is the ORIGIN/home group - a different group from the one
+          // this button was clicked for. If the reject fell back to groups[0] it
+          // would land on the home group and wrongly notify the poster.
+          groups: [
+            { groupid: 111, collection: 'Pending' },
+            { groupid: 999, collection: 'Pending' },
+          ],
+        }
+      )
+      await wrapper.vm.rejectFromGroupConfirmed()
+      expect(mockMessageStore.reject).toHaveBeenCalledWith(
+        555,
+        999,
+        '',
+        null,
+        ''
+      )
+      expect(mockMessageStore.reject).not.toHaveBeenCalledWith(
+        555,
+        111,
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      )
+    })
+  })
+
   describe('callback handling', () => {
     it('calls callback when provided', async () => {
       const callback = vi.fn()
@@ -419,7 +565,7 @@ describe('ModMessageButton', () => {
     })
 
     it('renders stdmsg modal when showStdMsgModal is true', async () => {
-      const wrapper = mountComponent({ reject: true })
+      const wrapper = mountComponent({ reject: true, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
       expect(wrapper.find('.stdmsg-modal').exists()).toBe(true)

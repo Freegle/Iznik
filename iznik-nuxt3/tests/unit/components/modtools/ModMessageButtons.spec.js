@@ -125,6 +125,7 @@ describe('ModMessageButtons', () => {
         'approveedits',
         'revertedits',
         'leave',
+        'isHomeGroup',
       ],
     },
     SpinButton: {
@@ -258,6 +259,56 @@ describe('ModMessageButtons', () => {
         { groups: [{ groupid: 456, collection: 'Pending' }] }
       )
       expect(wrapper.find('.mod-message-button.approve').exists()).toBe(false)
+    })
+  })
+
+  describe('is-home-group propagation to standard-message buttons (Discourse 9862/13)', () => {
+    // A standard message can itself be configured with action 'Reject' (e.g. a
+    // canned "Reject: Duplicate"). ModMessageButton's rippled-in guard relies on
+    // isHomeGroup being wired down to it exactly like the dedicated Reject
+    // button already was - previously the per-standard-message loop button
+    // never received it at all, so it always fell back to the (unsafe) prop
+    // default and composed/sent a message the server silently discarded.
+    it('passes is-home-group=false down to the per-standard-message loop buttons on a non-home group', () => {
+      const modConfig = createModConfig()
+      mockModConfigStore.configsById = { 1: modConfig }
+
+      const wrapper = mountComponent(
+        { modconfigid: 1, isHomeGroup: false },
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+
+      const buttons = wrapper.findAllComponents(commonStubs.ModMessageButton)
+      const stdmsgButton = buttons.find((b) => b.props('stdmsgid') === 2) // "Reject Message" stdmsg
+      expect(stdmsgButton).toBeTruthy()
+      expect(stdmsgButton.props('isHomeGroup')).toBe(false)
+    })
+
+    it('passes is-home-group=true down to the per-standard-message loop buttons on the home group', () => {
+      const modConfig = createModConfig()
+      mockModConfigStore.configsById = { 1: modConfig }
+
+      const wrapper = mountComponent(
+        { modconfigid: 1, isHomeGroup: true },
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+
+      const buttons = wrapper.findAllComponents(commonStubs.ModMessageButton)
+      const stdmsgButton = buttons.find((b) => b.props('stdmsgid') === 2)
+      expect(stdmsgButton).toBeTruthy()
+      expect(stdmsgButton.props('isHomeGroup')).toBe(true)
+    })
+
+    it('also passes is-home-group down to the dedicated plain Reject button', () => {
+      const wrapper = mountComponent(
+        { isHomeGroup: false },
+        { groups: [{ groupid: 456, collection: 'Pending' }] }
+      )
+      const buttons = wrapper.findAllComponents(commonStubs.ModMessageButton)
+      const rejectButton = buttons.find(
+        (b) => b.props('reject') === '' || b.props('reject') === true
+      )
+      expect(rejectButton.props('isHomeGroup')).toBe(false)
     })
   })
 

@@ -1469,6 +1469,62 @@ func TestPostMessageRejectNoSubjectDeletes(t *testing.T) {
 	assert.Equal(t, 1, deleted, "Reject without stdmsg should mark as deleted")
 }
 
+// A reject on a SECONDARY (non-origin) group must never notify the poster - that's by
+// design (#6), since they only need to hear about a rejection from their post's home
+// group. But if a mod's message (subject/body/stdmsgid) is supplied anyway - e.g. an
+// autosend standard message, a stale client bundle, or a direct API call bypassing the
+// frontend's rippled-in guard - it must not be silently discarded with no trace, which
+// is exactly how a standard-message reject on a rippled-in copy vanished with no chat
+// record and no email (Discourse 9862/13). The discard must be observable.
+func TestPostMessageRejectSecondaryGroupWithMessageIsDiscardedButObservable(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_secondary_msg")
+	db := database.DBConn
+
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	secondaryGroup := CreateTestGroup(t, prefix+"_secondary")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	// The mod moderates only the secondary (rippled-in) group.
+	CreateTestMembership(t, modID, secondaryGroup, "Moderator")
+	CreateTestMembership(t, posterID, originGroup, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, originGroup, prefix)
+	// Rippled into the secondary group an hour later - still Pending there too.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW() + INTERVAL 1 HOUR, 'Pending', 0)", msgID, secondaryGroup)
+
+	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'secondary_reject_message_discarded'")
+	defer db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'secondary_reject_message_discarded'")
+
+	body := map[string]interface{}{
+		"id":       msgID,
+		"action":   "Reject",
+		"groupid":  secondaryGroup,
+		"subject":  "Duplicate post",
+		"body":     "This is a duplicate of one already on your community.",
+		"stdmsgid": 999,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The poster must still not be notified/emailed from the secondary group.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_rejected' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "secondary-group reject must not queue a poster notification")
+
+	// But the discarded message must now be recorded, not silently dropped.
+	var discardCount int
+	db.Raw("SELECT count FROM rippling_event_metrics WHERE day = CURDATE() AND event = 'secondary_reject_message_discarded'").Scan(&discardCount)
+	assert.Equal(t, 1, discardCount, "a message supplied on a secondary-group reject must be recorded as discarded")
+}
+
 func TestPostMessageApproveMarksHam(t *testing.T) {
 	prefix := uniquePrefix("msgmod_appr_ham")
 	db := database.DBConn

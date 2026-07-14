@@ -164,11 +164,14 @@ const props = defineProps({
   },
   // Whether the group being moderated is the post's home/origin group. On a
   // rippled-in (non-home) group a Reject just removes the post from this group
-  // and sends no message to the freegler, so we skip the compose modal.
+  // and sends no message to the freegler, so we skip the compose modal. Defaults
+  // to false (NOT home) so a call site that forgets to wire this prop fails
+  // CLOSED into the safe "no message" confirm rather than silently composing and
+  // sending a message the server discards (Discourse 9862/13).
   isHomeGroup: {
     type: Boolean,
     required: false,
-    default: true,
+    default: false,
   },
 })
 
@@ -273,8 +276,12 @@ async function spamConfirmed() {
 async function rejectFromGroupConfirmed() {
   // Rippled-in (non-home) reject: just remove the post from this group, with no
   // message to the freegler (the server suppresses it anyway - they only need to
-  // hear about a rejection on their home community).
-  await messageStore.reject(message.value.id, groupid.value, '', null, '')
+  // hear about a rejection on their home community). Target the group THIS
+  // BUTTON was clicked for (its own groupid prop) - never fall back to
+  // message.groups[0] - so a multi-group rippled-in post can't have its reject
+  // land on the wrong (possibly home) group, which would wrongly notify the
+  // poster (Discourse 9862/13).
+  await messageStore.reject(message.value.id, props.groupid, '', null, '')
   refreshFromUser()
   checkWorkDeferGetMessages()
 }
@@ -334,7 +341,31 @@ async function click(callback) {
     stdmsgId.value = null
     stdmsgAction.value = null
 
-    if (props.reject && !props.isHomeGroup) {
+    if (props.stdmsgid) {
+      // We have a standard message. Fetch it into the store so both the guard
+      // below and the compose modal can read its real action/content.
+      await stdmsgStore.fetch(props.stdmsgid)
+    }
+
+    // Resolve whether this click might REJECT. A standard message can itself be
+    // configured with action 'Reject' (e.g. a canned "Reject: Duplicate"), not
+    // just the dedicated Reject button - so the same rippled-in guard must apply
+    // to it. Read the action back via the store GETTER (not fetch()'s resolved
+    // value, which isn't a proven contract). Fail CLOSED: if the action can't be
+    // positively resolved to something other than Reject (store miss/race ->
+    // undefined), treat it as though it might be a Reject rather than falling
+    // through to compose-and-send - losing a mod's message is worse than an
+    // extra confirm click (Discourse 9862/13).
+    const resolvedStdmsgAction = props.stdmsgid
+      ? stdmsgStore.byId(props.stdmsgid)?.action
+      : undefined
+    const mightReject =
+      props.reject ||
+      (Boolean(props.stdmsgid) &&
+        (resolvedStdmsgAction === 'Reject' ||
+          resolvedStdmsgAction === undefined))
+
+    if (mightReject && !props.isHomeGroup) {
       // Rippled-in reject: confirm a no-message removal instead of composing one.
       showRejectNoMsgModal.value = true
       if (callback) callback()
@@ -346,8 +377,6 @@ async function click(callback) {
     } else if (props.leave) {
       stdmsgAction.value = 'Leave'
     } else if (props.stdmsgid) {
-      // We have a standard message.  Fetch it into the store.
-      await stdmsgStore.fetch(props.stdmsgid)
       stdmsgId.value = props.stdmsgid
     }
 

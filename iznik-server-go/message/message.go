@@ -2233,7 +2233,20 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// so a group where the post had already gone live gets no phantom email/log (#9815).
 	for _, gid := range pendingGroups {
 		if originGid != 0 && gid != originGid {
-			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			if subject != "" || body != "" || stdmsgid != 0 {
+				// A message was supplied (e.g. an autosend standard message, a stale
+				// client bundle, or a direct API call) for a SECONDARY group's reject.
+				// The poster must still not be notified from a group that isn't their
+				// post's home group (#6), but previously that message was discarded
+				// with no trace at all, indistinguishable from a mod who never typed
+				// one - which is exactly how a standard-message reject on a rippled-in
+				// copy silently swallowed the mod's message (Discourse 9862/13). Make
+				// the discard observable instead of silent.
+				log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d supplied a message (subject=%q stdmsgid=%d) that will NOT be sent - poster is only notified from their home group", req.ID, gid, myid, subject, stdmsgid)
+				RecordRippleEvent(db, "secondary_reject_message_discarded")
+			} else {
+				log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			}
 			RecordRippleEvent(db, "secondary_reject")
 			ClipReachForRejectedGroup(db, req.ID, gid)
 			continue
