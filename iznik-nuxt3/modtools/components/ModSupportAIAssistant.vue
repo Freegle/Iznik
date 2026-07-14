@@ -1,5 +1,37 @@
 <template>
   <div class="log-analysis-container">
+    <!-- Privacy notice. Unlike the old pseudonymising version, this helper works
+         on real, de-anonymised member data, so the notice explains the legal basis
+         (DPIA) and the responsibilities rather than any anonymisation measures. -->
+    <b-modal
+      v-model="showPrivacyModal"
+      title="Privacy notice"
+      ok-only
+      ok-title="I understand"
+      centered
+    >
+      <p>
+        This tool uses AI to help you investigate support issues. It shows, and
+        sends to the AI (Claude),
+        <strong>real, non-anonymised member data</strong>
+        - names, email addresses and chat content. There is no pseudonymisation:
+        the AI sees the real values.
+      </p>
+      <ul class="mb-2">
+        <li>
+          Access is restricted to <strong>Support and Admin</strong> volunteers.
+        </li>
+        <li>
+          This de-anonymised processing is covered by Freegle's
+          <strong>Data Protection Impact Assessment (DPIA)</strong>.
+        </li>
+        <li>
+          Use it only for genuine support, look at the minimum you need, and
+          don't share what you see outside the support team.
+        </li>
+      </ul>
+    </b-modal>
+
     <!-- Header -->
     <div class="log-analysis-header">
       <div
@@ -32,9 +64,19 @@
             </b-button>
           </div>
         </div>
-        <b-form-checkbox v-model="debugMode" switch size="sm" class="me-1">
-          <small>Debug</small>
-        </b-form-checkbox>
+        <div class="d-flex align-items-center">
+          <b-form-checkbox v-model="debugMode" switch size="sm" class="me-2">
+            <small>Debug</small>
+          </b-form-checkbox>
+          <b-button
+            variant="link"
+            size="sm"
+            class="p-0 text-info"
+            @click="showPrivacyModal = true"
+          >
+            <span aria-hidden="true">&#9432;</span> Privacy
+          </b-button>
+        </div>
       </div>
     </div>
 
@@ -253,6 +295,7 @@ const AI_SUPPORT_URL = 'http://ai-support-helper.localhost'
 
 // UI state
 const debugMode = ref(false)
+const showPrivacyModal = ref(false)
 
 // User search
 const userSearch = ref('')
