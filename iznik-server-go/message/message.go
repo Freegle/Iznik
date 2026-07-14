@@ -1787,6 +1787,31 @@ func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 	return groupids
 }
 
+// resolvePatchLocationID determines the locationid to persist for a PATCH /message
+// edit. An explicit locationid (whether supplied directly or resolved from a location
+// name) always wins over lat/lng. Otherwise, when the caller supplies new coordinates
+// but no locationid — as partner integrations like Trash Nothing do, since they have
+// no concept of Freegle's location IDs — the nearest postcode for those coordinates is
+// derived instead. Without this, messages.lat/lng update but locationid stays pinned to
+// its pre-edit value; since locationid (not raw lat/lng) is what both the subject-line
+// reconstruction and the owner/mod-facing location display prefer, the postcode appears
+// to revert and stays stuck no matter how many times the coordinates are corrected
+// (Discourse 9908).
+func resolvePatchLocationID(explicit *uint64, lat, lng *float64, nearestPostcode func(lat, lng float32) location.Location) *uint64 {
+	if explicit != nil {
+		return explicit
+	}
+	if lat == nil || lng == nil {
+		return nil
+	}
+	nearest := nearestPostcode(float32(*lat), float32(*lng))
+	if nearest.ID == 0 {
+		return nil
+	}
+	id := nearest.ID
+	return &id
+}
+
 // constructLocationString builds a location string for a message's subject,
 // using the area name + vague postcode format.
 // The vague postcode is the outward code only (e.g., "CB22" from "CB22 3AA").
@@ -3110,6 +3135,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 			req.Locationid = &locID
 		}
 	}
+	req.Locationid = resolvePatchLocationID(req.Locationid, req.Lat, req.Lng, location.ClosestPostcode)
 	if req.Locationid != nil {
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
