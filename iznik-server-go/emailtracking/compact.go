@@ -351,18 +351,22 @@ func ImageCompact(c *fiber.Ctx) error {
 			})
 		}
 
+		// The per-load row IS the record of this image load - it carries the
+		// position label used by the digest-position analytics. Deliberately do
+		// NOT also increment email_tracking.images_loaded: the N images of one
+		// digest open load near-simultaneously, and a per-hit UPDATE on the
+		// shared parent row needs an exclusive lock that every concurrent load
+		// (plus each load's own FK insert here, which takes a shared lock on the
+		// same parent row) contends for. That serialised on the row lock and hit
+		// lock-wait timeouts, which in turn drove client retries that inflated
+		// the count. The counter is unread and derivable as a COUNT over these
+		// rows, so it is no longer maintained.
 		imageLoad := EmailTrackingImage{
 			EmailTrackingID: tracking.ID,
 			ImagePosition:   position,
 			LoadedAt:        now,
 		}
 		db.Create(&imageLoad)
-
-		// Atomic increment. The N images of one email load near-simultaneously, so a
-		// read-modify-write (ImagesLoaded+1 from the stale read above) both lost
-		// updates and held the row lock across a round trip long enough to hit
-		// lock-wait timeouts. Let the DB increment in a single statement.
-		db.Model(tracking).UpdateColumn("images_loaded", gorm.Expr("images_loaded + 1"))
 	}
 
 	return c.Redirect(imageURL)

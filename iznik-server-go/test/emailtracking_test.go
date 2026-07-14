@@ -2,6 +2,7 @@ package test
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,21 @@ import (
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/stretchr/testify/assert"
 )
+
+// encodeCompactID mirrors the batch encodeId() that DecodeID reverses: the id's
+// minimal big-endian bytes, base64url-encoded without padding.
+func encodeCompactID(id uint64) string {
+	if id == 0 {
+		return "0"
+	}
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], id)
+	i := 0
+	for i < 8 && b[i] == 0 {
+		i++
+	}
+	return base64.RawURLEncoding.EncodeToString(b[i:])
+}
 
 // getTestUserSite returns the user site URL for tests
 func getTestUserSite() string {
@@ -172,7 +188,12 @@ func TestEmailTrackingImage(t *testing.T) {
 	assert.NotNil(t, updated.OpenedAt)
 	assert.Equal(t, "image", *updated.OpenedVia)
 	assert.Equal(t, uint8(75), *updated.ScrollDepthPercent)
-	assert.Equal(t, uint16(1), updated.ImagesLoaded)
+
+	// The per-load record in email_tracking_images is the source of truth for how
+	// many (and which positioned) images loaded. The denormalised
+	// email_tracking.images_loaded counter is retired and the column dropped: it
+	// caused hot-row lock contention on the parent row and was derivable from these
+	// child rows anyway.
 
 	// Verify image load record was created
 	var images []emailtracking.EmailTrackingImage
@@ -180,6 +201,52 @@ func TestEmailTrackingImage(t *testing.T) {
 	assert.Equal(t, 1, len(images))
 	assert.Equal(t, "item_3", images[0].ImagePosition)
 	assert.Equal(t, uint8(75), *images[0].EstimatedScrollPercent)
+}
+
+// TestEmailTrackingImageCompactSourceOfTruth exercises the compact/digest image
+// route (ImageCompact) - the one seen hammering the cluster with
+// "images_loaded = images_loaded + 1" for a single row. Each load must record a
+// child email_tracking_images row (the source of truth) and redirect, WITHOUT
+// incrementing the parent counter (no per-hit hot-row UPDATE).
+func TestEmailTrackingImageCompactSourceOfTruth(t *testing.T) {
+	tracking := createTestTrackingRecord(t)
+	defer cleanupTestTracking(t, tracking.TrackingID)
+
+	ref := tracking.TrackingID[:12]
+	// type 't' (message photo) builds a delivery URL purely from the id, so no
+	// real message row is needed. preset 1, position label "i1".
+	idEnc := encodeCompactID(120345)
+	path := "/e/d/i/" + ref + "/t/" + idEnc + "/1/i1"
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", path, nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp.StatusCode) // 302 to delivery URL
+	assert.NotEmpty(t, resp.Header.Get("Location"))
+
+	db := database.DBConn
+	var updated emailtracking.EmailTracking
+	db.Where("tracking_id = ?", tracking.TrackingID).First(&updated)
+
+	// First-open marking still happens (once, guarded in SQL).
+	assert.NotNil(t, updated.OpenedAt)
+	assert.Equal(t, "image", *updated.OpenedVia)
+
+	// One child row per load (the source of truth; there is no parent counter).
+	var imgCount int64
+	db.Model(&emailtracking.EmailTrackingImage{}).Where("email_tracking_id = ?", updated.ID).Count(&imgCount)
+	assert.Equal(t, int64(1), imgCount)
+
+	var img emailtracking.EmailTrackingImage
+	db.Where("email_tracking_id = ?", updated.ID).First(&img)
+	assert.Equal(t, "i1", img.ImagePosition)
+
+	// A second load adds another child row (the per-load record); the count is
+	// derived from these rows.
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", path, nil), -1)
+	assert.Equal(t, http.StatusFound, resp2.StatusCode)
+	db.Where("tracking_id = ?", tracking.TrackingID).First(&updated)
+	db.Model(&emailtracking.EmailTrackingImage{}).Where("email_tracking_id = ?", updated.ID).Count(&imgCount)
+	assert.Equal(t, int64(2), imgCount)
 }
 
 func TestEmailTrackingMDN(t *testing.T) {
