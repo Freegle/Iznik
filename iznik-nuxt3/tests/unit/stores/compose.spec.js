@@ -753,6 +753,112 @@ describe('compose store', () => {
       expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
     })
 
+    it('resumePendingSubmit is a no-op while a submit is already in flight', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      // Pretend a normal freegleIt submit is already running.
+      store.submitting = true
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'a@b.com'
+      )
+
+      const ret = await store.resumePendingSubmit()
+
+      // Must not fire a second submit for the same draft (would double-post), and
+      // must still consume the marker so it can never replay later.
+      expect(ret).toBeNull()
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('resume submits the deferred draft but preserves an in-progress repost of the same type', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      store.messages = [
+        // The brand-new Offer being composed (what deferSubmit captured).
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'New Sofa',
+          submitted: false,
+          attachments: [],
+        },
+        // A separate repost-in-progress of the SAME type - must not be wiped.
+        {
+          id: 1,
+          type: 'Offer',
+          item: 'Old Chair',
+          submitted: false,
+          repostof: 555,
+          attachments: [],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      store.setPendingSubmit(store.messages[0], 'a@b.com')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.resumePendingSubmit()
+
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      const remaining = store.messages.filter(Boolean)
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].repostof).toBe(555)
+      expect(remaining[0].item).toBe('Old Chair')
+
+      logSpy.mockRestore()
+    })
+
+    it('submit() is a no-op while another submit is in flight (no duplicate post)', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          attachments: [],
+        },
+      ]
+      // Hold the first submit open so it is still in flight for the second call.
+      let resolveSubmit
+      mockMessageSubmit.mockReturnValue(
+        new Promise((resolve) => {
+          resolveSubmit = resolve
+        })
+      )
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      const first = store.submit({ type: 'Offer' })
+      expect(store.submitting).toBe(true)
+
+      // Second click while the first is pending: clean no-op, API not hit again.
+      const second = await store.submit({ type: 'Offer' })
+      expect(second).toEqual([])
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+
+      resolveSubmit({ id: 42, groupid: 10 })
+      await first
+      expect(store.submitting).toBe(false)
+
+      logSpy.mockRestore()
+    })
+
+    it('init() clears a stale submitting flag persisted from a crashed submit', () => {
+      const store = useComposeStore()
+      store.submitting = true
+      store.init({ public: {} })
+      expect(store.submitting).toBe(false)
+    })
+
     it('resumePendingSubmit is a no-op when nothing is pending', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
@@ -810,7 +916,13 @@ describe('compose store', () => {
       store.init({ public: {} })
       store.email = 'a@b.com'
       store.messages = [
-        { id: 0, type: 'Offer', item: 'Sofa', submitted: false, aiDeclined: true },
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          aiDeclined: true,
+        },
       ]
       store.deferSubmit('Offer')
       expect(store.pendingSubmit.options.ai_declined).toBe(true)
@@ -842,7 +954,9 @@ describe('compose store', () => {
       store.init({ public: {} })
       store.postcode = { id: 123 }
       store.group = 10
-      store.messages = [{ id: 0, type: 'Offer', item: 'Sofa', submitted: false }]
+      store.messages = [
+        { id: 0, type: 'Offer', item: 'Sofa', submitted: false },
+      ]
       mockMessageSubmit.mockRejectedValue(new Error('boom'))
       store.setPendingSubmit(
         { type: 'Offer', item: 'Sofa', attachments: [] },
@@ -917,8 +1031,20 @@ describe('compose store', () => {
       store.email = 'test@example.com'
       store.group = 10
       store.messages = [
-        { id: 0, type: 'Offer', item: 'Sofa', submitted: false, attachments: [] },
-        { id: 1, type: 'Wanted', item: 'Drill', submitted: false, attachments: [] },
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          attachments: [],
+        },
+        {
+          id: 1,
+          type: 'Wanted',
+          item: 'Drill',
+          submitted: false,
+          attachments: [],
+        },
       ]
       mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -1014,9 +1140,7 @@ describe('compose store', () => {
           item: 'Sofa',
           submitted: false,
           repostof: 99,
-          attachments: [
-            { ouruid: 'ai-uid', externalmods: { ai: true } },
-          ],
+          attachments: [{ ouruid: 'ai-uid', externalmods: { ai: true } }],
         },
       ]
       mockMessageUpdate.mockResolvedValue({})
