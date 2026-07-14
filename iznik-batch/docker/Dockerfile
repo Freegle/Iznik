@@ -19,7 +19,21 @@ FROM php:8.4-cli AS mjml-ext-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates build-essential clang libclang-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+# Retry the rustup install: static.rust-lang.org intermittently drops the
+# connection, and on a cold-cache build an un-retried install fails the whole
+# image build (seen on CircleCI - static.rust-lang.org "Could not connect").
+# Download the installer then run it under a retry loop, mirroring the
+# composer-install retry below. We split curl and sh (rather than curl|sh)
+# because the default RUN shell is dash, which has no pipefail, so a curl
+# failure in a pipe would be masked by sh's exit status.
+RUN n=0; until curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+        && sh /tmp/rustup-init.sh -y --default-toolchain stable; do \
+      n=$((n+1)); \
+      [ "$n" -ge 5 ] && { echo "rustup install failed after $n attempts" >&2; exit 1; }; \
+      echo "rustup install attempt $n hit a transient network error; retrying in 15s..."; \
+      sleep 15; \
+    done; \
+    rm -f /tmp/rustup-init.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /build
 RUN git clone --depth 1 --branch v1.2.1 https://github.com/alekitto/mjml-php.git . \
