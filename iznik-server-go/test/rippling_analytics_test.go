@@ -92,24 +92,56 @@ func TestBullseye(t *testing.T) {
 	assert.Equal(t, 0, empty[0].NReplies)
 }
 
-// The sysadmin analytics UI loads drive-times from a SEPARATE endpoint
-// (/rippling/analytics/drivetime) so the slow routing pass doesn't block the fast panels. This
-// guards that the route is actually registered: it was added as a handler but not wired into the
-// router, so the live UI got a 404 and silently hid the whole bullseye panel. The routing pass is
-// best-effort (unreachable routing just yields an empty sample), so the response is a well-formed
-// 200 carrying the 6 fixed bullseye rings regardless of the graph being reachable here.
+// The sysadmin analytics UI loads drive-times from a SEPARATE set of endpoints so the slow routing
+// pass never blocks the fast panels and never 504s. The client drives it: fetch the SAMPLE, score
+// it one chunk after another (serial), then aggregate. This guards that all three routes are
+// registered (a handler-not-wired-into-the-router regression 404'd and silently hid the bullseye
+// panel), and that the aggregate always carries the 6 fixed bullseye rings even when the routing
+// graph is unreachable here (an empty sample still produces well-formed stats).
 func TestRipplingAnalyticsDriveTimeEndpoint(t *testing.T) {
 	prefix := uniquePrefix("rippledrivetime")
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET",
-		fmt.Sprintf("/api/rippling/analytics/drivetime?jwt=%s", token), nil), -1)
-	assert.Equal(t, 200, resp.StatusCode, "drivetime route must be registered (was 404)")
+	// Step 1: the SAMPLE endpoint returns the posts to score (fast — one query, no routing). An 8s
+	// cap fails loudly rather than hanging if it ever regresses into doing the routing pass inline.
+	sampleURL := fmt.Sprintf("/api/rippling/analytics/drivetime?jwt=%s", token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", sampleURL, nil), 8000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "drivetime sample route must be registered (was 404) and answer promptly")
+	var sample map[string]interface{}
+	json.Unmarshal(rsp(resp), &sample)
+	assert.NotNil(t, sample["total"], "sample reports a total for the client progress bar")
+	posts, _ := sample["posts"].([]interface{})
+	// posts may be empty in the test DB — the flow still holds.
 
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-	bullseye, ok := result["bullseye"].([]interface{})
-	assert.True(t, ok, "drivetime response carries a bullseye array")
+	// Step 2: score the sample. Serial on the server; routing is unreachable here, so it returns a
+	// best-effort (empty) obs set without hanging.
+	postsJSON, _ := json.Marshal(map[string]interface{}{"posts": posts})
+	scoreReq := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/rippling/analytics/drivetime/score?jwt=%s", token), strings.NewReader(string(postsJSON)))
+	scoreReq.Header.Set("Content-Type", "application/json")
+	sresp, err := getApp().Test(scoreReq, 8000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, sresp.StatusCode, "drivetime score route must be registered")
+	var scored map[string]interface{}
+	json.Unmarshal(rsp(sresp), &scored)
+	_, hasObs := scored["obs"]
+	assert.True(t, hasObs, "score response carries an obs array")
+
+	// Step 3: aggregate the observations into the drive-time stats. Even an empty sample yields the
+	// 6 fixed bullseye rings, so the UI never loses the panel.
+	obsJSON, _ := json.Marshal(map[string]interface{}{"obs": scored["obs"]})
+	aggReq := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/rippling/analytics/drivetime/aggregate?jwt=%s", token), strings.NewReader(string(obsJSON)))
+	aggReq.Header.Set("Content-Type", "application/json")
+	aresp, err := getApp().Test(aggReq, 8000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, aresp.StatusCode, "drivetime aggregate route must be registered")
+	var done map[string]interface{}
+	json.Unmarshal(rsp(aresp), &done)
+	assert.Equal(t, "done", done["status"], "aggregate returns the done payload")
+	bullseye, ok := done["bullseye"].([]interface{})
+	assert.True(t, ok, "aggregate response carries a bullseye array")
 	assert.Len(t, bullseye, 6, "bullseye always has the 6 fixed drive-time rings")
 }
