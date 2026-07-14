@@ -92,6 +92,83 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $message->id)->count());
     }
 
+    public function test_does_not_index_soft_deleted_membership(): void
+    {
+        // Rippling's "removed on origin removal" sets messages_groups.deleted=1 but leaves
+        // collection=Approved and messages.deleted NULL. Such a removed copy — even with a recent
+        // arrival (e.g. one autorepost wrongly bumped) — must NOT be indexed into browse.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: removed copy (London)',
+            'textbody' => 'Removed on origin removal.',
+            'source' => 'Platform',
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+            'deleted' => 1,
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'a soft-deleted (removed) membership must not be indexed'
+        );
+    }
+
+    public function test_removes_spatial_row_when_membership_soft_deleted(): void
+    {
+        // An already-indexed row whose backing membership is later soft-deleted (deleted=1,
+        // collection still Approved) must be removed — otherwise the removed copy lingers in
+        // browse until removeOldMessages ages it out (up to 31 days).
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: lingering (London)',
+            'textbody' => 'Indexed then removed.',
+            'source' => 'Platform',
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+            'deleted' => 1,
+        ]);
+        // Already in the index, pointing at this now-removed group.
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
+        );
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'the spatial row is removed when its backing membership is soft-deleted'
+        );
+    }
+
     public function test_pending_rippled_in_row_keeps_approved_origin_spatial_row(): void
     {
         // #6 regression: removeNonApprovedMessages keys on (msgid, groupid), not msgid alone.
