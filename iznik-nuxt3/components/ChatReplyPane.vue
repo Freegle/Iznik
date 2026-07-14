@@ -34,15 +34,34 @@
           size="md"
         />
         <div class="reply-card__heading">
-          <span class="reply-card__name">{{
-            poster?.displayname || 'Freegler'
-          }}</span>
-          <span v-if="message" class="reply-card__context">
-            <span class="reply-card__tag" :class="tagClass">{{
-              typeLabel
+          <div class="reply-card__name-row">
+            <span class="reply-card__name">{{
+              poster?.displayname || 'Freegler'
             }}</span>
-            {{ subjectItemName }}
-          </span>
+            <SupporterInfo
+              v-if="poster?.supporter"
+              size="sm"
+              class="reply-card__supporter"
+            />
+          </div>
+          <!-- Same profile info the chat header shows: ratings, when they were last
+               seen, typical reply time and how far away they are - so replying from
+               browse/email carries the same reassurance as being in the chat. -->
+          <div v-if="poster && poster.info" class="reply-card__stats">
+            <UserRatings :id="poster.id" size="sm" />
+            <span v-if="posterLastSeen" class="reply-stat-chip">
+              <v-icon icon="clock" class="reply-stat-icon" />
+              {{ posterLastSeen }}
+            </span>
+            <span v-if="replytime" class="reply-stat-chip">
+              <v-icon icon="reply" class="reply-stat-icon" />
+              {{ replytime }}
+            </span>
+            <span v-if="milesaway" class="reply-stat-chip">
+              <v-icon icon="map-marker-alt" class="reply-stat-icon" />
+              {{ milesaway }} miles
+            </span>
+          </div>
         </div>
       </header>
 
@@ -65,6 +84,16 @@
         >
           <ChatMessageCard :id="messageId" class="reply-card__post" />
         </div>
+
+        <!-- Rippled-in explainer, aligned under the post card: it reached the
+             viewer's area on a later day than it was first posted, so make that
+             gap explicit rather than leaving the "posted N days ago" read feel
+             wrong. Only rendered when rippleDates is set (see rippledInAreaDates):
+             hidden for non-rippled posts and same-day ripples. -->
+        <p v-if="rippleDates" class="reply-card__ripple">
+          Posted {{ fmt(rippleDates.firstPosted) }}, available in your area from
+          {{ fmt(rippleDates.availableFrom) }}
+        </p>
 
         <!-- Delivery notice -->
         <NoticeMessage
@@ -279,6 +308,7 @@ import {
   onMounted,
   onUnmounted,
 } from 'vue'
+import dayjs from 'dayjs'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
@@ -299,6 +329,10 @@ import ChatMessageCard from '~/components/ChatMessageCard'
 import SpinButton from '~/components/SpinButton.vue'
 import NoticeMessage from '~/components/NoticeMessage'
 import ProfileImage from '~/components/ProfileImage'
+import UserRatings from '~/components/UserRatings'
+import SupporterInfo from '~/components/SupporterInfo'
+import { timeago } from '~/composables/useTimeFormat'
+import { rippledInAreaDates } from '~/composables/rippleStatus'
 import { FAR_AWAY } from '~/constants'
 
 const NewFreegler = defineAsyncComponent(() =>
@@ -397,25 +431,47 @@ const poster = computed(() => {
     : null
 })
 
-const typeLabel = computed(() => {
-  return message.value?.type === 'Offer' ? 'OFFER' : 'WANTED'
+// When the poster was last seen, formatted like the chat header (no trailing "ago").
+const posterLastSeen = computed(() => {
+  if (!poster.value?.lastaccess) return null
+  return timeago(poster.value.lastaccess).replace(/ ago$/, '')
 })
 
-const tagClass = computed(() => {
-  return message.value?.type === 'Offer'
-    ? 'reply-card__tag--offer'
-    : 'reply-card__tag--wanted'
+// How quickly the poster typically replies - mirrors the chat header's phrasing.
+const replytime = computed(() => {
+  const secs = poster.value?.info?.replytime
+  if (!secs) return null
+
+  let val
+  let unit
+  if (secs < 60) {
+    val = Math.round(secs)
+    unit = 'second'
+  } else if (secs < 60 * 60) {
+    val = Math.round(secs / 60)
+    unit = 'minute'
+  } else if (secs < 24 * 60 * 60) {
+    val = Math.round(secs / 60 / 60)
+    unit = 'hour'
+  } else {
+    val = Math.round(secs / 60 / 60 / 24)
+    unit = 'day'
+  }
+
+  return `${val} ${unit}${val === 1 ? '' : 's'}`
 })
 
-const subjectItemName = computed(() => {
-  if (!message.value?.subject) return ''
-  // Strip OFFER/WANTED prefix and location suffix
-  let subject = message.value.subject
-  subject = subject.replace(/^(OFFER|WANTED):\s*/i, '')
-  // Remove location in parentheses at end
-  subject = subject.replace(/\s*\([^)]*\)\s*$/, '')
-  return subject
-})
+// Cross-day rippled-in dates for the note under the post card (null when not applicable).
+const rippleDates = computed(() =>
+  rippledInAreaDates(message.value?.groups, myGroups.value)
+)
+
+function fmt(val) {
+  const d = dayjs(val)
+  return d.year() === dayjs().year()
+    ? d.format('D MMM')
+    : d.format('D MMM YYYY')
+}
 
 const milesaway = computed(() => {
   return milesAway(
@@ -620,14 +676,17 @@ $reply-border: #cdcdcd;
 }
 
 /* ---- Header ---- */
+/* Light profile header, matching the chat page's own header so replying feels
+   like a continuation of the same conversation. */
 .reply-card__header {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
   padding: 10px 14px;
-  background: $reply-header-green;
-  color: $color-white;
+  background: $color-white;
+  color: $color-gray--darker;
+  border-bottom: 1px solid $reply-border;
   min-height: 60px;
 }
 
@@ -641,15 +700,15 @@ $reply-border: #cdcdcd;
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.16);
-  color: $color-white;
+  background: $color-gray--lighter;
+  color: $color-gray--darker;
   font-size: 1.1rem;
   cursor: pointer;
   transition: background 0.15s ease;
 
   &:hover,
   &:focus-visible {
-    background: rgba(255, 255, 255, 0.3);
+    background: $color-gray--light;
     outline: none;
   }
 }
@@ -661,45 +720,56 @@ $reply-border: #cdcdcd;
 .reply-card__heading {
   display: flex;
   flex-direction: column;
+  gap: 3px;
+  /* Take the space between the avatar and the edge, and allow shrinking so a long
+     display name ellipsises and the stat chips wrap instead of overflowing. */
+  flex: 1 1 auto;
   min-width: 0;
   line-height: 1.25;
+}
+
+.reply-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .reply-card__name {
   font-weight: 700;
   font-size: 1.05rem;
+  color: $color-gray--darker;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.reply-card__context {
+.reply-card__supporter {
+  flex-shrink: 0;
+}
+
+.reply-card__stats {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 0.85rem;
-  opacity: 0.95;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.reply-card__tag {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  background: rgba(255, 255, 255, 0.9);
+.reply-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: $color-gray--lighter;
+  font-size: 0.75rem;
+  color: $color-gray--darker;
+  font-weight: 500;
+  border-radius: var(--radius-sm, 0.375rem);
+}
 
-  &--offer {
-    color: #338808;
-  }
-
-  &--wanted {
-    color: #c2410c;
-  }
+.reply-stat-icon {
+  font-size: 0.7rem;
+  color: $color-green--dark;
 }
 
 /* ---- Body (chat conversation area) ---- */
@@ -713,10 +783,11 @@ $reply-border: #cdcdcd;
   background-repeat: repeat;
 }
 
+/* Body content is left-aligned as a single column so the intro, the post card and
+   the rippled-in caption all share one edge (no mix of centred and left-aligned). */
 .reply-card__intro {
-  margin: 0 auto 14px;
-  max-width: 90%;
-  text-align: center;
+  margin: 0 0 12px;
+  text-align: left;
   font-size: 0.8rem;
   color: $color-gray--dark;
 }
@@ -724,7 +795,7 @@ $reply-border: #cdcdcd;
 .reply-card__incoming {
   display: flex;
   justify-content: flex-start;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .reply-card__post {
@@ -734,6 +805,16 @@ $reply-border: #cdcdcd;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
   cursor: default;
+}
+
+/* Caption under the card, sharing the body's left edge. Kept to a single line
+   (the body is wider than the card, so it doesn't wrap once "First" is dropped). */
+.reply-card__ripple {
+  margin: 0 0 12px;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: $color-gray--dark;
 }
 
 .reply-card__notice {
