@@ -59,8 +59,8 @@
           community where it was first posted.
         </p>
         <p class="mb-0">
-          The freegler won't be told, because they don't need to know unless it's
-          rejected on their home community. So there's no message to send.
+          The freegler won't be told, because they don't need to know unless
+          it's rejected on their home community. So there's no message to send.
         </p>
       </template>
     </ConfirmModal>
@@ -334,8 +334,27 @@ async function click(callback) {
     stdmsgId.value = null
     stdmsgAction.value = null
 
-    if (props.reject && !props.isHomeGroup) {
-      // Rippled-in reject: confirm a no-message removal instead of composing one.
+    // A standard message picked from the list (e.g. a canned "Reject:
+    // Duplicate") can itself be configured with action 'Reject', not just the
+    // dedicated Reject button. Fetch it into the store first, then read its
+    // action back via the store GETTER (not fetch()'s resolved value, which
+    // isn't a reliable contract) so the rippled-in guard below applies to
+    // either route to a Reject.
+    if (props.stdmsgid) {
+      await stdmsgStore.fetch(props.stdmsgid)
+    }
+    const resolvedAction = props.reject
+      ? 'Reject'
+      : props.stdmsgid
+      ? stdmsgStore.byId(props.stdmsgid)?.action
+      : null
+
+    if (resolvedAction === 'Reject' && props.isHomeGroup === false) {
+      // Rippled-in reject: confirm a no-message removal instead of composing/
+      // sending one. The server silently drops any message on a secondary
+      // group's reject (handleReject only notifies the poster from their home
+      // group), so sending a composed message here would vanish with no chat
+      // record and no email (Discourse 9862/13).
       showRejectNoMsgModal.value = true
       if (callback) callback()
       return
@@ -346,8 +365,6 @@ async function click(callback) {
     } else if (props.leave) {
       stdmsgAction.value = 'Leave'
     } else if (props.stdmsgid) {
-      // We have a standard message.  Fetch it into the store.
-      await stdmsgStore.fetch(props.stdmsgid)
       stdmsgId.value = props.stdmsgid
     }
 

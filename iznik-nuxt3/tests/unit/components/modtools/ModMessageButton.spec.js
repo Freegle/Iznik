@@ -13,12 +13,23 @@ const { mockMessageStore, mockStdmsgStore, mockCheckWorkDeferGetMessages } =
       release: vi.fn().mockResolvedValue(),
       approveedits: vi.fn().mockResolvedValue(),
       revertedits: vi.fn().mockResolvedValue(),
+      reject: vi.fn().mockResolvedValue(),
       byId: vi.fn(),
       fetch: vi.fn().mockResolvedValue(),
     }
 
     const mockStdmsgStore = {
       fetch: vi.fn().mockResolvedValue({
+        id: 1,
+        title: 'Test Standard Message',
+        body: 'Test body',
+        action: 'Reject',
+      }),
+      // The store GETTER used to resolve the fetched standard message's action -
+      // deliberately a separate mock from fetch() so tests can prove the
+      // component reads back through the store rather than trusting fetch()'s
+      // resolved value (Discourse 9862/13 review feedback).
+      byId: vi.fn().mockReturnValue({
         id: 1,
         title: 'Test Standard Message',
         body: 'Test body',
@@ -254,7 +265,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.hold when hold prop is true', async () => {
       const wrapper = mountComponent({ hold: true }, { id: 555 })
       await wrapper.vm.click()
-      expect(mockMessageStore.hold).toHaveBeenCalledWith({ id: 555, groupid: 456 })
+      expect(mockMessageStore.hold).toHaveBeenCalledWith({
+        id: 555,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after hold', async () => {
@@ -268,7 +282,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.release when release prop is true', async () => {
       const wrapper = mountComponent({ release: true }, { id: 666 })
       await wrapper.vm.click()
-      expect(mockMessageStore.release).toHaveBeenCalledWith({ id: 666, groupid: 456 })
+      expect(mockMessageStore.release).toHaveBeenCalledWith({
+        id: 666,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after release', async () => {
@@ -380,6 +397,102 @@ describe('ModMessageButton', () => {
       await wrapper.vm.click()
       await flushPromises()
       expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
+  })
+
+  describe('reject via standard message on a rippled-in (non-home) group (Discourse 9862/13)', () => {
+    it('shows the no-message confirm instead of the compose modal when the standard message action is Reject', async () => {
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+      expect(wrapper.vm.stdmsgId).toBeNull()
+    })
+
+    it('actually dispatches messageStore.reject once the no-message confirm is confirmed', async () => {
+      const wrapper = mountComponent(
+        { stdmsgid: 42, isHomeGroup: false },
+        { id: 321, groups: [{ groupid: 654 }] }
+      )
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+
+      // Simulate the mod confirming the "no message will be sent" explanation.
+      await wrapper.vm.rejectFromGroupConfirmed()
+
+      expect(mockMessageStore.reject).toHaveBeenCalledWith(
+        321,
+        654,
+        '',
+        null,
+        ''
+      )
+    })
+
+    it("reads the standard message action from the store getter, not from fetch()'s resolved value", async () => {
+      // fetch() resolves with nothing usable (mirrors a caller that only awaits
+      // it for the side effect) - the store itself is still populated, which is
+      // what the component must rely on to detect the Reject action.
+      mockStdmsgStore.fetch.mockResolvedValueOnce(undefined)
+      mockStdmsgStore.byId.mockReturnValueOnce({
+        id: 42,
+        title: 'Reject: Duplicate',
+        body: 'Test body',
+        action: 'Reject',
+      })
+
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('still opens the compose modal for a Reject standard message on the home group', async () => {
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
+      await wrapper.vm.click()
+      await flushPromises()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.stdmsgId).toBe(42)
+    })
+
+    it('still opens the compose modal for a non-Reject standard message on a non-home group', async () => {
+      mockStdmsgStore.fetch.mockResolvedValueOnce({
+        id: 42,
+        title: 'Blank Reply',
+        body: 'Test body',
+        action: 'Leave',
+      })
+      mockStdmsgStore.byId.mockReturnValueOnce({
+        id: 42,
+        title: 'Blank Reply',
+        body: 'Test body',
+        action: 'Leave',
+      })
+
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.stdmsgId).toBe(42)
+    })
+
+    it('still opens the compose modal for the plain Reject button (no stdmsgid) on the home group', async () => {
+      const wrapper = mountComponent({ reject: true, isHomeGroup: true })
+      await wrapper.vm.click()
+      await flushPromises()
+
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.stdmsgAction).toBe('Reject')
     })
   })
 
