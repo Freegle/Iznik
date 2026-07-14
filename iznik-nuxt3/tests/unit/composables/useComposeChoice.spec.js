@@ -9,6 +9,11 @@ let mockBreakpoint = 'sm' // mobile
 let mockIsApp = false
 let mockUserId = 42
 
+// Shared bandit spy so tests can assert exposure/conversion calls.
+const { mockBandit } = vi.hoisted(() => ({
+  mockBandit: { shown: vi.fn(), chosen: vi.fn() },
+}))
+
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({ breakpoint: mockBreakpoint }),
 }))
@@ -23,7 +28,7 @@ vi.mock('~/stores/config', () => ({
 }))
 vi.mock('#imports', () => ({
   useNuxtApp: () => ({
-    $api: { bandit: { shown: vi.fn(), chosen: vi.fn() } },
+    $api: { bandit: mockBandit },
   }),
   useRoute: () => mockRoute,
 }))
@@ -75,5 +80,56 @@ describe('useComposeChoice rollout from config', () => {
     const { loadRollout } = useComposeChoice()
 
     await expect(loadRollout()).resolves.toBeUndefined()
+  })
+})
+
+// Conversion is recorded at the shared final "Freegle it!" step for BOTH arms, keyed
+// by a variant stashed at compose entry — so voice and control are measured at the
+// same funnel point (actual post creation). Regression for the gap where control
+// conversions were never recorded (its typed flow didn't know about the experiment).
+describe('useComposeChoice conversion tracking', () => {
+  const sessionStore = new Map()
+
+  beforeEach(() => {
+    mockBandit.shown.mockReset()
+    mockBandit.chosen.mockReset()
+    sessionStore.clear()
+    globalThis.sessionStorage = {
+      getItem: (k) => (sessionStore.has(k) ? sessionStore.get(k) : null),
+      setItem: (k, v) => sessionStore.set(k, String(v)),
+      removeItem: (k) => sessionStore.delete(k),
+    }
+  })
+
+  it('records the pending variant as a conversion (control)', () => {
+    const { markConversionPending, recordConversionIfPending } = useComposeChoice()
+    markConversionPending('control')
+    recordConversionIfPending()
+    expect(mockBandit.chosen).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'mobile-compose-variant', variant: 'control' })
+    )
+  })
+
+  it('records voice the same way, at the same point', () => {
+    const { markConversionPending, recordConversionIfPending } = useComposeChoice()
+    markConversionPending('voice')
+    recordConversionIfPending()
+    expect(mockBandit.chosen).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'mobile-compose-variant', variant: 'voice' })
+    )
+  })
+
+  it('is a no-op when the user did not enter through the experiment', () => {
+    const { recordConversionIfPending } = useComposeChoice()
+    recordConversionIfPending()
+    expect(mockBandit.chosen).not.toHaveBeenCalled()
+  })
+
+  it('records a conversion at most once (marker cleared after recording)', () => {
+    const { markConversionPending, recordConversionIfPending } = useComposeChoice()
+    markConversionPending('control')
+    recordConversionIfPending()
+    recordConversionIfPending()
+    expect(mockBandit.chosen).toHaveBeenCalledTimes(1)
   })
 })
