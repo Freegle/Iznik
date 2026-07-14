@@ -148,3 +148,71 @@ export function isHomeGroup(group, groups) {
   const gid = group.groupid ?? group.id
   return gid != null && parseInt(gid) === homeId
 }
+
+/**
+ * Coerce a heldby value - numeric, numeric-string, or object ({id, displayname}, the
+ * legacy PHP-API shape) - to a plain numeric user id. Returns null for anything that
+ * isn't held (null/undefined/unparseable).
+ *
+ * @param {number|string|{id:number}|null|undefined} h
+ * @returns {number|null}
+ */
+export function normaliseHeldById(h) {
+  if (h === null || h === undefined) return null
+  if (typeof h === 'object') return h.id ?? null
+  const n = parseInt(h)
+  return Number.isNaN(n) ? null : n
+}
+
+/**
+ * The messages_groups row for the given group on this message - i.e. the group's own
+ * copy, as opposed to the legacy cross-group messages.heldby column, which is set
+ * whenever ANY group holds ANY copy of a rippled post. Reading that legacy field leaked
+ * a hold placed on one group's copy into every other group's view of the same message: a
+ * mod saw their own already-approved copy display "Held by X, check with them before
+ * releasing it" even though their copy was never held (Discourse 9904).
+ *
+ * Distinguishes "loaded, but no row" from "not loaded yet", so callers can tell a
+ * genuinely-resolved absence apart from a still-loading message:
+ *  - the matching row object if found
+ *  - null if `message.groups` is a loaded array but has no row for this group
+ *  - undefined if `message.groups` isn't an array yet (not loaded), or `groupid` can't
+ *    be resolved to a number at all
+ *
+ * @param {{groups?: Array<{groupid:number|string, heldby?:number|string|{id:number}|null}>}} message
+ * @param {number|string} groupid
+ * @returns {object|null|undefined}
+ */
+export function messageGroupRow(message, groupid) {
+  const groups = message?.groups
+  if (!Array.isArray(groups)) return undefined
+  const gid = parseInt(groupid)
+  if (Number.isNaN(gid)) return undefined
+  return groups.find((g) => parseInt(g.groupid) === gid) ?? null
+}
+
+/**
+ * The id of the moderator holding THIS message on THIS group - see messageGroupRow for
+ * the loaded/not-loaded distinction. This is the ONLY place that should turn a group row
+ * into a held-by id; every consumer (the held-by banner, the Hold/Release button toggle,
+ * the confirm-before-acting check) must call this rather than inspecting
+ * message.heldby or a group row directly, so they can't drift out of sync with each
+ * other.
+ *
+ * Returns:
+ *  - a numeric user id if the group's own copy is held
+ *  - null if the row is loaded and definitely NOT held (including a loaded-but-empty
+ *    groups array, which conclusively has no row for this group)
+ *  - undefined if the row can't be identified at all (message still loading) - callers
+ *    must not guess who holds it in this case, since that mod may be on a group the
+ *    reader can't act on.
+ *
+ * @param {object} message
+ * @param {number|string} groupid
+ * @returns {number|null|undefined}
+ */
+export function messageGroupHeldById(message, groupid) {
+  const row = messageGroupRow(message, groupid)
+  if (row === undefined || row === null) return row
+  return normaliseHeldById(row.heldby)
+}

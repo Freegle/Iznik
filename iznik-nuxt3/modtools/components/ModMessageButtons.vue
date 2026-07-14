@@ -55,7 +55,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="!message.heldby"
+        v-if="!heldByThisGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="warning"
@@ -186,6 +186,7 @@ import { ref, computed, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useModConfigStore } from '~/stores/modconfig'
 import { copyStdMsgs, icon, variant } from '~/composables/useStdMsgs'
+import { messageGroupHeldById } from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -260,6 +261,12 @@ function hasCollection(coll) {
 const pending = computed(() => {
   return hasCollection('Pending')
 })
+
+// Whether THIS group's own copy is held - never the legacy cross-group message.heldby,
+// which is set whenever ANY group holds ANY copy of a rippled post (Discourse 9904).
+const heldByThisGroup = computed(
+  () => typeof messageGroupHeldById(message.value, props.groupid) === 'number'
+)
 
 const approved = computed(() => {
   return hasCollection('Approved')

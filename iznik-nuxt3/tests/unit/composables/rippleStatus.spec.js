@@ -6,6 +6,9 @@ import {
   homeGroupFirst,
   isHomeGroup,
   RIPPLE_ORIGIN_WINDOW_MS,
+  messageGroupHeldById,
+  messageGroupRow,
+  normaliseHeldById,
 } from '~/composables/rippleStatus'
 
 // Helper: an ISO arrival N minutes after a fixed base.
@@ -359,5 +362,126 @@ describe('isHomeGroup', () => {
     expect(isHomeGroup(null, groups)).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, [])).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, null)).toBe(false)
+  })
+})
+
+describe('normaliseHeldById', () => {
+  it('returns null for null/undefined', () => {
+    expect(normaliseHeldById(null)).toBeNull()
+    expect(normaliseHeldById(undefined)).toBeNull()
+  })
+
+  it('returns a numeric id unchanged', () => {
+    expect(normaliseHeldById(7)).toBe(7)
+  })
+
+  it('coerces a numeric string', () => {
+    expect(normaliseHeldById('7')).toBe(7)
+  })
+
+  it('extracts id from an object-shaped heldby (legacy PHP-API shape)', () => {
+    expect(normaliseHeldById({ id: 5, displayname: 'Test Mod' })).toBe(5)
+  })
+
+  it('returns null for an unparseable value', () => {
+    expect(normaliseHeldById('not-a-number')).toBeNull()
+  })
+})
+
+describe('messageGroupRow (Discourse 9904)', () => {
+  it('returns the matching row when found', () => {
+    const message = { groups: [{ groupid: 10, heldby: null }] }
+    expect(messageGroupRow(message, 10)).toEqual({ groupid: 10, heldby: null })
+  })
+
+  it('coerces numeric-string groupids identically to numbers', () => {
+    const message = { groups: [{ groupid: '20', heldby: '7' }] }
+    expect(messageGroupRow(message, '20')).toEqual({
+      groupid: '20',
+      heldby: '7',
+    })
+    expect(messageGroupRow(message, 20)).toEqual({
+      groupid: '20',
+      heldby: '7',
+    })
+  })
+
+  it('distinguishes a loaded-but-empty groups array (conclusively no row) from a missing groups array (still loading)', () => {
+    // groups: [] is a fully-loaded response that genuinely has no rows - conclusive.
+    expect(messageGroupRow({ groups: [] }, 10)).toBeNull()
+    // groups missing entirely means the message (or its groups) hasn't loaded yet.
+    expect(messageGroupRow({}, 10)).toBeUndefined()
+    expect(messageGroupRow(undefined, 10)).toBeUndefined()
+    expect(messageGroupRow(null, 10)).toBeUndefined()
+  })
+
+  it('returns null (not undefined) when groups is loaded but no row matches the groupid', () => {
+    const message = { groups: [{ groupid: 20, heldby: 1 }] }
+    expect(messageGroupRow(message, 30)).toBeNull()
+  })
+
+  it('returns undefined when groupid cannot be resolved to a number, regardless of groups', () => {
+    const message = { groups: [{ groupid: 10, heldby: 1 }] }
+    expect(messageGroupRow(message, null)).toBeUndefined()
+    expect(messageGroupRow(message, undefined)).toBeUndefined()
+    expect(messageGroupRow(message, 'not-a-number')).toBeUndefined()
+  })
+})
+
+describe('messageGroupHeldById (Discourse 9904)', () => {
+  it("returns null when this group's own row is not held, even though another group holds its copy", () => {
+    // The exact 9904 scenario: my group's copy was approved (heldby null), but the
+    // post rippled to another group whose copy is held. The legacy message.heldby is
+    // set (some copy is held somewhere) but must never leak into my group's result.
+    const message = {
+      heldby: 1,
+      groups: [
+        { groupid: 10, heldby: null },
+        { groupid: 20, heldby: 1 },
+      ],
+    }
+    expect(messageGroupHeldById(message, 10)).toBeNull()
+  })
+
+  it("returns the holder id when this group's own row is held", () => {
+    const message = {
+      heldby: 1,
+      groups: [
+        { groupid: 10, heldby: null },
+        { groupid: 20, heldby: 1 },
+      ],
+    }
+    expect(messageGroupHeldById(message, 20)).toBe(1)
+  })
+
+  it('coerces a numeric-string groupid and a numeric-string heldby identically', () => {
+    const message = {
+      groups: [{ groupid: '20', heldby: '7' }],
+    }
+    expect(messageGroupHeldById(message, '20')).toBe(7)
+    expect(messageGroupHeldById(message, 20)).toBe(7)
+  })
+
+  it('coerces an object-shaped heldby ({id}) to its numeric id', () => {
+    const message = {
+      groups: [{ groupid: 20, heldby: { id: 5 } }],
+    }
+    expect(messageGroupHeldById(message, 20)).toBe(5)
+  })
+
+  it('returns null (a conclusive "not held") when groups is loaded but no row matches the groupid', () => {
+    const message = {
+      heldby: 1,
+      groups: [{ groupid: 20, heldby: 1 }],
+    }
+    expect(messageGroupHeldById(message, 30)).toBeNull()
+  })
+
+  it('returns undefined (unknown - not a guessed holder) when groups has not loaded yet, or groupid is unresolvable', () => {
+    expect(messageGroupHeldById({}, 10)).toBeUndefined()
+    expect(messageGroupHeldById(null, 10)).toBeUndefined()
+    expect(
+      messageGroupHeldById({ groups: [{ groupid: 10, heldby: 1 }] }, null)
+    ).toBeUndefined()
   })
 })

@@ -186,24 +186,66 @@ describe('ModMessageButton', () => {
   })
 
   describe('confirmButton computed', () => {
+    // Held state must be scoped to THIS group's own row (groupid 456, the default
+    // group resolved when no groupid prop is given) - not the legacy top-level
+    // message.heldby, which is set whenever ANY group holds ANY copy of a rippled
+    // post (Discourse 9904).
     it('returns true when message is held and action is not spam or delete', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent(
+        { approve: true },
+        { groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }] }
+      )
       expect(wrapper.vm.confirmButton).toBe(true)
     })
 
     it('returns false when message is held but action is spam', () => {
-      const wrapper = mountComponent({ spam: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent(
+        { spam: true },
+        { groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }] }
+      )
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns false when message is held but action is delete', () => {
-      const wrapper = mountComponent({ delete: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent(
+        { delete: true },
+        { groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }] }
+      )
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns falsy when message is not held', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: null })
+      const wrapper = mountComponent(
+        { approve: true },
+        { groups: [{ groupid: 456, collection: 'Pending', heldby: null }] }
+      )
       expect(wrapper.vm.confirmButton).toBeFalsy()
+    })
+
+    it('does not confirm when a DIFFERENT group holds its own copy (Discourse 9904)', () => {
+      const wrapper = mountComponent(
+        { approve: true, groupid: 456 },
+        {
+          heldby: 1,
+          groups: [
+            { groupid: 456, collection: 'Approved', heldby: null },
+            { groupid: 789, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
+      expect(wrapper.vm.confirmButton).toBeFalsy()
+    })
+
+    it('fails SAFE (confirms) when this group cannot be identified at all - the undefined branch', () => {
+      // groups hasn't loaded yet, so this group's own row is unidentifiable. We must
+      // not guess "not held" and let the action straight through (Discourse 9904).
+      const wrapper = mountComponent({ approve: true }, { groups: undefined })
+      expect(wrapper.vm.confirmButton).toBe(true)
+    })
+
+    it('does not fail-safe-confirm on an unidentifiable row when the action is spam or delete', () => {
+      const wrapper = mountComponent({ spam: true }, { groups: undefined })
+      expect(wrapper.vm.confirmButton).toBe(false)
     })
   })
 

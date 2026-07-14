@@ -13,6 +13,9 @@ const mockView = vi.fn()
 const mockMarkSeen = vi.fn()
 const mockCount = vi.fn()
 const mockNearbyMarkSeen = vi.fn()
+const mockHold = vi.fn()
+const mockRelease = vi.fn()
+const mockFetchMT = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -25,6 +28,9 @@ vi.mock('~/api', () => ({
       view: mockView,
       markSeen: mockMarkSeen,
       count: mockCount,
+      hold: mockHold,
+      release: mockRelease,
+      fetchMT: mockFetchMT,
     },
   }),
 }))
@@ -546,6 +552,55 @@ describe('message store - markSeenSiblings()', () => {
     await store.markSeenSiblings([])
 
     expect(mockMarkSeen).not.toHaveBeenCalled()
+  })
+})
+
+// hold()/release() re-fetch the whole message after the API call and replace
+// this.list[id] with the fresh copy - which naturally carries the correct, per-group
+// messages_groups.heldby row. Since every component reads the message via the
+// reactive byId getter, this refetch is what keeps the Hold/Release toggle and the
+// held-by banner in sync with the server (Discourse 9904) - no separate optimistic
+// patch of groups[] is needed or attempted.
+describe('message store - hold()/release() update the matching per-group row', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('replaces the message with a refetch whose groups[] row reflects the new hold', async () => {
+    const store = useMessageStore()
+    mockFetchMT.mockResolvedValue({
+      id: 42,
+      groups: [
+        { groupid: 10, collection: 'Pending', heldby: 999 },
+        { groupid: 20, collection: 'Approved', heldby: null },
+      ],
+    })
+
+    await store.hold({ id: 42, groupid: 10 })
+
+    expect(mockHold).toHaveBeenCalledWith(42, 10)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
+    const row = store.byId(42).groups.find((g) => g.groupid === 10)
+    expect(row.heldby).toBe(999)
+    // The other group's row is unaffected - it was never held.
+    expect(
+      store.byId(42).groups.find((g) => g.groupid === 20).heldby
+    ).toBeNull()
+  })
+
+  it('replaces the message with a refetch whose groups[] row reflects the release', async () => {
+    const store = useMessageStore()
+    mockFetchMT.mockResolvedValue({
+      id: 42,
+      groups: [{ groupid: 10, collection: 'Pending', heldby: null }],
+    })
+
+    await store.release({ id: 42, groupid: 10 })
+
+    expect(mockRelease).toHaveBeenCalledWith(42, 10)
+    const row = store.byId(42).groups.find((g) => g.groupid === 10)
+    expect(row.heldby).toBeNull()
   })
 })
 

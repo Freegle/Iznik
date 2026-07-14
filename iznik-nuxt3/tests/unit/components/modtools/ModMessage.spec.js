@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { computed } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import ModMessage from '~/modtools/components/ModMessage.vue'
 
@@ -131,9 +132,11 @@ vi.mock('~/stores/user', () => ({
 
 // Mock composables
 vi.mock('~/composables/useMe', () => ({
+  // myid is a computed ref in the real composable (~/composables/useMe.js) - script-
+  // side code (not just templates) reads myid.value, so the mock must match that shape.
   useMe: () => ({
     me: mockMe,
-    myid: mockMe.id,
+    myid: computed(() => mockMe.id),
   }),
 }))
 
@@ -825,28 +828,115 @@ describe('ModMessage', () => {
   })
 
   describe('Held message', () => {
+    // Held state is scoped to THIS group's own row (groupid 789, matching
+    // authStore/myModGroups) - not the legacy top-level message.heldby
+    // (Discourse 9904).
     it('shows release button when held, warning when held by someone else', async () => {
       const wrapper1 = mountComponent(
         {
           summary: false,
         },
         {
-          heldby: { id: 999, displayname: 'Test Mod' },
+          heldby: 999,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              heldby: { id: 999, displayname: 'Test Mod' },
+            },
+          ],
         }
       )
       await wrapper1.vm.$nextTick()
       expect(wrapper1.find('.mod-message-button').exists()).toBe(true)
+      expect(wrapper1.text()).toContain('You held this')
 
       const wrapper2 = mountComponent(
         {
           summary: false,
         },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()
       expect(wrapper2.text()).toContain('Held by')
+    })
+
+    it('does not show a held banner when this group is unheld even though the legacy cross-group message.heldby is set by a rippled-to group holding its own copy (Discourse 9904)', async () => {
+      const wrapper = mountComponent(
+        {
+          summary: false,
+        },
+        {
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Approved',
+              heldby: null,
+            },
+            {
+              groupid: 790,
+              namedisplay: 'Other Group',
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('Held by')
+      expect(wrapper.text()).not.toContain('Held on another group')
+    })
+
+    it('fails safe with generic wording (no named mod) when this group cannot be identified at all but the legacy field says it is held somewhere', async () => {
+      // Defensive fallback only: the message's groups haven't loaded yet, but the
+      // legacy cross-group field says SOME copy is held. We must not guess which
+      // mod - they may not be on a group this reader can act on.
+      const wrapper = mountComponent(
+        {
+          summary: false,
+        },
+        {
+          heldby: 888,
+          groups: undefined,
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Held on another group')
+      expect(wrapper.text()).not.toContain('Held by')
+      expect(wrapper.text()).not.toContain('Other Mod')
+    })
+
+    it('keeps the holder able to Release even via the unknown-group fail-safe fallback, when the legacy holder is me (Discourse 9904)', async () => {
+      // groups hasn't loaded yet, so this group's own row can't be identified - but
+      // the legacy field says I (999) hold it. The actual holder must never be
+      // locked out of Release, even in this fallback.
+      const wrapper = mountComponent(
+        {
+          summary: false,
+        },
+        {
+          heldby: 999,
+          groups: undefined,
+        }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('You held this')
+      expect(wrapper.find('.mod-message-button').exists()).toBe(true)
+      // The footer must not hide the action buttons for the actual holder.
+      expect(wrapper.text()).not.toContain('held by someone else')
     })
   })
 
@@ -1238,7 +1328,15 @@ describe('ModMessage', () => {
       const wrapper2 = mountComponent(
         { summary: false },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          heldby: 888,
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()

@@ -323,16 +323,19 @@
                 at
                 {{ datetimeshort(message.outcomes[0].timestamp) }}
               </NoticeMessage>
-              <div v-if="message.heldby">
+              <div v-if="heldNoticeVisible">
                 <NoticeMessage variant="warning" class="mb-2">
-                  <p v-if="me.id === heldbyId">
+                  <p v-if="me.id === effectiveHeldbyId">
                     You held this. Other people will see a warning to check with
                     you before releasing it. If you release it, it will stay in
                     Pending.
                   </p>
-                  <p v-else>
+                  <p v-else-if="heldByThisGroup">
                     Held by <strong>{{ heldbyName }}</strong
                     >. Please check with them before releasing it.
+                  </p>
+                  <p v-else>
+                    Held on another group. Please check before releasing it.
                   </p>
                   <ModMessageButton
                     :messageid="message.id"
@@ -721,7 +724,7 @@
         </b-row>
       </b-card-body>
       <b-card-footer v-if="!noactions && expanded">
-        <div v-if="message.heldby && heldbyId !== myid">
+        <div v-if="heldAndNotByMe">
           This message is held by someone else. The buttons are hidden so you
           don't click them by accident. Please check with them before releasing
           the message.
@@ -734,11 +737,7 @@
           This message needs editing so that we know where it is.
         </NoticeMessage>
         <div
-          v-if="
-            pending &&
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="pending && !heldAndNotByMe && !editing"
           class="text-end mb-1"
         >
           <b-button variant="danger" @click="spamReport">
@@ -746,10 +745,7 @@
           </b-button>
         </div>
         <ModMessageButtons
-          v-if="
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="!heldAndNotByMe && !editing"
           :messageid="message.id"
           :groupid="currentGroupid"
           :modconfigid="configid"
@@ -832,6 +828,8 @@ import {
   isRippledInToContextGroup as isRippledIn,
   earliestArrivalGroupId,
   homeGroupId,
+  messageGroupRow,
+  normaliseHeldById,
 } from '~/composables/rippleStatus'
 
 const props = defineProps({
@@ -1177,23 +1175,69 @@ const eBody = computed(() => {
   return twem(message.value.textbody)
 })
 
-// Handle heldby as either numeric ID (Go API) or object (PHP API).
-const heldbyId = computed(() => {
-  if (!message.value) return null
-  const h = message.value.heldby
-  if (!h) return null
-  return Number.isInteger(h) ? h : h.id
+// The current group's own messages_groups row - never the legacy cross-group
+// messages.heldby, which is set whenever ANY group holds ANY copy of a rippled post.
+// Reading that field leaked a hold placed on one group's copy into every other
+// group's (already-approved, unheld) view of the same message (Discourse 9904).
+const currentGroupRow = computed(() =>
+  messageGroupRow(message.value, currentGroupid.value)
+)
+
+// null = this group's row is loaded and confirmed unheld (including a loaded-but-empty
+// groups array); a number = held by that user; undefined = we can't identify this
+// group's own row at all (message/groups still loading, or currentGroupid doesn't match
+// any group on the post) - see heldByUnknownGroup for how that fail-safe case is handled.
+const heldByThisGroupId = computed(() => {
+  const row = currentGroupRow.value
+  if (row === undefined || row === null) return row
+  return normaliseHeldById(row.heldby)
 })
 
+const heldByThisGroup = computed(
+  () => typeof heldByThisGroupId.value === 'number'
+)
+
+// The legacy cross-group field. Only ever consulted as a fail-safe fallback below -
+// never as the primary source of this group's held state (Discourse 9904).
+const legacyHeldbyId = computed(() => normaliseHeldById(message.value?.heldby))
+
+// Fail-safe fallback: this group's own row can't be identified (message/groups still
+// loading), but the legacy field says SOME copy is held somewhere.
+const heldByUnknownGroup = computed(
+  () => heldByThisGroupId.value === undefined && legacyHeldbyId.value !== null
+)
+
+const heldNoticeVisible = computed(
+  () => heldByThisGroup.value || heldByUnknownGroup.value
+)
+
+// Who the banner/footer treat as the holder: this group's own holder when known, or -
+// only in the fail-safe fallback - the legacy holder. We never let a mod other than
+// that holder see them named from the unscoped legacy field (see heldbyName).
+const effectiveHeldbyId = computed(() => {
+  if (heldByThisGroup.value) return heldByThisGroupId.value
+  if (heldByUnknownGroup.value) return legacyHeldbyId.value
+  return null
+})
+
+const heldbyId = computed(() =>
+  heldByThisGroup.value ? heldByThisGroupId.value : null
+)
+
 const heldbyName = computed(() => {
-  if (!message.value) return ''
-  const h = message.value.heldby
-  if (!h) return ''
-  if (Number.isInteger(h)) {
-    const user = userStore.byId(h)
-    return user?.displayname || ''
-  }
-  return h.displayname || ''
+  if (!heldByThisGroup.value) return ''
+  const raw = currentGroupRow.value?.heldby
+  if (raw && typeof raw === 'object') return raw.displayname || ''
+  const user = userStore.byId(heldbyId.value)
+  return user?.displayname || ''
+})
+
+// Should action buttons be hidden because this group's own copy is held by somebody
+// else (or, in the fail-safe fallback, might be)? The actual holder is never locked
+// out, even when they can only be identified via the legacy field (Discourse 9904).
+const heldAndNotByMe = computed(() => {
+  if (!heldNoticeVisible.value) return false
+  return effectiveHeldbyId.value !== myid.value
 })
 
 const membership = computed(() => {
@@ -1435,6 +1479,17 @@ watch(
   { immediate: true }
 )
 
+// Fetch the holder's user record whenever the held-by id changes - not just once on
+// mount - so the name stays current across hold()/release() refetches and async loads
+// (Discourse 9904).
+watch(
+  heldbyId,
+  (id) => {
+    if (id) userStore.fetch(id)
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
   expanded.value = !props.summary
   if (message.value) {
@@ -1442,11 +1497,6 @@ onMounted(() => {
       ? message.value.attachments
       : []
     findHomeGroup()
-
-    // Fetch heldby user if message is held (Go API returns numeric ID).
-    if (message.value.heldby && Number.isInteger(message.value.heldby)) {
-      userStore.fetch(message.value.heldby)
-    }
   }
 })
 

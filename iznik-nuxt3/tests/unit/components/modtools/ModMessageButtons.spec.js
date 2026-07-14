@@ -224,24 +224,59 @@ describe('ModMessageButtons', () => {
 
     it('shows hold button for pending messages without heldby', () => {
       const wrapper = mountComponent(
-        {},
+        { groupid: 456 },
         {
-          groups: [{ groupid: 456, collection: 'Pending' }],
+          groups: [{ groupid: 456, collection: 'Pending', heldby: null }],
           heldby: null,
         }
       )
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
     })
 
-    it('hides hold button when message is held', () => {
+    // The Hold/Release toggle follows THIS group's own row - never the legacy
+    // cross-group message.heldby, which is set whenever ANY group holds ANY copy of
+    // a rippled post (Discourse 9904).
+    it('hides hold button and shows release when this group is held', () => {
       const wrapper = mountComponent(
-        {},
+        { groupid: 456 },
         {
-          groups: [{ groupid: 456, collection: 'Pending' }],
+          groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
           heldby: { id: 1 },
         }
       )
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(false)
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(true)
+    })
+
+    it('offers Hold (not Release) when a DIFFERENT group holds its own copy - the exact Discourse 9904 scenario', () => {
+      // My group's copy (10) is unheld; another group's copy (20) rippled to and is
+      // held there. The legacy message.heldby is set globally, but must not leak
+      // into my group's Hold/Release toggle.
+      const wrapper = mountComponent(
+        { groupid: 10 },
+        {
+          heldby: { id: 1 },
+          groups: [
+            { groupid: 10, collection: 'Pending', heldby: null },
+            { groupid: 20, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(false)
+    })
+
+    it("does not fall back to the legacy field when this group's own row is unheld but no other group holds it either", () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          heldby: null,
+          groups: [{ groupid: 456, collection: 'Pending', heldby: null }],
+        }
+      )
+      expect(wrapper.vm.heldByThisGroup).toBe(false)
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(false)
     })
 
     it('shows spam button for pending messages', () => {

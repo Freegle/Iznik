@@ -74,6 +74,7 @@ import { useMessageStore } from '~/stores/message'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { useUserStore } from '~/stores/user'
 import { useModMe } from '~/composables/useModMe'
+import { messageGroupHeldById } from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -239,7 +240,15 @@ const spinclass = computed(() => {
 
 const confirmButton = computed(() => {
   // We confirm any actions on held messages, except where we have a separate confirm.
-  return message.value?.heldby && !props.spam && !props.delete
+  if (props.spam || props.delete) return false
+
+  // Scoped to THIS group's own row - never the legacy cross-group message.heldby, which
+  // is set whenever ANY group holds ANY copy of a rippled post (Discourse 9904). Fails
+  // SAFE: if we can't identify this group's own row (message/groups still loading, or
+  // groupid unresolved), we don't know whether it's held, so we confirm rather than
+  // silently letting the action through.
+  const held = messageGroupHeldById(message.value, groupid.value)
+  return held === undefined || typeof held === 'number'
 })
 
 async function approveIt() {
