@@ -5,6 +5,8 @@ import ModSysAdminRipplingAnalytics from '~/modtools/components/ModSysAdminRippl
 
 const mockFetchAnalytics = vi.fn()
 const mockFetchAnalyticsDriveTimes = vi.fn()
+const mockScoreAnalyticsDriveTimes = vi.fn()
+const mockAggregateAnalyticsDriveTimes = vi.fn()
 const mockFetchMetrics = vi.fn().mockResolvedValue({})
 
 vi.mock('~/api', () => ({
@@ -12,6 +14,8 @@ vi.mock('~/api', () => ({
     rippling: {
       fetchAnalytics: mockFetchAnalytics,
       fetchAnalyticsDriveTimes: mockFetchAnalyticsDriveTimes,
+      scoreAnalyticsDriveTimes: mockScoreAnalyticsDriveTimes,
+      aggregateAnalyticsDriveTimes: mockAggregateAnalyticsDriveTimes,
       fetchMetrics: mockFetchMetrics,
     },
   }),
@@ -188,18 +192,38 @@ function fastOf(full) {
 }
 function driveOf(full) {
   return {
+    status: 'done',
     reply_drive_min: full.section1.reply_drive_min,
     ripple_drive_min: full.section3.ripple_drive_min,
     drive_time: full.section2.drive_time,
     bullseye: full.bullseye,
   }
 }
+// The drive-time pass is now three client calls: fetch the random SAMPLE, score it in chunks
+// (serial), then aggregate. A one-post sample + one observation is enough to drive the loop; the
+// rendered figures come from the mocked aggregate (driveOf(FULL)).
+const DRIVE_SAMPLE_POST = {
+  lat: 51.5,
+  lng: -0.1,
+  points: [[-0.1, 51.5]],
+  rippled: [false],
+  days: ['2026-07-01'],
+  takers: [false],
+}
+const DRIVE_OBS = { min: 17.2, rippled: false, day: '2026-07-01', taker: false }
 
 describe('ModSysAdminRipplingAnalytics', () => {
   beforeEach(() => {
     mockFetchAnalytics.mockReset()
     mockFetchAnalyticsDriveTimes.mockReset()
-    mockFetchAnalyticsDriveTimes.mockResolvedValue(driveOf(FULL))
+    mockScoreAnalyticsDriveTimes.mockReset()
+    mockAggregateAnalyticsDriveTimes.mockReset()
+    mockFetchAnalyticsDriveTimes.mockResolvedValue({
+      posts: [DRIVE_SAMPLE_POST],
+      total: 1,
+    })
+    mockScoreAnalyticsDriveTimes.mockResolvedValue({ obs: [DRIVE_OBS] })
+    mockAggregateAnalyticsDriveTimes.mockResolvedValue(driveOf(FULL))
   })
 
   it('fetches with the default stratum + date range on mount', async () => {
@@ -369,8 +393,9 @@ describe('ModSysAdminRipplingAnalytics', () => {
     expect(wrapper.html()).not.toContain('17.2')
     expect(wrapper.html()).toContain('sampling drive-times')
 
-    // Resolve the routing pass: the drive panels + bullseye now fill in.
-    resolveDrive(driveOf(FULL))
+    // Resolve the SAMPLE fetch; the client then scores it and aggregates (both mocked in
+    // beforeEach), so the drive panels + bullseye fill in.
+    resolveDrive({ posts: [DRIVE_SAMPLE_POST], total: 1 })
     await flushPromises()
     expect(wrapper.html()).toContain('17.2') // reply drive-time
     expect(wrapper.html()).toContain('How reliably does a reply convert') // bullseye
