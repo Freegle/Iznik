@@ -584,30 +584,11 @@ describe('ChatReplyPane', () => {
     })
   })
 
-  describe('subject processing', () => {
-    it('strips OFFER prefix from subject', async () => {
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(ChatReplyPane)
-      expect(comp.vm.subjectItemName).toBe('Sofa')
-    })
-
-    it('strips location suffix from subject', async () => {
-      mockMessageStore.byId.mockReturnValue({
-        ...mockMessage,
-        subject: 'WANTED: Chair (London SW1)',
-      })
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(ChatReplyPane)
-      expect(comp.vm.subjectItemName).toBe('Chair')
-    })
-
-    it('returns empty string when no subject', async () => {
-      mockMessageStore.byId.mockReturnValue({ ...mockMessage, subject: '' })
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(ChatReplyPane)
-      expect(comp.vm.subjectItemName).toBe('')
-    })
-  })
+  // The reply header no longer carries the OFFER/WANTED item-name subtitle
+  // (subjectItemName) - it was replaced with the poster's profile info (ratings,
+  // last-seen, distance) to mirror the chat header, and the item is shown as the
+  // post card in the body. The former 'subject processing' tests for that removed
+  // computed are gone with it.
 
   describe('reach-blocked (rippling-out #5)', () => {
     it('shows the composer AND a hold notice when replyeligible is false (reply is held, not blocked)', async () => {
