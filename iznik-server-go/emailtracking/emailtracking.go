@@ -290,16 +290,21 @@ func Image(c *fiber.Ctx) error {
 
 		now := time.Now()
 
-		// If not opened yet, mark as opened via image
+		// If not opened yet, mark as opened via image. Guard the write in SQL,
+		// not just on the stale Go read: an email's images load near-together and
+		// all see OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of
+		// them UPDATEs the same parent row and they serialise on its lock.
 		if tracking.OpenedAt == nil {
 			openedVia := "image"
-			db.Model(&tracking).Updates(map[string]interface{}{
+			db.Model(&tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
 				"opened_at":  now,
 				"opened_via": openedVia,
 			})
 		}
 
-		// Create image load record
+		// Create image load record. This per-load row (with its position and
+		// estimated scroll percent) is the source of truth for image/scroll-depth
+		// analytics.
 		imageLoad := EmailTrackingImage{
 			EmailTrackingID: tracking.ID,
 			ImagePosition:   position,
@@ -310,7 +315,7 @@ func Image(c *fiber.Ctx) error {
 			sp := uint8(scrollPercent)
 			imageLoad.EstimatedScrollPercent = &sp
 
-			// Update scroll depth if this is deeper
+			// Update scroll depth if this is deeper.
 			if tracking.ScrollDepthPercent == nil || sp > *tracking.ScrollDepthPercent {
 				db.Model(&tracking).Update("scroll_depth_percent", sp)
 			}
@@ -318,8 +323,11 @@ func Image(c *fiber.Ctx) error {
 
 		db.Create(&imageLoad)
 
-		// Increment image count
-		db.Model(&tracking).UpdateColumn("images_loaded", tracking.ImagesLoaded+1)
+		// Deliberately do NOT increment email_tracking.images_loaded. A per-hit
+		// counter UPDATE takes an exclusive lock on the parent row that every
+		// concurrent image load contends for (see ImageCompact) - and the old
+		// read-modify-write form here also lost updates. The count is unread and
+		// derivable as a COUNT over email_tracking_images, so it is not kept.
 	}
 
 	// Redirect to original image
