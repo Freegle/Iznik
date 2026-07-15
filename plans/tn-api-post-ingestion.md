@@ -14,11 +14,12 @@ TNSyncCommand (orchestrator)
   ├── RatingsSyncer                     (existing logic, extracted)
   ├── UserChangesSyncer                 (existing logic, extracted)
   ├── DuplicateUserMerger               (existing logic, extracted)
-  ├── PostsSyncer            ── uses ── GroupPostIngestionService (new, TN-only)
-  └── ChatMessagesSyncer     ── uses ── ChatMessageIngestionService (new, TN-only)
+  └── PostsSyncer            ── uses ── GroupPostIngestionService (new, TN-only)
 ```
 
-`GroupPostIngestionService` and `ChatMessageIngestionService` are new TN-only services that re-implement the relevant slices of `IncomingMailService` logic, but operating on TN API DTOs instead of `ParsedEmail`. The email service is not touched.
+`GroupPostIngestionService` is the new TN-only service that re-implements the posts slice of `IncomingMailService` logic, operating on TN API DTOs instead of `ParsedEmail`. The email service is not touched.
+
+**Out of scope**: Chat (TN chat replies arrive via email and are handled by `IncomingMailService::handleChatNotificationReply` — that path remains unchanged. The TN API exposes no chat messages endpoint.)
 
 ## File layout
 
@@ -26,14 +27,13 @@ TNSyncCommand (orchestrator)
 - `iznik-batch/app/Services/TrashNothing/TNApiClient.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/RatingsSyncer.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/UserChangesSyncer.php`
+- `iznik-batch/app/Services/TrashNothing/Sync/RatingsSyncer.php` ✅
+- `iznik-batch/app/Services/TrashNothing/Sync/UserChangesSyncer.php` ✅
 - `iznik-batch/app/Services/TrashNothing/Sync/PostSyncer.php` — paging + group lookup ✅
-- `iznik-batch/app/Services/TrashNothing/Syncers/ChatMessagesSyncer.php`
 - `iznik-batch/app/Services/TrashNothing/Syncers/DuplicateUserMerger.php`
 - `iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php` ✅
-- `iznik-batch/app/Services/TrashNothing/Ingestion/ChatMessageIngestionService.php`
 - `iznik-batch/app/Services/TrashNothing/Ingestion/TNPayloadToRfc822.php` — RFC822 synthesis inlined into GroupPostIngestionService for now
 - `iznik-batch/app/Services/TrashNothing/Dto/TNPostPayload.php`
-- `iznik-batch/app/Services/TrashNothing/Dto/TNChatMessagePayload.php`
 - `iznik-batch/app/Services/TrashNothing/Dto/SyncResult.php`
 - `iznik-batch/tests/fixtures/tn_sync/posts_page_1.json` — local-testing fixture ✅
 - `iznik-batch/tests/Unit/Services/TrashNothing/GroupPostIngestionServiceTest.php` ✅
@@ -65,6 +65,7 @@ Keep the single sync-date file. Each syncer runs in try/catch; if any throws, th
 ### B. Idempotency / dedup
 - During parallel run, even though API path is dry-run, trace emitter should detect "row with this `tnpostid` already exists" and tag the trace line `would_be_duplicate: true`.
 - Once live: `firstOrCreate` on `(tnpostid, groupid)`.
+- **Overlap window**: All TN API date-range queries use a small backward overlap (e.g. 10 seconds) so data written to the current second is not missed when the sync boundary lands mid-second. Items already processed in the previous request are silently skipped via the idempotency check — no double-writes. The overlap is applied when building the `from` timestamp, not when storing `maxChangeDate`. See section N for implementation approach.
 
 ### C. Field-level parity — `createGroupPostMessage` writes these and each needs an API mapping
 - `message` — synthesized RFC822 (see above)
@@ -86,16 +87,11 @@ Keep the single sync-date file. Each syncer runs in try/catch; if any throws, th
 - Posting-status decision tree: `ourPostingStatus`, Big Switch (`overridemoderation`), mod-post-to-pending, group `moderated` setting, unmapped user, worry words
 - Side-effects: `messages_postings`, `messages_history`, `messages_groups`, `messages_spatial`, `logs (Message/Received)`, `notifyGroupMods`, `addToSpatialIndex`, `pruneSubject`, `recordFailure`
 
-### E. Chat messages
-- API equivalent of `handleChatNotificationReply` / `handleReplyToAddress` / `createChatMessageFromEmail`.
-- Map: chat id, sender user id, `refmsgid`, message type (`TYPE_INTERESTED` vs `TYPE_DEFAULT`), body, attachments.
-- Stale-chat / unfamiliar-sender drop logic — still applicable?
-- `addEmailToUser` (email forwarding scenario) — N/A.
-- `trackEmailReply` (AMP comparison stats) — N/A or replaced with TN-source tracking.
-- Read-receipts from TN — separate concern; map only if the API exposes them.
+### E. Chat messages — OUT OF SCOPE
+TN chat replies continue to arrive via email and are handled by the existing `IncomingMailService::handleChatNotificationReply` path. The TN public API exposes no chat messages endpoint. No API-based chat ingestion will be built.
 
 ### F. Ordering between syncers
-Order: ratings → user-changes → posts → chats → duplicate merge.
+Order: ratings → user-changes → posts → duplicate merge.
 Risk: a post references an `fd_user_id` not yet created locally (race with `UserChangesSyncer`). Behavior on missing user is an open item.
 
 ### G. Failure semantics
@@ -124,10 +120,35 @@ Email path emits structured logs at every routing decision (`routing_reason`, `u
 - Parity test (email vs API path producing same rows) — not yet written; deferred until chat path is also done.
 - Existing `IncomingMailServiceTest` suite stays green untouched.
 
+### N. Sync-window overlap ✅
+All TN API date-range queries should request a small backward overlap (recommended: 10 seconds) on the `from` boundary so data written to the current second is not missed when the sync boundary lands mid-second.
+
+**Implementation**:
+- `resolveFromDate()` in `TNSyncCommand` (or each syncer) subtracts `SYNC_OVERLAP_SECONDS = 10` from the stored sync date before passing it as `date_min`.
+- The stored sync date (`storeSyncDate`) is written as-is (the true max date seen), so the overlap is re-applied fresh on every run — not accumulated.
+- Items already processed in the previous request are silently skipped by the per-endpoint idempotency checks:
+  - Ratings: `firstOrNew` on `tn_rating_id` (no duplicate write if already exists).
+  - User changes: idempotent saves; name/location updates are safe to repeat.
+  - Posts: `postAlreadyExists(tnpostid, groupid)` guard in `GroupPostIngestionService::ingest()`.
+
+**Applies to**: all three existing endpoint sync loops (`syncRatings`, `syncUserChanges`, `PostSyncer::sync`).
+
+### O. Syncer extraction ✅
+Currently `syncRatings` and `syncUserChanges` are private methods inside `TNSyncCommand`. As the command grows, extracting each into its own class (like `PostSyncer`) improves testability and keeps the command a thin orchestrator.
+
+**Proposed classes** (can be done alongside or after the overlap work):
+- `iznik-batch/app/Services/TrashNothing/Sync/RatingsSyncer.php`
+- `iznik-batch/app/Services/TrashNothing/Sync/UserChangesSyncer.php`
+
+Each would follow the `PostSyncer` pattern: constructor takes `(bool $dryRun, bool $localTesting, string $apiKey, string $apiBaseUrl, LokiService $loki)`, exposes `sync(string $from, string $to): array` returning `[int $count, ?string $maxDate]`, and handles its own fixture loading for `--local-testing`. `TNSyncCommand::handle()` becomes three `$syncer->sync(...)` calls.
+
+**Not required for the posts ingestion go-live**, but recommended before the codebase grows further.
+
 ### M. NOT in scope
 - Modifying `IncomingMailService` in any way.
 - Extracting/sharing helpers between email + API paths during parallel running.
 - Removing SMTP receivers or any TN-aware code paths in the mail pipeline.
+- Chat messages — TN chat replies continue via the email path indefinitely (no TN chat API).
 
 ## Open items still to resolve
 

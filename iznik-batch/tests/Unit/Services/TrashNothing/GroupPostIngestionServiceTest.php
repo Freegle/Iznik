@@ -246,6 +246,35 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(1, $count, 'Second ingest must not create a second messages row');
     }
 
+    public function test_overlap_window_does_not_duplicate_posts(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-overlap-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $svc    = $this->makeService(dryRun: false);
+
+        // Simulates the first sync window: post is created.
+        $first = $svc->ingest($post, $group);
+        $this->assertSame('approved', $first);
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+
+        // Simulates the overlap window re-fetching the same post.
+        // postAlreadyExists() must detect the duplicate and return early without
+        // inserting a second messages row or messages_groups row.
+        $second = $svc->ingest($post, $group);
+        $this->assertSame('duplicate', $second);
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+        $this->assertSame(
+            1,
+            MessageGroup::whereIn('msgid', Message::where('tnpostid', $postId)->pluck('id'))->count(),
+            'messages_groups must not acquire a second row for the same post',
+        );
+    }
+
     public function test_live_synthesizes_rfc822_blob_in_messages_message(): void
     {
         $locationId = $this->createTestLocation();

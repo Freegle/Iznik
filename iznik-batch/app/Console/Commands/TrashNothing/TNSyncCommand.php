@@ -3,18 +3,16 @@
 namespace App\Console\Commands\TrashNothing;
 
 use App\Console\Concerns\PreventsOverlapping;
-use App\Models\Location;
 use App\Models\Rating;
 use App\Models\User;
-use App\Models\UserAboutMe;
-use App\Models\UserReplyTime;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\PostSyncer;
+use App\Services\TrashNothing\Sync\RatingsSyncer;
+use App\Services\TrashNothing\Sync\UserChangesSyncer;
 use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class TNSyncCommand extends Command
@@ -34,9 +32,13 @@ class TNSyncCommand extends Command
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
-    private const PAGE_SIZE = 100;
-
     private const STALENESS_THRESHOLD_HOURS = 12;
+
+    // Backward overlap applied to the stored sync date when building `date_min`
+    // for every TN API request. Handles data written to the current second when
+    // the boundary lands mid-second. Duplicate items in the overlap window are
+    // dropped by each syncer's idempotency checks.
+    private const SYNC_OVERLAP_SECONDS = 10;
 
     private bool $dryRun;
 
@@ -91,13 +93,15 @@ class TNSyncCommand extends Command
                 $maxChangeDate = null;
 
                 // Sync ratings.
-                [$ratingsProcessed, $ratingsMaxDate] = $this->syncRatings($from, $to);
+                $ratingsSyncer = new RatingsSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
+                [$ratingsProcessed, $ratingsMaxDate] = $ratingsSyncer->sync($from, $to);
                 if ($ratingsMaxDate && (!$maxChangeDate || $ratingsMaxDate > $maxChangeDate)) {
                     $maxChangeDate = $ratingsMaxDate;
                 }
 
                 // Sync user changes.
-                [$changesProcessed, $changesMaxDate] = $this->syncUserChanges($from, $to);
+                $userChangesSyncer = new UserChangesSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
+                [$changesProcessed, $changesMaxDate] = $userChangesSyncer->sync($from, $to);
                 if ($changesMaxDate && (!$maxChangeDate || $changesMaxDate > $maxChangeDate)) {
                     $maxChangeDate = $changesMaxDate;
                 }
@@ -248,7 +252,17 @@ class TNSyncCommand extends Command
             return $override;
         }
 
-        return $this->getSyncFromDate();
+        $from = $this->getSyncFromDate();
+
+        // Apply backward overlap so data recorded in the last few seconds of the
+        // previous window is not missed when the boundary lands mid-second.
+        // Each syncer's idempotency check drops items already processed.
+        $ts = strtotime($from);
+        if ($ts !== false) {
+            return gmdate('Y-m-d\TH:i:s\Z', $ts - self::SYNC_OVERLAP_SECONDS);
+        }
+
+        return $from;
     }
 
     private function resolveToDate(): string
@@ -343,284 +357,6 @@ class TNSyncCommand extends Command
                 'age_hours' => $ageHours,
             ]);
         }
-    }
-
-    /**
-     * @return array [count, maxDate]
-     */
-    private function syncRatings(string $from, string $to): array
-    {
-        $page = 1;
-        $count = 0;
-        $maxDate = NULL;
-
-        do {
-            if ($this->localTesting) {
-                $ratingsFile = base_path("tests/fixtures/tn_sync/ratings_page_{$page}.json");
-                if (file_exists($ratingsFile)) {
-                    $ratingsPayload = json_decode(file_get_contents($ratingsFile), true);
-                    $ratings = is_array($ratingsPayload) ? ($ratingsPayload['ratings'] ?? []) : [];
-                } else {
-                    Log::info("TN-SYNC-TRACE [RATINGS-PAGE] missing fixture file={$ratingsFile}");
-                    $ratings = [];
-                }
-            } else {
-                $response = Http::get("{$this->apiBaseUrl}/ratings", [
-                    'key' => $this->apiKey,
-                    'page' => $page,
-                    'per_page' => self::PAGE_SIZE,
-                    'date_min' => $from,
-                    'date_max' => $to,
-                ]);
-
-                if (!$response->successful()) {
-                    Log::error("TN sync: ratings API failed on page {$page}", [
-                        'status' => $response->status(),
-                    ]);
-                    break;
-                }
-
-                $ratings = $response->json('ratings', []);
-            }
-            $page++;
-
-            Log::info("TN-SYNC-TRACE [RATINGS-PAGE] page=" . ($page - 1) . " count=" . count($ratings));
-
-            foreach ($ratings as $rating) {
-                $count++;
-
-                if (!$maxDate || $rating['date'] > $maxDate) {
-                    $maxDate = $rating['date'];
-                }
-
-                if (!($rating['ratee_fd_user_id'] ?? null)) {
-                    continue;
-                }
-
-                $user = User::find($rating['ratee_fd_user_id']);
-                if (!$user) {
-                    continue;
-                }
-
-                try {
-                    if ($rating['rating']) {
-                        $ratingModel = Rating::firstOrNew(['tn_rating_id' => $rating['rating_id']]);
-                        $isNew = !$ratingModel->exists;
-                        if ($isNew) {
-                            $ratingModel->ratee = $rating['ratee_fd_user_id'];
-                            $ratingModel->visible = 1;
-                        }
-                        $ratingModel->rating = $rating['rating'];
-                        $ratingModel->timestamp = $rating['date'];
-                        Log::info("TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id={$rating['rating_id']} set=ratee={$rating['ratee_fd_user_id']},rating={$rating['rating']},timestamp={$rating['date']},visible=1");
-                        if (!$this->dryRun) {
-                            $ratingModel->save();
-                        }
-                        $this->loki->logEvent('tn-sync', 'rating-upsert', [
-                            'action' => $isNew ? 'insert' : 'update',
-                            'tn_rating_id' => $rating['rating_id'],
-                            'user_id' => $rating['ratee_fd_user_id'],
-                        ]);
-                    } else {
-                        Log::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$rating['ratee_fd_user_id']},tn_rating_id={$rating['rating_id']}");
-                        $existing = Rating::where('ratee', $rating['ratee_fd_user_id'])
-                            ->where('tn_rating_id', $rating['rating_id'])
-                            ->first();
-                        if ($existing) {
-                            if (!$this->dryRun) {
-                                $existing->delete();
-                            }
-                            $this->loki->logEvent('tn-sync', 'rating-delete', [
-                                'tn_rating_id' => $rating['rating_id'],
-                                'user_id' => $rating['ratee_fd_user_id'],
-                            ]);
-                        }
-                    }
-                } catch (\Exception $e) {
-                    Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=error");
-                    Log::error('TN sync: ratings sync failed', [
-                        'error' => $e->getMessage(),
-                        'rating' => $rating,
-                    ]);
-                    if (function_exists('\Sentry\captureException')) {
-                        \Sentry\captureException($e);
-                    }
-                }
-            }
-        } while ($ratings && count($ratings) == self::PAGE_SIZE);
-
-        return [$count, $maxDate];
-    }
-
-    /**
-     * @return array [count, maxDate]
-     */
-    private function syncUserChanges(string $from, string $to): array
-    {
-        $page = 1;
-        $count = 0;
-        $maxDate = NULL;
-
-        do {
-            if ($this->localTesting) {
-                $changesFile = base_path("tests/fixtures/tn_sync/user_changes_page_{$page}.json");
-                if (file_exists($changesFile)) {
-                    $changesPayload = json_decode(file_get_contents($changesFile), true);
-                    $changes = is_array($changesPayload) ? ($changesPayload['changes'] ?? []) : [];
-                } else {
-                    Log::info("TN-SYNC-TRACE [CHANGES-PAGE] missing fixture file={$changesFile}");
-                    $changes = [];
-                }
-            } else {
-                $response = Http::get("{$this->apiBaseUrl}/user-changes", [
-                    'key' => $this->apiKey,
-                    'page' => $page,
-                    'per_page' => self::PAGE_SIZE,
-                    'date_min' => $from,
-                    'date_max' => $to,
-                ]);
-
-                if (!$response->successful()) {
-                    Log::error("TN sync: user-changes API failed on page {$page}", [
-                        'status' => $response->status(),
-                    ]);
-                    break;
-                }
-
-                $changes = $response->json('changes', []);
-            }
-            $page++;
-
-            Log::info("TN-SYNC-TRACE [CHANGES-PAGE] page=" . ($page - 1) . " count=" . count($changes));
-
-            foreach ($changes as $change) {
-                $count++;
-
-                if (!$maxDate || $change['date'] > $maxDate) {
-                    $maxDate = $change['date'];
-                }
-
-                if (!($change['fd_user_id'] ?? null)) {
-                    continue;
-                }
-
-                try {
-                    $user = User::find($change['fd_user_id']);
-                    if (!$user || !$user->isTN()) {
-                        continue;
-                    }
-
-                    if (!empty($change['account_removed'])) {
-                        Log::info("FD #{$change['fd_user_id']} TN account removed");
-                        Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=account-removed");
-                        $user->forget('TN account removed', $this->dryRun);
-                        $this->loki->logEvent('tn-sync', 'user-forget', [
-                            'user_id' => $change['fd_user_id'],
-                        ]);
-                        continue;
-                    }
-
-                    if (!empty($change['reply_time'])) {
-                        $replyTime = UserReplyTime::firstOrNew(['userid' => $change['fd_user_id']]);
-                        $isNew = !$replyTime->exists;
-                        $replyTime->replytime = $change['reply_time'];
-                        $replyTime->timestamp = $change['date'];
-                        Log::info("TN-SYNC-TRACE [WRITE] table=users_replytime op=replace where=userid={$change['fd_user_id']} set=replytime={$change['reply_time']},timestamp={$change['date']}");
-                        if (!$this->dryRun) {
-                            $replyTime->save();
-                        }
-                        $this->loki->logEvent('tn-sync', 'user-reply-time-upsert', [
-                            'action' => $isNew ? 'insert' : 'update',
-                            'user_id' => $change['fd_user_id'],
-                        ]);
-                    }
-
-                    if (!empty($change['about_me'])) {
-                        try {
-                            $aboutMe = UserAboutMe::firstOrNew(['userid' => $change['fd_user_id']]);
-                            $isNew = !$aboutMe->exists;
-                            $aboutMe->timestamp = $change['date'];
-                            $aboutMe->text = $change['about_me'];
-                            Log::info("TN-SYNC-TRACE [WRITE] table=users_aboutme op=replace where=userid={$change['fd_user_id']} set=timestamp={$change['date']},text=len=" . strlen($change['about_me']));
-                            if (!$this->dryRun) {
-                                $aboutMe->save();
-                            }
-                            $this->loki->logEvent('tn-sync', 'user-about-me-upsert', [
-                                'action' => $isNew ? 'insert' : 'update',
-                                'user_id' => $change['fd_user_id'],
-                            ]);
-                        } catch (\Exception $e) {
-                            if (function_exists('\Sentry\captureException')) {
-                                \Sentry\captureException($e);
-                            }
-                        }
-                    }
-
-                    // Spot name changes.
-                    if (!empty($change['username'])) {
-                        $oldname = User::removeTNGroup($user->fullname ?? '');
-
-                        if ($oldname != $change['username']) {
-                            Log::info("Name change for {$change['fd_user_id']} {$oldname} => {$change['username']}");
-                            Log::info("TN-SYNC-TRACE [NAME-CHANGE] fd_user_id={$change['fd_user_id']} old={$oldname} new={$change['username']}");
-                            $user->fullname = $change['username'];
-
-                            $emails = $user->emails()->pluck('email');
-
-                            foreach ($emails as $email) {
-                                if (str_contains($email, "{$oldname}-")) {
-                                    $newEmail = str_replace("{$oldname}-", "{$change['username']}-", $email);
-                                    $user->removeEmail($email, $this->dryRun);
-                                    Log::info("...{$email} => {$newEmail}");
-                                    $user->addEmail($newEmail, dryRun: $this->dryRun);
-                                    $this->loki->logEvent('tn-sync', 'user-email-rename', [
-                                        'user_id' => $change['fd_user_id'],
-                                        'old_email' => $email,
-                                        'new_email' => $newEmail,
-                                    ]);
-                                }
-                            }
-                        }
-                    }
-
-                    // Location changes.
-                    if (!empty($change['location'])) {
-                        $lat = $change['location']['latitude'] ?? null;
-                        $lng = $change['location']['longitude'] ?? null;
-
-                        if ($lat !== null && $lng !== null) {
-                            $loc = Location::closestPostcode((float) $lat, (float) $lng);
-
-                            if ($loc && $loc->id !== $user->lastlocation) {
-                                Log::info("FD #{$change['fd_user_id']} TN lat/lng {$lat},{$lng} has changed  => {$loc->id} {$loc->name}");
-                                Log::info("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat={$lat} lng={$lng} old_loc={$user->lastlocation} new_loc={$loc->id}");
-                                $user->lastlocation = $loc->id;
-                            }
-                        }
-                    }
-
-                    if (!$this->dryRun) {
-                        $user->save();
-                    }
-                    $this->loki->logEvent('tn-sync', 'user-update', [
-                        'user_id' => $change['fd_user_id'],
-                    ]);
-
-                    Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=processed");
-                } catch (\Exception $e) {
-                    Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=error");
-                    Log::error('TN sync: user changes sync failed', [
-                        'error' => $e->getMessage(),
-                        'change' => $change,
-                    ]);
-                    if (function_exists('\Sentry\captureException')) {
-                        \Sentry\captureException($e);
-                    }
-                }
-            }
-        } while ($changes && count($changes) == self::PAGE_SIZE);
-
-        return [$count, $maxDate];
     }
 
     private function mergeDuplicateTNUsers(): int

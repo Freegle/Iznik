@@ -666,10 +666,12 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // Verify the API was called with the stored date as date_min.
-        Http::assertSent(function ($request) use ($storedDate) {
+        // Verify the API was called with the stored date minus the overlap window as date_min.
+        // resolveFromDate() subtracts SYNC_OVERLAP_SECONDS (10) from the stored date.
+        $expectedDateMin = '2026-03-14T23:59:50Z';
+        Http::assertSent(function ($request) use ($expectedDateMin) {
             return str_contains($request->url(), 'ratings') &&
-                   $request['date_min'] === $storedDate;
+                   $request['date_min'] === $expectedDateMin;
         });
     }
 
@@ -703,8 +705,8 @@ class TNSyncCommandTest extends TestCase
                 return false;
             }
             $dateMin = $request['date_min'] ?? '';
-            // The stored date should be from the max rating timestamp.
-            return strtotime($dateMin) === strtotime($knownDate);
+            // resolveFromDate() subtracts SYNC_OVERLAP_SECONDS (10) from the fallback timestamp.
+            return strtotime($dateMin) === strtotime($knownDate) - 10;
         });
     }
 
@@ -1346,6 +1348,112 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
 
         Log::shouldNotHaveReceived('warning');
+    }
+
+    // =========================================================================
+    // Overlap-window idempotency
+    //
+    // Each syncer requests data with a small backward overlap (SYNC_OVERLAP_SECONDS)
+    // so data written in the last few seconds of the previous window is not missed.
+    // These tests confirm that re-processing the same item from the overlap window
+    // does not produce a second row in the database.
+    // =========================================================================
+
+    public function test_overlap_window_does_not_duplicate_ratings(): void
+    {
+        $user       = $this->createTestUser();
+        $tnRatingId = 'tn_r_overlap_' . uniqid();
+
+        $ratingPayload = [
+            'rating_id'        => $tnRatingId,
+            'ratee_fd_user_id' => $user->id,
+            'rating'           => 'Up',
+            'date'             => self::DATE_SYNC,
+        ];
+
+        // First sync window: rating is created for the first time.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => [$ratingPayload]], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T10:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('ratings')->where('tn_rating_id', $tnRatingId)->count());
+
+        // Second sync window: the same rating falls inside the 10-second overlap and is
+        // returned again. firstOrNew on tn_rating_id must not create a second row.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => [$ratingPayload]], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:59:50Z', '--to' => '2026-03-20T11:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('ratings')->where('tn_rating_id', $tnRatingId)->count());
+    }
+
+    public function test_overlap_window_does_not_duplicate_user_reply_times(): void
+    {
+        $user = $this->createTNUser();
+
+        $changePayload = [
+            'fd_user_id' => $user->id,
+            'reply_time' => 3600,
+            'date'       => self::DATE_SYNC,
+        ];
+
+        // First sync window: reply time created.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T10:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_replytime')->where('userid', $user->id)->count());
+
+        // Second sync window: same change re-fetched via overlap. firstOrNew on userid
+        // must upsert in place and not create a second users_replytime row.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:59:50Z', '--to' => '2026-03-20T11:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_replytime')->where('userid', $user->id)->count());
+    }
+
+    public function test_overlap_window_does_not_duplicate_about_me(): void
+    {
+        $user = $this->createTNUser();
+
+        $changePayload = [
+            'fd_user_id' => $user->id,
+            'about_me'   => 'I am a tidy person who loves repurposing things.',
+            'date'       => self::DATE_SYNC,
+        ];
+
+        // First sync window: about_me created.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:00:00Z', '--to' => '2026-03-20T10:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_aboutme')->where('userid', $user->id)->count());
+
+        // Second sync window: same about_me re-fetched via overlap.
+        Http::fake([
+            '*/ratings*'      => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => [$changePayload]], 200),
+        ]);
+        $this->artisan('tn:sync', ['--from' => '2026-03-20T09:59:50Z', '--to' => '2026-03-20T11:00:00Z'])
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('users_aboutme')->where('userid', $user->id)->count());
     }
 
     // =========================================================================
