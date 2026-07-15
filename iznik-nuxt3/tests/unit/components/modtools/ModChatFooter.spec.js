@@ -169,6 +169,16 @@ vi.mock('pinia', () => {
   }
 })
 
+// Mock the chat-draft store. pinia is mocked above (no defineStore), so the
+// real store module can't initialise here - stub the API the footer uses.
+vi.mock('~/stores/chatdraft', () => ({
+  useChatDraftStore: () => ({
+    saveDraft: vi.fn(),
+    getDraft: vi.fn(() => ''),
+    clearDraft: vi.fn(),
+  }),
+}))
+
 // Mock composables
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
