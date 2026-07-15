@@ -1,0 +1,34 @@
+{
+  "emails": [
+    {
+      "post_id": "tn-test-001",
+      "group_id": "8444",
+      "from_address": "user@user.trashnothing.com",
+      "from_name": "TN User",
+      "subject": "OFFER: Old wooden bookshelf (Edinburgh)",
+      "date": "2026-07-07T12:00:00Z",
+      "message_id": "tn-test-001@trashnothing.com",
+      "secret": "test-secret-12345",
+      "source": "Web",
+      "sender_ip": "192.0.2.100",
+      "latitude": 55.9533,
+      "longitude": -3.1883,
+      "content": "Good condition wooden bookshelf, 180cm tall, free to a good home. Must be collected."
+    },
+    {
+      "post_id": "tn-test-002",
+      "group_id": "8444",
+      "from_address": "user@user.trashnothing.com",
+      "from_name": "TN User",
+      "subject": "OFFER: Dining chairs x4 (Edinburgh)",
+      "date": "2026-07-07T14:30:00Z",
+      "message_id": "tn-test-002@trashnothing.com",
+      "secret": "test-secret-12345",
+      "source": "Web",
+      "sender_ip": "192.0.2.100",
+      "latitude": 55.9743,
+      "longitude": -3.1736,
+      "content": "Four solid wood dining chairs, slight scratches on two. Free, collect from Leith."
+    }
+  ]
+}
