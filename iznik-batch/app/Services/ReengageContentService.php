@@ -101,6 +101,7 @@ class ReengageContentService
                 'intro'     => "Over the next five days we'll send you one short tip a day to help you get the hang of things. Here's the first.",
                 'body'      => [
                     "The heart of Freegle is offering things you no longer need to neighbours who do. A good post gets snapped up fast, and it only takes a moment.",
+                    "When someone wants it, you'll arrange a quick doorstep handover - sort the details out in Freegle chat rather than in a public post, and a little common sense keeps it lovely.",
                 ],
                 'highlight' => [
                     'title' => 'What makes a good offer',
@@ -168,7 +169,7 @@ class ReengageContentService
                 'intro'     => "That's the lot - you've got the hang of it.",
                 'body'      => [
                     "A quick recap: offer the things you're not using, ask for what you need, and search for anything specific. Then keep an eye on what's popping up nearby.",
-                    "One last thing. Freegle works because of neighbours being kind to each other - reply promptly, sort out the details in Freegle chat rather than in a public post, keep it to an easy doorstep pickup, and say thanks. A little common sense keeps it lovely for everyone.",
+                    "One last thing. Freegle works because of neighbours being kind to each other - reply promptly, arrange an easy doorstep pickup, and say thanks. That's really all there is to it.",
                 ],
                 'highlight' => [
                     'title' => 'Your Freegle in a nutshell',

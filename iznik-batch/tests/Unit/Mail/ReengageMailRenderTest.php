@@ -66,18 +66,17 @@ class ReengageMailRenderTest extends TestCase
         $this->assertStringContainsString('Search Freegle', $html);
     }
 
-    public function test_day5_gives_safe_neighbourly_collection_guidance(): void
+    public function test_day1_gives_safe_neighbourly_collection_guidance(): void
     {
-        // The wrap-up tip carries the safety/etiquette message that hundreds of
-        // groups put in their own welcome mails: arrange privately in chat (not a
-        // public post), keep to a doorstep pickup, and use common sense.
-        $html = view('emails.mjml.reengage.tip', $this->data(5))->render();
+        // The safety/etiquette message that hundreds of groups put in their own
+        // welcome mails - arrange privately in chat (not a public post), keep to a
+        // doorstep handover, use common sense - lands on day 1: a new member can be
+        // arranging their first pickup within the hour of their first offer, so it
+        // must not wait until the day-5 wrap-up.
+        $html = view('emails.mjml.reengage.tip', $this->data(1))->render();
 
-        // Heading contains an apostrophe which Blade escapes in HTML, so match an
-        // apostrophe-free substring.
-        $this->assertStringContainsString('freegler now', $html);
+        $this->assertStringContainsString('doorstep handover', $html);
         $this->assertStringContainsString('in Freegle chat rather than in a public post', $html);
-        $this->assertStringContainsString('doorstep pickup', $html);
         $this->assertStringContainsString('common sense', $html);
     }
 
