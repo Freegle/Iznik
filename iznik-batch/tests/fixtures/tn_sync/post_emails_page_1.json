@@ -1,13 +1,13 @@
 {
   "emails": [
     {
-      "post_id": "tn-test-001",
+      "post_id": "tn-test-101",
       "group_id": "8444",
-      "from_address": "user@user.trashnothing.com",
-      "from_name": "TN User",
+      "from_address": "usera@user.trashnothing.com",
+      "from_name": "TN User A",
       "subject": "OFFER: Old wooden bookshelf (Edinburgh)",
       "date": "2026-07-07T12:00:00Z",
-      "message_id": "tn-test-001@trashnothing.com",
+      "message_id": "tn-test-101@tn.trashnothing.com",
       "secret": "test-secret-12345",
       "source": "Web",
       "sender_ip": "192.0.2.100",
@@ -16,19 +16,49 @@
       "content": "Good condition wooden bookshelf, 180cm tall, free to a good home. Must be collected."
     },
     {
-      "post_id": "tn-test-002",
+      "post_id": "tn-test-102",
       "group_id": "8444",
-      "from_address": "user@user.trashnothing.com",
-      "from_name": "TN User",
-      "subject": "OFFER: Dining chairs x4 (Edinburgh)",
-      "date": "2026-07-07T14:30:00Z",
-      "message_id": "tn-test-002@trashnothing.com",
+      "from_address": "usera@user.trashnothing.com",
+      "from_name": "TN User A",
+      "subject": "WANTED: Small step ladder (Edinburgh)",
+      "date": "2026-07-07T13:15:00Z",
+      "message_id": "tn-test-102@tn.trashnothing.com",
       "secret": "test-secret-12345",
       "source": "Web",
       "sender_ip": "192.0.2.100",
+      "latitude": 55.9511,
+      "longitude": -3.1899,
+      "content": "Looking for a small step ladder, 2-3 steps, for reaching kitchen cupboards."
+    },
+    {
+      "post_id": "tn-test-103",
+      "group_id": "8444",
+      "from_address": "userb@user.trashnothing.com",
+      "from_name": "TN User B",
+      "subject": "OFFER: Dining chairs x4 (Edinburgh)",
+      "date": "2026-07-07T14:30:00Z",
+      "message_id": "tn-test-103@tn.trashnothing.com",
+      "secret": "test-secret-12345",
+      "source": "Web",
+      "sender_ip": "192.0.2.101",
       "latitude": 55.9743,
       "longitude": -3.1736,
       "content": "Four solid wood dining chairs, slight scratches on two. Free, collect from Leith."
+    },
+    {
+      "post_id": "tn-test-104",
+      "group_id": "8445",
+      "from_address": "userc@user.trashnothing.com",
+      "from_name": "TN User C",
+      "subject": "OFFER: Garden tools (Glasgow)",
+      "date": "2026-07-08T09:00:00Z",
+      "message_id": "tn-test-104@tn.trashnothing.com",
+      "secret": "test-secret-12345",
+      "source": "Web",
+      "sender_ip": "192.0.2.102",
+      "latitude": 55.8642,
+      "longitude": -4.2518,
+      "content": "Spade, fork and rake, all in good working order. Free to collect this weekend."
     }
   ]
 }

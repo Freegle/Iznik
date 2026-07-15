@@ -2,9 +2,9 @@
   "num_pages": 1,
   "posts": [
     {
-      "post_id": "tn-test-001",
+      "post_id": "tn-test-101",
       "group_id": "8444",
-      "user_id": null,
+      "user_id": 99010001,
       "title": "Old wooden bookshelf (Edinburgh)",
       "content": "Good condition wooden bookshelf, 180cm tall, free to a good home. Must be collected.",
       "date": "2026-07-07T12:00:00Z",
@@ -13,22 +13,32 @@
       "latitude": 55.9533,
       "longitude": -3.1883,
       "footer": null,
-      "photos": [
-        {
-          "url": "https://img.trashnothing.com/photos/test-001-large.jpg",
-          "images": [
-            { "url": "https://img.trashnothing.com/photos/test-001-large.jpg" }
-          ]
-        }
-      ],
+      "photos": [],
       "expiration": null,
       "reselling": false,
-      "url": "https://trashnothing.com/post/tn-test-001"
+      "url": "https://trashnothing.com/post/tn-test-101"
     },
     {
-      "post_id": "tn-test-002",
+      "post_id": "tn-test-102",
       "group_id": "8444",
-      "user_id": null,
+      "user_id": 99010001,
+      "title": "Small step ladder (Edinburgh)",
+      "content": "Looking for a small step ladder, 2-3 steps, for reaching kitchen cupboards.",
+      "date": "2026-07-07T13:15:00Z",
+      "type": "wanted",
+      "outcome": null,
+      "latitude": 55.9511,
+      "longitude": -3.1899,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-test-102"
+    },
+    {
+      "post_id": "tn-test-103",
+      "group_id": "8444",
+      "user_id": 99010002,
       "title": "Dining chairs x4 (Edinburgh)",
       "content": "Four solid wood dining chairs, slight scratches on two. Free, collect from Leith.",
       "date": "2026-07-07T14:30:00Z",
@@ -40,7 +50,24 @@
       "photos": [],
       "expiration": null,
       "reselling": false,
-      "url": "https://trashnothing.com/post/tn-test-002"
+      "url": "https://trashnothing.com/post/tn-test-103"
+    },
+    {
+      "post_id": "tn-test-104",
+      "group_id": "8445",
+      "user_id": 99010003,
+      "title": "Garden tools (Glasgow)",
+      "content": "Spade, fork and rake, all in good working order. Free to collect this weekend.",
+      "date": "2026-07-08T09:00:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": 55.8642,
+      "longitude": -4.2518,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-test-104"
     }
   ]
 }
