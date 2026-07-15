@@ -152,13 +152,14 @@ Each would follow the `PostSyncer` pattern: constructor takes `(bool $dryRun, bo
 
 ## Open items still to resolve
 
-1. **Trace log format** — JSON only, key=value only, or both?
-2. **Comparison tooling** — new `tn:sync-compare` artisan command vs offline scripting?
-3. **Spam check on API path** — skip entirely (TN trusted), or run it and log when it would have flagged?
-4. **Worry-words on API path** — apply, or skip because TN moderates on their end?
-5. **Missing user handling** — when `PostsSyncer` sees an `fd_user_id` that doesn't exist locally yet (race with `UserChangesSyncer`), what's the desired behavior? Note: all-or-nothing checkpointing means failing the sync blocks ratings progress too.
+_(none)_
 
 ## Resolved decisions
 
-6. **Group lookup** — TN uses the Freegle group `nameshort` as `group_id` in API responses (confirmed from `iznik-server/http/api/group.php`). `PostSyncer::findGroup()` mirrors `IncomingMailService::findGroup()`: `Group::where('nameshort', $nameshort)->first()`. No config map.
+2. **Comparison tooling** — no dedicated tool. Same approach as the TNSync V1→iznik-batch port: run with `--dry-run` in parallel alongside the email path; TRACE logs are inspected manually (via Loki) against DB rows written by the email path, joined on `tnpostid`. No artisan compare command. ✅
+3. **Trace log format** — key=value (`TN-SYNC-TRACE [WRITE] table=foo op=insert set=...`). Human-readable, consistent across all syncers. No JSON. ✅
+4. **Spam check on API path** — skipped entirely. The email path uses `shouldSkipSpamCheck()` to skip for TN emails with a valid secret; all API posts are from TN by definition, so the check is always skipped. Behavior is identical to the email path. ✅
+4. **Worry-words on API path** — applied. `GroupPostIngestionService::subjectContainsWorryWords()` is a direct duplicate of `IncomingMailService::containsWorryWords()` and runs unconditionally, matching the email path. ✅
+5. **Missing user handling** — stub user created via `findOrCreateUser()`: inserts a minimal `users` row (explicit `id = $fdUserId`), a synthetic `tn{id}@user.trashnothing.com` email, and an Approved membership. `UserChangesSyncer` fills in the real name/email on the next sync. In dry-run mode the stub is not created and the post is skipped. ✅
+6. **Group lookup** — TN uses the Freegle group `nameshort` as `group_id` in API responses (confirmed from `iznik-server/http/api/group.php`). `PostSyncer::findGroup()` mirrors `IncomingMailService::findGroup()`: `Group::where('nameshort', $nameshort)->first()`. No config map. ✅
 7. **Duplicate detection in dry-run** — trace lines carry `would_be_duplicate=true` when a row with the same `tnpostid` already exists. ✅
