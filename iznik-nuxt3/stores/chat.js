@@ -7,6 +7,65 @@ import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
 import { useUserStore } from '~/stores/user'
 
+// A chat send goes through useFetchRetry, which retries the POST on a network
+// error or a 5xx - neither of which proves the write failed. If the original
+// POST actually reached the server but its response was lost, the retry inserts
+// a SECOND, genuinely-persisted chat_messages row (different id, identical
+// content). The batch `cleanup:chat-duplicates` cron removes one eventually, but
+// until then the sender briefly sees two copies of their message (Discourse
+// 9913). We filter these out on read so the duplicate never shows.
+//
+// A duplicate is the SAME author with byte-identical CONTENT - not just the
+// message text: the type, refmsgid, refchatid, imageid, addressid and modnote
+// must all match too, so two genuinely-different messages that happen to share
+// text are never merged. We also require the rows to be within the retry window
+// of each other, so a member deliberately repeating a message much later is left
+// alone. The `sending` guard means a member can't interleave their own messages
+// during a retry; only the other party's message can fall between the two rows,
+// so we scan back over recently-kept messages (bounded by the window) rather than
+// only comparing adjacent ones.
+const DUP_WINDOW_MS = 15 * 1000
+
+function chatMessageContentKey(m) {
+  return JSON.stringify([
+    m.userid ?? null,
+    m.type ?? '',
+    m.message ?? '',
+    m.refmsgid ?? null,
+    m.refchatid ?? null,
+    m.imageid ?? null,
+    m.addressid ?? null,
+    m.modnote ?? false,
+  ])
+}
+
+export function dedupeRetriedChatMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return messages
+  const out = []
+  for (const m of messages) {
+    const mDate = new Date(m.date).getTime()
+    const key = chatMessageContentKey(m)
+    let dup = false
+    // A retry duplicate must be within the retry window, so we can only dedupe
+    // when both rows have a valid timestamp. A message with a missing/invalid
+    // date is never treated as a duplicate (keep both).
+    if (!Number.isNaN(mDate)) {
+      // messages arrive oldest-first, so walk back only while inside the window.
+      for (let j = out.length - 1; j >= 0; j--) {
+        const kDate = new Date(out[j].date).getTime()
+        if (Number.isNaN(kDate)) continue
+        if (mDate - kDate > DUP_WINDOW_MS) break
+        if (chatMessageContentKey(out[j]) === key) {
+          dup = true
+          break
+        }
+      }
+    }
+    if (!dup) out.push(m)
+  }
+  return out
+}
+
 export const useChatStore = defineStore({
   id: 'chat',
   state: () => ({
@@ -262,6 +321,10 @@ export const useChatStore = defineStore({
       const miscStore = useMiscStore() // MT
       const params = miscStore.modtools ? { modtools: true } : {}
       messages = await api(this.config).chat.fetchMessages(id, params)
+
+      // Drop retry-duplicate rows (see dedupeRetriedChatMessages) so a message
+      // sent once over a flaky connection never shows twice.
+      messages = dedupeRetriedChatMessages(messages)
 
       const update = () => {
         this.messages[id] = messages

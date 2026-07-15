@@ -13,8 +13,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Send the newsfeed ("chitchat") digest to recently-active users.
  *
- * Mirrors iznik-server cron/newsfeed_digest.php + Newsfeed::digest()
- * (include/newsfeed/Newsfeed.php:806-973):
+ * Mirrors the legacy V1 PHP newsfeed_digest cron script + Newsfeed::digest():
  *
  * - Iterates published, on-here, non-playground Freegle groups whose 'newsfeed'
  *   setting is on (default on), and for each approved member builds a digest of

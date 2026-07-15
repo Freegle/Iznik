@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
@@ -484,8 +485,8 @@ class UnifiedDigestServiceTest extends TestCase
 
     public function test_digest_includes_users_own_posts(): void
     {
-        // V1 parity: the per-group digest selection in iznik-server
-        // include/mail/Digest.php has no fromuser != ? filter, so a user's
+        // V1 parity: the per-group digest selection in the legacy V1 PHP
+        // Digest implementation has no fromuser != ? filter, so a user's
         // own posts appear in their own digest. Mirror that here.
         $recipient = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -1880,7 +1881,7 @@ class UnifiedDigestServiceTest extends TestCase
     // Bug case (user 801, Richmond Upon Thames, 2026-05-27): a user with
     // legacy simplemail='Full' who had switched some groups to Daily was
     // being treated as a "Full" user for every group and flooded with
-    // immediate emails. V1 (iznik-server/include/mail/Digest.php:418)
+    // immediate emails. V1 (the legacy V1 PHP Digest implementation)
     // ignores simplemail at send time and filters strictly on
     // memberships.emailfrequency. These tests pin that behaviour so the
     // regression cannot recur.
@@ -2523,6 +2524,79 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent'], 'the sentinel value means unlimited — unaffected by the new filter');
     }
 
+    // ─── OUTBOUND (author-side) distance preference ─────────────────────
+    // The SAME setting, read from the POST AUTHOR, also caps who sees their post:
+    // a recipient beyond the author's browseMaxDistance of the post is filtered
+    // out even when the recipient themselves has no distance limit. (51.5, 0.4) is
+    // ~22.7 miles from the London recipient — inside a 50-mile author cap, outside
+    // a 2-mile one.
+
+    public function test_daily_digest_filters_out_post_beyond_authors_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        // Recipient has NO distance limit of their own, so any filtering is the author's doing.
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        // Poster caps how far away their post is shown at 2 miles.
+        $poster = $this->createTestUser();
+        $poster->settings = ['browseMaxDistance' => 2];
+        $poster->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        // ~22.7 miles from the recipient — outside the poster's 2-mile outbound cap.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Local-only item',
+            'lat' => 51.5,
+            'lng' => 0.4,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent'], "the post is filtered out by the author's 2-mile cap, despite the recipient having no limit");
+    }
+
+    public function test_daily_digest_keeps_post_within_authors_distance_preference(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = [
+            'simplemail' => User::SIMPLE_MAIL_BASIC,
+            'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278],
+        ];
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        // Poster's cap (50 miles) comfortably includes the ~22.7-mile recipient.
+        $poster = $this->createTestUser();
+        $poster->settings = ['browseMaxDistance' => 50];
+        $poster->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Wider-reach item',
+            'lat' => 51.5,
+            'lng' => 0.4,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], "a recipient within the author's cap still gets the post");
+    }
+
     public function test_daily_digest_own_post_bypasses_distance_preference(): void
     {
         config(['freegle.digest.daily_allowlist' => '*']);
@@ -2908,5 +2982,58 @@ class UnifiedDigestServiceTest extends TestCase
             DB::table('rippling_reach_notified')->where('msgid', $reachMsg->id)->where('userid', $reachRecipient->id)->exists(),
             'reach-mail rejects the out-of-range post, same as the other two pipelines'
         );
+    }
+
+    public function test_daily_digest_eager_loads_externalmods_for_ai_photo_detection(): void
+    {
+        // The daily-posts PUSH collage prefers a real photo over an AI illustration
+        // (PushNotificationService::attachmentIsAi reads attachments.externalmods).
+        // getPostsForUser's shared eager-load must carry externalmods through, or in
+        // production every photo is silently classed as real. The existing AI-preference
+        // tests build fully-loaded models and so never exercised the real eager-load.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+        MessageAttachment::create([
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/ai.jpg',
+            'archived'     => 0,
+            'primary'      => 1,
+            'externalmods' => json_encode(['ai' => true]),
+        ]);
+
+        $tracker = UserDigest::firstOrCreate(
+            ['userid' => $recipient->id, 'mode' => UnifiedDigestService::MODE_DAILY],
+            ['lastmsgid' => null, 'lastmsgdate' => null],
+        );
+
+        $posts = $this->service->getPostsForUser(
+            $recipient,
+            $tracker,
+            UnifiedDigestService::MODE_DAILY
+        );
+
+        $post = $posts->firstWhere('id', $msg->id);
+        $this->assertNotNull($post, 'the AI-photo offer should be in the daily digest set');
+
+        $attachment = $post->attachments->first();
+        $this->assertNotNull($attachment, 'the attachment should be eager-loaded');
+        $this->assertNotNull(
+            $attachment->externalmods,
+            'externalmods must be eager-loaded so the push can distinguish AI illustrations from real photos'
+        );
+        $this->assertSame(['ai' => true], json_decode($attachment->externalmods, true));
     }
 }

@@ -80,8 +80,11 @@ class ProximityNotesCommand extends Command
                 }
 
                 if ($prox['status'] === ReachService::PROX_OK && ($prox['body']['quicker'] ?? false)) {
-                    $p = Location::describeNearest((float) $prox['body']['closest']['lat'], (float) $prox['body']['closest']['lng']);
-                    $q = Location::describeNearest((float) $prox['body']['furthest']['lat'], (float) $prox['body']['furthest']['lng']);
+                    // Name the P/Q points with postcodes INSIDE this group - a point
+                    // near the group edge would otherwise be named with a neighbouring
+                    // group's postcode, making the note read as nonsense (Discourse 9808/583).
+                    $p = Location::describeNearestInGroup((float) $prox['body']['closest']['lat'], (float) $prox['body']['closest']['lng'], (int) $r->groupid);
+                    $q = Location::describeNearestInGroup((float) $prox['body']['furthest']['lat'], (float) $prox['body']['furthest']['lng'], (int) $r->groupid);
                     if ($p === null || $q === null) {
                         continue; // place names unavailable (KNN gap) — retry next run rather than mark half-done
                     }

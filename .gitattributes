@@ -20,9 +20,6 @@
 # count; linguist-vendored / linguist-generated / linguist-documentation remove
 # a path from the language breakdown.
 
-# Retired V1 monolith — no longer developed (superseded by iznik-server-go +
-# iznik-batch). Kept for reference only, so don't count it as active code.
-iznik-server/** linguist-vendored
 
 # Bulk data archive of incoming messages — data, not source (thousands of JSON).
 iznik-batch/incoming-archive/** linguist-generated

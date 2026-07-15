@@ -1,6 +1,6 @@
 # Migration Status
 
-This document tracks progress migrating cron scripts from `iznik-server/scripts/cron/` to Laravel services in this application.
+This document tracks progress migrating cron scripts from the legacy V1 PHP implementation to Laravel services in this application.
 
 **Before migrating any email:** Read [EMAIL-MIGRATION-GUIDE.md](./EMAIL-MIGRATION-GUIDE.md) for lessons learned from previous migrations.
 
@@ -328,7 +328,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`purge_sessions.php`~~ | ~~03:00~~ | ~~Low~~ | ~~Session purging~~ — **Migrated: `purge:sessions`** |
 | ~~`purge_logs.php`~~ | ~~04:00~~ | ~~Low~~ | ~~Log purging~~ — **Migrated: `purge:logs`** |
 | ~~`email_validate.php`~~ | ~~04:00~~ | ~~Low~~ | ~~Email validation~~ — **Migrated: `emails:validate`** |
-| ~~`messages_popular.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Popular messages~~ — **Skip: `Group::findPopularMessages()` not implemented in iznik-server** |
+| ~~`messages_popular.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Popular messages~~ — **Skip: `Group::findPopularMessages()` not implemented in the legacy V1 PHP implementation** |
 | ~~`users_remap.php`~~ | ~~05:00~~ | ~~Low~~ | ~~User remapping~~ — **Migrated: `users:remap-locations`** |
 | ~~`locations_skewwhiff.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Location fixes~~ — **Migrated: `locations:fix-skewed`** |
 | `nearby.php` | 14:05 | Medium | Nearby items |
@@ -386,9 +386,9 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 ### Schema Discrepancies
 
-When migrating, we've found cases where the database schema (from migration generator) differs from iznik-server constants. Always verify against iznik-server source code.
+When migrating, we've found cases where the database schema (from migration generator) differs from the legacy V1 PHP implementation's constants. Always verify against the legacy V1 PHP source code.
 
-Example: `messages_outcomes.outcome` enum - the migration generator may not capture all values defined in `Message::OUTCOME_*` constants. The iznik-server defines:
+Example: `messages_outcomes.outcome` enum - the migration generator may not capture all values defined in `Message::OUTCOME_*` constants. The legacy V1 PHP implementation defines:
 - `OUTCOME_TAKEN`
 - `OUTCOME_RECEIVED`
 - `OUTCOME_WITHDRAWN`
@@ -401,9 +401,9 @@ Example: `messages_outcomes.outcome` enum - the migration generator may not capt
 When starting work on a new script:
 
 1. Update this file to mark it "In Progress"
-2. Read the original PHP script in `iznik-server/scripts/cron/`
-3. Check related PHPUnit tests in `iznik-server/test/ut/php/` (see sections above)
-4. Verify any constants/enums against iznik-server source
+2. Read the original PHP script in the legacy V1 PHP implementation
+3. Check related PHPUnit tests in the legacy V1 PHP implementation (see sections above)
+4. Verify any constants/enums against the legacy V1 PHP source
 5. Write tests first based on expected behavior
 6. Implement the service
 7. Update status to "Done" when tests pass

@@ -24,7 +24,6 @@
 /rebuild-monitor.log
 yesterday/.env
 yesterday/data/
-iznik-server-my.cnf
 docker-compose.override.yml
 
 # Vim swap files
@@ -39,7 +38,6 @@ nohup.out
 *.deb
 
 # Temporary scripts
-apiv1-entrypoint.sh
 
 # Node modules
 node_modules/
@@ -50,11 +48,6 @@ yesterday/api/node_modules/
 # Capacitor plugins (local development copies)
 capacitor-push-notifications-cap7/
 
-# Sentry integration database (SQLite)
-sentry-issues.db
-sentry-issues.db-shm
-sentry-issues.db-wal
-sentry-issues.db
 /plans/exploratory-testing-state.json
 /iznik-batch/coverage/
 

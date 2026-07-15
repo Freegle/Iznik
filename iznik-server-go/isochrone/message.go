@@ -21,6 +21,28 @@ import (
 // already governs", so the fast, unfiltered count/feed path is used.
 const BrowseDistanceUnlimited = 9007199254740991 // Number.MAX_SAFE_INTEGER
 
+// authorReachCapWhere is the OUTBOUND half of the distance preference: a post is only visible to
+// viewers within the POST AUTHOR's own settings.browseMaxDistance of it ("how far away can people
+// see your posts"), mirroring the inbound recipient-side cap in the Laravel digest. Applied in SQL
+// (not Go) so the feed and its unread-count badge stay in lock-step - both queries add this same
+// clause. Absent settings / missing key / <= 0 / the sentinel all DISABLE the cap (the common
+// case). Distance is real great-circle from the viewer to the post point (like the ST_Contains
+// reach gate), not the blurred distance the viewer-side slider uses. Placeholders, in order:
+// sentinel, viewerLng, viewerLat. Requires `au` (users, joined on messages.fromuser) and `ms`
+// (messages_spatial, for the post point) to be in scope.
+// Distance is an inline great-circle (Haversine, 3959-mile earth radius matching the Laravel
+// filter) over ST_X/ST_Y of ms.point as plain lng/lat degrees, NOT ST_Distance_Sphere - the latter
+// errors on the SRID-3857-tagged points Freegle stores (its degrees carry a projected SRID that
+// ST_Distance_Sphere rejects). LEAST(1.0, ...) guards ACOS against float overshoot at ~0 distance.
+const authorReachCapWhere = "AND (au.settings IS NULL " +
+	"OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL " +
+	"OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 " +
+	"OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? " +
+	"OR (3959 * ACOS(LEAST(1.0, " +
+	"COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) " +
+	"+ SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) " +
+	"<= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+
 // reachCandidateRow is the intermediate scan target for both the reach arm
 // and the viewer's-own-posts arm of Messages: a post's identity/visibility
 // columns plus the raw ingredients (views, replies, reach polygon/origin)
@@ -149,6 +171,8 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
 			// the ripple-bumped spatial arrival, so it can't stand in for "posted".
 			"INNER JOIN messages m ON m.id = ms.msgid "+
+			// users au = the post AUTHOR, for the outbound distance cap below.
+			"INNER JOIN users au ON au.id = m.fromuser "+
 			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 "+
@@ -158,10 +182,13 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			// consumer already skips held rows; without this filter the reported
 			// post kept appearing in the nearby browse feed (Discourse 9862).
 			"AND rr.status != 'held' "+
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))",
+			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+			// Outbound cap: only show this post to viewers within the author's chosen distance.
+			authorReachCapWhere,
 		utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
 		myid, utils.MESSAGE_LIKES_VIEW,
 		latlng.Lng, latlng.Lat, utils.SRID,
+		BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat,
 	).Scan(&candidates)
 
 	return candidates
@@ -284,16 +311,18 @@ func Messages(c *fiber.Ctx) error {
 				// off My Posts, not linger here for up to OPEN_AGE days (approved, no
 				// outcome row yet, arrival still within the window) because this own-posts
 				// arm queries the messages table directly and so bypasses spatial pruning.
-				// Pending/Rejected posts are never in spatial, so keep showing those - that
-				// is the whole point of this arm: the poster sees their post immediately,
-				// including while it awaits moderation.
+				// A PENDING post is never in spatial, so keep showing it via this arm - that
+				// is its whole point: the poster sees their post immediately while it awaits
+				// moderation, so it's less obvious a post is delayed. A REJECTED post is
+				// deliberately NOT shown here - a poster seeing their own rejected post linger in
+				// the browse feed is wrong (Discourse 9808); it belongs only in My Posts.
 				"AND (EXISTS (SELECT 1 FROM messages_spatial ms WHERE ms.msgid = m.id) "+
-				"OR mg.collection IN (?, ?)) "+
+				"OR mg.collection = ?) "+
 				"GROUP BY m.id",
 			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
 			myid, utils.MESSAGE_LIKES_VIEW, myid, start,
-			utils.COLLECTION_PENDING, utils.COLLECTION_REJECTED,
+			utils.COLLECTION_PENDING,
 		).Scan(&ownCandidates)
 
 		// Apply the SAME age-based expiry the My Posts endpoint uses, so a poster's
@@ -648,13 +677,19 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
+		// Viewer sets no inbound limit, but the OUTBOUND author cap still applies (and must match
+		// the feed), so join the author and add authorReachCapWhere here too.
 		db.Raw("SELECT COUNT(DISTINCT ms.msgid) "+
 			"FROM messages_spatial ms "+
+			"INNER JOIN messages m ON m.id = ms.msgid "+
+			"INNER JOIN users au ON au.id = m.fromuser "+
 			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))",
-			myid, utils.MESSAGE_LIKES_VIEW, latlng.Lng, latlng.Lat, utils.SRID).Scan(&count)
+			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+			authorReachCapWhere,
+			myid, utils.MESSAGE_LIKES_VIEW, latlng.Lng, latlng.Lat, utils.SRID,
+			BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat).Scan(&count)
 		return count
 	}
 

@@ -355,6 +355,41 @@ describe('compose store', () => {
     })
   })
 
+  describe('clearMessage', () => {
+    it('resets one message to empty, keeping its id and type', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'bed and chair',
+          description: 'oak',
+          attachments: [{ id: 1 }],
+        },
+        { id: 1, type: 'Wanted', item: 'a bench' },
+      ]
+      store.clearMessage(0)
+      // Message 0 is reset to just id + type; others are untouched.
+      expect(store.messages[0].id).toBe(0)
+      expect(store.messages[0].type).toBe('Offer')
+      expect(store.messages[0].item).toBeUndefined()
+      expect(store.messages[0].description).toBeUndefined()
+      expect(store.messages[0].attachments).toBeUndefined()
+      expect(store.messages[1]).toEqual({
+        id: 1,
+        type: 'Wanted',
+        item: 'a bench',
+      })
+    })
+
+    it('does nothing when the id is not present', () => {
+      const store = useComposeStore()
+      store.messages = [{ id: 0, type: 'Offer', item: 'x' }]
+      store.clearMessage(99)
+      expect(store.messages[0].item).toBe('x')
+    })
+  })
+
   describe('calculateSteps', () => {
     it('counts 2 steps per new draft (id < 0)', () => {
       const store = useComposeStore()

@@ -1753,7 +1753,7 @@ class ExpandService
     /**
      * Blur a poster's origin by ~400m (BLUR_USER) before it drives the reach polygon, so the
      * reach is no more precise than the location Freegle exposes elsewhere. Same algorithm and
-     * geodesic engine (App\Support\GreatCircle) as iznik-server Utils::blur / Go utils.Blur:
+     * geodesic engine (App\Support\GreatCircle) as the legacy V1 PHP Utils::blur / Go utils.Blur:
      * a deterministic, location-derived direction (so the reach doesn't jitter across recomputes)
      * and a final 4-dp round.
      *

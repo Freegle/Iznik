@@ -139,3 +139,44 @@ func TestBrowseOwnPrunedFromSpatialHidden(t *testing.T) {
 	assert.False(t, got[pruned], "an own post pruned from messages_spatial (expired/withdrawn) is hidden on the nearby feed, matching My Posts")
 	assert.True(t, got[pending], "a Pending own post (never in spatial) still shows so the poster sees it awaiting moderation")
 }
+
+// Discourse 9808: a poster's own REJECTED post was leaking back into their browse feed. The
+// own-posts arm included collection Rejected alongside Pending, so a rejected post (removed by
+// moderators, never in messages_spatial) kept showing in the nearby feed - and, via the client's
+// message cache, in the 'all my communities' view too. A Pending post (awaiting moderation) must
+// still show so the poster sees it isn't lost; a Rejected one must not.
+func TestBrowseFeedHidesOwnRejectedPost(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("ownrejfeed")
+	group := CreateTestGroup(t, prefix)
+
+	posterID, token := CreateFullTestUser(t, prefix+"_poster")
+	// The own-posts arm only runs when the viewer has a location.
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 53.0, 'lng', -2.0)) WHERE id = ?", posterID)
+
+	// Both recent (3 days) so age expiry isn't the factor.
+	pending := CreateTestMessageWithArrival(t, posterID, group, "OFFER: pending own post ("+prefix+")", 53.0, -2.0, 3)
+	rejected := CreateTestMessageWithArrival(t, posterID, group, "OFFER: rejected own post ("+prefix+")", 53.0, -2.0, 3)
+	db.Exec("UPDATE messages SET lat = 53.0, lng = -2.0 WHERE id IN (?, ?)", pending, rejected)
+
+	// Pending/Rejected posts are never in messages_spatial; set the group collections and prune them.
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", pending)
+	db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", pending)
+	db.Exec("UPDATE messages_groups SET collection = 'Rejected' WHERE msgid = ?", rejected)
+	db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", rejected)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	got := map[uint64]bool{}
+	for _, m := range msgs {
+		got[m.ID] = true
+	}
+	assert.True(t, got[pending], "a Pending own post still shows so the poster sees it awaiting moderation")
+	assert.False(t, got[rejected], "a poster's own Rejected post must NOT appear in the browse feed (Discourse 9808)")
+}

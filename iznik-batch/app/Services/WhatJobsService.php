@@ -8,7 +8,14 @@ use Illuminate\Support\Facades\Log;
 
 class WhatJobsService
 {
-    const MINIMUM_CPC = 0.10;
+    // Minimum cost-per-click for a WhatJobs listing to be worth ingesting/showing.
+    // Lowered 0.10 -> 0.08 on 2026-07-09: WhatJobs compressed ~75% of their bids to
+    // ~£0.084 (just under the old £0.10 floor), collapsing our billable feed from
+    // ~225k to ~80k and tripping the swap-guard so the jobs table went stale. £0.08
+    // sits just below that £0.084 spike (≈10th percentile of the current feed),
+    // recapturing the bulk (~325k) while still excluding the genuine sub-£0.08 tail.
+    // Must match Job::MINIMUM_CPC (serving), Go job.JOBS_MINIMUM_CPC, and V1.
+    const MINIMUM_CPC = 0.08;
     const MAX_AGE_DAYS = 7;
     const DISTRIBUTE = 0.0005;
     const BATCH_SIZE = 500;
@@ -26,7 +33,7 @@ class WhatJobsService
     const UK_NELAT = 58.6350001085;
     const UK_NELNG = 1.68153079591;
 
-    // Special-case address normalisation (matches iznik-server Jobs::geocode)
+    // Special-case address normalisation (matches the legacy V1 PHP Jobs::geocode)
     private const ADDRESS_FIXES = [
         'West Marsh'      => 'Grimsby',
         'Stoney Middleton' => 'Stoney Middleton, Derbyshire',
@@ -488,6 +495,14 @@ class WhatJobsService
             return ['total' => $total, 'inserted' => 0, 'dry_run' => true];
         }
 
+        // Rebuild jobs_keywords from clicks on the *current* (pre-swap) live
+        // table BEFORE inserting, so insertJobs() can score clickability inline
+        // and set it on the INSERT. Keyword frequency is a slow-moving 31-day
+        // click signal, independent of the incoming feed, so computing it from
+        // the outgoing table is correct — and it lets us drop the old post-swap
+        // updateClickability() pass that hammered Galera with ~1M UPDATEs.
+        $this->analyseClickability();
+
         // Real run: stream jobs into jobs_new in batches, then decide whether
         // to swap based on the inserted row count.
         $this->prepareTempTable();
@@ -514,8 +529,6 @@ class WhatJobsService
         }
 
         $this->swapTables();
-        $this->analyseClickability();
-        $this->updateClickability();
 
         // The swap drops rows for postings that have closed/left the feed. The
         // spatial server's "jobs" index backs both the web jobs page and the
@@ -728,7 +741,7 @@ class WhatJobsService
 
             [$swlat, $swlng, $nelat, $nelng, $geomWkt] = $geom;
 
-            // Randomise within bbox to avoid clustering (matches iznik-server behaviour)
+            // Randomise within bbox to avoid clustering (matches the legacy V1 PHP behaviour)
             $newlat  = $swlat + (mt_rand() / mt_getrandmax()) * ($nelat - $swlat);
             $newlng  = $swlng + (mt_rand() / mt_getrandmax()) * ($nelng - $swlng);
             $geomWkt = $this->boxPoly(
@@ -1241,10 +1254,28 @@ class WhatJobsService
         // Preserve existing auto-increment IDs so email links (e.g. /jobs/12345) don't break
         $existingIds = DB::table('jobs')->pluck('id', 'job_reference')->all();
 
+        // Clickability is a pure function of the title's keyword pairs weighted
+        // by how often those pairs appear in *clicked* jobs (jobs_keywords,
+        // rebuilt by analyseClickability() immediately before this call),
+        // normalised by the 95th-percentile keyword count. Because it depends on
+        // nothing but the title + those pre-computed frequencies, we compute it
+        // here in PHP and set it on the INSERT. Previously a post-swap
+        // updateClickability() pass issued one UPDATE per row — ~1M separate
+        // autocommit statements, each its own Galera write-set certified and
+        // applied synchronously across all three nodes. That sustained storm ran
+        // for ~an hour and starved apiv2's connection pool (health checks hung,
+        // monit restarted it). Folding it into the batched INSERT means the
+        // freshly-swapped table is never touched again.
+        $maxish   = $this->getMaxish();
+        $keywords = [];
+        foreach (DB::select('SELECT keyword, count FROM jobs_keywords') as $row) {
+            $keywords[$row->keyword] = (int) $row->count;
+        }
+
         $inserted = 0;
         $buffer   = [];
 
-        $flush = function () use (&$buffer, &$inserted, $existingIds, $srid): void {
+        $flush = function () use (&$buffer, &$inserted, $existingIds, $srid, $keywords, $maxish): void {
             if (empty($buffer)) {
                 return;
             }
@@ -1253,7 +1284,14 @@ class WhatJobsService
             $bindings     = [];
 
             foreach ($buffer as $j) {
-                $id             = $existingIds[$j['job_reference']] ?? null;
+                $id = $existingIds[$j['job_reference']] ?? null;
+
+                $score = 0;
+                foreach ($this->getKeywords($j['title']) as $kw) {
+                    $score += $keywords[$kw] ?? 0;
+                }
+                $clickability = $maxish > 0 ? $score / $maxish : 0;
+
                 $placeholders[] = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,ST_GeomFromText(?,?),?,?,?,?,?)';
                 array_push(
                     $bindings,
@@ -1263,7 +1301,7 @@ class WhatJobsService
                     $j['job_reference'], $j['company'], $j['category'], $j['url'],
                     $j['body'], $j['cpc'],
                     $j['geometry'], $srid,
-                    $j['clickability'], $j['bodyhash'], $j['seenat'],
+                    $clickability, $j['bodyhash'], $j['seenat'],
                     $j['visible'], $j['canonical_title']
                 );
             }

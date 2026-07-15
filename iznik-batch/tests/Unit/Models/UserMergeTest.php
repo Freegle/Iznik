@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Tests for User::merge() — ported from iznik-server UserTest::testMerge()
+ * Tests for User::merge() — ported from the legacy V1 PHP UserTest::testMerge()
  * and iznik-server-go TestPostUserMerge.
  */
 class UserMergeTest extends TestCase

@@ -9,75 +9,51 @@
       <div class="option-info mb-2">
         <span class="option-label">How far away</span>
         <span class="option-desc">
-          How far away posts can be &mdash; this applies both when you browse
-          <em>and</em> to the posts in the emails we send you. Drag towards
-          <strong>Nearer</strong> to see only nearby posts, or
-          <strong>Further</strong> for no distance limit.
+          You'll see mostly nearby posts, but some from further away.
+          <span class="drag-hint"
+            >Drag towards <strong>Nearer</strong> or
+            <strong>Further</strong>. </span
+          >We use road distance and travel time, not crow flies. Applies to
+          Browse, notifications and who sees your posts.
         </span>
       </div>
 
-      <RangeSlider
-        v-model="sliderValue"
-        :min="0.5"
-        :max="feedMax"
-        :step="0.5"
-        left-label="Nearer"
-        right-label="Further"
-        aria-label="How far away"
-        @change="onSliderChange"
-      />
+      <div class="slider-frame">
+        <RangeSlider
+          v-model="sliderValue"
+          :min="BROWSE_MINUTES_MIN"
+          :max="BROWSE_MINUTES_MAX"
+          :step="BROWSE_MINUTES_STEP"
+          left-label="Nearer"
+          right-label="Further"
+          aria-label="How far away"
+          @change="onSliderChange"
+        />
+        <NearbyTowns :minutes="sliderValue" />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, defineEmits } from 'vue'
-import { useAuthStore } from '~/stores/auth'
-import { useMe } from '~/composables/useMe'
+import { defineEmits } from 'vue'
 import RangeSlider from '~/components/RangeSlider.vue'
-import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
+import NearbyTowns from '~/components/NearbyTowns.vue'
+import {
+  BROWSE_MINUTES_MIN,
+  BROWSE_MINUTES_MAX,
+  BROWSE_MINUTES_STEP,
+} from '~/constants'
+import { useReachDistance } from '~/composables/useReachDistance'
 
 const emit = defineEmits(['update'])
 
-const authStore = useAuthStore()
-const { me } = useMe()
-
-// The browse filter's slider scales its max to the current feed's extent. There's
-// no feed here, so we use a fixed extent; the far-right stop always means "no
-// distance limit" (BROWSE_DISTANCE_UNLIMITED), matching the browse behaviour.
-const feedMax = 30
-
-const maxDistance = computed(
-  () => me.value?.settings?.browseMaxDistance ?? BROWSE_DISTANCE_UNLIMITED
-)
-
-// Far-right when unlimited, or when a saved value is at/above our fixed extent
-// (e.g. it was set from a wider browse feed); otherwise the real mile value.
-function sliderPositionFor(distance, max) {
-  return distance === BROWSE_DISTANCE_UNLIMITED || distance >= max
-    ? max
-    : distance
-}
-
-const sliderValue = ref(sliderPositionFor(maxDistance.value, feedMax))
-
-watch(maxDistance, (d) => {
-  sliderValue.value = sliderPositionFor(d, feedMax)
-})
-
-// Deliberately no numeric readout - the Nearer/Further labels are enough, and a
-// per-tick "within N miles" text made the drag janky (matches the browse slider,
-// which is numeric-readout-free for the same reason).
-// Only persist on release/keyup (RangeSlider's `change`), not every drag tick.
-async function onSliderChange(val) {
-  const settings = me.value?.settings
-  if (!settings) {
-    return
-  }
-  settings.browseMaxDistance = val >= feedMax ? BROWSE_DISTANCE_UNLIMITED : val
-  await authStore.saveAndGet({ settings })
-  emit('update')
-}
+// Time-based "How far away" slider - a travel-time budget in MINUTES (matching the reach system), not
+// miles. The shared composable persists both the chosen minutes (so the slider restores) and the
+// routing-derived crow-flies mile radius (settings.browseMaxDistance, for the fast feed filter). The
+// far-right stop means "no limit". Deliberately no numeric readout - Nearer/Further is enough, and a
+// per-tick readout made the drag janky. Only persists on release (RangeSlider's `change`).
+const { sliderValue, onSliderChange } = useReachDistance(() => emit('update'))
 </script>
 
 <style scoped lang="scss">
@@ -128,5 +104,29 @@ async function onSliderChange(val) {
 .option-desc {
   font-size: 0.8rem;
   color: var(--color-gray-600);
+}
+
+/* The drag instruction is redundant on a touch screen and costs a line, so hide it on mobile. */
+.drag-hint {
+  display: none;
+}
+@media (min-width: 768px) {
+  .drag-hint {
+    display: inline;
+  }
+}
+
+/* Framed rounded box around the slider + its reach hint, matching the settings card curves. */
+.slider-frame {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg, 0.75rem);
+  padding: 0.75rem 1rem 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Centre the reach hint under the slider, within the frame. text-align centres the two-line block
+   layout on mobile and the single inline line on tablet+ (when it fits). */
+.slider-frame :deep(.nearby-towns) {
+  text-align: center;
 }
 </style>

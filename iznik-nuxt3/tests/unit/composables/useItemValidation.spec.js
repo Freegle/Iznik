@@ -108,9 +108,37 @@ describe('isVagueItem', () => {
     expect(isVagueItem("don't know")).toBe(true)
   })
 
+  it('rejects the additional catch-alls found slipping through on live data', () => {
+    expect(isVagueItem('various items')).toBe(true)
+    expect(isVagueItem('Various')).toBe(true)
+    expect(isVagueItem('free stuff')).toBe(true)
+    expect(isVagueItem('Free items')).toBe(true)
+    expect(isVagueItem('freebies')).toBe(true)
+    expect(isVagueItem('something')).toBe(true)
+    expect(isVagueItem('owt')).toBe(true)
+    expect(isVagueItem('whatever')).toBe(true)
+    expect(isVagueItem('unwanted items')).toBe(true)
+    expect(isVagueItem('misc')).toBe(true)
+    expect(isVagueItem('sundries')).toBe(true)
+    expect(isVagueItem('nothing specific')).toBe(true)
+  })
+
+  it('rejects the anything/everything/something family with a content-free qualifier', () => {
+    expect(isVagueItem('anything nice')).toBe(true)
+    expect(isVagueItem('anything really')).toBe(true)
+    expect(isVagueItem('anything useful')).toBe(true)
+    expect(isVagueItem('everything really')).toBe(true)
+    expect(isVagueItem('something free')).toBe(true)
+  })
+
   it('allows a vague term used within a real phrase', () => {
     expect(isVagueItem('anything blue')).toBe(false)
     expect(isVagueItem('garden tools')).toBe(false)
+    // A *specific* trailer keeps it postable - only content-free qualifiers block.
+    expect(isVagueItem('anything for a toddler')).toBe(false)
+    expect(isVagueItem('something for the garden')).toBe(false)
+    expect(isVagueItem('free weights')).toBe(false)
+    expect(isVagueItem('various board games')).toBe(false)
   })
 
   it('does not block legitimate broad categories (warning-only territory)', () => {

@@ -258,6 +258,24 @@ describe('ChatMessage', () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.chat-message-reminder').exists()).toBe(true)
     })
+
+    // System notices (e.g. "the item you replied about has now been taken") must
+    // render their text, NOT fall through to the raw "Unknown chat message type"
+    // debug dump that members were seeing.
+    it('renders a System message as its text, not the unknown-type fallback', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      const message =
+        "Sorry — the item you replied about has now been taken, so it's no longer available."
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, type: 'System', message }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.system-message').exists()).toBe(true)
+      expect(wrapper.text()).toContain('has now been taken')
+      expect(wrapper.text()).not.toContain('Unknown chat message type')
+    })
   })
 
   describe('selection', () => {

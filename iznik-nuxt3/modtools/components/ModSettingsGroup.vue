@@ -215,7 +215,7 @@
               :groupid="groupid"
               name="welcomemail"
               label="Welcome email"
-              description="This is emailed out to new members.  Keep it short.  Positive - use 'do' not 'don't'."
+              description="This is emailed out to new members. Keep it short and positive (use 'do' not 'don't'). Make it LOCAL - only things specific to your community. Don't repeat what Freegle already tells every new member centrally (how to Give, Browse or Find; that items must be free and legal; being nice; staying safe; changing settings) - that is all in the standard welcome email and on the website. Good things to include: a warm local welcome, any genuinely local rules (e.g. a local collection point or a charity you work with), or a short note from your volunteers."
               type="textarea"
               :rows="10"
             />

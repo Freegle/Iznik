@@ -94,6 +94,7 @@ class WelcomeMailTest extends TestCase
             'email'             => 'stub@example.com',
             'password'          => null,
             'giveUrl'           => 'https://www.ilovefreegle.org/give',
+            'browseUrl'         => 'https://www.ilovefreegle.org/browse',
             'findUrl'           => 'https://www.ilovefreegle.org/find',
             'termsUrl'          => 'https://www.ilovefreegle.org/terms',
             'helpUrl'           => 'https://www.ilovefreegle.org/help',
@@ -112,7 +113,7 @@ class WelcomeMailTest extends TestCase
         $html = view('emails.mjml.welcome.welcome', $this->welcomeViewData('Beatrice'))->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>Welcome, Beatrice! Give stuff away or find what you need for free.</mj-preview>',
+            '<mj-preview>Welcome, Beatrice! Give stuff away, browse, or find what you need for free.</mj-preview>',
             $html
         );
     }
@@ -122,7 +123,7 @@ class WelcomeMailTest extends TestCase
         $html = view('emails.mjml.welcome.welcome', $this->welcomeViewData(null))->render();
 
         $this->assertStringContainsString(
-            '<mj-preview>Welcome to Freegle! Give stuff away or find what you need for free.</mj-preview>',
+            '<mj-preview>Welcome to Freegle! Give stuff away, browse, or find what you need for free.</mj-preview>',
             $html
         );
     }

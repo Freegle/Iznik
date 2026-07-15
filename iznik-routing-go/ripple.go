@@ -26,6 +26,13 @@ type rippleEvalRequest struct {
 	Mode       string       `json:"mode"`
 	MaxMinutes float64      `json:"max_minutes"`
 	Points     [][2]float64 `json:"points"` // [[lng, lat], ...] (GeoJSON order)
+	// PointsOnly skips the freegler enumeration (the within_coords KNN call + per-freegler
+	// nearestNodeForMode loop - the routing bottleneck). Callers that only need per-point
+	// drive-times (and don't read `rank`) set this to avoid seconds of unused work. rank comes
+	// back null.
+	PointsOnly bool `json:"points_only,omitempty"`
+	// Frontier also returns the isochrone's road-distance reach range (frontier_{min,max}_miles).
+	Frontier bool `json:"frontier,omitempty"`
 }
 
 type rippleEvalPoint struct {
@@ -36,6 +43,11 @@ type rippleEvalPoint struct {
 type rippleEvalResponse struct {
 	TotalReachable int               `json:"total_reachable"`
 	Results        []rippleEvalPoint `json:"results"`
+	// FrontierMedianMiles/FrontierMaxMiles: how far the isochrone reaches BY ROAD across directions -
+	// the median and max of the per-sector furthest road-distance. Present only when Frontier was
+	// requested.
+	FrontierMedianMiles *float64 `json:"frontier_median_miles,omitempty"`
+	FrontierMaxMiles    *float64 `json:"frontier_max_miles,omitempty"`
 }
 
 // handleRippleEval returns, for a post at (lat, lng), each input point's
@@ -75,64 +87,67 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 			return c.JSON(empty)
 		}
 
-		// --- collect all reachable freegler drive-times ---
-		// Candidates come from the reach's bbox (not the detailed boundary, which is
-		// unsimplified and too large for a WKT query); the nearest-node-in-reached-set
-		// test below filters each candidate exactly, so the result is unchanged.
-		evMinLat, evMaxLat, evMinLng, evMaxLng := reachedBBox(g, iso.ReachedNodes)
-		wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
-			evMinLng, evMaxLng, evMinLat, evMaxLat)
+		// --- collect all reachable freegler drive-times (for the `rank` field only) ---
+		// Skipped when points_only: this is the routing bottleneck (a within_coords KNN call +
+		// a no-dedup nearestNodeForMode per freegler - seconds in a dense area, dwarfing the
+		// isochrone), and callers that only want per-point drive-times never read rank.
+		var freeglerSecs []float32
+		if !req.PointsOnly {
+			// Candidates come from the reach's bbox (not the detailed boundary, which is
+			// unsimplified and too large for a WKT query); the nearest-node-in-reached-set
+			// test below filters each candidate exactly, so the result is unchanged.
+			evMinLat, evMaxLat, evMinLng, evMaxLng := reachedBBox(g, iso.ReachedNodes)
+			wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
+				evMinLng, evMaxLng, evMinLat, evMaxLat)
 
-		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
-		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
-		if err != nil || resp.StatusCode != 200 {
-			log.Printf("ripple-eval: within_coords failed (status=%v err=%v)", func() int {
-				if resp != nil {
-					return resp.StatusCode
+			reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
+			resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
+			if err != nil || resp.StatusCode != 200 {
+				log.Printf("ripple-eval: within_coords failed (status=%v err=%v)", func() int {
+					if resp != nil {
+						return resp.StatusCode
+					}
+					return 0
+				}(), err)
+				return c.JSON(empty)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return c.JSON(empty)
+			}
+			var within struct {
+				Results []struct {
+					Extra map[string]any `json:"extra"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(body, &within); err != nil {
+				return c.JSON(empty)
+			}
+			for _, r := range within.Results {
+				if r.Extra == nil {
+					continue
 				}
-				return 0
-			}(), err)
-			return c.JSON(empty)
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return c.JSON(empty)
-		}
-		var within struct {
-			Results []struct {
-				Extra map[string]any `json:"extra"`
-			} `json:"results"`
-		}
-		if err := json.Unmarshal(body, &within); err != nil {
-			return c.JSON(empty)
-		}
-
-		// All freegler drive-times in seconds, sorted ascending.
-		freeglerSecs := make([]float32, 0, len(within.Results))
-		for _, r := range within.Results {
-			if r.Extra == nil {
-				continue
+				lat, ok1 := r.Extra["lat"].(float64)
+				lng, ok2 := r.Extra["lng"].(float64)
+				if !ok1 || !ok2 {
+					continue
+				}
+				nid := nearestNodeForMode(g, lat, lng, mode)
+				if nid == noNode {
+					continue
+				}
+				t, ok := iso.ReachedNodes[nid]
+				if !ok {
+					continue
+				}
+				freeglerSecs = append(freeglerSecs, t)
 			}
-			lat, ok1 := r.Extra["lat"].(float64)
-			lng, ok2 := r.Extra["lng"].(float64)
-			if !ok1 || !ok2 {
-				continue
-			}
-			nid := nearestNodeForMode(g, lat, lng, mode)
-			if nid == noNode {
-				continue
-			}
-			t, ok := iso.ReachedNodes[nid]
-			if !ok {
-				continue
-			}
-			freeglerSecs = append(freeglerSecs, t)
+			sort.Slice(freeglerSecs, func(i, j int) bool { return freeglerSecs[i] < freeglerSecs[j] })
 		}
-		sort.Slice(freeglerSecs, func(i, j int) bool { return freeglerSecs[i] < freeglerSecs[j] })
 		total := len(freeglerSecs)
 
-		// --- per-input-point drive_min + rank ---
+		// --- per-input-point drive_min (+ rank, unless points_only) ---
 		results := make([]rippleEvalPoint, len(req.Points))
 		for i, p := range req.Points {
 			lng, lat := p[0], p[1]
@@ -145,16 +160,67 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 				continue
 			}
 			dMin := float64(t) / 60.0
-			// rank = count of freeglers with drive_min <= this point's drive_min
-			rank := sort.Search(total, func(j int) bool { return freeglerSecs[j] > t })
-			results[i] = rippleEvalPoint{DriveMin: &dMin, Rank: &rank}
+			pt := rippleEvalPoint{DriveMin: &dMin}
+			if !req.PointsOnly {
+				rank := sort.Search(total, func(j int) bool { return freeglerSecs[j] > t })
+				pt.Rank = &rank
+			}
+			results[i] = pt
 		}
 
-		return c.JSON(rippleEvalResponse{
-			TotalReachable: total,
-			Results:        results,
-		})
+		out := rippleEvalResponse{TotalReachable: total, Results: results}
+		if req.Frontier {
+			fmed, fmax := frontierMilesMedianMax(g, req.Lat, req.Lng, iso.DistM)
+			out.FrontierMedianMiles = &fmed
+			out.FrontierMaxMiles = &fmax
+		}
+		return c.JSON(out)
 	}
+}
+
+// frontierMilesMedianMax summarises how far the isochrone reaches BY ROAD across directions: it
+// buckets every reached node into one of 16 compass sectors around the origin, takes the furthest
+// road distance in each sector (that direction's frontier), then returns the MEDIAN and MAX of those
+// per-sector frontiers. Median rather than min because the min is dominated by whichever single
+// direction a coast/edge cuts short, making a min..max range far too wide to be useful; the median
+// is the typical reach, so median..max reads as "usually reaches this far, up to this far down a
+// fast road". Uses iso.DistM (road metres per node, accumulated in the isochrone's own Dijkstra
+// pass), so there is no extra routing cost. metresPerMile is defined in proximity.go.
+func frontierMilesMedianMax(g *Graph, lat0, lng0 float64, distM map[NodeID]float32) (fmedian, fmax float64) {
+	const sectors = 16
+	var sectorMax [sectors]float32
+	cosLat := math.Cos(lat0 * math.Pi / 180)
+	for nid, dM := range distM {
+		n := g.Nodes[nid]
+		// Bearing from origin; atan2(east, north) so 0 = due north, increasing clockwise.
+		ang := math.Atan2((float64(n.Lng)-lng0)*cosLat, float64(n.Lat)-lat0)
+		if ang < 0 {
+			ang += 2 * math.Pi
+		}
+		s := int(ang/(2*math.Pi/sectors)) % sectors
+		if dM > sectorMax[s] {
+			sectorMax[s] = dM
+		}
+	}
+	// Non-empty sector frontiers, in metres, ascending.
+	vals := make([]float64, 0, sectors)
+	for _, m := range sectorMax {
+		if m > 0 { // skip empty sectors - the reach doesn't extend that way at all
+			vals = append(vals, float64(m))
+		}
+	}
+	if len(vals) == 0 {
+		return 0, 0
+	}
+	sort.Float64s(vals)
+	n := len(vals)
+	var medM float64
+	if n%2 == 1 {
+		medM = vals[n/2]
+	} else {
+		medM = (vals[n/2-1] + vals[n/2]) / 2
+	}
+	return medM / metresPerMile, vals[n-1] / metresPerMile
 }
 
 // curveFraction maps "elapsed fraction" (k/ticks ∈ [0,1]) to "notified fraction"

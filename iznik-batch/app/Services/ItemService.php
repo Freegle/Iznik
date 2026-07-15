@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Item catalog helper: find-or-create item rows, link them to messages, and
- * estimate weights. Ported from V1 iznik-server include/message/Item.php
+ * estimate weights. Ported from the legacy V1 PHP Item class
  * (create/estimateWeight) and the item-extraction in Message::save().
  *
  * Both the incoming-mail path and the messages:backfill-items command use this

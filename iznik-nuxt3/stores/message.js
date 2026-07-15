@@ -726,6 +726,27 @@ export const useMessageStore = defineStore({
       })
       this.remove({ id })
     },
+    // After a PER-GROUP mod action (approve/reject) on a post that may be pending on several of
+    // the mod's groups, re-fetch it and KEEP it in the review list if any group copy is still in
+    // the review queue - so the next group's copy is immediately actionable without reloading the
+    // pending page (Discourse 9862). Only drop it once nothing's left. The review-queue states
+    // match ModMessage's own predicate; mirrors hold()/release()'s re-fetch, but conditional.
+    async refreshOrRemoveFromMTList(id) {
+      let message = null
+      try {
+        message = await this.fetchMT({ id }, false)
+      } catch (e) {
+        message = null
+      }
+      const stillInReviewQueue = !!message?.groups?.some((g) =>
+        ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+      )
+      if (stillInReviewQueue) {
+        this.list[message.id] = message
+      } else {
+        this.remove({ id })
+      }
+    },
     async approve(id, groupid, subject, stdmsgid, body) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
@@ -737,7 +758,7 @@ export const useMessageStore = defineStore({
         stdmsgid,
         body
       )
-      this.remove({ id })
+      await this.refreshOrRemoveFromMTList(id)
 
       // Re-fetch the sender so posting status changes from stdmsg take effect.
       if (fromuser) {
@@ -758,7 +779,7 @@ export const useMessageStore = defineStore({
         stdmsgid,
         body
       )
-      this.remove({ id })
+      await this.refreshOrRemoveFromMTList(id)
 
       if (fromuser) {
         const uid = typeof fromuser === 'number' ? fromuser : fromuser.id

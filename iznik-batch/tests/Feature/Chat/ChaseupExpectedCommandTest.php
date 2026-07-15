@@ -10,8 +10,8 @@ use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 /**
- * Feature tests for chats:chaseup-expected (migration of
- * iznik-server cron/chat_chaseup_expected.php → ChatRoom::chaseupExpected()).
+ * Feature tests for chats:chaseup-expected (migration of the legacy V1 PHP
+ * chat_chaseup_expected cron script → ChatRoom::chaseupExpected()).
  */
 class ChaseupExpectedCommandTest extends TestCase
 {

@@ -713,21 +713,13 @@ export function useReplyStateMachine(messageId, options = {}) {
       return
     }
 
-    // Proactive reach gate. The server marks a rippled-out post the member cannot reply to
-    // yet with replyeligible === false — their location is outside the post's current reach
-    // polygon ("we're showing this to people closest first"). Honour that flag BEFORE we
-    // create a chat and send, so the member sees the explanation instead of composing a
-    // reply that the write path then rejects with 403 (which previously mis-fired a forced
-    // re-login). The catch-side isNotInReachError handling stays as a backstop for a stale
-    // cached flag, a bypassable client, or a ?reply= deep link.
-    if (messageStore.byId?.(messageId)?.replyeligible === false) {
-      log(
-        'Reply blocked proactively: post not yet in reach (replyeligible=false)'
-      )
-      action('reply_blocked_not_in_reach_proactive', { message_id: messageId })
-      handleNotInReach(callback)
-      return
-    }
+    // Rippling-out reply HOLD: a rippled-out post whose reach hasn't reached this member yet
+    // (replyeligible === false) is NO LONGER blocked here. We let the send proceed — the server
+    // creates the reply and HOLDS it (rippling_held_replies), then delivers it when the post
+    // ripples to the member. The composer shows an info notice ("we'll pass it on when it reaches
+    // you") and the sender sees their message with a "waiting to send" badge. isNotInReachError
+    // below stays as a backstop only for the brief deploy window when an older server, not yet
+    // running the hold path, might still answer the send with a 403 not_in_reach.
 
     transitionTo(ReplyState.VALIDATING, { event: ReplyEvent.SUBMIT })
 

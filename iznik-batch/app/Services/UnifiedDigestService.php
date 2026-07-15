@@ -139,7 +139,7 @@ class UnifiedDigestService
     /**
      * V1-parity per-group iteration for immediate-mode digests.
      *
-     * Mirrors iznik-server/include/mail/Digest.php exactly: walk the V1
+     * Mirrors the legacy V1 PHP Digest implementation exactly: walk the V1
      * `groups_digests` table, find new messages per group since that group's
      * cursor, send one notification to every member at emailfrequency=-1
      * (minus the poster), then advance the cursor. Using V1's table directly
@@ -367,7 +367,8 @@ class UnifiedDigestService
                     $message->lat,
                     $message->lng,
                     $user,
-                    $isOwnPost
+                    $isOwnPost,
+                    $this->authorMaxMiles((int) $message->fromuser)
                 )) {
                     continue;
                 }
@@ -719,7 +720,8 @@ class UnifiedDigestService
                     $msg->lat,
                     $msg->lng,
                     $user,
-                    $isOwnPost
+                    $isOwnPost,
+                    $this->authorMaxMiles((int) $msg->fromuser)
                 )) {
                     continue;
                 }
@@ -953,8 +955,8 @@ class UnifiedDigestService
      */
     protected function getUsersForDigest(string $mode, ?int $userId = null, int $shard = 0, int $shards = 1): \Illuminate\Support\LazyCollection
     {
-        // V1 parity (User::sendOurMails, iznik-server/include/user/User.php:4117
-        // and Engage::USER_INACTIVE = 365*12*3600 = 182.5 days): the canonical
+        // V1 parity (the legacy V1 PHP User::sendOurMails and
+        // Engage::USER_INACTIVE = 365*12*3600 = 182.5 days): the canonical
         // "is this user reachable" gate excludes anyone inactive for half a
         // year, all Trash Nothing-imported users (handled separately by TN),
         // and any address known to be bouncing. V2 previously used 90 days
@@ -989,7 +991,7 @@ class UnifiedDigestService
             $query->whereRaw('CRC32(users.id) % ? = ?', [$shards, $shard]);
         }
 
-        // V1 parity (iznik-server/include/mail/Digest.php:418): per-group
+        // V1 parity (the legacy V1 PHP Digest implementation): per-group
         // memberships.emailfrequency is authoritative at send time. The
         // global users.settings.simplemail only acts as the join-time
         // DEFAULT that populates a new membership's emailfrequency (see
@@ -1263,7 +1265,8 @@ class UnifiedDigestService
                 $p->lat,
                 $p->lng,
                 $user,
-                (int) $p->fromuser === (int) $user->id
+                (int) $p->fromuser === (int) $user->id,
+                $this->authorMaxMiles((int) $p->fromuser)
             ))->values();
         }
 
@@ -1416,7 +1419,7 @@ class UnifiedDigestService
     /**
      * Get all posts for a user from their member groups since last digest.
      *
-     * V1 parity (iznik-server/include/mail/Digest.php): per-group
+     * V1 parity (the legacy V1 PHP Digest implementation): per-group
      * memberships.emailfrequency is authoritative at send time. The
      * global users.settings.simplemail is NEVER consulted here — it
      * only sets the join-time default for emailfrequency on new
@@ -1441,14 +1444,18 @@ class UnifiedDigestService
      *   welcomemail/description — none of which a digest renders — and that was
      *   ~27% of per-user DB time. The digest only needs id + nameshort/namefull
      *   (namedisplay derives from those).
-     * - attachments: only the primary-photo pointer columns. The digest shows one
-     *   photo per post (getPrimaryAttachment), so externalmods/data are dead weight.
+     * - attachments: the primary-photo pointer columns plus externalmods. The email
+     *   digest shows one photo per post (getPrimaryAttachment) and ignores externalmods,
+     *   but the daily-posts PUSH shares this eager-load and its collage prefers a real
+     *   photo over an AI illustration (PushNotificationService::attachmentIsAi reads
+     *   attachments.externalmods) - without the column every photo is silently treated
+     *   as real. The heavy `data` blob stays excluded (that was the real dead weight).
      *   msgid is required for the hasMany to match rows to their message.
      */
     private function digestPostEagerLoads(): array
     {
         return [
-            'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived'),
+            'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived', 'externalmods'),
             'fromUser',
             'groups' => fn ($q) => $q->select('groups.id', 'groups.nameshort', 'groups.namefull'),
         ];
@@ -1625,7 +1632,7 @@ class UnifiedDigestService
      * @param mixed $lat Post/message latitude (numeric or null).
      * @param mixed $lng Post/message longitude (numeric or null).
      */
-    private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost): bool
+    private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost, ?float $authorMaxMiles = null): bool
     {
         if ($isOwnPost) {
             return true;
@@ -1642,9 +1649,14 @@ class UnifiedDigestService
         }
 
         $filter = app(DistancePreferenceFilter::class);
-        $maxMiles = $filter->maxDistanceMiles($user);
-        if ($maxMiles >= DistancePreferenceFilter::DISTANCE_UNLIMITED) {
-            // Fast path: absent/sentinel setting, the majority case. No haversine needed.
+        // INBOUND cap: the recipient only wants posts within their chosen distance.
+        // OUTBOUND cap: the post author only wants their post shown to people within
+        // their chosen distance of it (the same setting, read from the author).
+        $recipientMax = $filter->maxDistanceMiles($user);
+        $authorMax = $authorMaxMiles ?? (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
+        if ($recipientMax >= DistancePreferenceFilter::DISTANCE_UNLIMITED
+            && $authorMax >= DistancePreferenceFilter::DISTANCE_UNLIMITED) {
+            // Fast path: neither side limits distance, the majority case. No haversine needed.
             return true;
         }
 
@@ -1655,7 +1667,27 @@ class UnifiedDigestService
             (float) $lng
         );
 
-        return $filter->passes($distanceMiles, $maxMiles, false);
+        return $filter->passesBothPreferences($distanceMiles, $recipientMax, $authorMax, false);
+    }
+
+    /**
+     * The post author's OUTBOUND distance cap in miles (settings.browseMaxDistance),
+     * memoised per author id so repeated posts by the same freegler — across
+     * recipients and groups within a run — cost a single lookup. Absent author or
+     * absent/sentinel setting resolves to DISTANCE_UNLIMITED (no outbound cap).
+     */
+    private array $authorMaxMilesCache = [];
+
+    private function authorMaxMiles(int $fromuser): float
+    {
+        if (!array_key_exists($fromuser, $this->authorMaxMilesCache)) {
+            $author = User::select('id', 'settings')->find($fromuser);
+            $this->authorMaxMilesCache[$fromuser] = $author
+                ? app(DistancePreferenceFilter::class)->maxDistanceMiles($author)
+                : (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
+        }
+
+        return $this->authorMaxMilesCache[$fromuser];
     }
 
     /**

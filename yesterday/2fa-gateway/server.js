@@ -908,10 +908,6 @@ app.use(requireAuth, checkAdminPorts, createProxyMiddleware({
                 // Mailhog (Admin only - checked in middleware)
                 console.log(`→ Routing to Mailhog for admin user ${req.username}`);
                 return 'http://freegle-mailhog:8025';
-            case '8181':
-                // Iznik API v1
-                console.log(`→ Routing to Iznik API v1 for user ${req.username}`);
-                return 'http://freegle-apiv1:80';
             case '8193':
                 // Iznik API v2
                 console.log(`→ Routing to Iznik API v2 for user ${req.username}`);

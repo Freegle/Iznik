@@ -76,13 +76,14 @@ class RippleReplyService
      * Record a hold (delivery is blocked via deliveryGateSql, NOT reviewrequired).
      * Returns the new rippling_held_replies row id.
      */
-    public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng): int
+    public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng, string $source = 'email'): int
     {
         $id = (int) DB::table('rippling_held_replies')->insertGetId([
             'chatid' => $chatid,
             'chatmsgid' => $chatmsgid,
             'msgid' => $msgid,
             'replieruserid' => $replieruserid,
+            'source' => $source,
             'lat' => $lat,
             'lng' => $lng,
             'status' => 'held',
@@ -236,6 +237,28 @@ class RippleReplyService
             'releasedat' => now(),
         ]);
         $this->recordEvent('released');
+    }
+
+    /**
+     * Release a single still-held reply by its rippling_held_replies id (row-level, as
+     * opposed to the per-post releaseAll/releaseCovered). Used by the scoped backfill in
+     * ripple:release-replies --release-open --since-hours. No-op if the row is not 'held'.
+     * Returns 1 if released, 0 otherwise.
+     */
+    public function releaseHeldRow(int $ripplingRowId): int
+    {
+        $isHeld = DB::table('rippling_held_replies')
+            ->where('id', $ripplingRowId)
+            ->where('status', 'held')
+            ->exists();
+
+        if (! $isHeld) {
+            return 0;
+        }
+
+        $this->release($ripplingRowId);
+
+        return 1;
     }
 
     private function hasReach(int $msgid): bool

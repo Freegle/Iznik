@@ -12,8 +12,8 @@ use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 /**
- * Feature tests for mail:newsfeed:digest (migration of
- * iznik-server cron/newsfeed_digest.php → Newsfeed::digest()).
+ * Feature tests for mail:newsfeed:digest (migration of the legacy V1 PHP
+ * newsfeed_digest cron script → Newsfeed::digest()).
  *
  * Uses the --user path for deterministic, isolated assertions.
  */

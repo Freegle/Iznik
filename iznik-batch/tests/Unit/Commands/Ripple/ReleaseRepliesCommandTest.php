@@ -84,4 +84,79 @@ class ReleaseRepliesCommandTest extends TestCase
 
         $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
+
+    public function test_release_open_releases_stuck_reply_for_open_post(): void
+    {
+        // Backfill: a held reply for a post that is still open but whose reach never reached
+        // the replier would otherwise stay 'held' indefinitely (see the no-reach regression
+        // test above). --release-open releases it so it is delivered.
+        [$rowId] = $this->seedHeldNoReach(); // open post, no reach row -> normally stays held
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true])->assertExitCode(0);
+
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_open_still_marks_gone_for_taken_post(): void
+    {
+        // --release-open must not resurrect replies for genuinely gone posts.
+        [$rowId, $msgid] = $this->seedHeldNoReach();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true])->assertExitCode(0);
+
+        $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_open_since_hours_only_releases_recent_replies(): void
+    {
+        // Scoped backfill: only held replies whose reply is within the window are released;
+        // older held replies for the same still-open post are left alone (row-level).
+        [$recentRow] = $this->seedHeldNoReach();
+        [$oldRow, $oldMsgId] = $this->seedHeldNoReach();
+
+        // Age the old reply's chat message beyond the window.
+        $oldChatMsgId = DB::table('rippling_held_replies')->where('id', $oldRow)->value('chatmsgid');
+        DB::table('chat_messages')->where('id', $oldChatMsgId)->update(['date' => now()->subHours(72)]);
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true, '--since-hours' => 48])
+            ->assertExitCode(0);
+
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $recentRow)->value('status'),
+            'recent held reply for an open post is released');
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $oldRow)->value('status'),
+            'held reply older than the window is left alone');
+    }
+
+    public function test_release_open_since_hours_skips_gone_posts(): void
+    {
+        // A recent held reply whose post is gone is skipped by the scoped backfill (left for
+        // the normal per-post release path to mark gone) — not released.
+        [$rowId, $msgid] = $this->seedHeldNoReach();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies', ['--release-open' => true, '--since-hours' => 48])
+            ->assertExitCode(0);
+
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_taken_post_with_lingering_done_reach_marks_gone_not_released(): void
+    {
+        // Discourse 9808/#555: a post can be marked Taken while its reach row lingers and only
+        // later reaches status 'done'. The "gone" check must win over the 'done' branch — the
+        // post is gone, so its held replies are told-gone (taken-gone), never released and
+        // flooded into the offerer's inbox as if the item were still live.
+        [$rowId, , $msgid] = $this->seedHeldInsideReach(); // reach row created ('expanding')
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['status' => 'done']);
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies')->assertExitCode(0);
+
+        $this->assertSame(
+            'taken-gone',
+            DB::table('rippling_held_replies')->where('id', $rowId)->value('status'),
+            'a Taken post with a lingering done reach row is marked gone, not released'
+        );
+    }
 }

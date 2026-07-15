@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schedule;
  * Define the application's command schedule.
  *
  * IMPORTANT: Most commands are disabled for now. Only enable when ready to go live.
- * Commands are gradually being enabled as we migrate from iznik-server crontab.
+ * Commands are gradually being enabled as we migrate from the legacy V1 PHP crontab.
  */
 
 // Helper to build a per-command log path for output capture.
@@ -316,6 +316,14 @@ Schedule::command('monitor:email-health')
     ->everyFifteenMinutes()
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('monitor:email-health'))
+    ->runInBackground();
+
+// Deprecated-endpoint retirement report: once daily, early, so the team sees it
+// with the morning's mail. Only emails when an endpoint is past its x-sunset date.
+Schedule::command('monitor:deprecated-endpoints')
+    ->dailyAt('06:20')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('monitor:deprecated-endpoints'))
     ->runInBackground();
 
 // Outcome-based monitoring — asserts that scheduled tasks actually DID their

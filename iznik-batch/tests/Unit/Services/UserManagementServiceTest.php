@@ -733,4 +733,62 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['made_visible']);
         $this->assertEquals(0, $stats['made_hidden']);
     }
+
+    public function test_backfill_demotes_stale_moderator(): void
+    {
+        // systemrole Moderator but no Owner/Moderator membership anywhere.
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+
+        $stats = $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('User', $user->systemrole);
+        $this->assertGreaterThanOrEqual(1, $stats['demoted']);
+    }
+
+    public function test_backfill_keeps_moderator_with_mod_membership(): void
+    {
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['role' => 'Moderator']);
+
+        $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('Moderator', $user->systemrole);
+    }
+
+    public function test_backfill_keeps_moderator_with_owner_membership(): void
+    {
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['role' => 'Owner']);
+
+        $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('Moderator', $user->systemrole);
+    }
+
+    public function test_backfill_leaves_support_untouched(): void
+    {
+        // Support outranks Moderator and is set deliberately — never auto-demoted.
+        $user = $this->createTestUser(['systemrole' => 'Support']);
+
+        $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('Support', $user->systemrole);
+    }
+
+    public function test_backfill_dry_run_does_not_change(): void
+    {
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+
+        $stats = $this->service->backfillModeratorSystemRoles(true);
+
+        $user->refresh();
+        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertGreaterThanOrEqual(1, $stats['demoted']);
+    }
 }

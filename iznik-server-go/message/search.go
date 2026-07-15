@@ -288,3 +288,24 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 
 	return processResults("SoundsLike", res)
 }
+
+// SearchByMsgID returns the message with the given id as a single-element search
+// result, restricted to the supplied groups (nil groupids = no restriction, as
+// used for admin/support). Returns nil if the message does not exist or is not in
+// one of those groups. This lets "search by message id" return the exact message
+// rather than word-matching the digits against message text.
+func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult {
+	var results []SearchResult
+
+	sql := "SELECT messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, " +
+		"messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng " +
+		"FROM messages_spatial WHERE messages_spatial.msgid = ?" + groupFilter(groupids) + " LIMIT 1"
+
+	db.Raw(sql, msgid).Scan(&results)
+
+	for i := range results {
+		results[i].Matchedon = Matchedon{Type: "id", Word: strconv.FormatUint(msgid, 10)}
+	}
+
+	return results
+}

@@ -11,7 +11,7 @@
     <div class="image-card mb-3">
       <div class="image-container">
         <img
-          :src="currentImageUrl"
+          :src="aiimage.url"
           :alt="'AI image for ' + aiimage.name"
           class="review-image"
           @error="brokenImage"
@@ -54,26 +54,7 @@
         </p>
       </div>
 
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <div class="d-flex gap-2">
-          <button class="btn btn-outline-secondary" @click="regenerate">
-            Regenerate
-          </button>
-          <button
-            class="btn btn-outline-secondary"
-            :disabled="currentIndex === 0"
-            @click="previous"
-          >
-            Previous
-          </button>
-          <button
-            class="btn btn-outline-secondary"
-            :disabled="currentIndex >= images.length - 1"
-            @click="next"
-          >
-            Next
-          </button>
-        </div>
+      <div class="d-flex justify-content-end align-items-center mb-3">
         <div class="d-flex gap-2">
           <SpinButton
             variant="danger"
@@ -111,10 +92,9 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import SpinButton from './SpinButton'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
-import AIImagesAPI from '~/api/AIImagesAPI'
 
 const props = defineProps({
   aiimage: {
@@ -129,30 +109,6 @@ const microVolunteeringStore = useMicroVolunteeringStore()
 
 const containsPeople = ref(null)
 const submitted = ref(false)
-
-const images = ref([props.aiimage.url])
-const currentIndex = ref(0)
-
-const currentImageUrl = computed(() => images.value[currentIndex.value])
-
-async function regenerate() {
-  const api = new AIImagesAPI()
-  const result = await api.regenerate(props.aiimage.id)
-  images.value.push(result.url)
-  currentIndex.value = images.value.length - 1
-}
-
-function previous() {
-  if (currentIndex.value > 0) {
-    currentIndex.value--
-  }
-}
-
-function next() {
-  if (currentIndex.value < images.value.length - 1) {
-    currentIndex.value++
-  }
-}
 
 async function approve(callback) {
   await microVolunteeringStore.respond({

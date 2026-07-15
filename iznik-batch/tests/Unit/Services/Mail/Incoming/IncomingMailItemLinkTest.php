@@ -16,7 +16,7 @@ use Tests\TestCase;
  * INNER JOIN messages_items drops the message and reports zero kg even though
  * the item was given away.
  *
- * @see https://github.com/Freegle/iznik-server include/message/Message.php (item-extraction on save)
+ * @see the legacy V1 PHP Message::save() (item-extraction on save)
  */
 class IncomingMailItemLinkTest extends TestCase
 {
@@ -64,7 +64,9 @@ class IncomingMailItemLinkTest extends TestCase
         $parsed = $this->parser->parse($email, $userEmail, $to);
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        // The item link is created regardless of collection; an unmoderated member's
+        // post now starts Pending (content-check gated) rather than Approved on arrival.
+        $this->assertEquals(RoutingResult::PENDING, $result);
 
         $msg = DB::table('messages')
             ->where('subject', 'OFFER: Distinctive Velvet Armchair (London)')

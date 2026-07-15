@@ -365,6 +365,9 @@ const threadcommentautoheight = ref(null)
 // Reactive state
 const replyingTo = ref(null)
 const uploading = ref(false)
+// Guards sendComment against double-submit (Enter binds keydown here; a stray double-fire or
+// double-click would otherwise post twice before threadcomment is cleared). See NewsReply.vue.
+const sending = ref(false)
 const imageid = ref(null)
 const ouruid = ref(null)
 const imageuid = ref(null)
@@ -573,46 +576,58 @@ function focusedComment() {
 }
 
 async function sendComment(callback) {
+  // Re-entrancy guard against double-submit (see the sending ref above).
+  if (sending.value) {
+    return
+  }
   if (threadcomment.value && threadcomment.value.trim()) {
-    // Encode up any emojis.
-    const msg = untwem(threadcomment.value)
-    const newid = await newsfeedStore.send(
-      msg,
-      replyingTo.value,
-      props.id,
-      imageid.value
-    )
+    sending.value = true
+    try {
+      // Encode up any emojis.
+      const msg = untwem(threadcomment.value)
+      const newid = await newsfeedStore.send(
+        msg,
+        replyingTo.value,
+        props.id,
+        imageid.value
+      )
 
-    // New message will be shown because it's in the store and we have a computed
-    // property. Keep the poster anchored to their reply: the post-send refetch
-    // re-renders in the server's new order (replied-to parents get bumped), so
-    // without this the viewport content swaps and the reply lands off-screen.
-    // The pin re-resolves the selector on every correction, so it waits for
-    // the refetch to render the new reply and holds it through the shuffle,
-    // releasing when the refetch and image loads are complete.
-    if (newid) {
-      nextTick(() => {
-        ownPin = scrollToAndPin(
-          () => document.querySelector(`[data-reply-id="${newid}"]`),
-          {
-            block: 'center',
-            done: whenAllSettled([
-              condition(() => !miscStore.apiCount),
-              { ok: () => imagesComplete(), wait: () => whenImagesComplete() },
-            ]),
-          }
-        )
-      })
+      // New message will be shown because it's in the store and we have a computed
+      // property. Keep the poster anchored to their reply: the post-send refetch
+      // re-renders in the server's new order (replied-to parents get bumped), so
+      // without this the viewport content swaps and the reply lands off-screen.
+      // The pin re-resolves the selector on every correction, so it waits for
+      // the refetch to render the new reply and holds it through the shuffle,
+      // releasing when the refetch and image loads are complete.
+      if (newid) {
+        nextTick(() => {
+          ownPin = scrollToAndPin(
+            () => document.querySelector(`[data-reply-id="${newid}"]`),
+            {
+              block: 'center',
+              done: whenAllSettled([
+                condition(() => !miscStore.apiCount),
+                {
+                  ok: () => imagesComplete(),
+                  wait: () => whenImagesComplete(),
+                },
+              ]),
+            }
+          )
+        })
+      }
+
+      // Clear the textarea now it's sent.
+      threadcomment.value = null
+
+      // And any image id
+      imageid.value = null
+      imageuid.value = null
+      ouruid.value = null
+      imagemods.value = null
+    } finally {
+      sending.value = false
     }
-
-    // Clear the textarea now it's sent.
-    threadcomment.value = null
-
-    // And any image id
-    imageid.value = null
-    imageuid.value = null
-    ouruid.value = null
-    imagemods.value = null
   }
 
   if (typeof callback === 'function') {

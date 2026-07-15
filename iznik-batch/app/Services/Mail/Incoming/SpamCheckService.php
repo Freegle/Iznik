@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Spam detection service for incoming email.
  *
- * Implements all spam checks from legacy iznik-server Spam.php and MailRouter.php:
+ * Implements all spam checks from the legacy V1 PHP Spam and MailRouter classes:
  * - Keyword matching (spam_keywords table)
  * - IP country blocking (spam_countries + GeoIP)
  * - IP whitelist (spam_whitelist_ips)

@@ -1814,6 +1814,47 @@ func TestPostUserUnbounceNotAdmin(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// TestPostUserUnbounceSelf verifies that a regular member can unbounce
+// themselves — the self-service "Try again" button in their own Settings
+// (AccountSection.vue). Regression: the handler required admin/support, so a
+// bouncing member clicking "Try again" always got a 403. It must also clear the
+// per-email users_emails.bounced timestamp, not just users.bouncing.
+func TestPostUserUnbounceSelf(t *testing.T) {
+	prefix := uniquePrefix("unbounceself")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, userToken := CreateTestSession(t, userID)
+
+	// Mark the user (and their email) as bouncing.
+	db.Exec("UPDATE users SET bouncing = 1 WHERE id = ?", userID)
+	db.Exec("UPDATE users_emails SET bounced = NOW() WHERE userid = ?", userID)
+
+	payload := map[string]interface{}{
+		"action": "Unbounce",
+		"id":     userID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+userToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Both the user-level flag and the per-email timestamp must be cleared.
+	var bouncing bool
+	db.Raw("SELECT bouncing FROM users WHERE id = ?", userID).Scan(&bouncing)
+	assert.False(t, bouncing)
+
+	var bouncedCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND bounced IS NOT NULL", userID).Scan(&bouncedCount)
+	assert.Equal(t, int64(0), bouncedCount)
+}
+
 // TestPostUserUnsubscribeBySupportRemovesMembership verifies that a Support user clicking
 // "Unsubscribe" in the Support tools removes the target user's memberships and marks their
 // account as deleted (limbo). Regression: POST /user action=Unsubscribe was missing from

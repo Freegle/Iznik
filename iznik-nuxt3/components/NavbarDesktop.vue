@@ -6,19 +6,12 @@
   >
     <nuxt-link :to="homePage" class="navbar-brand p-0" no-prefetch>
       <OfflineIndicator v-if="!online" />
-      <b-img
-        v-else-if="logoFormat === 'gif'"
-        class="logo me-2"
-        :src="logo"
-        :format="logoFormat"
-        alt="Home"
-      />
       <ProxyImage
         v-else
         preload
         class="logo me-2"
-        :src="logo"
-        :format="logoFormat"
+        src="/icon.png"
+        format="webp"
         alt="Home"
         sizes="58px"
       />
@@ -275,8 +268,6 @@ import { useAuthStore } from '~/stores/auth'
 const {
   online,
   distance,
-  logo,
-  logoFormat,
   unreadNotificationCount,
   chatCount,
   activePostsCount,

@@ -4,7 +4,7 @@ import { useTestStore } from '~/stores/tests'
 
 const testStore = useTestStore()
 
-const testTypes: TestType[] = ['go', 'spatial', 'routing', 'php', 'laravel', 'vitest', 'playwright']
+const testTypes: TestType[] = ['go', 'spatial', 'routing', 'laravel', 'vitest', 'playwright']
 
 onMounted(() => {
   // Refresh test statuses on mount

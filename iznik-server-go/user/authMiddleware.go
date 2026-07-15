@@ -6,6 +6,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/plugin/dbresolver"
 	"sync"
 	"time"
 )
@@ -41,8 +42,19 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 
 				// We have a uid.  Check if the user is still present in the DB.
 				// Also fetch systemrole for HAProxy rate limit exemption.
-				result := db.Raw("SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1;", sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
+				const q = "SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1;"
+				result := db.Raw(q, sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
 				dbQueryErr = result.Error
+
+				// Read/write split: the session row is INSERTed on the write host at login, so a
+				// read replica can momentarily return zero rows right after login (Galera apply
+				// lag). That would make the check below wrongly 401 a valid session. On a miss,
+				// confirm against the write host before treating the session as invalid.
+				// .Clauses(dbresolver.Write) is a no-op when no replica is configured.
+				if dbQueryErr == nil && userIdInDB.Id == 0 {
+					result = db.Clauses(dbresolver.Write).Raw(q, sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
+					dbQueryErr = result.Error
+				}
 			}()
 		}
 

@@ -191,15 +191,30 @@ describe('MessageShareModal', () => {
       expect(wrapper.text()).toContain('Copy')
     })
 
-    it('copies URL to clipboard on click', async () => {
+    it('copies the full Email-style payload (subject, body, url) to the clipboard', async () => {
       const wrapper = createWrapper()
       const copyBtn = wrapper
         .findAll('.b-button')
         .find((b) => b.text().includes('Copy'))
       await copyBtn.trigger('click')
+      expect(mockClipboard.writeText).toHaveBeenCalledTimes(1)
       expect(mockClipboard.writeText).toHaveBeenCalledWith(
-        'https://freegle.org/message/1'
+        `${mockMessage.subject}\n\n${mockMessage.textbody}\n\n${mockMessage.url}`
       )
+    })
+
+    it('omits a missing body so the clipboard never contains "undefined" / "null"', async () => {
+      // Body-less messages (subject-only OFFERs/WANTEDs, or the API nulling the
+      // body) must not stringify into the literal word "undefined"/"null".
+      mockMessageStore.byId.mockReturnValue({ ...mockMessage, textbody: null })
+      const wrapper = createWrapper()
+      const copyBtn = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Copy'))
+      await copyBtn.trigger('click')
+      const copiedText = mockClipboard.writeText.mock.calls[0][0]
+      expect(copiedText).not.toMatch(/undefined|null/)
+      expect(copiedText).toBe(`${mockMessage.subject}\n\n${mockMessage.url}`)
     })
 
     it('shows check icon after copy', async () => {

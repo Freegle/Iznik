@@ -14,12 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestCreateChatMessage_ReachBlockedReplyRejected verifies the rippling reply gate on the WRITE
-// path: an in-app reply to a post whose reach has not yet reached the replier is rejected (403),
-// not just hidden in the UI. The UI gate (replyeligible / ?reply= link) is bypassable by a stale
-// or modified client, so the server must enforce it. Once the reach covers the replier, the
-// reply is accepted. Fails open when no reach row exists (post isn't rippling).
-func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
+// TestCreateChatMessage_ReachBlockedReplyHeld verifies the rippling reply HOLD on the WRITE path:
+// an in-app reply to a post whose reach has not yet reached the replier is ACCEPTED (200) but HELD
+// — a rippling_held_replies row (source='web', status='held') is recorded and the poster does not
+// see the reply until it is released. This replaced the old 403 reject: rather than turning the
+// member away, we hold their reply and deliver it when the post ripples to them (matching the
+// email/TN path). Once the reach covers the replier, the reply is delivered normally (no hold row).
+func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reachreply")
 
@@ -33,6 +34,18 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 		polygon GEOMETRY NOT NULL SRID 3857,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
 		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	// The hold target table (source column matches the 2026_07_08 migration and the other
+	// rippling_held_replies stand-ins; first CREATE wins, so all must agree).
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_held_replies (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		chatid BIGINT UNSIGNED NOT NULL, chatmsgid BIGINT UNSIGNED NOT NULL,
+		msgid BIGINT UNSIGNED NOT NULL, replieruserid BIGINT UNSIGNED NOT NULL,
+		source ENUM('email','tn','web') NOT NULL DEFAULT 'email',
+		lat DOUBLE, lng DOUBLE,
+		status ENUM('held','released','dropped','taken-gone') NOT NULL DEFAULT 'held',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, releasedat TIMESTAMP NULL,
+		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	groupID := CreateTestGroup(t, prefix)
@@ -49,6 +62,7 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
 		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857))", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
 
 	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
 	_, token := CreateTestSession(t, replierID)
@@ -64,12 +78,38 @@ func TestCreateChatMessage_ReachBlockedReplyRejected(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	assert.Equal(t, fiber.StatusForbidden, post(), "in-app reply rejected when replier is outside the post's reach")
+	// Out of reach: the reply is ACCEPTED (not rejected) and HELD.
+	assert.Equal(t, fiber.StatusOK, post(), "in-app reply is accepted (not rejected) when outside the post's reach")
 
-	// Reach grows to cover the replier → accepted.
+	var held struct {
+		Chatmsgid uint64 `gorm:"column:chatmsgid"`
+		Source    string `gorm:"column:source"`
+		Status    string `gorm:"column:status"`
+	}
+	db.Raw("SELECT chatmsgid, source, status FROM rippling_held_replies "+
+		"WHERE msgid = ? AND replieruserid = ? ORDER BY id DESC LIMIT 1", msgID, replierID).Scan(&held)
+	assert.NotZero(t, held.Chatmsgid, "an out-of-reach in-app reply records a rippling_held_replies row")
+	assert.Equal(t, "web", held.Source, "the held row is tagged source='web'")
+	assert.Equal(t, "held", held.Status, "the held row starts held")
+
+	// Delivery gate: the poster must NOT see the held reply yet.
+	_, posterToken := CreateTestSession(t, posterID)
+	greq := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, posterToken), nil)
+	gresp, _ := getApp().Test(greq)
+	var posterMsgs []chat.ChatMessage
+	json.Unmarshal(rsp(gresp), &posterMsgs)
+	for _, m := range posterMsgs {
+		assert.NotEqual(t, held.Chatmsgid, m.ID, "the poster must not see the held reply until it is released")
+	}
+
+	// Reach grows to cover the replier → the reply is delivered normally (no new hold row).
 	db.Exec("UPDATE rippling_reach SET polygon = ST_GeomFromText("+
 		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857) WHERE msgid = ?", msgID)
 	assert.Equal(t, fiber.StatusOK, post(), "in-app reply accepted once the reach covers the replier")
+	var heldCount int
+	db.Raw("SELECT COUNT(*) FROM rippling_held_replies WHERE msgid = ? AND replieruserid = ?",
+		msgID, replierID).Scan(&heldCount)
+	assert.Equal(t, 1, heldCount, "the in-reach reply is delivered normally — only the earlier out-of-reach reply is held")
 }
 
 // TestCreateChatMessage_ReportToModsNotReachGated verifies the reach gate does NOT apply to a

@@ -1652,7 +1652,7 @@ class IncomingMailService
         // rippling_held_replies row) so the poster isn't notified until it reaches them.
         // hasReach fails open, so before the reach engine is live nothing is held.
         if ($chatMsgId !== null) {
-            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser);
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser, $email->isFromTrashNothing() ? 'tn' : 'email');
         }
 
         // #7: Check if message has outcome (TAKEN/RECEIVED) - don't email if so
@@ -1711,7 +1711,7 @@ class IncomingMailService
      * the poster notification until the post ripples to them (status→'released'). Inert until
      * the reach engine populates rippling_reach (hasReach fails open before then).
      */
-    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier): void
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier, string $source = 'email'): void
     {
         $latlng = $this->resolveReplierLatLng($replier);
         if ($latlng === null) {
@@ -1722,12 +1722,13 @@ class IncomingMailService
         $service = app(RippleReplyService::class);
 
         if ($service->shouldHold($msgid, $lat, $lng)) {
-            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng);
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng, $source);
             Log::info('ripple:held-external-reply', [
                 'msgid' => $msgid,
                 'chatid' => $chatId,
                 'chatmsgid' => $chatMsgId,
                 'replieruserid' => $replier->id,
+                'source' => $source,
             ]);
         }
     }
@@ -1997,7 +1998,7 @@ class IncomingMailService
 
         // Strip quoted reply text and signatures before storing.
         // For volunteer messages, the quoted text (conversation transcript, reported post)
-        // is the useful content - don't strip it. Matches legacy iznik-server behavior:
+        // is the useful content - don't strip it. Matches the legacy V1 PHP behavior:
         // "Don't strip quoted as it might be useful."
         if (! $skipStripQuoted) {
             $body = $this->stripQuoted->strip($body);
@@ -2465,7 +2466,7 @@ class IncomingMailService
         // TN "Reporting member/post" emails include a conversation transcript that
         // is valuable context for moderators. Don't strip quoted text for these -
         // the transcript contains From:/To:/Subject:/Date: lines that the strip
-        // logic would eat. Matches legacy iznik-server behavior which says
+        // logic would eat. Matches the legacy V1 PHP behavior which says
         // "Don't strip quoted as it might be useful" for volunteer messages,
         // but we still want to strip for other volunteer messages like digest replies.
         $isTnReport = str_starts_with($email->subject ?? '', 'Reporting ');
@@ -2640,6 +2641,11 @@ class IncomingMailService
         // Determine routing result first
         $routingResult = RoutingResult::PENDING;  // Default
         $pendingReason = null;
+        // True when the post would otherwise have gone live immediately (an
+        // unmoderated member, clean of the checks below). Such posts now start
+        // Pending and are promoted by the content-check batch job instead of being
+        // approved on arrival - see the routing note and the collection update below.
+        $awaitingContentCheck = false;
 
         // Check if user is unmapped (no location)
         if ($user->lastlocation === null) {
@@ -2659,11 +2665,18 @@ class IncomingMailService
         // API rejects PROHIBITED with "Not allowed to post on this group" (message.php:625)
         // so email should match: drop the post.
         else {
+            // Unmoderated members (DEFAULT/UNMODERATED) are NOT approved on arrival.
+            // Like the web/API submit path (iznik-server-go message.go: "All messages
+            // start Pending - the content check batch job ... promotes clean messages
+            // from non-moderated users to Approved"), they start Pending so the
+            // content-check job (messages:contentcheck) can gate them: clean posts are
+            // auto-promoted within a minute, while posts matching a concern keyword or
+            // content rule are held for a moderator instead of going live unchecked.
             $routingResult = match ($postingStatus) {
-                'DEFAULT', 'UNMODERATED' => RoutingResult::APPROVED,
                 'PROHIBITED' => RoutingResult::DROPPED,
-                default => RoutingResult::PENDING,  // NULL, MODERATED, or any other value
+                default => RoutingResult::PENDING,  // DEFAULT, UNMODERATED, NULL, MODERATED, ...
             };
+            $awaitingContentCheck = in_array($postingStatus, ['DEFAULT', 'UNMODERATED'], true);
         }
 
         // For DROPPED messages, don't create a record
@@ -2686,7 +2699,10 @@ class IncomingMailService
                 'date' => now(),
             ]);
 
-            // Update the collection based on routing result
+            // Update the collection based on routing result.
+            // Note: member posts are no longer Approved on arrival (see routing note
+            // above). The APPROVED branch is retained for completeness / any future
+            // caller; unmoderated members take the awaiting-content-check path below.
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
                 MessageGroup::where('msgid', $messageId)
@@ -2702,8 +2718,23 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+            } elseif ($awaitingContentCheck) {
+                // Unmoderated member: start Pending and let the content-check job
+                // promote it (clean) or hold and notify mods (flagged). We do NOT
+                // notify mods or add to the spatial index here - that is the
+                // content-check job's responsibility, so clean posts create no mod
+                // work and flagged posts never go live unchecked.
+                MessageGroup::where('msgid', $messageId)
+                    ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+
+                Log::info('Message pending content check (auto-approve candidate)', [
+                    'message_id' => $messageId,
+                    'group_id' => $group->id,
+                ]);
             } else {
-                // Message is pending - collection is already Incoming, update to Pending
+                // Message is pending for a moderator reason (moderated user/group,
+                // worry words, unmapped user, Big Switch) - collection is already
+                // Incoming, update to Pending and notify mods now.
                 MessageGroup::where('msgid', $messageId)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
@@ -3205,7 +3236,7 @@ class IncomingMailService
         // by the post's reach yet - the same gate as the digest reply path - so the poster isn't
         // notified out-of-reach via this route. Only when we linked the reply to a post.
         if ($refMsgId !== null && $chatMsgId !== null) {
-            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser);
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser, $email->isFromTrashNothing() ? 'tn' : 'email');
         }
 
         // Track email reply in email_tracking for AMP comparison stats.
@@ -3450,7 +3481,7 @@ class IncomingMailService
         ]);
 
         // Create roster entries for both users so the notification system can
-        // track seen/emailed state. The legacy iznik-server code does this in
+        // track seen/emailed state. The legacy V1 PHP implementation does this in
         // ChatRoom::createConversation() via updateRoster() for both users.
         // Without roster entries, users never receive email notifications
         // about new messages in this chat.
@@ -4185,7 +4216,7 @@ class IncomingMailService
     /**
      * Record a processing failure against a message.
      *
-     * V1 parity: Message::recordFailure() in iznik-server/include/message/Message.php.
+     * V1 parity: the legacy V1 PHP Message::recordFailure().
      * Increments retrycount and sets retrylastfailure so the message can be retried later.
      * Also logs the failure to the logs table (type=Message, subtype=Failure).
      */

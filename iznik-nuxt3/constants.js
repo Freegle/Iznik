@@ -67,6 +67,16 @@ export const GROUP_REPOSTS = { offer: 3, wanted: 14, max: 10, chaseups: 2 }
 // newly-arriving distant posts keep showing.
 export const BROWSE_DISTANCE_UNLIMITED = Number.MAX_SAFE_INTEGER
 
+// The "How far away" slider is TIME-based: a travel-time budget in MINUTES, matching the reach
+// system (drive-time isochrones), not miles. The far-right (MAX) stop means "no limit" - it stores
+// BROWSE_DISTANCE_UNLIMITED, deferring to the server's own reach (default 30-min budget). The chosen
+// minutes are converted to a crow-flies mile radius by real routing (location-aware) and stored as
+// settings.browseMaxDistance for the fast distance filter; the minutes themselves are stored as
+// settings.browseMaxMinutes so the slider restores.
+export const BROWSE_MINUTES_MIN = 5
+export const BROWSE_MINUTES_MAX = 30
+export const BROWSE_MINUTES_STEP = 5
+
 // Colour for the reach/isochrone-style map polygons (the former per-user
 // isochrone fill, now reused for the browse "coverage" hull). Kept as a
 // constant so the map overlays don't hardcode the hex in several places.

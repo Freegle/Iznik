@@ -1,4 +1,4 @@
-export type TestType = 'go' | 'spatial' | 'routing' | 'php' | 'laravel' | 'vitest' | 'playwright'
+export type TestType = 'go' | 'spatial' | 'routing' | 'laravel' | 'vitest' | 'playwright'
 
 export type TestStatus = 'idle' | 'running' | 'completed' | 'failed'
 
@@ -51,13 +51,6 @@ export const testConfigs: Record<TestType, TestConfig> = {
     name: 'Routing Server Tests',
     description: 'Tests for the isochrone/routing server (iznik-routing-go)',
     filterPlaceholder: 'Filter tests (e.g., TestIsochrone)',
-    hasReport: false,
-  },
-  php: {
-    type: 'php',
-    name: 'PHP v1 API Tests',
-    description: 'Tests for the v1 API (iznik-server)',
-    filterPlaceholder: 'Filter tests (e.g., messageTest)',
     hasReport: false,
   },
   laravel: {

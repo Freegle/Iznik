@@ -13,6 +13,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // Compact email tracking URLs
@@ -264,21 +265,24 @@ func ClickCompact(c *fiber.Ctx) error {
 	now := time.Now()
 
 	if tracking.OpenedAt == nil {
-		openedVia := "click"
-		db.Model(tracking).Updates(map[string]interface{}{
+		// Conditional in SQL so only the first concurrent hit rewrites the row (see
+		// the matching note in ImageCompact).
+		db.Model(tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
 			"opened_at":  now,
-			"opened_via": openedVia,
+			"opened_via": "click",
 		})
 	}
 
 	if tracking.ClickedAt == nil {
-		db.Model(tracking).Updates(map[string]interface{}{
+		db.Model(tracking).Where("clicked_at IS NULL").Updates(map[string]interface{}{
 			"clicked_at":   now,
 			"clicked_link": destinationURL,
 		})
 	}
 
-	db.Model(tracking).UpdateColumn("links_clicked", tracking.LinksClicked+1)
+	// Atomic increment rather than read-modify-write, to avoid lost updates and
+	// minimise how long the row lock is held.
+	db.Model(tracking).UpdateColumn("links_clicked", gorm.Expr("links_clicked + 1"))
 
 	click := EmailTrackingClick{
 		EmailTrackingID: tracking.ID,
@@ -337,21 +341,32 @@ func ImageCompact(c *fiber.Ctx) error {
 		now := time.Now()
 
 		if tracking.OpenedAt == nil {
-			openedVia := "image"
-			db.Model(tracking).Updates(map[string]interface{}{
+			// Guard the write in SQL, not just on the stale Go read: when an email is
+			// opened its client loads many tracking images at once, and they all see
+			// OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of them
+			// UPDATEs the same row and they serialise on its lock.
+			db.Model(tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
 				"opened_at":  now,
-				"opened_via": openedVia,
+				"opened_via": "image",
 			})
 		}
 
+		// The per-load row IS the record of this image load - it carries the
+		// position label used by the digest-position analytics. Deliberately do
+		// NOT also increment email_tracking.images_loaded: the N images of one
+		// digest open load near-simultaneously, and a per-hit UPDATE on the
+		// shared parent row needs an exclusive lock that every concurrent load
+		// (plus each load's own FK insert here, which takes a shared lock on the
+		// same parent row) contends for. That serialised on the row lock and hit
+		// lock-wait timeouts, which in turn drove client retries that inflated
+		// the count. The counter is unread and derivable as a COUNT over these
+		// rows, so it is no longer maintained.
 		imageLoad := EmailTrackingImage{
 			EmailTrackingID: tracking.ID,
 			ImagePosition:   position,
 			LoadedAt:        now,
 		}
 		db.Create(&imageLoad)
-
-		db.Model(tracking).UpdateColumn("images_loaded", tracking.ImagesLoaded+1)
 	}
 
 	return c.Redirect(imageURL)

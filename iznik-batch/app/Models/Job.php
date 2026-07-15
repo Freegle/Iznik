@@ -23,7 +23,11 @@ class Job extends Model
      * server's "jobs" dataset floor and the public jobs page, so digest job
      * ads are drawn from the same eligible pool as everything else.
      */
-    public const MINIMUM_CPC = 0.10;
+    // Kept in lockstep with WhatJobsService::MINIMUM_CPC (ingest), Go
+    // job.JOBS_MINIMUM_CPC and V1 Jobs::MINIMUM_CPC. Lowered 0.10 -> 0.08 on
+    // 2026-07-09 after WhatJobs compressed their bids to ~£0.084 — see the note
+    // on WhatJobsService::MINIMUM_CPC.
+    public const MINIMUM_CPC = 0.08;
 
     /**
      * Candidate-pool multiplier used to break the "same N jobs forever"

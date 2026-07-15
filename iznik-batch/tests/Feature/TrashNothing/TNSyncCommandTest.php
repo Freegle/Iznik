@@ -19,7 +19,7 @@ use Tests\TestCase;
  * duplicate TN user merging, date management, error handling, and pagination.
  *
  * Ported test coverage from:
- * - iznik-server: userAPITest::testRating(), sessionTest::testAboutMe(),
+ * - the legacy V1 PHP implementation: userAPITest::testRating(), sessionTest::testAboutMe(),
  *   chatRoomsTest::testUserStopsReplyingReplyTime()
  * - iznik-server-go: TestPostUserRateUp/Down, TestPatchUserAboutMe
  *

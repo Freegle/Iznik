@@ -32,7 +32,6 @@ import ImageAPI from './ImageAPI.js'
 import IsochroneAPI from './IsochroneAPI.js'
 import JobAPI from './JobAPI.js'
 import LocationAPI from './LocationAPI.js'
-import LogoAPI from './LogoAPI.js'
 import LogsAPI from './LogsAPI.js'
 import MembershipsAPI from './MembershipsAPI.js'
 import MergeAPI from './MergeAPI.js'
@@ -43,6 +42,7 @@ import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
 import RipplingAPI from './RipplingAPI.js'
+import TownAPI from './TownAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
@@ -54,6 +54,7 @@ import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
+import VoicePostAPI from './VoicePostAPI.js'
 import VolunteeringAPI from './VolunteeringAPI.js'
 
 export default (config) => {
@@ -83,7 +84,6 @@ export default (config) => {
     isochrone: new IsochroneAPI(options),
     job: new JobAPI(options),
     location: new LocationAPI(options),
-    logo: new LogoAPI(options),
     logs: new LogsAPI(options),
     memberships: new MembershipsAPI(options),
     merge: new MergeAPI(options),
@@ -94,6 +94,7 @@ export default (config) => {
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
     rippling: new RipplingAPI(options),
+    town: new TownAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),
     spammers: new SpammersAPI(options),
@@ -105,6 +106,7 @@ export default (config) => {
     user: new UserAPI(options),
     usersearch: new UserSearchAPI(options),
     visualise: new VisualiseAPI(options),
+    voicepost: new VoicePostAPI(options),
     volunteering: new VolunteeringAPI(options),
   }
 }

@@ -400,6 +400,20 @@ export const useComposeStore = defineStore({
     deleteMessage(id) {
       this.messages = this.messages.filter((m) => m.id !== id)
     },
+    // Reset a message's content to empty while keeping its id and type - used by "Clear
+    // and start over" so the compose form stays mounted (rather than vanishing when the
+    // message is deleted) and the store-bound inputs clear reactively. See
+    // useCompose.clearItem / Discourse 9915.
+    clearMessage(id) {
+      const idx = this.messages.findIndex((m) => m && m.id === id)
+      if (idx !== -1) {
+        this.messages[idx] = {
+          id,
+          type: this.messages[idx].type,
+          savedAt: Date.now(),
+        }
+      }
+    },
     async submit(params) {
       // This is the most important bit of code in the client :-).  We have our messages in the compose store.
       //

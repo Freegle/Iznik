@@ -383,6 +383,24 @@
             >
               {{ message.spamreason }}
             </NoticeMessage>
+            <!-- When a post is back in Pending because a moderator moved it there (e.g. a
+                 "Back to Pending" on any community pulls every copy back for per-group
+                 review), the reason is stored on THIS group's copy (contextGroup.spamreason),
+                 not the message-level spamreason. Surface it so a mod who approved the post
+                 understands why it has reappeared and isn't left clicking Approve with no
+                 explanation. -->
+            <NoticeMessage
+              v-if="
+                contextGroup &&
+                contextGroup.collection === 'Pending' &&
+                contextGroup.spamreason &&
+                contextGroup.spamreason !== message.spamreason
+              "
+              variant="info"
+              class="mb-2"
+            >
+              {{ contextGroup.spamreason }}
+            </NoticeMessage>
             <NoticeMessage
               v-if="
                 pending &&
@@ -813,6 +831,7 @@ import { twem } from '~/composables/useTwem'
 import {
   isRippledInToContextGroup as isRippledIn,
   earliestArrivalGroupId,
+  homeGroupId,
 } from '~/composables/rippleStatus'
 
 const props = defineProps({
@@ -977,15 +996,16 @@ const currentGroupid = computed(() => {
       ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
     )
     const pool = pending.length ? pending : mine
-    let pick = pool[0]
-    for (const g of pool) {
-      if (
-        g.arrival &&
-        (!pick.arrival || new Date(g.arrival) > new Date(pick.arrival))
-      )
-        pick = g
-    }
-    return parseInt(pick.groupid)
+    // Anchor to the group the post ORIGINATED on (home), not a copy that rippled in
+    // later. A mod active on both the origin and a group the post rippled into should
+    // act on / reply from the origin, so a Blank reply appends to the member's existing
+    // chat with the origin group's volunteers rather than starting a fresh one from the
+    // rippled-in group (Discourse 9808/565). rippled_in is authoritative here; arrival is
+    // not, because the approve path stamps arrival=NOW() on whichever copy was approved -
+    // which is exactly the just-approved rippled-in copy we must NOT pick.
+    const home = homeGroupId(pool)
+    if (home != null) return home
+    return parseInt(pool[0].groupid)
   }
   const gid = parseInt(groupid.value)
   return gid || null
@@ -1192,9 +1212,15 @@ const configid = computed(() => {
   // Look up configid from authStore.groups (always populated from session)
   // rather than relying on modGroupStore.list[].mysettings which may not be
   // populated yet due to a race condition with fetchGroupMT().
-  if (groupid.value && authStore.groups) {
+  //
+  // Anchor to currentGroupid (the group this copy is being administered on),
+  // not groupid (which falls back to groups[0] - no guaranteed order). Using
+  // groupid here let a rippled post's standard-message list and substitutions
+  // ($groupname etc.) come from a different group's config than the one shown
+  // as "moderating for" and used to send/sign the reply (Discourse 9862/15).
+  if (currentGroupid.value && authStore.groups) {
     const sessionGroup = authStore.groups.find(
-      (g) => parseInt(g.groupid) === parseInt(groupid.value)
+      (g) => parseInt(g.groupid) === parseInt(currentGroupid.value)
     )
     if (sessionGroup?.configid) {
       id = sessionGroup.configid

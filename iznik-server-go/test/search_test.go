@@ -231,3 +231,33 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 	}
 	assert.False(t, foundAsMod, "regular mod should NOT see messages from groups they are not a member of")
 }
+
+func TestSearchByMessageID(t *testing.T) {
+	// Reported on Discourse (topic 9585): searching for a message id returned posts
+	// whose title merely contained those digits, not the message with that id. A
+	// purely-numeric term (with or without a leading "#") must return that message.
+	prefix := uniquePrefix("searchbyid")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	msgID := CreateTestMessage(t, userID, groupID, "Exercise Bike Lewisham", 55.9533, -3.1883)
+	_, token := CreateTestSession(t, userID)
+
+	findsIt := func(term string) bool {
+		u := fmt.Sprintf("/api/message/search/%s?groupids=%d&jwt=%s", term, groupID, token)
+		resp, _ := getApp().Test(httptest.NewRequest("GET", u, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var results []message.SearchResult
+		json2.NewDecoder(resp.Body).Decode(&results)
+		for _, r := range results {
+			if r.Msgid == msgID {
+				return true
+			}
+		}
+		return false
+	}
+
+	// "%23" is the URL-encoded "#".
+	assert.True(t, findsIt(fmt.Sprintf("%%23%d", msgID)), "#<id> should return that message")
+	assert.True(t, findsIt(fmt.Sprintf("%d", msgID)), "a bare numeric id should also return that message")
+}

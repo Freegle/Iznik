@@ -1320,8 +1320,11 @@ class IncomingMailServiceTest extends TestCase
     // Group Post Routing Tests
     // ========================================
 
-    public function test_routes_approved_member_post_to_approved(): void
+    public function test_routes_unmoderated_member_post_to_pending_for_content_check(): void
     {
+        // An unmoderated member's emailed post is NOT approved on arrival: it starts
+        // Pending so the content-check batch job can gate it (promote clean posts,
+        // hold ones matching a concern keyword) - matching the web/API submit path.
         $group = $this->createTestGroup();
         $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('member')]);
         $this->createMembership($user, $group, [
@@ -1348,7 +1351,15 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        $this->assertEquals(RoutingResult::PENDING, $result);
+
+        // The post lands Pending (awaiting its first content check), not Approved.
+        $context = $this->service->getLastRoutingContext();
+        $collection = DB::table('messages_groups')
+            ->where('msgid', $context['message_id'])
+            ->where('groupid', $group->id)
+            ->value('collection');
+        $this->assertEquals('Pending', $collection);
     }
 
     public function test_routes_moderated_member_post_to_pending(): void
@@ -3157,7 +3168,8 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        // Unmoderated members now start Pending (content-check gated), not Approved.
+        $this->assertEquals(RoutingResult::PENDING, $result);
 
         $context = $this->service->getLastRoutingContext();
         $this->assertEquals($group->id, $context['group_id']);
@@ -4339,7 +4351,9 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        // Posting record is created whether the post lands Approved or Pending; an
+        // unmoderated member's post now starts Pending (content-check gated).
+        $this->assertEquals(RoutingResult::PENDING, $result);
 
         $context = $this->service->getLastRoutingContext();
         $this->assertArrayHasKey('message_id', $context);
@@ -4939,7 +4953,7 @@ class IncomingMailServiceTest extends TestCase
     /**
      * Test that recordFailure() increments retrycount and sets retrylastfailure.
      *
-     * V1 parity: Message::recordFailure() in iznik-server/include/message/Message.php
+     * V1 parity: the legacy V1 PHP Message::recordFailure()
      * does: UPDATE messages SET retrycount = LAST_INSERT_ID(retrycount), retrylastfailure = NOW()
      * and logs to the logs table with type='Message', subtype='Failure'.
      */

@@ -12,6 +12,7 @@ Save this password - you'll need it to log in.
 Ready to start freegling?
 
 Give stuff away: {{ $giveUrl }}
+Browse what's on offer: {{ $browseUrl }}
 Find what you need: {{ $findUrl }}
 
 

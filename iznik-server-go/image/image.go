@@ -3,11 +3,15 @@ package image
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
+	"strconv"
+	"strings"
+
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
-	"strconv"
 )
 
 // imageTypeConfig maps imgtype names to their database table and parent ID column.
@@ -52,9 +56,9 @@ type PostRequest struct {
 	CommunityEvent any    `json:"communityevent"` // Can be uint64 (parent ID) or bool (type flag)
 	Volunteering   any    `json:"volunteering"`   // Can be uint64 (parent ID) or bool (type flag)
 	ChatMessage    uint64 `json:"chatmessage"`
-	UserID         any    `json:"user"`       // Can be uint64 (parent ID) or bool (type flag)
+	UserID         any    `json:"user"` // Can be uint64 (parent ID) or bool (type flag)
 	Newsfeed       uint64 `json:"newsfeed"`
-	Story          any    `json:"story"`      // Can be bool (type flag)
+	Story          any    `json:"story"`       // Can be bool (type flag)
 	Noticeboard    any    `json:"noticeboard"` // Can be bool (type flag)
 	Newsletter     uint64 `json:"newsletter"`
 }
@@ -253,6 +257,147 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 		"ret":    0,
 		"status": "Success",
 	})
+}
+
+// Legacy GET /image support. The images.ilovefreegle.org vhost rewrites the
+// old *img_N.jpg URL forms (still referenced by old emails and external
+// links) into /api/image?id=N[&w=..&h=..][&<type>=1], which V1 answered with
+// a 302. This endpoint replaces that last live V1 code so app1 can retire
+// (front-end migration plan Stage 4).
+
+// getFlagTypes maps the legacy query flags to image types, mirroring V1
+// image.php's flag checks and the vhost rewrite forms (gimg_→group,
+// nimg_→newsletter, cimg_→communityevent, oimg_→volunteering, simg_→story,
+// fimg_→newsfeed, mimg_→chatmessage, uimg_→user, bimg_→noticeboard; plain
+// img_ is a message attachment).
+var getFlagTypes = []struct {
+	flag    string
+	imgType string
+}{
+	{"group", "Group"},
+	{"newsletter", "Newsletter"},
+	{"communityevent", "CommunityEvent"},
+	{"volunteering", "Volunteering"},
+	{"story", "Story"},
+	{"newsfeed", "Newsfeed"},
+	{"chatmessage", "ChatMessage"},
+	{"user", "User"},
+	{"noticeboard", "Noticeboard"},
+}
+
+// archivePrefixes: the only types V1 ever archived to Azure (the switch in
+// Attachment::canRedirect); other types never have archived set, so an
+// archived flag on them falls through to the default.
+var archivePrefixes = map[string]string{
+	"Message":        "img",
+	"ChatMessage":    "mimg",
+	"Newsfeed":       "fimg",
+	"CommunityEvent": "cimg",
+	"Noticeboard":    "bimg",
+}
+
+type legacyAttachment struct {
+	Externaluid  string
+	Externalmods string
+	Externalurl  string
+	Archived     int
+}
+
+// siteURL returns the public user-facing site root, e.g. https://www.ilovefreegle.org,
+// with any trailing slash removed.
+func siteURL() string {
+	site := os.Getenv("USER_SITE")
+
+	if site == "" {
+		site = "https://www.ilovefreegle.org"
+	}
+
+	if !strings.HasPrefix(site, "http") {
+		site = "https://" + site
+	}
+
+	return strings.TrimSuffix(site, "/")
+}
+
+// defaultImageURL is the fallback served when an image can't be resolved (unknown id,
+// missing row, or legacy data-column bytes we no longer serve). Group images fall back to
+// the Freegle logo: the person silhouette (/defaultprofile.png) wrongly implies the
+// community is a person and leaves communities whose icon is missing looking broken on the
+// explore list. Every other type keeps V1's default profile image.
+func defaultImageURL(imgType string) string {
+	if imgType == "Group" {
+		return siteURL() + "/icon.png"
+	}
+
+	return siteURL() + "/defaultprofile.png"
+}
+
+// Get handles GET /image - resolves a legacy image reference to a redirect.
+//
+// @Summary Resolve a legacy image URL to a redirect
+// @Tags Image
+// @Produce json
+// @Success 302
+// @Router /api/image [get]
+func Get(c *fiber.Ctx) error {
+	// No auth: these are public image URLs embedded in old emails and pages.
+	id, _ := strconv.ParseUint(c.Query("id"), 10, 64)
+	w, _ := strconv.Atoi(c.Query("w"))
+	h, _ := strconv.Atoi(c.Query("h"))
+
+	imgType := "Message"
+	for _, ft := range getFlagTypes {
+		if isTruthy(c.Query(ft.flag)) {
+			imgType = ft.imgType
+			break
+		}
+	}
+
+	cfg, ok := typeConfigs[imgType]
+	if id == 0 || !ok {
+		// Seen in the wild (e.g. gimg_0.jpg); V1 sent the default profile image.
+		return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
+	}
+
+	// Every image table has externaluid/externalmods/archived; only
+	// messages_attachments has externalurl.
+	cols := "COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived"
+	if imgType == "Message" {
+		cols += ", COALESCE(externalurl, '') AS externalurl"
+	}
+
+	db := database.DBConn
+	var rows []legacyAttachment
+	db.Raw("SELECT "+cols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&rows)
+
+	if len(rows) == 0 {
+		return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
+	}
+	row := rows[0]
+
+	// Resolution order mirrors V1 Attachment::canRedirect.
+	if row.Externaluid != "" {
+		// Uploaded via tusd: serve through the caching delivery proxy. V1
+		// ignores w/h here - the proxy serves a browser-scalable image.
+		return c.Redirect(misc.GetImageDeliveryUrl(row.Externaluid, row.Externalmods), fiber.StatusFound)
+	}
+
+	if row.Externalurl != "" {
+		// Hosted elsewhere (e.g. TrashNothing): deliver via the proxy.
+		return c.Redirect(misc.GetExternalImageDeliveryUrl(row.Externalurl, row.Externalmods), fiber.StatusFound)
+	}
+
+	if row.Archived > 0 {
+		if prefix, found := archivePrefixes[imgType]; found {
+			return c.Redirect(misc.GetArchivedImageDeliveryUrl(prefix, id, w, h), fiber.StatusFound)
+		}
+	}
+
+	// Pre-tusd rows whose bytes live in the legacy `data` column. V1 served
+	// those bytes straight from the DB; we deliberately don't (migration plan
+	// Stage 4 decision) - they are ancient, mostly profile thumbnails, so the
+	// default profile image is served rather than keeping blob-serving alive.
+	return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
 }
 
 // isTruthy checks if a value from JSON is truthy (bool true or non-zero number).

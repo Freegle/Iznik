@@ -145,7 +145,7 @@ class UserAddress extends Model implements Auditable
         // Filter empty lines and join
         $lines = array_filter($lines, fn($line) => !empty(trim($line)));
 
-        // Apply tweaks similar to iznik-server
+        // Apply tweaks similar to the legacy V1 PHP implementation
         if (count($lines) >= 2 && str_starts_with($lines[1] ?? '', ($lines[0] ?? '') . ' ')) {
             array_shift($lines);
         }

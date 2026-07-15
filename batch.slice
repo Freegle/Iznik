@@ -1,0 +1,20 @@
+# Background/batch tier on the batch-prod host (see interactive.slice for
+# install + rationale). batch-prod is the box's dominant CPU consumer; this
+# slice lets it soak up idle capacity while guaranteeing it yields to the
+# interactive tier under contention.
+#
+# CPUWeight=25 keeps ~3% of CPU guaranteed under full contention so scheduled
+# jobs (digests) still make progress. For a true scavenger class that gets
+# CPU only when nothing else wants it, use CPUWeight=idle instead.
+#
+# MemoryHigh throttles-and-reclaims batch before it drives the host into
+# swap; MemoryMax means a runaway job OOMs inside this cgroup instead of
+# taking out the interactive tier. Tune against `free -h` and
+# /proc/pressure/memory after observing real usage (batch-prod RSS was
+# ~2.7G, spatial ~5.8G when these defaults were chosen, host RAM 23G).
+
+[Slice]
+CPUWeight=25
+MemoryHigh=10G
+MemoryMax=14G
+IOWeight=50

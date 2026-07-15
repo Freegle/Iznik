@@ -10,6 +10,7 @@ use App\Models\ChatRoster;
 use App\Models\User;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -124,12 +125,31 @@ class ChatNotificationService
         $startTime = now()->subHours($sinceHours);
         $endTime = now()->subSeconds($delay);
 
+        // Rippling-out held replies (#3): a reply held while a post hadn't yet rippled to
+        // the replier's area is delivered when the hold is RELEASED (status→'released'),
+        // which typically happens hours/days after the reply was written — well outside the
+        // notification look-back window keyed on chat_messages.date. Keying delivery on
+        // chat_messages.date alone therefore never picks a released reply up: by release time
+        // it has aged out and the poster is never notified. So also admit any message whose
+        // rippling hold was released within the look-back window, keyed on releasedat. The
+        // set is small (one row per held reply) and matched by primary key below.
+        $releasedRecently = DB::table('rippling_held_replies')
+            ->where('status', 'released')
+            ->where('releasedat', '>=', $startTime)
+            ->pluck('chatmsgid')
+            ->all();
+
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
             ->join('users', 'chat_messages.userid', '=', 'users.id')
             ->where('chat_rooms.chattype', $chatType)
-            ->where('chat_messages.date', '>=', $startTime)
             ->where('chat_messages.date', '<=', $endTime)
+            ->where(function ($q) use ($startTime, $releasedRecently) {
+                $q->where('chat_messages.date', '>=', $startTime);
+                if (! empty($releasedRecently)) {
+                    $q->orWhereIn('chat_messages.id', $releasedRecently);
+                }
+            })
             ->where('chat_messages.deleted', 0)
             ->whereNull('users.deleted')
             ->select('chat_messages.*');
@@ -333,7 +353,7 @@ class ChatNotificationService
 
         // User2User: Use standard roster-based logic.
         // Only notify the actual chat participants (user1/user2), not mods who may have
-        // added mod notes to the chat. See original iznik-server getMembersStatus().
+        // added mod notes to the chat. See the legacy V1 PHP getMembersStatus().
         $query = ChatRoster::where('chatid', $chatRoom->id)
             ->whereIn('userid', [$chatRoom->user1, $chatRoom->user2])
             ->notBlocked()
@@ -488,7 +508,7 @@ class ChatNotificationService
      * (same template, previous-message context and threading) with the subject
      * prefixed "WAITING FOR REPLY:".
      *
-     * Mirrors iznik-server ChatRoom::chaseupExpected() (ChatRoom.php:2456-2520),
+     * Mirrors the legacy V1 PHP ChatRoom::chaseupExpected() behaviour,
      * which constructs the ordinary user2user notification but prefixes the
      * subject. Used by ChatChaseupExpectedService / chats:chaseup-expected.
      */

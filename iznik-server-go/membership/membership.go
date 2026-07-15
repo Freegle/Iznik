@@ -1317,6 +1317,9 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
 			userid, req.Groupid, myid)
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "via ban")
+		// A ban removes this membership; if it was the user's last Owner/Moderator
+		// role, demote a now-stale Moderator systemrole (V1 updateSystemRole parity).
+		user.SyncSystemRole(db, userid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
@@ -1339,6 +1342,9 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		// (which query logs for type=Group/subtype=Left) lose every voluntary
 		// leave and every non-ban moderator removal.
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "")
+		// If that leave/removal dropped the user's last Owner/Moderator role,
+		// demote a now-stale Moderator systemrole to User (V1 parity).
+		user.SyncSystemRole(db, userid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1544,7 +1550,7 @@ func PatchMemberships(c *fiber.Ctx) error {
 			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
 
-		// V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808):
+		// V1 parity (User::updateSystemRole, legacy V1 PHP implementation):
 		// changes to memberships.role must propagate to users.systemrole so the
 		// global Moderator flag stays in sync. The frontend reads users.systemrole
 		// to render the crown next to a user (ModLogUser.vue, byline avatars,

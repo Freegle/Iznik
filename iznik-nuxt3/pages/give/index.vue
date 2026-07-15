@@ -23,7 +23,7 @@
 
           <!-- Clear form - subtle link, shown only when there's content -->
           <div v-if="notblank" class="clear-form-section">
-            <a href="#" class="clear-link" @click.prevent="deleteItem(ids[0])">
+            <a href="#" class="clear-link" @click.prevent="clearAndStartOver">
               <v-icon icon="times" /> Clear and start over
             </a>
           </div>
@@ -59,7 +59,7 @@
 import { buildHead } from '~/composables/useBuildHead'
 import NoticeMessage from '~/components/NoticeMessage'
 import WizardProgressCompact from '~/components/WizardProgressCompact'
-import { setup, deleteItem } from '~/composables/useCompose'
+import { setup, clearItem } from '~/composables/useCompose'
 import { onMounted, computed, watch, nextTick, useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 
@@ -85,9 +85,13 @@ const showDesktopLayout = computed(
 )
 
 // Helper function to perform the mobile redirect.
+// Route through /give/mobile (the voice-posting experiment entry), not straight to
+// /give/mobile/photos: /give/mobile assigns the variant, records exposure, and then
+// forwards the voice cohort to /voicepost and everyone else on to /give/mobile/photos.
+// Redirecting directly to photos bypassed the experiment, so no user was ever enrolled.
 async function redirectToMobileIfNeeded() {
   if (breakpointReady.value && isMobile.value && process.client) {
-    await navigateTo('/give/mobile/photos', { replace: true })
+    await navigateTo('/give/mobile', { replace: true })
   }
 }
 
@@ -103,7 +107,7 @@ watch(
   () => ({ ready: breakpointReady.value, mobile: isMobile.value }),
   async ({ ready, mobile }) => {
     if (ready && mobile && process.client) {
-      await navigateTo('/give/mobile/photos', { replace: true })
+      await navigateTo('/give/mobile', { replace: true })
     }
   }
 )
@@ -118,6 +122,10 @@ useHead(
 )
 
 const { me, ids, messageValid, uploadingPhoto, notblank } = await setup('Offer')
+
+function clearAndStartOver() {
+  clearItem(ids.value[0])
+}
 
 // The 'Give an Item' conversion event fires on actual post completion in
 // freegleIt() (composables/useCompose.js), not on page mount - mounting the

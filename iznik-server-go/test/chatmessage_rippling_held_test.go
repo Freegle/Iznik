@@ -25,6 +25,7 @@ func TestFetchChatMessages_HeldByRippling(t *testing.T) {
 		chatmsgid BIGINT UNSIGNED NOT NULL,
 		msgid BIGINT UNSIGNED NOT NULL,
 		replieruserid BIGINT UNSIGNED NOT NULL,
+		source ENUM('email','tn','web') NOT NULL DEFAULT 'email',
 		lat DOUBLE,
 		lng DOUBLE,
 		status ENUM('held','released','dropped','taken-gone') NOT NULL DEFAULT 'held',

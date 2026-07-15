@@ -207,6 +207,11 @@ describe('OurUploader', () => {
             template: '<div class="uppy-dashboard-modal" :data-open="open" />',
             props: ['uppy', 'open', 'props'],
           },
+          'b-alert': {
+            template:
+              '<div v-if="modelValue" class="alert" :class="variant"><slot /></div>',
+            props: ['variant', 'modelValue'],
+          },
         },
       },
     })
@@ -1199,6 +1204,86 @@ describe('OurUploader', () => {
       uploaderComp.vm.loading = 'Uploading 50%'
       await flushPromises()
       expect(wrapper.text()).toContain('Uploading 50%')
+    })
+  })
+
+  // AssertFlip test — declining the OS camera/photos permission must show a
+  // human-readable error instead of silently doing nothing. Verified against
+  // the pre-fix code: all tests in this block fail red without the fix (the
+  // catch blocks only console.log the error) and pass once photoError is
+  // surfaced via a b-alert.
+  describe('camera/gallery permission denied (app mode)', () => {
+    beforeEach(() => {
+      mockIsApp.value = true
+    })
+
+    it('shows a human-readable error when the camera permission is declined', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+    })
+
+    it('shows a human-readable error when the gallery/photos permission is declined', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.pickImages.mockRejectedValueOnce(
+        new Error('User denied access to photos')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.choosePhoto()
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+    })
+
+    it('stays silent when the user simply cancels (not a permission error)', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
+    })
+
+    it('clears a previous permission error as soon as a new attempt starts', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+      expect(wrapper.find('.alert').exists()).toBe(true)
+
+      // A fresh attempt (even one the user then cancels) should not leave the
+      // stale error from the previous attempt on screen.
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
     })
   })
 

@@ -320,7 +320,7 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 			continue
 		}
 
-		// Mirror V1 Message::getPublic() (iznik-server Message.php:1106-1110):
+		// Mirror the legacy V1 PHP Message::getPublic() behaviour:
 		//   $maxagetoshow = $g->getSetting('maxagetoshow', 90);
 		//   $reposts      = $g->getSetting('reposts', ['offer'=>3,'wanted'=>14,'max'=>10,...]);
 		//   $repost       = $type == Offer ? $reposts['offer'] : $reposts['wanted'];
@@ -1486,6 +1486,23 @@ func Search(c *fiber.Ctx) error {
 		}
 	}()
 
+	// A purely-numeric search term (optionally "#"-prefixed) is a message id:
+	// return that exact message rather than word-matching the digits against
+	// message subjects/text. Reported on Discourse (topic 9585): searching
+	// "#120975040" surfaced unrelated posts whose title merely contained those
+	// digits. strconv.ParseUint succeeds only for an all-digits term, so ordinary
+	// searches fall through to the word search below. Access stays restricted by
+	// groupFilter, so a mod only gets the message if it is in their groups.
+	if idStr := strings.TrimPrefix(term, "#"); idStr != "" {
+		if msgid, err := strconv.ParseUint(idStr, 10, 64); err == nil {
+			byID := SearchByMsgID(db, msgid, groupids)
+			if len(byID) > 0 {
+				wg.Wait()
+				return c.JSON(byID)
+			}
+		}
+	}
+
 	nelat, _ := strconv.ParseFloat(c.Query("nelat", "0"), 32)
 	nelng, _ := strconv.ParseFloat(c.Query("nelng", "0"), 32)
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
@@ -2162,12 +2179,12 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// With a subject (stdmsg), move to Rejected collection (user can edit and resubmit).
 	// Without a subject (plain delete), mark as deleted.
 	if subject != "" {
-		if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW() WHERE msgid = ? AND groupid IN ? AND collection = ?",
+		if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW(), heldby = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
 			utils.COLLECTION_REJECTED, req.ID, pendingGroups, utils.COLLECTION_PENDING); result.Error != nil {
 			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
 	} else {
-		if result := db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ? AND collection = ?",
+		if result := db.Exec("UPDATE messages_groups SET deleted = 1, heldby = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
 			req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
 			log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
 		}
@@ -2188,6 +2205,17 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 				log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
 			}
 		}
+	}
+
+	// A rejected or deleted copy is no longer held. If that cleared the last held copy,
+	// clear the message-level heldby too - otherwise a rejected-but-heldby row (deleted=0)
+	// keeps the whole post showing "Held", blocking a mod on another group the post rippled
+	// into from acting on their copy and leaving them unable to clear it via Release
+	// (Discourse 9894). Mirrors the recompute in handleReleaseHeld.
+	var stillHeld int64
+	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeld)
+	if stillHeld == 0 {
+		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
 
 	// Determine the message's ORIGIN group — the first group it was posted to (the

@@ -8,7 +8,7 @@ and continuing to drift down. Item **volume** (the Outcomes figure) is unchanged
 
 ## Root cause
 
-The Weight stat is computed by `StatsGenerationService` (V1: `iznik-server`
+The Weight stat is computed by `StatsGenerationService` (V1: the legacy V1 PHP
 `Stats::generate()`), which sums `items.weight` over the items linked to each
 taken/received message:
 
@@ -25,7 +25,7 @@ Because that join to `messages_items` is an **inner** join, any taken message
 with no `messages_items` row contributes **0 kg** while still counting as an
 Outcome.
 
-When incoming-email processing was migrated from V1 (`iznik-server`
+When incoming-email processing was migrated from V1 (the legacy V1 PHP
 `Message::save()`) to V2 (`iznik-batch` `IncomingMailService`), the item-extraction
 step was not ported. V1, after inserting a message, parsed a well-formed
 `TYPE: item (location)` subject, found/created the `items` catalog row and wrote

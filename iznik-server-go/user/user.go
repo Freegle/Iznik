@@ -2307,7 +2307,7 @@ func PatchUser(c *fiber.Ctx) error {
 			targetID, utils.LOGIN_TYPE_NATIVE, uid, hashed, salt, hashed, salt)
 	}
 
-	// Trustlevel mirrors V1 iznik-server/http/api/user.php:199-226.
+	// Trustlevel mirrors the legacy V1 PHP user API endpoint.
 	// A moderator (systemrole Moderator/Support/Admin) can set any trust level
 	// on any user. A regular user can only self-set Basic or Declined, or
 	// clear it by sending an empty string. Attempts that don't match either
@@ -2444,7 +2444,10 @@ func LimboUser(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// handleUnbounce resets the bouncing flag on a user. Admin/Support only.
+// handleUnbounce clears the bouncing flag on a user. A regular user may unbounce
+// only themselves (the self-service "Try again" button in their own Settings —
+// AccountSection.vue); admin/support may unbounce anyone. This mirrors the
+// self-or-admin gate on handleUserUnsubscribe.
 func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	db := database.DBConn
 
@@ -2452,12 +2455,16 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
-	// Require admin/support.
-	if !auth.IsAdminOrSupport(myid) {
-		return fiber.NewError(fiber.StatusForbidden, "Only admin/support can unbounce users")
+	if req.ID != myid && !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only admin/support can unbounce other users")
 	}
 
+	// Clear both the user-level bouncing flag and the per-email bounced
+	// timestamps, matching the canonical reset (UnbounceDomainCommand). Leaving
+	// users_emails.bounced set would let processBouncedEmails re-mark the address
+	// invalid and re-flag the user as bouncing.
 	db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", req.ID)
+	db.Exec("UPDATE users_emails SET bounced = NULL WHERE userid = ?", req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
