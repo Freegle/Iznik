@@ -151,4 +151,41 @@ class LocationTest extends TestCase
             DB::table('locations')->where('id', self::TEST_PC_ID)->delete();
         }
     }
+
+    /**
+     * describeNearestInGroup must name a point with a postcode INSIDE the group's
+     * polygon, skipping a nearer one that lies outside it.
+     *
+     * Regression for Discourse 9808/583: the reach "quicker to get to" note named a
+     * point near the group edge with the globally-nearest postcode, which sat in a
+     * neighbouring group (Islington/Newham postcodes "justifying" a Hackney ripple).
+     */
+    public function test_describe_nearest_in_group_prefers_a_postcode_inside_the_group(): void
+    {
+        $srid = (int) config('freegle.srid', 3857);
+
+        // Group polygon covering lng 2.95..3.05, lat 56.65..56.75 (empty North Sea,
+        // so no real postcode out-competes the seeded sentinels).
+        $group = $this->createTestGroup(['lat' => 56.70, 'lng' => 3.00, 'publish' => 1, 'listable' => 1]);
+        DB::statement(
+            "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((2.95 56.65, 2.95 56.75, 3.05 56.75, 3.05 56.65, 2.95 56.65))', $srid, $group->id]
+        );
+
+        $outId = self::TEST_PC_ID;       // nearest to the point, but OUTSIDE the group
+        $inId  = self::TEST_PC_ID + 1;   // slightly farther, INSIDE the group
+        $this->seedPostcode($outId, 'OUT 1AA', 56.70, 2.945); // lng 2.945 < 2.95 -> outside
+        $this->seedPostcode($inId, 'IN 1BB', 56.70, 2.975);   // inside the polygon
+
+        try {
+            // The unconstrained nearest is the out-of-group postcode (the bug).
+            $this->assertSame('OUT 1AA', Location::describeNearest(56.70, 2.955));
+
+            // The group-aware version skips it and names the point with the in-group one.
+            $this->assertSame('IN 1BB', Location::describeNearestInGroup(56.70, 2.955, $group->id));
+        } finally {
+            $this->removeSpatial('postcodes', [$outId, $inId]);
+            DB::table('locations')->whereIn('id', [$outId, $inId])->delete();
+        }
+    }
 }
