@@ -1444,14 +1444,18 @@ class UnifiedDigestService
      *   welcomemail/description — none of which a digest renders — and that was
      *   ~27% of per-user DB time. The digest only needs id + nameshort/namefull
      *   (namedisplay derives from those).
-     * - attachments: only the primary-photo pointer columns. The digest shows one
-     *   photo per post (getPrimaryAttachment), so externalmods/data are dead weight.
+     * - attachments: the primary-photo pointer columns plus externalmods. The email
+     *   digest shows one photo per post (getPrimaryAttachment) and ignores externalmods,
+     *   but the daily-posts PUSH shares this eager-load and its collage prefers a real
+     *   photo over an AI illustration (PushNotificationService::attachmentIsAi reads
+     *   attachments.externalmods) - without the column every photo is silently treated
+     *   as real. The heavy `data` blob stays excluded (that was the real dead weight).
      *   msgid is required for the hasMany to match rows to their message.
      */
     private function digestPostEagerLoads(): array
     {
         return [
-            'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived'),
+            'attachments' => fn ($q) => $q->select('id', 'msgid', 'primary', 'externaluid', 'externalurl', 'archived', 'externalmods'),
             'fromUser',
             'groups' => fn ($q) => $q->select('groups.id', 'groups.nameshort', 'groups.namefull'),
         ];
