@@ -1212,9 +1212,15 @@ const configid = computed(() => {
   // Look up configid from authStore.groups (always populated from session)
   // rather than relying on modGroupStore.list[].mysettings which may not be
   // populated yet due to a race condition with fetchGroupMT().
-  if (groupid.value && authStore.groups) {
+  //
+  // Anchor to currentGroupid (the group this copy is being administered on),
+  // not groupid (which falls back to groups[0] - no guaranteed order). Using
+  // groupid here let a rippled post's standard-message list and substitutions
+  // ($groupname etc.) come from a different group's config than the one shown
+  // as "moderating for" and used to send/sign the reply (Discourse 9862/15).
+  if (currentGroupid.value && authStore.groups) {
     const sessionGroup = authStore.groups.find(
-      (g) => parseInt(g.groupid) === parseInt(groupid.value)
+      (g) => parseInt(g.groupid) === parseInt(currentGroupid.value)
     )
     if (sessionGroup?.configid) {
       id = sessionGroup.configid

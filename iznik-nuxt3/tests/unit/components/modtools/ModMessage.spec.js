@@ -1556,6 +1556,49 @@ describe('ModMessage', () => {
       }
     })
 
+    // Discourse 9862/15: a mod found a standard message configured only for other
+    // groups (Newham/Hackney) available on a rippled post, auto-signed as Tower
+    // Hamlets (the group they were actually moderating it under). configid drives
+    // which group's stdmsg config is offered/substituted, so it must anchor to
+    // currentGroupid (the group being moderated) - not groups[0], which has no
+    // guaranteed order and can be the rippled-in copy.
+    it('resolves configid from the group being moderated (currentGroupid), not groups[0], for a rippled post with no contextGroupid', () => {
+      mockMyModGroups.push({ id: 111 })
+      mockAuthStore.groups.push({ groupid: 111, configid: 2 })
+      try {
+        const wrapper = mountComponent(
+          {},
+          {
+            groups: [
+              // Rippled-in copy (e.g. Newham/Hackney): approved most recently, so
+              // its arrival is the NEWEST, and it happens to be groups[0].
+              {
+                groupid: 789,
+                namedisplay: 'Rippled-in',
+                collection: 'Approved',
+                arrival: rippleLater,
+                rippled_in: 1,
+              },
+              // Origin (e.g. Tower Hamlets): where the mod is actually administering
+              // this post from - currentGroupid anchors here.
+              {
+                groupid: 111,
+                namedisplay: 'Origin',
+                collection: 'Approved',
+                arrival: rippleEarlier,
+                rippled_in: 0,
+              },
+            ],
+          }
+        )
+        expect(wrapper.vm.currentGroupid).toBe(111)
+        expect(wrapper.vm.configid).toBe(2)
+      } finally {
+        mockMyModGroups.pop()
+        mockAuthStore.groups.pop()
+      }
+    })
+
     it('computes contextGroup from the correct group', () => {
       const wrapper = mountComponent(
         { contextGroupid: 999 },
