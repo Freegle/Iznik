@@ -352,6 +352,51 @@ describe('chat store', () => {
       // Force causes listByChatMessageId to be rebuilt
       expect(store.listByChatMessageId[10]).toBeTruthy()
     })
+
+    it('keeps the freshest data when an overlapping fetch resolves late (9913)', async () => {
+      // send() fires an un-awaited fetchMessages(chatid) internally (chat.js), and
+      // ChatFooter's _updateAfterSend() fires a second, explicit fetchMessages() right
+      // after — two concurrent, unsynchronised requests for the same chat on every
+      // send. If the earlier-dispatched one is slower (e.g. it lands on a lagging
+      // read replica) and resolves AFTER the later one, it must not clobber the
+      // fresher state with a stale snapshot that is missing the just-sent message.
+      const store = useChatStore()
+      store.config = {}
+      store.messages[10] = [{ id: 1, message: 'hi' }]
+
+      let resolveSlowStaleFetch
+      const slowStaleFetch = new Promise((resolve) => {
+        resolveSlowStaleFetch = resolve
+      })
+
+      mockFetchMessages
+        // Call #1: dispatched first (send()'s internal fire-and-forget refresh) but
+        // kept pending — simulates it losing the race to a lagging read replica.
+        .mockImplementationOnce(() => slowStaleFetch)
+        // Call #2: dispatched second (the explicit post-send refresh) but resolves
+        // immediately with the up-to-date list including the sent message.
+        .mockImplementationOnce(() =>
+          Promise.resolve([
+            { id: 1, message: 'hi' },
+            { id: 2, message: 'new message' },
+          ])
+        )
+
+      const call1 = store.fetchMessages(10)
+      await store.fetchMessages(10)
+
+      // The just-sent message is visible.
+      expect(store.messages[10]).toHaveLength(2)
+
+      // Call #1 now finally resolves with its stale, pre-send snapshot.
+      resolveSlowStaleFetch([{ id: 1, message: 'hi' }])
+      await call1
+
+      // The just-sent message must still be visible — a late, stale response must
+      // not be allowed to overwrite the fresher state.
+      expect(store.messages[10]).toHaveLength(2)
+      expect(store.messages[10].map((m) => m.id)).toEqual([1, 2])
+    })
   })
 
   describe('fetchChat', () => {

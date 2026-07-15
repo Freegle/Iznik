@@ -14,6 +14,7 @@ export const useChatStore = defineStore({
     listByChatId: {},
     listByChatMessageId: {},
     messages: {},
+    messagesFetchSeq: {},
     searchSince: null,
     showContactDetailsAskModal: false,
     showClosed: false,
@@ -27,6 +28,7 @@ export const useChatStore = defineStore({
       this.listByChatId = {}
       this.listByChatMessageId = {}
       this.messages = {}
+      this.messagesFetchSeq = {}
       this.searchSince = null
       this.showContactDetailsAskModal = false
       this.currentChatMT = null
@@ -258,10 +260,26 @@ export const useChatStore = defineStore({
       }
     },
     async fetchMessages(id, force) {
+      // Callers routinely fire off more than one fetchMessages(id) for the same chat in
+      // quick succession and don't wait for each other (e.g. send() triggers its own
+      // refresh and the caller of send() triggers another straight after). Network
+      // timing gives no guarantee the responses land in the order they were requested,
+      // so track which call is the most recent for this chat and ignore a response if a
+      // newer request has since been made - an older, slower response must never
+      // clobber fresher data (#9913).
+      const seq = (this.messagesFetchSeq[id] || 0) + 1
+      this.messagesFetchSeq[id] = seq
+
       let messages = []
       const miscStore = useMiscStore() // MT
       const params = miscStore.modtools ? { modtools: true } : {}
       messages = await api(this.config).chat.fetchMessages(id, params)
+
+      if (this.messagesFetchSeq[id] !== seq) {
+        // A newer fetchMessages(id) call has been made since this one started - this
+        // response is stale, so drop it rather than overwrite more current data.
+        return messages
+      }
 
       const update = () => {
         this.messages[id] = messages
