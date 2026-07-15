@@ -108,7 +108,6 @@ class ReengageContentService
                         'A clear title - just say what it is ("Single duvet", "Pine bookshelf").',
                         'A photo - even a quick phone snap makes all the difference.',
                         "The condition - honest is perfect. Well-loved and working is very welcome.",
-                        'Roughly where you are, so people know if they can collect.',
                     ],
                 ],
                 'ctaLabel' => 'Offer something',
@@ -146,7 +145,6 @@ class ReengageContentService
                     'items' => [
                         "Say clearly what you're after.",
                         'Add a line of why - it helps someone think "I\'ve got just the thing".',
-                        'Roughly where you are.',
                         "Stay open on brand and condition - you'll get more offers.",
                     ],
                 ],
@@ -170,7 +168,7 @@ class ReengageContentService
                 'intro'     => "That's the lot - you've got the hang of it.",
                 'body'      => [
                     "A quick recap: offer the things you're not using, ask for what you need, and search for anything specific. Then keep an eye on what's popping up nearby.",
-                    "One last thing. Freegle works because of neighbours being kind to each other - reply promptly, arrange an easy doorstep pickup, and say thanks. That's really all there is to it.",
+                    "One last thing. Freegle works because of neighbours being kind to each other - reply promptly, sort out the details in Freegle chat rather than in a public post, keep it to an easy doorstep pickup, and say thanks. A little common sense keeps it lovely for everyone.",
                 ],
                 'highlight' => [
                     'title' => 'Your Freegle in a nutshell',
