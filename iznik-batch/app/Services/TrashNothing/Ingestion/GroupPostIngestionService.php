@@ -8,6 +8,7 @@ use App\Models\Message;
 use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
 use App\Models\User;
+use App\Models\UserEmail;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\SpatialQueryService;
@@ -63,10 +64,11 @@ class GroupPostIngestionService
             return 'duplicate';
         }
 
-        // Resolve Freegle user from TN fd_user_id.
-        $user = $fdUserId ? User::find($fdUserId) : null;
+        // Resolve Freegle user from TN fd_user_id, creating a stub account if needed.
+        $user = $fdUserId ? $this->findOrCreateUser((int) $fdUserId, $group) : null;
         if ($user === null) {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-user tnpostid=' . $postId . ' fd_user_id=' . $fdUserId);
+            $reason = $fdUserId ? 'unknown-user' : 'no-user-id';
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $reason . ' tnpostid=' . $postId . ' fd_user_id=' . $fdUserId);
             $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'fd_user_id' => $fdUserId]);
             return 'skipped';
         }
@@ -337,6 +339,75 @@ class GroupPostIngestionService
 
             return null;
         }
+    }
+
+    /**
+     * Return the Freegle user for the given fd_user_id, creating a stub account if none exists.
+     *
+     * The normal flow is: TN calls the partner membership-add endpoint → Freegle creates the
+     * user and returns the fd_user_id → TN uses that id in subsequent post API responses.
+     * When that flow was missed (fresh environment, failed webhook, etc.) the user won't exist
+     * locally. Rather than silently dropping the post, we create a minimal stub so ingestion
+     * can proceed. UserChangesSyncer will fill in the real name/email on the next sync cycle.
+     *
+     * In dry-run mode no DB writes are made, so we return null and the caller skips the post.
+     */
+    private function findOrCreateUser(int $fdUserId, Group $group): ?User
+    {
+        $user = User::find($fdUserId);
+        if ($user !== null) {
+            return $user;
+        }
+
+        // Synthesize a unique TN-style email. Using "tn{id}@user.trashnothing.com" (no hyphen)
+        // avoids the canonicalization regex that strips the last hyphen-segment on that domain.
+        $syntheticEmail = "tn{$fdUserId}@user.trashnothing.com";
+
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=insert set=id=' . $fdUserId . ',fullname=TN User,added=now()');
+        Log::info('TN-SYNC-TRACE [WRITE] table=users_emails op=insert set=userid=' . $fdUserId . ',email=' . $syntheticEmail);
+        Log::info('TN-SYNC-TRACE [WRITE] table=memberships op=insert set=userid=' . $fdUserId . ',groupid=' . $group->id . ',collection=Approved');
+
+        if ($this->dryRun) {
+            $this->loki->logEvent('tn-sync', 'user-stub-create', ['fd_user_id' => $fdUserId, 'group_id' => $group->id, 'dry_run' => true]);
+            return null;
+        }
+
+        // Use the query builder so we can supply the explicit id that TN knows about.
+        // Eloquent::create() respects $guarded = ['id'] and would assign a new auto-increment id
+        // instead, breaking future User::find($fdUserId) lookups.
+        DB::table('users')->insert([
+            'id'         => $fdUserId,
+            'fullname'   => 'TN User',
+            'systemrole' => 'User',
+            'added'      => now(),
+            'lastaccess' => now(),
+        ]);
+
+        UserEmail::create([
+            'userid'    => $fdUserId,
+            'email'     => $syntheticEmail,
+            'preferred' => 1,
+            'added'     => now(),
+            'canon'     => $syntheticEmail,
+        ]);
+
+        // Create an Approved membership so the membership check in ingest() passes.
+        // TN only delivers posts for group members, so this mirrors the state TN holds.
+        if (!Membership::where('userid', $fdUserId)->where('groupid', $group->id)->exists()) {
+            Membership::create([
+                'userid'           => $fdUserId,
+                'groupid'          => $group->id,
+                'role'             => Membership::ROLE_MEMBER,
+                'collection'       => Membership::COLLECTION_APPROVED,
+                'emailfrequency'   => Membership::EMAIL_FREQUENCY_IMMEDIATE,
+                'ourPostingStatus' => 'DEFAULT',
+                'added'            => now(),
+            ]);
+        }
+
+        $this->loki->logEvent('tn-sync', 'user-stub-create', ['fd_user_id' => $fdUserId, 'group_id' => $group->id]);
+
+        return User::find($fdUserId);
     }
 
     private function postAlreadyExists(string $tnPostId, int $groupId): bool

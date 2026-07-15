@@ -80,14 +80,71 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame('skipped', $result);
     }
 
-    public function test_skips_when_user_not_found(): void
+    public function test_skips_when_user_not_found_in_dry_run(): void
     {
+        // In dry-run mode no DB writes occur, so a missing user cannot be created
+        // and the post must be skipped rather than crash.
         $group = $this->createTestGroup();
         $post  = $this->makePost(['user_id' => 999999999]);
 
-        $result = $this->makeService()->ingest($post, $group);
+        $result = $this->makeService(dryRun: true)->ingest($post, $group);
 
         $this->assertSame('skipped', $result);
+        $this->assertFalse(DB::table('users')->where('id', 999999999)->exists(), 'Dry-run must not create a user row');
+    }
+
+    public function test_creates_stub_user_and_ingests_post_when_user_unknown(): void
+    {
+        // Pick an ID that won't collide with any auto-incremented user created in this test.
+        $fdUserId = 98765432;
+        $this->assertFalse(DB::table('users')->where('id', $fdUserId)->exists(), 'Pre-condition: user must not exist');
+
+        $group  = $this->createTestGroup();
+        $postId = 'tn-stub-user-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $fdUserId]);
+
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        // Stub user was created with the correct Freegle id.
+        $this->assertTrue(DB::table('users')->where('id', $fdUserId)->exists(), 'Stub user row must be created');
+        $this->assertTrue(
+            DB::table('users_emails')->where('userid', $fdUserId)->where('email', "tn{$fdUserId}@user.trashnothing.com")->exists(),
+            'Synthetic email must be created for stub user',
+        );
+
+        // Membership was created so the post could pass the membership check.
+        $this->assertTrue(
+            DB::table('memberships')->where('userid', $fdUserId)->where('groupid', $group->id)->where('collection', 'Approved')->exists(),
+            'Stub membership must be created',
+        );
+
+        // Post was ingested (not skipped).
+        $this->assertNotSame('skipped', $result, 'Post must not be skipped when stub user is created');
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'Message row must be created');
+    }
+
+    public function test_stub_user_creation_is_idempotent_on_second_ingest(): void
+    {
+        // If the same post arrives again (overlap window), the second call must detect
+        // the duplicate and not try to re-insert the user or membership.
+        $fdUserId = 98765433;
+        $group    = $this->createTestGroup();
+        $postId   = 'tn-stub-idem-' . uniqid();
+        $post     = $this->makePost(['post_id' => $postId, 'user_id' => $fdUserId]);
+        $svc      = $this->makeService(dryRun: false);
+
+        $first  = $svc->ingest($post, $group);
+        $second = $svc->ingest($post, $group);
+
+        $this->assertNotSame('skipped', $first);
+        $this->assertSame('duplicate', $second);
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+        $this->assertSame(1, DB::table('users')->where('id', $fdUserId)->count(), 'User must not be duplicated');
+        $this->assertSame(
+            1,
+            DB::table('memberships')->where('userid', $fdUserId)->where('groupid', $group->id)->count(),
+            'Membership must not be duplicated',
+        );
     }
 
     public function test_skips_when_user_not_a_member(): void
