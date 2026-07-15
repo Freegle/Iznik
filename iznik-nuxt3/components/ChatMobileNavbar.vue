@@ -31,12 +31,8 @@
         id="other-user-group"
         ref="expandBtnRef"
         class="other-user-group"
-        :class="{ clickme: chat.chattype === 'User2User' || chat.chattype === 'User2Mod' }"
-        @click="
-          chat.chattype === 'User2User' || chat.chattype === 'User2Mod'
-            ? toggleProfileCard()
-            : null
-        "
+        :class="{ clickme: chat.chattype === 'User2User' }"
+        @click="chat.chattype === 'User2User' ? toggleProfileCard() : null"
       >
         <ProfileImage
           v-if="chat.icon"
@@ -49,11 +45,11 @@
       </div>
     </div>
 
-    <!-- Profile popover — only for User2User where other user info is available -->
+    <!-- Profile popover — only for User2User where other user info is available.
+         A User2Mod (contact-the-volunteers) chat has no single other-user profile,
+         so this rendered as an empty white box under the header (Discourse 9918). -->
     <b-popover
-      v-if="
-        cssReady && (chat.chattype === 'User2User' || chat.chattype === 'User2Mod')
-      "
+      v-if="cssReady && chat.chattype === 'User2User'"
       v-model="profileCardExpanded"
       target="other-user-group"
       placement="bottom"
