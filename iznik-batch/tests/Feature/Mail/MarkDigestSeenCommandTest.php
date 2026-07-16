@@ -55,7 +55,14 @@ class MarkDigestSeenCommandTest extends TestCase
         $group = $this->createTestGroup();
         $msg = $this->createTestMessage($this->createTestUser(), $group);
 
-        $this->seedDigest($user->id, [$msg->id], ['clicked_at' => Carbon::now()->subMinutes(5)]);
+        // Clicks are detected via email_tracking_clicks (indexed clicked_at), not the
+        // denormalised email_tracking.clicked_at.
+        $etid = $this->seedDigest($user->id, [$msg->id], ['clicked_at' => Carbon::now()->subMinutes(5)]);
+        DB::table('email_tracking_clicks')->insert([
+            'email_tracking_id' => $etid,
+            'link_url' => 'https://www.ilovefreegle.org/message/' . $msg->id,
+            'clicked_at' => Carbon::now()->subMinutes(5),
+        ]);
 
         $this->artisan('mail:digest:mark-seen')->assertExitCode(0);
         $this->assertSame(1, $this->seenCount($msg->id, $user->id));

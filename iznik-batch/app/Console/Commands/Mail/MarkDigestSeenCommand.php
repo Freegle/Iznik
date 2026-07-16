@@ -34,19 +34,32 @@ class MarkDigestSeenCommand extends Command
     public function handle(): int
     {
         $since = now()->subHours((int) $this->option('hours'));
+        $limit = (int) $this->option('limit');
 
-        // email_type is indexed; the open/click time bound keeps the window small.
-        $rows = DB::table('email_tracking')
+        // Two index-driven reads rather than one `opened_at OR clicked_at` scan:
+        // email_tracking.opened_at is indexed but clicked_at is NOT, so an OR across
+        // them can't use the opened_at index and degrades to a backward PRIMARY(id)
+        // scan of the whole (multi-million row) table. Opens come from the opened_at
+        // range; clicks come via email_tracking_clicks (its clicked_at IS indexed).
+        $opens = DB::table('email_tracking')
             ->whereIn('email_type', self::DIGEST_TYPES)
             ->whereNotNull('userid')
             ->whereNotNull('metadata')
-            ->where(function ($q) use ($since) {
-                $q->where('opened_at', '>=', $since)
-                    ->orWhere('clicked_at', '>=', $since);
-            })
-            ->orderByDesc('id')
-            ->limit((int) $this->option('limit'))
+            ->where('opened_at', '>=', $since)
+            ->limit($limit)
             ->get(['userid', 'metadata']);
+
+        $clicks = DB::table('email_tracking_clicks as etc')
+            ->join('email_tracking as et', 'et.id', '=', 'etc.email_tracking_id')
+            ->whereIn('et.email_type', self::DIGEST_TYPES)
+            ->whereNotNull('et.userid')
+            ->whereNotNull('et.metadata')
+            ->where('etc.clicked_at', '>=', $since)
+            ->limit($limit)
+            ->get(['et.userid as userid', 'et.metadata as metadata']);
+
+        // A digest in both sets is harmless - insertOrIgnore dedupes the markers.
+        $rows = $opens->concat($clicks);
 
         $emails = 0;
         $marked = 0;
