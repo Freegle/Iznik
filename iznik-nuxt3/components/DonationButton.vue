@@ -19,6 +19,10 @@
         <div v-else>{{ show }}</div>
       </div>
     </b-button>
+    <PayPalGivingFundModal
+      v-if="showGivingFund"
+      @hidden="showGivingFund = false"
+    />
   </div>
 </template>
 <script setup>
@@ -26,6 +30,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { loadScript } from 'vue-plugin-load-script'
 import { uid } from '~/composables/useId'
 import { useNuxtApp } from '#app'
+import PayPalGivingFundModal from '~/components/PayPalGivingFundModal'
 
 const props = defineProps({
   directDonation: {
@@ -43,9 +48,18 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // After a completed PayPal donation, offer to set Freegle as the member's
+  // favourite charity in PayPal Giving Fund. Off on /donate, where that
+  // suggestion already has its own card.
+  suggestGivingFund: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
 })
 
 const bump = ref(1)
+const showGivingFund = ref(false)
 
 watch(
   () => props.value,
@@ -125,6 +139,9 @@ function makeButton() {
       // Because we get a callback we can record the actual amount donated.
       console.log('Donation completed with', params)
       emit('clicked', params.amt)
+      if (props.suggestGivingFund) {
+        showGivingFund.value = true
+      }
     },
   }).render('#' + uniqueId.value)
 }
