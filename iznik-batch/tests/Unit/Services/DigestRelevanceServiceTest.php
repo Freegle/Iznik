@@ -183,4 +183,48 @@ class DigestRelevanceServiceTest extends TestCase
         $this->assertSame($embedded->id, $ranked->first()->id, 'embedded relevant post outranks the unembedded one');
         $this->assertSame($noEmb->id, $ranked->last()->id, 'unembedded post sinks to the bottom');
     }
+
+    public function test_interests_counts_a_genuinely_viewed_post_pageview_1(): void
+    {
+        // The interest signal includes posts the member actually OPENED - a
+        // messages_likes View with pageview=1 - not only their own posts. This is
+        // the "recently viewed" half of the UNION, previously untested.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $viewed = $this->createTestMessage($poster, $group, ['arrival' => now()]);
+        $vec = $this->unitVec(3.0);
+        $this->insertEmbedding($viewed->id, $vec);
+        DB::table('messages_likes')->insert([
+            'msgid' => $viewed->id, 'userid' => $user->id, 'type' => 'View',
+            'pageview' => 1, 'count' => 1, 'timestamp' => now(),
+        ]);
+
+        $interests = (new DigestRelevanceService)->interests($user->id);
+
+        $this->assertCount(1, $interests, 'a genuinely-viewed post contributes to interests');
+        foreach ($vec as $i => $expected) {
+            $this->assertEqualsWithDelta($expected, $interests[0][$i], 1e-6);
+        }
+    }
+
+    public function test_interests_ignores_a_scroll_impression_pageview_0(): void
+    {
+        // A pageview=0 View row is a mere list-scroll impression (MarkSeen), not a
+        // genuine read. It must NOT count as an interest signal, or an active
+        // browser's 40-slot budget is swamped by everything that scrolled past.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $scrolled = $this->createTestMessage($poster, $group, ['arrival' => now()]);
+        $this->insertEmbedding($scrolled->id, $this->unitVec(4.0));
+        DB::table('messages_likes')->insert([
+            'msgid' => $scrolled->id, 'userid' => $user->id, 'type' => 'View',
+            'pageview' => 0, 'count' => 1, 'timestamp' => now(),
+        ]);
+
+        $interests = (new DigestRelevanceService)->interests($user->id);
+
+        $this->assertCount(0, $interests, 'a scroll-impression (pageview=0) is not an interest signal');
+    }
 }

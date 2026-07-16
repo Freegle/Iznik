@@ -105,7 +105,7 @@ class DigestRelevanceService
                 SELECT me.subject_embedding AS emb, ml.timestamp AS ts
                 FROM messages_likes ml
                 INNER JOIN messages_embeddings me ON me.msgid = ml.msgid
-                WHERE ml.userid = ? AND ml.type = ? AND ml.timestamp >= DATE_SUB(NOW(), INTERVAL ? DAY)
+                WHERE ml.userid = ? AND ml.type = ? AND ml.pageview = 1 AND ml.timestamp >= DATE_SUB(NOW(), INTERVAL ? DAY)
             ) x
             ORDER BY x.ts DESC
             LIMIT ?',
