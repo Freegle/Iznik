@@ -121,6 +121,7 @@ import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
+import { useComposeChoice } from '~/composables/useComposeChoice'
 import {
   setup,
   postcodeSelect,
@@ -134,6 +135,7 @@ const composeStore = useComposeStore()
 const userStore = useUserStore()
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
+const { recordConversionIfPending } = useComposeChoice()
 
 // Check if sticky ad is rendered
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
@@ -208,6 +210,11 @@ async function submitOffer() {
 
     // Deadline and delivery options are passed directly in the submit call
     await freegleIt('Offer', router)
+
+    // Post created: record the compose experiment conversion for whichever arm the
+    // user came in on (voice or control). No-op for non-experiment posts. Both arms
+    // reach this same point, so the completion rates are finally comparable.
+    recordConversionIfPending()
   } catch (e) {
     console.error('Error in submitOffer():', e)
     wentWrong.value = true

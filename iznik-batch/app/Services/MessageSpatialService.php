@@ -52,6 +52,13 @@ class MessageSpatialService
             ->whereNotNull('messages.lng')
             ->whereNull('messages.deleted')
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            // The membership itself must be live. Rippling's "removed on origin removal" (and
+            // group-leave retraction) sets messages_groups.deleted=1 while leaving
+            // collection=Approved and messages.deleted NULL, so without this a removed copy with
+            // a recent arrival is indexed straight back into browse. (Whatever set that arrival —
+            // e.g. autorepost — should not have touched a dead membership either; see
+            // AutoRepostService::getCandidates.)
+            ->where('messages_groups.deleted', 0)
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 // Include messages with no outcome, or Taken/Received (same as V1: outcome IS NULL OR outcome IN ('Taken','Received'))
@@ -215,12 +222,21 @@ class MessageSpatialService
         // messages_groups row for ITS OWN group is non-approved. Joining on msgid alone
         // would let a rippled-in Pending row on another group (#6) delete the origin post's
         // approved spatial row, flickering it out of browse every spatial-index run.
+        //
+        // Also drop it when its own membership is soft-deleted (deleted=1): rippling's "removed
+        // on origin removal" leaves collection=Approved but sets deleted=1, so the collection
+        // check alone would leave a removed copy in browse until it ages out. upsertRecentMessages
+        // runs before this pass, so a message still live on ANOTHER group has already had its
+        // spatial row re-pointed to that group and is not caught here.
         $rows = DB::table('messages_spatial')
             ->join('messages_groups', function ($join) {
                 $join->on('messages_groups.msgid', '=', 'messages_spatial.msgid')
                     ->on('messages_groups.groupid', '=', 'messages_spatial.groupid');
             })
-            ->where('messages_groups.collection', '!=', MessageGroup::COLLECTION_APPROVED)
+            ->where(function ($q) {
+                $q->where('messages_groups.collection', '!=', MessageGroup::COLLECTION_APPROVED)
+                    ->orWhere('messages_groups.deleted', 1);
+            })
             ->select('messages_spatial.id', 'messages_spatial.msgid')
             ->get();
 

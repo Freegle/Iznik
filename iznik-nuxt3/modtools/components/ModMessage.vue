@@ -383,6 +383,24 @@
             >
               {{ message.spamreason }}
             </NoticeMessage>
+            <!-- When a post is back in Pending because a moderator moved it there (e.g. a
+                 "Back to Pending" on any community pulls every copy back for per-group
+                 review), the reason is stored on THIS group's copy (contextGroup.spamreason),
+                 not the message-level spamreason. Surface it so a mod who approved the post
+                 understands why it has reappeared and isn't left clicking Approve with no
+                 explanation. -->
+            <NoticeMessage
+              v-if="
+                contextGroup &&
+                contextGroup.collection === 'Pending' &&
+                contextGroup.spamreason &&
+                contextGroup.spamreason !== message.spamreason
+              "
+              variant="info"
+              class="mb-2"
+            >
+              {{ contextGroup.spamreason }}
+            </NoticeMessage>
             <NoticeMessage
               v-if="
                 pending &&
@@ -1194,9 +1212,15 @@ const configid = computed(() => {
   // Look up configid from authStore.groups (always populated from session)
   // rather than relying on modGroupStore.list[].mysettings which may not be
   // populated yet due to a race condition with fetchGroupMT().
-  if (groupid.value && authStore.groups) {
+  //
+  // Anchor to currentGroupid (the group this copy is being administered on),
+  // not groupid (which falls back to groups[0] - no guaranteed order). Using
+  // groupid here let a rippled post's standard-message list and substitutions
+  // ($groupname etc.) come from a different group's config than the one shown
+  // as "moderating for" and used to send/sign the reply (Discourse 9862/15).
+  if (currentGroupid.value && authStore.groups) {
     const sessionGroup = authStore.groups.find(
-      (g) => parseInt(g.groupid) === parseInt(groupid.value)
+      (g) => parseInt(g.groupid) === parseInt(currentGroupid.value)
     )
     if (sessionGroup?.configid) {
       id = sessionGroup.configid

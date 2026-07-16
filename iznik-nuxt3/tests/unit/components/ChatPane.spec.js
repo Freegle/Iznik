@@ -1,9 +1,47 @@
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import { describe, it, expect } from 'vitest'
 
 /*
  * ChatPane component uses top-level await for setupChat which causes
  * test timeout issues. We test component structure and prop definitions.
  */
+
+// ChatPane awaits setupChat() in <script setup>, so it is an async-setup
+// component that cannot be cleanly mounted here (see the placeholder tests
+// below). For the empty-chat layout fix we assert on the source, matching the
+// pattern in ChatFooterDraftPersistence.spec.js.
+const chatPaneSource = readFileSync(
+  resolve(__dirname, '../../../components/ChatPane.vue'),
+  'utf-8'
+)
+
+describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
+  it('renders a fallback spacer when a chat has no messages, so the footer is not the only flex child', () => {
+    // On mobile an empty chat (first contact with a group's volunteers) renders
+    // neither the message list (v-if="chatmessages?.length") nor the busy spinner,
+    // and the profile header is desktop-only. Without a v-else fallback the
+    // ChatFooter becomes the sole child of the flex column and jumps up under the
+    // navbar, leaving a large blank area below it. There must be a v-else spacer
+    // between the busy branch and the footer.
+    const between = chatPaneSource.slice(
+      chatPaneSource.indexOf('chatBusy'),
+      chatPaneSource.indexOf('<ChatFooter')
+    )
+    expect(between).toMatch(/v-else\b/)
+    expect(between).toMatch(/chatContentEmpty/)
+  })
+
+  it('gives the empty-chat spacer flex-grow and the message-slot order so the footer stays pinned to the bottom', () => {
+    // The spacer must actually fill the space (flex-grow) and sit in the message
+    // slot (order 3, above the order-4 footer), or the footer would not be pushed
+    // to the bottom.
+    const rule = chatPaneSource.match(/\.chatContentEmpty\s*\{[^}]*\}/)
+    expect(rule, '.chatContentEmpty CSS rule must exist').not.toBeNull()
+    expect(rule[0]).toMatch(/flex-grow:\s*1/)
+    expect(rule[0]).toMatch(/order:\s*3/)
+  })
+})
 
 describe('ChatPane', () => {
   describe('component structure', () => {

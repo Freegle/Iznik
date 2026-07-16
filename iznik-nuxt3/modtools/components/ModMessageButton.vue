@@ -59,8 +59,8 @@
           community where it was first posted.
         </p>
         <p class="mb-0">
-          The freegler won't be told, because they don't need to know unless it's
-          rejected on their home community. So there's no message to send.
+          The freegler won't be told, because they don't need to know unless
+          it's rejected on their home community. So there's no message to send.
         </p>
       </template>
     </ConfirmModal>
@@ -339,6 +339,22 @@ async function click(callback) {
       showRejectNoMsgModal.value = true
       if (callback) callback()
       return
+    }
+
+    if (props.stdmsgid && !props.isHomeGroup) {
+      // A standard message whose action is Reject, applied to a rippled-in copy,
+      // must behave exactly like the Reject button above: scope the removal to
+      // this group with NO message to the member, and show the same "stop
+      // appearing on your community" confirmation (Discourse 9862/16-17). We only
+      // take this DESTRUCTIVE scoped path when the action is DEFINITIVELY 'Reject':
+      // if the standard message can't be resolved we fall through to the normal
+      // compose modal (fail closed; cf. the fail-open flaw that closed PR #1071).
+      const stdmsg = await stdmsgStore.fetch(props.stdmsgid)
+      if (stdmsg?.action === 'Reject') {
+        showRejectNoMsgModal.value = true
+        if (callback) callback()
+        return
+      }
     }
 
     if (props.reject) {

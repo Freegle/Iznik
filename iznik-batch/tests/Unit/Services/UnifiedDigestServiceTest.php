@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageAttachment;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
@@ -296,6 +297,40 @@ class UnifiedDigestServiceTest extends TestCase
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
         $this->assertEquals(0, $stats['emails_sent'], 'a withdrawn/taken post must not be digested');
+    }
+
+    public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
+    {
+        // A messages_likes 'View' (in-app view, or an opened/clicked digest via
+        // mail:digest:mark-seen) marks the post seen for THAT recipient, so the
+        // daily digest can sink it below fresh posts (config freegle.digest.seen_penalty).
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $seen = $this->createTestMessage($poster, $group);
+        $unseen = $this->createTestMessage($poster, $group);
+
+        DB::table('messages_likes')->insert([
+            'msgid' => $seen->id, 'userid' => $recipient->id, 'type' => 'View', 'count' => 0,
+        ]);
+
+        $tracker = UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+        ]);
+
+        $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+        $byId = $posts->keyBy('id');
+
+        $this->assertNotNull($byId->get($seen->id), 'seen post is a candidate');
+        $this->assertTrue((bool) $byId->get($seen->id)->seen_by_user, 'viewed post is flagged seen_by_user');
+        $this->assertFalse((bool) $byId->get($unseen->id)->seen_by_user, 'un-viewed post is not flagged');
     }
 
     public function test_daily_digest_with_available_and_taken_still_sends(): void
@@ -2981,5 +3016,58 @@ class UnifiedDigestServiceTest extends TestCase
             DB::table('rippling_reach_notified')->where('msgid', $reachMsg->id)->where('userid', $reachRecipient->id)->exists(),
             'reach-mail rejects the out-of-range post, same as the other two pipelines'
         );
+    }
+
+    public function test_daily_digest_eager_loads_externalmods_for_ai_photo_detection(): void
+    {
+        // The daily-posts PUSH collage prefers a real photo over an AI illustration
+        // (PushNotificationService::attachmentIsAi reads attachments.externalmods).
+        // getPostsForUser's shared eager-load must carry externalmods through, or in
+        // production every photo is silently classed as real. The existing AI-preference
+        // tests build fully-loaded models and so never exercised the real eager-load.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->lastaccess = now();
+        $recipient->save();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $msg = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+        ]);
+        MessageAttachment::create([
+            'msgid'        => $msg->id,
+            'externalurl'  => 'https://cdn.example.com/ai.jpg',
+            'archived'     => 0,
+            'primary'      => 1,
+            'externalmods' => json_encode(['ai' => true]),
+        ]);
+
+        $tracker = UserDigest::firstOrCreate(
+            ['userid' => $recipient->id, 'mode' => UnifiedDigestService::MODE_DAILY],
+            ['lastmsgid' => null, 'lastmsgdate' => null],
+        );
+
+        $posts = $this->service->getPostsForUser(
+            $recipient,
+            $tracker,
+            UnifiedDigestService::MODE_DAILY
+        );
+
+        $post = $posts->firstWhere('id', $msg->id);
+        $this->assertNotNull($post, 'the AI-photo offer should be in the daily digest set');
+
+        $attachment = $post->attachments->first();
+        $this->assertNotNull($attachment, 'the attachment should be eager-loaded');
+        $this->assertNotNull(
+            $attachment->externalmods,
+            'externalmods must be eager-loaded so the push can distinguish AI illustrations from real photos'
+        );
+        $this->assertSame(['ai' => true], json_decode($attachment->externalmods, true));
     }
 }

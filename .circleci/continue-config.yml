@@ -311,7 +311,18 @@ workflows:
                   if ! command -v compare >/dev/null 2>&1; then
                     sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || echo "imagemagick unavailable (will commit all changes)"
                   fi
-                  DOCS_ALLOW_MASTER=1 bash docs/screenshots/regenerate-and-commit.sh --commit-only || echo "commit step non-fatal"
+                  # Only commit + push the regenerated screenshots on master. On a PR
+                  # branch the shots are still generated and uploaded as CI artifacts
+                  # (store_artifacts below) for review, but NOT committed to the branch:
+                  # pushing a "docs: regenerate screenshots" commit onto a PR branch emails
+                  # the PR author a GitHub notification on every run, which is pure noise.
+                  # Screenshots stay current because master regenerates them on its own
+                  # build after merge; the docs-freshness gate ignores the assets dir.
+                  if [ "${CIRCLE_BRANCH:-}" = "master" ]; then
+                    DOCS_ALLOW_MASTER=1 bash docs/screenshots/regenerate-and-commit.sh --commit-only || echo "commit step non-fatal"
+                  else
+                    echo "PR branch (${CIRCLE_BRANCH:-unknown}): screenshots uploaded as artifacts only, not committed to the branch."
+                  fi
                   exit 0
             - store_artifacts:
                 path: ~/artifacts/doc-screenshots

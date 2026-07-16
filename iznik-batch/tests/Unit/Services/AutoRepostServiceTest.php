@@ -316,6 +316,33 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(0, $stats['reposted']);
     }
 
+    public function test_skips_soft_deleted_membership(): void
+    {
+        // Rippling's "removed on origin removal" (and group-leave retraction) soft-deletes a
+        // rippled-in messages_groups row with deleted=1 while leaving collection=Approved and the
+        // parent messages.deleted NULL. Autorepost must not repost that dead membership —
+        // reposting stamps arrival=NOW() and resurrects a copy rippling already pulled, leaking it
+        // back into browse and the spatial index. Live incident 2026-07-08 (msgid 119128577):
+        // six memberships removed on 07-01 were all reposted a week later.
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->update(['deleted' => 1]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['reposted'], 'a membership removed by rippling must not be reposted');
+
+        // The removed membership's arrival must NOT have been bumped to now.
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertEquals(0, $mg->autoreposts, 'the dead membership was not touched');
+    }
+
     public function test_warns_in_window_before_repost(): void
     {
         // Offer interval is 3 days = 72 hours.

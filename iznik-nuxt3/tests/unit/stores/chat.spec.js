@@ -3,7 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 
 // Import the REAL store directly — vitest.config.mts aliases ~/stores/chat
 // to a global mock for other tests. We need the actual implementation here.
-import { useChatStore } from '../../../stores/chat'
+import { useChatStore, dedupeRetriedChatMessages } from '../../../stores/chat'
 
 const mockListChats = vi.fn().mockResolvedValue([])
 const mockListChatsMT = vi.fn().mockResolvedValue({ chatrooms: [] })
@@ -645,6 +645,160 @@ describe('chat store', () => {
       await store.markUnread(5, 99)
 
       expect(mockMarkRead).toHaveBeenCalledWith(5, 99, true)
+    })
+  })
+
+  describe('dedupeRetriedChatMessages (Discourse 9913)', () => {
+    it('drops a retry-duplicate row (same author + identical content, within the window)', () => {
+      const msgs = [
+        {
+          id: 1,
+          userid: 5,
+          type: 'Default',
+          message: 'hi',
+          date: '2026-07-15T10:00:00Z',
+        },
+        {
+          id: 2,
+          userid: 5,
+          type: 'Default',
+          message: 'hi',
+          date: '2026-07-15T10:00:02Z',
+        },
+      ]
+      expect(dedupeRetriedChatMessages(msgs).map((m) => m.id)).toEqual([1])
+    })
+
+    it('drops a retry duplicate even when the other party replied between the two rows', () => {
+      const msgs = [
+        {
+          id: 1,
+          userid: 5,
+          type: 'Default',
+          message: 'hi',
+          date: '2026-07-15T10:00:00Z',
+        },
+        {
+          id: 2,
+          userid: 9,
+          type: 'Default',
+          message: 'ok',
+          date: '2026-07-15T10:00:01Z',
+        },
+        {
+          id: 3,
+          userid: 5,
+          type: 'Default',
+          message: 'hi',
+          date: '2026-07-15T10:00:03Z',
+        },
+      ]
+      expect(dedupeRetriedChatMessages(msgs).map((m) => m.id)).toEqual([1, 2])
+    })
+
+    it('keeps two messages that share text but differ in refmsgid (not a duplicate)', () => {
+      const msgs = [
+        {
+          id: 1,
+          userid: 5,
+          type: 'Interested',
+          message: 'yes please',
+          refmsgid: 100,
+          date: '2026-07-15T10:00:00Z',
+        },
+        {
+          id: 2,
+          userid: 5,
+          type: 'Interested',
+          message: 'yes please',
+          refmsgid: 200,
+          date: '2026-07-15T10:00:01Z',
+        },
+      ]
+      expect(dedupeRetriedChatMessages(msgs).map((m) => m.id)).toEqual([1, 2])
+    })
+
+    it('keeps images/addresses that differ even when the text is empty', () => {
+      const msgs = [
+        {
+          id: 1,
+          userid: 5,
+          message: '',
+          imageid: 11,
+          date: '2026-07-15T10:00:00Z',
+        },
+        {
+          id: 2,
+          userid: 5,
+          message: '',
+          imageid: 12,
+          date: '2026-07-15T10:00:01Z',
+        },
+      ]
+      expect(dedupeRetriedChatMessages(msgs)).toHaveLength(2)
+    })
+
+    it('keeps an identical message sent well after the retry window (a deliberate repeat)', () => {
+      const msgs = [
+        {
+          id: 1,
+          userid: 5,
+          type: 'Default',
+          message: 'thanks',
+          date: '2026-07-15T10:00:00Z',
+        },
+        {
+          id: 2,
+          userid: 5,
+          type: 'Default',
+          message: 'thanks',
+          date: '2026-07-15T10:00:30Z',
+        },
+      ]
+      expect(dedupeRetriedChatMessages(msgs).map((m) => m.id)).toEqual([1, 2])
+    })
+
+    it('is a no-op for empty or single-message arrays', () => {
+      expect(dedupeRetriedChatMessages([])).toEqual([])
+      const one = [
+        { id: 1, userid: 5, message: 'hi', date: '2026-07-15T10:00:00Z' },
+      ]
+      expect(dedupeRetriedChatMessages(one)).toBe(one)
+    })
+
+    it('does not dedupe when timestamps are missing/invalid (needs the retry window)', () => {
+      // Without a valid date we cannot establish the retry window, so both rows
+      // are kept even if their content keys match.
+      const msgs = [
+        { id: 10, userid: 5, message: 'hi' },
+        { id: 11, userid: 5, message: 'hi' },
+      ]
+      expect(dedupeRetriedChatMessages(msgs).map((m) => m.id)).toEqual([10, 11])
+    })
+
+    it('fetchMessages drops a retry-duplicate before storing it', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockFetchMessages.mockResolvedValue([
+        {
+          id: 1,
+          userid: 5,
+          type: 'Default',
+          message: 'hi',
+          date: '2026-07-15T10:00:00Z',
+        },
+        {
+          id: 2,
+          userid: 5,
+          type: 'Default',
+          message: 'hi',
+          date: '2026-07-15T10:00:02Z',
+        },
+      ])
+
+      await store.fetchMessages(7)
+
+      expect(store.messages[7].map((m) => m.id)).toEqual([1])
     })
   })
 })

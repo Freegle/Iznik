@@ -254,7 +254,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.hold when hold prop is true', async () => {
       const wrapper = mountComponent({ hold: true }, { id: 555 })
       await wrapper.vm.click()
-      expect(mockMessageStore.hold).toHaveBeenCalledWith({ id: 555, groupid: 456 })
+      expect(mockMessageStore.hold).toHaveBeenCalledWith({
+        id: 555,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after hold', async () => {
@@ -268,7 +271,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.release when release prop is true', async () => {
       const wrapper = mountComponent({ release: true }, { id: 666 })
       await wrapper.vm.click()
-      expect(mockMessageStore.release).toHaveBeenCalledWith({ id: 666, groupid: 456 })
+      expect(mockMessageStore.release).toHaveBeenCalledWith({
+        id: 666,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after release', async () => {
@@ -362,23 +368,65 @@ describe('ModMessageButton', () => {
 
   describe('stdmsgid action (fetch standard message)', () => {
     it('fetches standard message when stdmsgid prop is set', async () => {
-      const wrapper = mountComponent({ stdmsgid: 42 })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
       expect(mockStdmsgStore.fetch).toHaveBeenCalledWith(42)
     })
 
     it('sets stdmsgId from prop after fetch', async () => {
-      const wrapper = mountComponent({ stdmsgid: 42 })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
       expect(wrapper.vm.stdmsgId).toBe(42)
     })
 
     it('shows stdmsg modal when stdmsgid is set', async () => {
-      const wrapper = mountComponent({ stdmsgid: 42 })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
+  })
+
+  describe('stdmsg reject on a rippled-in copy (Discourse 9862/16-17)', () => {
+    it('routes a Reject standard message on a rippled-in copy to the scoped no-message removal', async () => {
+      // action:'Reject' from the default mock; isHomeGroup:false = rippled-in copy.
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+      // Same scoped confirmation as the Reject button - NOT the compose modal.
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('still opens the compose modal for a Reject standard message on the HOME group', async () => {
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+    })
+
+    it('opens the compose modal (does NOT scope-delete) for a non-Reject standard message on a rippled-in copy', async () => {
+      mockStdmsgStore.fetch.mockResolvedValueOnce({
+        id: 42,
+        action: 'Leave Member',
+      })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+    })
+
+    it('fails closed: opens the compose modal (does NOT scope-delete) when the action cannot be resolved', async () => {
+      // fetch returns no usable object → action undefined → must not treat as Reject.
+      mockStdmsgStore.fetch.mockResolvedValueOnce(null)
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
       expect(wrapper.vm.showStdMsgModal).toBe(true)
     })
   })
