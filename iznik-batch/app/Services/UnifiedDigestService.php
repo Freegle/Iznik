@@ -1493,6 +1493,12 @@ class UnifiedDigestService
             // like counts; replies = approved 'Interested' chat replies).
             ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
             ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
+            // Has THIS recipient already had a chance to see the post? A messages_likes
+            // 'View' row means they viewed it in-app OR opened/clicked a digest that
+            // contained it (mail:digest:mark-seen writes the latter). Used to sink
+            // already-seen posts in the daily order, mirroring the browse feed's
+            // unseen-first sort which reads the same signal.
+            ->selectRaw('EXISTS(SELECT 1 FROM messages_likes mlseen WHERE mlseen.msgid = messages.id AND mlseen.userid = ? AND mlseen.type = ?) AS seen_by_user', [$user->id, 'View'])
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->whereIn('messages_groups.groupid', $groupIds)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
@@ -1859,7 +1865,13 @@ class UnifiedDigestService
                 $weights,
                 $env
             );
-            $post->_score = $s['total'];
+            // Sink posts the recipient has already had a chance to see (in-app view
+            // or an opened/clicked digest) so the digest leads with fresh posts.
+            $score = (float) $s['total'];
+            if (! empty($post->seen_by_user)) {
+                $score *= (float) config('freegle.digest.seen_penalty', 0.15);
+            }
+            $post->_score = $score;
             $post->_dist = $dist;
         }
 
@@ -1879,7 +1891,10 @@ class UnifiedDigestService
         if ($sorted->count() <= 2) {
             return $sorted;
         }
-        $closest = $sorted->sortBy('_dist')->take(2)->values();
+        // Pin only among posts the recipient hasn't already seen, so a nearby
+        // already-seen post isn't forced back to the very top.
+        $closest = $sorted->filter(fn ($p) => empty($p->seen_by_user))
+            ->sortBy('_dist')->take(2)->values();
         $closestIds = $closest->pluck('id')->all();
         $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
         return $closest->concat($rest)->values();
