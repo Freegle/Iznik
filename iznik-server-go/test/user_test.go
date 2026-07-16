@@ -4836,3 +4836,40 @@ func TestGetUserInfoWantedsNotInflatedByRippling(t *testing.T) {
 	assert.Equal(t, uint64(1), u.Info.Openwanteds,
 		"a WANTED rippled into an extra group must count once in openwanteds, not once per group it reached")
 }
+
+// A group moderator editing the settings of a member on a group they moderate is
+// allowed, and the change must actually persist to the target's row.
+func TestPatchUserSettingsBySharedGroupModPersists(t *testing.T) {
+	prefix := uniquePrefix("patchshared")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db.Exec(`UPDATE users SET settings = '{"notifications":{"email":false}}' WHERE id = ?`, targetID)
+
+	payload := map[string]interface{}{
+		"id": targetID,
+		"settings": map[string]interface{}{
+			"notifications": map[string]interface{}{"email": true},
+		},
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var stored string
+	db.Raw("SELECT settings FROM users WHERE id = ?", targetID).Scan(&stored)
+	var settings map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(stored), &settings))
+	notifications, ok := settings["notifications"].(map[string]interface{})
+	require.True(t, ok, "notifications object should be present")
+	assert.Equal(t, true, notifications["email"], "shared-group mod's settings write must persist")
+}
