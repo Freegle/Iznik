@@ -2,20 +2,19 @@
  * Freegle support agent (de-anonymised, direct-access).
  *
  * Drives Claude via @anthropic-ai/claude-agent-sdk's query() — the same code
- * path as the real Claude Code CLI, so it works with EITHER a mounted ~/.claude
- * session (testing, Max sub) OR ANTHROPIC_API_KEY (prod), chosen purely by which
- * credential is present. Streams thinking + tool progress + cost via onProgress.
+ * path as the real Claude Code CLI, so it works with an ANTHROPIC_API_KEY (api),
+ * a CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` (subscription, headless), or a
+ * mounted ~/.claude session - chosen purely by which credential is present (see
+ * auth.js driverMode). Streams thinking + tool progress + cost via onProgress.
  */
 
 const { query, createSdkMcpServer } = require('@anthropic-ai/claude-agent-sdk')
 const { buildTools, audit } = require('./tools')
+const { driverMode } = require('./auth')
 
 const MODEL = process.env.SUPPORT_AI_MODEL || 'claude-sonnet-4-20250514'
 const CODEBASE = process.env.CODEBASE_DIR || '/app/codebase'
 
-function driverMode() {
-  return process.env.ANTHROPIC_API_KEY ? 'api' : 'session'
-}
 
 function systemPrompt(userId) {
   const member = userId

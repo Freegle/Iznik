@@ -2,7 +2,7 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { verifyModerator, extractJWT, SUPPORT_ROLES } = require('./auth')
+const { verifyModerator, extractJWT, SUPPORT_ROLES, driverMode } = require('./auth')
 
 // Build a fake fetch returning the given status + JSON body.
 function fakeFetch(status, body) {
@@ -69,4 +69,41 @@ test('verifyModerator rejects when the API call throws', async () => {
     throw new Error('network down')
   })
   assert.strictEqual(mod, null)
+})
+
+// driverMode() picks the Claude Agent SDK credential purely from the environment.
+function withEnv(env, fn) {
+  const save = { ...process.env }
+  delete process.env.ANTHROPIC_API_KEY
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+  Object.assign(process.env, env)
+  try {
+    fn()
+  } finally {
+    process.env = save
+  }
+}
+
+test('driverMode: api when ANTHROPIC_API_KEY is set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, () => {
+    assert.strictEqual(driverMode(), 'api')
+  })
+})
+
+test('driverMode: subscription when only CLAUDE_CODE_OAUTH_TOKEN is set', () => {
+  withEnv({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(driverMode(), 'subscription')
+  })
+})
+
+test('driverMode: api wins when both credentials are set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(driverMode(), 'api')
+  })
+})
+
+test('driverMode: session when neither credential is set', () => {
+  withEnv({}, () => {
+    assert.strictEqual(driverMode(), 'session')
+  })
 })

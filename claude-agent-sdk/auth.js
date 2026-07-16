@@ -77,4 +77,23 @@ async function verifyModerator(req, fetchImpl = fetch) {
   return { role, id: Number(me.id) || 0, email: me.email || '' }
 }
 
-module.exports = { verifyModerator, extractJWT, FREEGLE_API_URL, SUPPORT_ROLES }
+/**
+ * Which credential the Claude Agent SDK's query() will use, chosen purely by the
+ * environment (matching the SDK's own precedence):
+ *   - 'api'          - ANTHROPIC_API_KEY set (API billing; production/edge).
+ *   - 'subscription' - CLAUDE_CODE_OAUTH_TOKEN set (a token from `claude setup-token`;
+ *                      Max/Pro subscription billing, and HEADLESS - no interactive
+ *                      login and no mounted ~/.claude, so the helper can be driven by
+ *                      an automation/subagent).
+ *   - 'session'      - neither; a mounted ~/.claude login session (interactive/testing).
+ * ANTHROPIC_API_KEY wins if it and the OAuth token are both set.
+ *
+ * @returns {'api'|'subscription'|'session'}
+ */
+function driverMode() {
+  if (process.env.ANTHROPIC_API_KEY) return 'api'
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return 'subscription'
+  return 'session'
+}
+
+module.exports = { verifyModerator, extractJWT, driverMode, FREEGLE_API_URL, SUPPORT_ROLES }

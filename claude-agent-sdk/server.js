@@ -53,19 +53,18 @@ let lastCodeUpdate = null
  * Check if Anthropic API key is configured.
  */
 function checkAuth() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    authStatus = {
-      valid: false,
-      checked: true,
-      message: 'ANTHROPIC_API_KEY not set. Add it to your .env file.',
-    }
+  if (process.env.ANTHROPIC_API_KEY) {
+    authStatus = { valid: true, checked: true, message: 'Anthropic API key configured (api mode).' }
     return
   }
-
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    authStatus = { valid: true, checked: true, message: 'Claude subscription token configured (claude setup-token).' }
+    return
+  }
   authStatus = {
-    valid: true,
+    valid: false,
     checked: true,
-    message: 'Anthropic API key configured.',
+    message: 'No ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN set (or mount a ~/.claude session).',
   }
 }
 

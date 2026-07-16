@@ -43,11 +43,14 @@ ModSupportAIAssistant.vue                  server.js  → support-agent.js → t
 
 One `query()` code path serves both auth modes (see below); everything else is identical.
 
-## Claude auth: two modes, one code path
+## Claude auth: three modes, one code path
 
 `support-agent.js` (`driverMode()`) picks the mode from the environment:
 
 - **api** — `ANTHROPIC_API_KEY` set. Production/edge. No `~/.claude` mount.
+- **subscription** — `CLAUDE_CODE_OAUTH_TOKEN` set (a token from `claude setup-token`). Uses a
+  Max/Pro subscription and is **headless** - no interactive login and no `~/.claude` mount - so
+  the helper can be driven by an automation/subagent. `ANTHROPIC_API_KEY` wins if both are set.
 - **session** — a read-only `~/.claude` credential mount (a logged-in Claude subscription).
   Testing only. `docker-compose.yml` mounts **just** `.credentials.json`, not the whole
   `~/.claude` (so a prompt-injected read cannot reach memory/transcripts).
