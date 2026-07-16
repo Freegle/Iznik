@@ -248,6 +248,13 @@ Schedule::command('users:remove-spammers')
 
 // Process bounced emails — mark as invalid.
 // V1: cron/bounce.php + bounce_users.php
+// Turn digest opens/clicks into per-member 'seen' markers so the digest and browse
+// feed stop re-showing posts a member has already had a chance to see.
+Schedule::command('mail:digest:mark-seen')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('mail:digest:mark-seen'));
+
 Schedule::command('mail:bounced')
     ->hourly()
     ->withoutOverlapping(120)

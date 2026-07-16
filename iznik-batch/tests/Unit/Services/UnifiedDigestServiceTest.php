@@ -299,6 +299,40 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a withdrawn/taken post must not be digested');
     }
 
+    public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
+    {
+        // A messages_likes 'View' (in-app view, or an opened/clicked digest via
+        // mail:digest:mark-seen) marks the post seen for THAT recipient, so the
+        // daily digest can sink it below fresh posts (config freegle.digest.seen_penalty).
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $seen = $this->createTestMessage($poster, $group);
+        $unseen = $this->createTestMessage($poster, $group);
+
+        DB::table('messages_likes')->insert([
+            'msgid' => $seen->id, 'userid' => $recipient->id, 'type' => 'View', 'count' => 0,
+        ]);
+
+        $tracker = UserDigest::create([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'lastmsgid' => 0,
+        ]);
+
+        $posts = $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY);
+        $byId = $posts->keyBy('id');
+
+        $this->assertNotNull($byId->get($seen->id), 'seen post is a candidate');
+        $this->assertTrue((bool) $byId->get($seen->id)->seen_by_user, 'viewed post is flagged seen_by_user');
+        $this->assertFalse((bool) $byId->get($unseen->id)->seen_by_user, 'un-viewed post is not flagged');
+    }
+
     public function test_daily_digest_with_available_and_taken_still_sends(): void
     {
         // An available post + a Taken post: the digest still goes (1 email);
