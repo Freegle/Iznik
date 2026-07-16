@@ -188,8 +188,18 @@
            to the bottom of the pane. Without it the footer becomes the only child of
            the column (the profile header is desktop-only and the message list is not
            rendered when empty), so it jumps up under the mobile navbar leaving a large
-           blank space below - Discourse 9918. -->
-      <div v-else class="chatContentEmpty" />
+           blank space below - Discourse 9918. The card mirrors .empty-state-content
+           below (used for "no chat selected") - the pattern background alone reads as
+           a blank white banner with nothing to anchor the eye (Discourse 9918/5). -->
+      <div v-else class="chatContentEmpty">
+        <div class="chatContentEmpty-card">
+          <v-icon icon="comments" class="chatContentEmpty-icon" />
+          <p class="chatContentEmpty-text">Say hello!</p>
+          <p class="chatContentEmpty-hint">
+            Send a message below to start the conversation.
+          </p>
+        </div>
+      </div>
       <ChatFooter
         v-bind="$props"
         class="chatFooter"
@@ -588,14 +598,47 @@ function typing() {
 /* Placeholder that fills the space of an empty chat (no messages yet) so the
    compose footer stays pinned to the bottom rather than jumping up under the
    header. Mirrors .chatContent's background so an empty chat still looks like a
-   chat, not a blank white void (Discourse 9918). */
+   chat, not a blank white void (Discourse 9918). The textured background alone
+   is too faint to read as intentional once there is no message content sitting
+   on top of it, so it needs a floating card (like .empty-state-content) to avoid
+   looking like a blank white banner (Discourse 9918/5). */
 .chatContentEmpty {
   order: 3;
   flex-grow: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   background-color: $color-gray--lighter;
   background-image: url('/chat-pattern.svg');
   background-repeat: repeat;
   background-size: 200px 200px;
+}
+
+.chatContentEmpty-card {
+  text-align: center;
+  background: white;
+  padding: 24px 32px;
+  border-radius: var(--radius-lg, 0.75rem);
+  box-shadow: var(--shadow-md);
+}
+
+.chatContentEmpty-icon {
+  font-size: 2rem;
+  color: $color-green-background;
+  margin-bottom: 10px;
+}
+
+.chatContentEmpty-text {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: $color-gray--darker;
+  margin-bottom: 4px;
+}
+
+.chatContentEmpty-hint {
+  font-size: 0.85rem;
+  color: var(--color-gray-500);
+  margin: 0;
 }
 
 .itemwrapper {

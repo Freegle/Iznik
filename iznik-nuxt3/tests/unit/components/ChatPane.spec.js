@@ -43,6 +43,24 @@ describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
   })
 })
 
+describe('ChatPane empty-chat spacer content (Discourse 9918/5)', () => {
+  it('renders a card (icon + text) inside the empty-chat spacer instead of a bare textured div', () => {
+    // The bare .chatContentEmpty spacer (chat-pattern.svg tiled over
+    // $color-gray--lighter, no content on top) is too faint to read as an
+    // intentional chat backdrop once there are no message bubbles giving it
+    // visual weight - it looks like a blank white banner (Discourse 9918/5).
+    // Fix: give it a floating card, matching the existing .empty-state-content
+    // pattern already used below for "no chat selected".
+    const between = chatPaneSource.slice(
+      chatPaneSource.indexOf('chatBusy'),
+      chatPaneSource.indexOf('<ChatFooter')
+    )
+    expect(between).not.toMatch(/<div v-else class="chatContentEmpty"\s*\/>/)
+    expect(between).toMatch(/chatContentEmpty-card/)
+    expect(between).toMatch(/v-icon/)
+  })
+})
+
 describe('ChatPane', () => {
   describe('component structure', () => {
     it('is the main chat pane component', () => {
