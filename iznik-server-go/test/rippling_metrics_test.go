@@ -658,12 +658,13 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 	CreateTestMembership(t, posterID, groupID, "Member")
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy split test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
-	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_notified WHERE msgid = ?", msgID)
 
-	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach_notified (
+	db.Exec(`CREATE TABLE IF NOT EXISTS messages_notified (
 		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		channel VARCHAR(16) NOT NULL DEFAULT 'reach',
 		notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (msgid, userid), KEY rrn_userid (userid))`)
+		PRIMARY KEY (msgid, userid, channel), KEY rrn_userid (userid))`)
 
 	// A rippled-in copy of the post, and a replier who was an established member of that
 	// group before it arrived.
@@ -676,7 +677,7 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 		groupMemberID, rippledGroup)
 
 	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
-	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 DAY)",
+	db.Exec("INSERT INTO messages_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 DAY)",
 		msgID, notifiedID)
 
 	unknownID := CreateTestUser(t, prefix+"_unknown", "User")

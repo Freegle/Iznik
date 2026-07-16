@@ -61,12 +61,23 @@ class ReplyAttributionBackfillServiceTest extends TestCase
 
         // Notified via the ripple mail ledger before replying.
         $notifiedUser = $this->createTestUser();
-        DB::table('rippling_reach_notified')->insert([
+        DB::table('messages_notified')->insert([
             'msgid' => $message->id,
             'userid' => $notifiedUser->id,
             'notified_at' => now()->subDay(),
         ]);
         $this->insertLegacyRow($message->id, $notifiedUser->id, 0);
+
+        // Notified only on a NON-reach channel (digest) - must NOT be read as a reach
+        // notification once the ledger is shared (channel guard).
+        $digestUser = $this->createTestUser();
+        DB::table('messages_notified')->insert([
+            'msgid' => $message->id,
+            'userid' => $digestUser->id,
+            'channel' => 'digest',
+            'notified_at' => now()->subDay(),
+        ]);
+        $this->insertLegacyRow($message->id, $digestUser->id, 0);
 
         // Established member of the rippled-into group (added before the copy arrived).
         $groupUser = $this->createTestUser();
@@ -90,6 +101,11 @@ class ReplyAttributionBackfillServiceTest extends TestCase
         $this->assertSame(1, (int) $notified->post_had_rippled);
         $this->assertNull($notified->in_origin_catchment, 'location bits are not backfillable');
         $this->assertNull($notified->in_reach, 'location bits are not backfillable');
+
+        $digest = $this->attributionRow($message->id, $digestUser->id);
+        $this->assertNotSame('ripple_notified', $digest->attribution,
+            'a digest-channel notify must not be read as a reach notification');
+        $this->assertSame(0, (int) $digest->was_notified);
 
         $group = $this->attributionRow($message->id, $groupUser->id);
         $this->assertSame('ripple_group', $group->attribution);

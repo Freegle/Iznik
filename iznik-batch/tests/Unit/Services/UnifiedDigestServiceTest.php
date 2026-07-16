@@ -1045,7 +1045,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->mailNewlyReachedForPost($msg->id);
 
-        $ledgered = fn ($uid) => DB::table('rippling_reach_notified')
+        $ledgered = fn ($uid) => DB::table('messages_notified')
             ->where('msgid', $msg->id)->where('userid', $uid)->exists();
         $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
@@ -1053,12 +1053,12 @@ class UnifiedDigestServiceTest extends TestCase
         // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
         DB::statement('UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
             ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
-        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
+        $before = DB::table('messages_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
         $this->assertSame(
             $before + 1,
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->count(),
             'only B newly notified — A not re-mailed'
         );
 
@@ -1113,7 +1113,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertSame(
             0,
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->count(),
             'no reach-coordination ledger rows are written while rippling is off'
         );
     }
@@ -1141,18 +1141,18 @@ class UnifiedDigestServiceTest extends TestCase
         // No reach row yet → the cursor immediate digest mails the group and records the ledger.
         $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
             'cursor immediate send is recorded in the ledger'
         );
 
         // Reach row appears afterwards; the expander must not re-mail the already-mailed member.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
+        $before = DB::table('messages_notified')->where('msgid', $msg->id)->count();
         $sent = $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertSame(0, $sent, 'expander does not re-mail members the cursor digest already mailed');
         $this->assertSame(
             $before,
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->count(),
             'no new ledger rows — the shared ledger prevents the double-mail'
         );
     }
@@ -2359,7 +2359,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertGreaterThanOrEqual(1, $stats['emails_sent'], 'a reachable immediate member is mailed');
         $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
             'the reach-mail pass records the notification in the ledger'
         );
     }
@@ -2385,14 +2385,14 @@ class UnifiedDigestServiceTest extends TestCase
         // The shard that does NOT own this msgid must skip it entirely.
         $this->service->sendReachDigests(null, false, $otherShard, $shards);
         $this->assertFalse(
-            DB::table('rippling_reach_notified')->where('msgid', $message->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $message->id)->exists(),
             'a shard does not process posts outside its MOD(msgid, shards) partition'
         );
 
         // The owning shard processes it.
         $this->service->sendReachDigests(null, false, $ownShard, $shards);
         $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
             'the owning shard mails the reachable member'
         );
     }
@@ -2839,7 +2839,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->service->mailNewlyReachedForPost($msg->id);
 
         $this->assertFalse(
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
             'inside reach but beyond the personal distance preference — not mailed, no ledger write'
         );
     }
@@ -2868,7 +2868,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertFalse(
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
             'first run: filtered out, no ledger row written'
         );
 
@@ -2880,7 +2880,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->service->mailNewlyReachedForPost($msg->id);
 
         $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->where('userid', $memberC->id)->exists(),
             'second run after widening: mailed and ledgered'
         );
     }
@@ -2909,7 +2909,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->service->mailNewlyReachedForPost($msg->id);
 
         $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $poster->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $msg->id)->where('userid', $poster->id)->exists(),
             'own post is mailed and ledgered despite exceeding the personal distance preference'
         );
     }
@@ -2979,7 +2979,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->seedReach($reachMsg->id, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
         $this->service->mailNewlyReachedForPost($reachMsg->id);
         $this->assertFalse(
-            DB::table('rippling_reach_notified')->where('msgid', $reachMsg->id)->where('userid', $reachRecipient->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $reachMsg->id)->where('userid', $reachRecipient->id)->exists(),
             'reach-mail rejects the out-of-range post, same as the other two pipelines'
         );
     }

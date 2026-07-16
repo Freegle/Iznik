@@ -270,10 +270,11 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
 		SPATIAL INDEX msgreach_poly (polygon)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach_notified (
+	db.Exec(`CREATE TABLE IF NOT EXISTS messages_notified (
 		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		channel VARCHAR(16) NOT NULL DEFAULT 'reach',
 		notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (msgid, userid), KEY rrn_userid (userid))`)
+		PRIMARY KEY (msgid, userid, channel), KEY rrn_userid (userid))`)
 
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
@@ -281,7 +282,7 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 	CreateTestMembership(t, posterID, originGroup, "Member")
 	msgID := CreateTestMessage(t, posterID, originGroup, "OFFER: attribution ladder test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
-	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_notified WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	// Origin group's catchment covers (-0.1, 51.5) only; the reach polygon covers both that
@@ -305,7 +306,7 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 	//    catchment - the notified rung must outrank the location rungs.
 	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, notifiedID)
-	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 HOUR)",
+	db.Exec("INSERT INTO messages_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 HOUR)",
 		msgID, notifiedID)
 	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, notifiedID, posterID, msgID, ""))
 	row, ok := fetchAttribution(t, msgID, notifiedID)

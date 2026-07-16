@@ -888,9 +888,9 @@ LOCK TABLES `rippling_reach` WRITE;
 /*!40000 ALTER TABLE `rippling_reach` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `rippling_reach_notified` WRITE;
-/*!40000 ALTER TABLE `rippling_reach_notified` DISABLE KEYS */;
-/*!40000 ALTER TABLE `rippling_reach_notified` ENABLE KEYS */;
+LOCK TABLES `messages_notified` WRITE;
+/*!40000 ALTER TABLE `messages_notified` DISABLE KEYS */;
+/*!40000 ALTER TABLE `messages_notified` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `rippling_reply_attribution` WRITE;

@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Durable bits are re-derivable from timestamped tables, so freezing them now - before the
  * evidence decays further - is the whole point:
- *   was_notified            <- rippling_reach_notified (notified_at <= replied_at)
+ *   was_notified            <- messages_notified (notified_at <= replied_at)
  *   was_ripple_group_member <- an approved membership of a group the post rippled into, added
  *                              before the copy arrived (decays when members leave, hence freeze)
  *   post_had_rippled        <- a rippled-in copy or a reach row existed by reply time
@@ -68,9 +68,9 @@ class ReplyAttributionBackfillService
                 ) batch ON batch.msgid = rra.msgid AND batch.userid = rra.userid
                 SET
                     rra.was_notified = EXISTS(
-                        SELECT 1 FROM rippling_reach_notified rrn
+                        SELECT 1 FROM messages_notified rrn
                         WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
-                          AND rrn.notified_at <= rra.replied_at),
+                          AND rrn.notified_at <= rra.replied_at AND rrn.channel = 'reach'),
                     rra.was_ripple_group_member = EXISTS(
                         SELECT 1 FROM messages_groups mg
                         INNER JOIN memberships mem ON mem.groupid = mg.groupid
@@ -90,9 +90,9 @@ class ReplyAttributionBackfillService
                     rra.attribution = CASE
                         WHEN rra.was_home_member = 1 THEN 'home'
                         WHEN EXISTS(
-                            SELECT 1 FROM rippling_reach_notified rrn2
+                            SELECT 1 FROM messages_notified rrn2
                             WHERE rrn2.msgid = rra.msgid AND rrn2.userid = rra.userid
-                              AND rrn2.notified_at <= rra.replied_at) THEN 'ripple_notified'
+                              AND rrn2.notified_at <= rra.replied_at AND rrn2.channel = 'reach') THEN 'ripple_notified'
                         WHEN EXISTS(
                             SELECT 1 FROM messages_groups mg3
                             INNER JOIN memberships mem3 ON mem3.groupid = mg3.groupid

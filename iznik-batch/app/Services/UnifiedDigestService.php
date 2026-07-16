@@ -435,9 +435,10 @@ class UnifiedDigestService
                         // a ledger-write failure can't masquerade as a spool failure or abort the
                         // loop; harmless for non-rippling posts (the row is simply never read).
                         try {
-                            DB::table('rippling_reach_notified')->insertOrIgnore([
+                            DB::table('messages_notified')->insertOrIgnore([
                                 'msgid' => (int) $message->mg_msgid,
                                 'userid' => (int) $uid,
+                                'channel' => 'reach',
                                 'notified_at' => now(),
                             ]);
                         } catch (\Throwable $e) {
@@ -538,10 +539,10 @@ class UnifiedDigestService
      *
      * Processes rippling_reach rows whose reach changed recently (updated_at within the configured
      * window — reach only changes on init/advance, never on this pass, which writes only
-     * rippling_reach_notified), partitioned across parallel workers by MOD(msgid, shards) exactly
+     * messages_notified), partitioned across parallel workers by MOD(msgid, shards) exactly
      * as the immediate-digest cron partitions by MOD(groupid, shards). Disjoint partitions → shards
      * run concurrently with no locking. Idempotent regardless of window overlap: the
-     * rippling_reach_notified ledger means an already-notified member is never re-mailed.
+     * messages_notified ledger means an already-notified member is never re-mailed.
      *
      * @param int|null $limit Cap on posts processed per run (null = no cap).
      * @param int $shard Shard index (0..shards-1).
@@ -599,7 +600,7 @@ class UnifiedDigestService
      * pass (sendReachDigests) and by AutoApproveService (the post-'done' approval gap) — no longer
      * inline in ExpandService's serial loop. Mails the post to every immediate-eligible member of a
      * group it is APPROVED on whose location the reach NOW covers and who has not already been
-     * notified (rippling_reach_notified), recording each so a later tick — or another rippled-in
+     * notified (messages_notified), recording each so a later tick — or another rippled-in
      * group — never re-mails them. Because it re-runs every tick (no cursor), members the reach
      * reaches later are picked up; the cursor digest excludes reach-row posts so neither path
      * double-mails. Member point = settings.mylocation (both coords) else lastlocation. Returns
@@ -661,7 +662,7 @@ class UnifiedDigestService
                               ELSE l.lat END
                        ), ?))
                    AND NOT EXISTS (
-                         SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
+                         SELECT 1 FROM messages_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id AND n.channel = 'reach'
                        )",
                 [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
             ));
@@ -706,7 +707,7 @@ class UnifiedDigestService
                     continue;
                 }
                 // Distance-preference filter (settings.browseMaxDistance). Deliberately
-                // does NOT write rippling_reach_notified on a filtered-out skip (unlike
+                // does NOT write messages_notified on a filtered-out skip (unlike
                 // the "already sent" path below) — see the design doc's "Reach-mail
                 // ledger semantics" edge case: leaving the ledger unwritten lets a later
                 // tick re-consider this (post, user) pair if the member widens their
@@ -736,9 +737,10 @@ class UnifiedDigestService
                         $user->email_preferred,
                         emailType: 'digest_immediate',
                     );
-                    DB::table('rippling_reach_notified')->insertOrIgnore([
+                    DB::table('messages_notified')->insertOrIgnore([
                         'msgid' => $msgid,
                         'userid' => (int) $user->id,
+                        'channel' => 'reach',
                         'notified_at' => now(),
                     ]);
                     $sent++;

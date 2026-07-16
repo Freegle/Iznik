@@ -392,7 +392,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
 	var wasNotified int
-	db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach_notified WHERE msgid = ? AND userid = ?)",
+	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_notified WHERE msgid = ? AND userid = ? AND channel = 'reach')",
 		refmsgid, myid).Scan(&wasNotified)
 
 	// Established member of a group the post rippled INTO: added before the rippled copy

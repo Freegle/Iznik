@@ -107,7 +107,7 @@ class ExpandService
      * post and overwrites the stored polygon + schedule at the post's CURRENT
      * tick. It deliberately does NOT ripple into/out of groups, touch
      * memberships, or bump updated_at — so it generates no mail (sendReachDigests
-     * only scans recently-updated rows, and the rippling_reach_notified ledger
+     * only scans recently-updated rows, and the messages_notified ledger
      * blocks re-notification regardless) and never retracts copies already
      * delivered to far groups (we shrink future reach, we don't claw back).
      *

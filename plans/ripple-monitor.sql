@@ -43,4 +43,4 @@ FROM (
 SELECT '=== 4. reach rows total + last-hour activity ===' AS section;
 SELECT (SELECT COUNT(*) FROM rippling_reach) AS reach_rows_total,
        (SELECT COUNT(*) FROM rippling_reply_attribution WHERE replied_at >= NOW()-INTERVAL 1 HOUR) AS replies_last_hr,
-       (SELECT COUNT(*) FROM rippling_reach_notified WHERE notified_at >= NOW()-INTERVAL 1 HOUR) AS immediate_mails_last_hr;
+       (SELECT COUNT(*) FROM messages_notified WHERE notified_at >= NOW()-INTERVAL 1 HOUR) AS immediate_mails_last_hr;

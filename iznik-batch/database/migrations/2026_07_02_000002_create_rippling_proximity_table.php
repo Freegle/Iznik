@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Schema;
  * rippling_proximity — the moderator "quicker to get to" P/Q note for a post that has rippled
  * into a group, computed once at ripple-in time (ExpandService::recordRippleProximity). Kept in
  * its own rippling_* table rather than as columns on the hot messages_groups table (same approach
- * as rippling_reach / rippling_reach_notified / rippling_held_replies).
+ * as rippling_reach / messages_notified / rippling_held_replies).
  *
  * Composite PK (msgid, groupid): the note is per copy-in-a-group, written once. p/q are the
  * human place names ("AB10 1XG (Gilcomston)"). Cascades away with the message or the group.

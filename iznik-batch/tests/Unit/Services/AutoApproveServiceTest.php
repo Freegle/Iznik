@@ -144,7 +144,7 @@ class AutoApproveServiceTest extends TestCase
         $this->service->process();
 
         $this->assertTrue(
-            DB::table('rippling_reach_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $message->id)->where('userid', $member->id)->exists(),
             'auto-approve mails a now-reachable immediate member of a done-reach rippling post'
         );
     }
@@ -185,7 +185,7 @@ class AutoApproveServiceTest extends TestCase
 
         $this->assertEquals(0, $sent, 'a taken post is not mailed to newly-reached members');
         $this->assertFalse(
-            DB::table('rippling_reach_notified')->where('msgid', $message->id)->exists(),
+            DB::table('messages_notified')->where('msgid', $message->id)->exists(),
             'no reach notification recorded for a taken post'
         );
     }

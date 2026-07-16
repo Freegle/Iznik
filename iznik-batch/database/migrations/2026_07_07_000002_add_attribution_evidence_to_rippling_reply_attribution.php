@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Schema;
  * snapshotted AT REPLY TIME by the Go reply handler (chat/chatmessage.go).
  *
  * Evidence bits (nullable: NULL = not captured, pre-migration row or evidence unavailable):
- *   was_notified             - (msgid, userid) hit in rippling_reach_notified before the reply:
+ *   was_notified             - (msgid, userid) hit in messages_notified before the reply:
  *                              we SENT this user the ripple mail for this post. Durable; backfillable.
  *   was_ripple_group_member  - established member (added < the copy's arrival) of a group the
  *                              post rippled INTO by reply time. Durable-ish (leavers decay);

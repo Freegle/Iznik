@@ -232,9 +232,9 @@ type GroupOption struct {
 func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 	derive := `CASE
 	       WHEN rra.was_home_member = 1 THEN 'home'
-	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
+	       WHEN EXISTS(SELECT 1 FROM messages_notified rrn
 	                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
-	                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
+	                     AND rrn.notified_at <= rra.replied_at AND rrn.channel = 'reach') THEN 'ripple_notified'
 	       WHEN EXISTS(SELECT 1 FROM messages_groups mgr
 	                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid
 	                     AND mem.userid = rra.userid AND mem.collection = 'Approved'
