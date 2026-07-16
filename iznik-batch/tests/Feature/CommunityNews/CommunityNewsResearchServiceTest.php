@@ -6,6 +6,7 @@ use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
 use App\Services\CommunityNews\CommunityNewsResearchService;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class CommunityNewsResearchServiceTest extends TestCase
@@ -16,6 +17,11 @@ class CommunityNewsResearchServiceTest extends TestCase
         // Isolate from the repo's curated source store so these tests exercise
         // pure web-search research with no seed sources.
         config(['freegle.communitynews.sources_path' => sys_get_temp_dir() . '/cn-none-' . uniqid()]);
+        // Default to the API path (no subscription token) so these tests are
+        // deterministic even when CLAUDE_CODE_OAUTH_TOKEN leaks in from the env,
+        // and never actually exec the CLI.
+        config(['freegle.communitynews.oauth_token' => '']);
+        Process::fake();
     }
 
     private function area(): CommunityNewsArea
@@ -125,9 +131,55 @@ class CommunityNewsResearchServiceTest extends TestCase
         Http::assertSentCount(2);
     }
 
-    public function test_research_without_api_key_is_a_noop(): void
+    public function test_research_uses_the_claude_cli_when_a_setup_token_is_present(): void
     {
-        config(['freegle.communitynews.anthropic_api_key' => '']);
+        // A `claude setup-token` subscription token wins over the metered key:
+        // research must shell out to the `claude` CLI, not touch the Messages API.
+        config([
+            'freegle.communitynews.oauth_token' => 'sk-ant-oat01-test',
+            'freegle.communitynews.anthropic_api_key' => 'unused-key',
+        ]);
+
+        $json = json_encode([
+            'intro' => 'Warm local bits.',
+            'items' => [
+                ['title' => 'Seed swap', 'blurb' => 'Bring spare seeds on Sunday.', 'url' => 'https://example.org/seeds', 'source' => 'Allotment'],
+            ],
+        ]);
+
+        Http::fake();
+        // claude -p --output-format json wraps the answer as {"result": "..."}.
+        Process::fake([
+            '*' => Process::result(output: json_encode(['type' => 'result', 'result' => $json, 'total_cost_usd' => 0.0])),
+        ]);
+
+        $area = $this->area();
+        $result = $this->svc()->researchArea($area);
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame(1, $result['items']);
+        $this->assertSame(1, CommunityNewsItem::where('areaid', $area->id)->count());
+
+        // Went via the CLI (WebSearch, JSON output) and NOT the metered API...
+        Http::assertNothingSent();
+        Process::assertRan(function ($process) {
+            $cmd = is_array($process->command) ? implode(' ', $process->command) : (string) $process->command;
+
+            return str_contains($cmd, 'claude')
+                && str_contains($cmd, '--allowedTools')
+                && str_contains($cmd, 'WebSearch')
+                && str_contains($cmd, '--output-format')
+                // ...and the token travels in the environment, never on the argv.
+                && !str_contains($cmd, 'sk-ant-oat01-test');
+        });
+    }
+
+    public function test_research_without_any_credentials_is_a_noop(): void
+    {
+        config([
+            'freegle.communitynews.anthropic_api_key' => '',
+            'freegle.communitynews.oauth_token' => '',
+        ]);
         Http::fake();
 
         $area = $this->area();
@@ -136,6 +188,7 @@ class CommunityNewsResearchServiceTest extends TestCase
         $this->assertFalse($result['ok']);
         $this->assertSame(0, CommunityNewsItem::where('areaid', $area->id)->count());
         Http::assertNothingSent();
+        Process::assertNothingRan();
     }
 
     public function test_parse_strips_fence_and_drops_unsafe_url(): void

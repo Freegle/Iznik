@@ -7,6 +7,7 @@ use App\Models\CommunityNewsItem;
 use App\Models\Group;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 
 /**
  * Researches an area and writes a handful of warm, local Community News nuggets.
@@ -75,12 +76,55 @@ class CommunityNewsResearchService
      */
     public function generate(CommunityNewsArea $area, array $seedSources = []): ?array
     {
-        $apiKey = config('freegle.communitynews.anthropic_api_key');
-        if (empty($apiKey)) {
-            Log::warning('CommunityNews: ANTHROPIC_API_KEY not set; cannot research', ['area' => $area->id]);
+        $mode = $this->driverMode();
+        if ($mode === null) {
+            Log::warning('CommunityNews: no Anthropic credentials — set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) to run on a Claude subscription, or ANTHROPIC_API_KEY; cannot research', ['area' => $area->id]);
             return null;
         }
 
+        $maxItems = (int) config('freegle.communitynews.items_per_area', 6);
+
+        $finalText = $mode === 'subscription'
+            ? $this->researchViaCli($area, $seedSources)
+            : $this->researchViaApi($area, $seedSources);
+
+        if ($finalText === null || trim($finalText) === '') {
+            Log::warning('CommunityNews: empty research response', ['area' => $area->id]);
+            return null;
+        }
+
+        return $this->parse($finalText, $maxItems);
+    }
+
+    /**
+     * Which backend runs the research call.
+     *
+     *  - 'subscription': a `claude setup-token` OAuth token (CLAUDE_CODE_OAUTH_TOKEN)
+     *    is configured — run headlessly on a Claude subscription via the `claude`
+     *    CLI, with no metered API spend. Takes precedence when set.
+     *  - 'api': only ANTHROPIC_API_KEY is set — the raw Messages-API call.
+     *  - null: neither credential configured; research is a no-op.
+     */
+    private function driverMode(): ?string
+    {
+        if (trim((string) config('freegle.communitynews.oauth_token', '')) !== '') {
+            return 'subscription';
+        }
+        if (trim((string) config('freegle.communitynews.anthropic_api_key', '')) !== '') {
+            return 'api';
+        }
+
+        return null;
+    }
+
+    /**
+     * Metered path: one raw Anthropic Messages-API call using the web_search
+     * (and, when we have curated seeds, web_fetch) server tools. Returns the
+     * model's final text, or null on failure.
+     */
+    private function researchViaApi(CommunityNewsArea $area, array $seedSources): ?string
+    {
+        $apiKey = config('freegle.communitynews.anthropic_api_key');
         $model = config('freegle.communitynews.model', 'claude-opus-4-8');
         $maxItems = (int) config('freegle.communitynews.items_per_area', 6);
         $maxIterations = (int) config('freegle.communitynews.max_search_iterations', 8);
@@ -111,8 +155,6 @@ class CommunityNewsResearchService
                 'max_uses' => 10,
             ];
         }
-
-        $finalText = null;
 
         for ($iter = 0; $iter < max(1, $maxIterations); $iter++) {
             try {
@@ -161,16 +203,80 @@ class CommunityNewsResearchService
                 continue;
             }
 
-            $finalText = $thisText;
-            break;
+            return $thisText;
         }
 
-        if ($finalText === null || trim($finalText) === '') {
-            Log::warning('CommunityNews: empty research response', ['area' => $area->id]);
+        return null;
+    }
+
+    /**
+     * Subscription path: run the same research headlessly through the `claude`
+     * CLI on a `claude setup-token` OAuth token (CLAUDE_CODE_OAUTH_TOKEN) — no
+     * metered API spend. The CLI's built-in WebSearch (and WebFetch, when we have
+     * curated seed URLs) stands in for the Messages-API server tools. Returns the
+     * model's final text, or null on failure.
+     *
+     * Runs with a clean per-run CLAUDE_CONFIG_DIR so this repo's Claude hooks /
+     * skills / settings never load into an unattended batch job, and in non-bare
+     * mode (bare mode ignores CLAUDE_CODE_OAUTH_TOKEN). --output-format json wraps
+     * the answer as {"result": "<text>", ...}.
+     */
+    private function researchViaCli(CommunityNewsArea $area, array $seedSources): ?string
+    {
+        $token = trim((string) config('freegle.communitynews.oauth_token', ''));
+        $model = (string) config('freegle.communitynews.model', 'claude-opus-4-8');
+        $maxItems = (int) config('freegle.communitynews.items_per_area', 6);
+        $bin = (string) config('freegle.communitynews.claude_bin', 'claude');
+
+        $configDir = trim((string) config('freegle.communitynews.claude_config_dir', ''));
+        if ($configDir === '') {
+            $configDir = rtrim(sys_get_temp_dir(), '/') . '/cn-claude-' . $area->id;
+        }
+        @mkdir($configDir, 0700, true);
+
+        $allowedTools = empty($seedSources) ? 'WebSearch' : 'WebSearch,WebFetch';
+
+        $command = [
+            $bin,
+            '-p', $this->userPrompt($area, $maxItems, $seedSources),
+            '--append-system-prompt', $this->systemPrompt($area),
+            '--allowedTools', $allowedTools,
+            '--model', $model,
+            '--output-format', 'json',
+        ];
+
+        try {
+            $result = Process::timeout(240)
+                ->env([
+                    'CLAUDE_CODE_OAUTH_TOKEN' => $token,
+                    'CLAUDE_CONFIG_DIR' => $configDir,
+                ])
+                ->run($command);
+        } catch (\Throwable $e) {
+            Log::warning('CommunityNews claude CLI threw', ['area' => $area->id, 'error' => $e->getMessage()]);
             return null;
         }
 
-        return $this->parse($finalText, $maxItems);
+        if (!$result->successful()) {
+            Log::warning('CommunityNews claude CLI failed', [
+                'area' => $area->id,
+                'exit' => $result->exitCode(),
+                'err' => mb_substr($result->errorOutput(), 0, 500),
+            ]);
+            return null;
+        }
+
+        // --output-format json => {"type":"result","result":"<text>","total_cost_usd":...}
+        $decoded = json_decode($result->output(), true);
+        if (!is_array($decoded) || !array_key_exists('result', $decoded)) {
+            Log::warning('CommunityNews: unparseable claude CLI output', [
+                'area' => $area->id,
+                'raw' => mb_substr($result->output(), 0, 300),
+            ]);
+            return null;
+        }
+
+        return (string) $decoded['result'];
     }
 
     /**

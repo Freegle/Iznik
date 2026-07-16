@@ -306,6 +306,18 @@ return [
         'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
         'model'             => env('COMMUNITY_NEWS_MODEL', 'claude-opus-4-8'),
 
+        // Run the research on a Claude SUBSCRIPTION instead of a metered API key:
+        // set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`). When present it
+        // takes precedence over anthropic_api_key, and research shells out to the
+        // `claude` CLI (WebSearch tool) rather than the raw Messages API — a raw
+        // OAuth Bearer call to /v1/messages is not supported by Anthropic. Needs
+        // the `claude` CLI in the container (the batch image installs it).
+        'oauth_token' => env('COMMUNITY_NEWS_OAUTH_TOKEN', env('CLAUDE_CODE_OAUTH_TOKEN', '')),
+        // Override the CLI binary / its config dir (blank => a clean per-run temp
+        // dir, so this repo's Claude hooks/skills/settings don't load into the job).
+        'claude_bin'        => env('COMMUNITY_NEWS_CLAUDE_BIN', 'claude'),
+        'claude_config_dir' => env('COMMUNITY_NEWS_CLAUDE_CONFIG_DIR', ''),
+
         // Post to ChitChat / send the digest AS this account ("Freegle").
         'system_user_email' => env('COMMUNITY_NEWS_SYSTEM_USER_EMAIL', env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org')),
 

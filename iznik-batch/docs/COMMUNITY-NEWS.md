@@ -110,7 +110,15 @@ All the sending/posting commands take `--dry-run`.
 
 - `enabled` (`COMMUNITY_NEWS_ENABLED`, default false) — global kill switch for the
   **scheduled** runs; manual `artisan` invocation always works.
-- `anthropic_api_key` (`ANTHROPIC_API_KEY`) — for the research call.
+- `anthropic_api_key` (`ANTHROPIC_API_KEY`) — metered key for the research call.
+- `oauth_token` (`COMMUNITY_NEWS_OAUTH_TOKEN`, falls back to `CLAUDE_CODE_OAUTH_TOKEN`)
+  — a `claude setup-token` token. **When set it takes precedence**: the research
+  runs on a Claude *subscription* by shelling out to the `claude` CLI (WebSearch
+  tool) instead of the metered Messages API. A raw OAuth Bearer call to
+  `/v1/messages` is *not* an Anthropic-supported auth method, so we go through the
+  CLI (the batch image bundles it). `claude_bin` (`COMMUNITY_NEWS_CLAUDE_BIN`) and
+  `claude_config_dir` (`COMMUNITY_NEWS_CLAUDE_CONFIG_DIR`, blank => a clean per-run
+  temp dir) tune that path.
 - `model` (`COMMUNITY_NEWS_MODEL`, default `claude-opus-4-8`).
 - `system_user_email` (`COMMUNITY_NEWS_SYSTEM_USER_EMAIL`, default the noreply
   address) — the "Freegle" account ChitChat posts are attributed to.
@@ -123,9 +131,11 @@ All the sending/posting commands take `--dry-run`.
 Community News is inert until **all** of these are true:
 
 1. `COMMUNITY_NEWS_ENABLED=true` (for the scheduled runs).
-2. `ANTHROPIC_API_KEY` is set for the batch/batch-prod container (see
-   `.env.background.example`; also wired into the dev batch service in
-   `docker-compose.yml`).
+2. A research credential is set for the batch/batch-prod container: either
+   `ANTHROPIC_API_KEY` (metered) or `COMMUNITY_NEWS_OAUTH_TOKEN` /
+   `CLAUDE_CODE_OAUTH_TOKEN` (subscription, via the bundled `claude` CLI) — see
+   `.env.background.example`; both are wired into the dev batch service in
+   `docker-compose.yml`.
 3. At least one community has `communitynews` enabled.
 4. **Email only:** `CommunityNews` is present in `FREEGLE_MAIL_ENABLED_TYPES`.
    The ChitChat trial does **not** need this — run the trial first, watch

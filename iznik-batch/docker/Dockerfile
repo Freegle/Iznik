@@ -69,6 +69,20 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends osmium-tool \
     && rm -rf /var/lib/apt/lists/*
 
+# Claude Code CLI — lets Community News research run on a Claude SUBSCRIPTION
+# (COMMUNITY_NEWS_OAUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`)
+# instead of a metered API key. A raw OAuth Bearer call to /v1/messages is not an
+# Anthropic-supported auth method, so CommunityNewsResearchService shells out to
+# `claude -p` for that path. Node 20 via NodeSource, then the CLI globally. Kept
+# in this per-branch Dockerfile (not Dockerfile.base) so a PR's CI exercises it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && claude --version \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /var/www/html
 
 # Copy application files
