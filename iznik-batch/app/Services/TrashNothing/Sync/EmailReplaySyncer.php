@@ -9,8 +9,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Replays TN "post emails sent" records through the legacy email-ingestion
- * pipeline (MailParserService + IncomingMailService), so the resulting
+ * Replays TN post emails through the legacy email-ingestion pipeline
+ * (MailParserService + IncomingMailService), so the resulting
  * TN-SYNC-TRACE [WRITE]/[POST-*] log lines can be diffed against a
  * GroupPostIngestionService dry-run over the same date range.
  *
@@ -18,114 +18,227 @@ use Illuminate\Support\Facades\Log;
  * mode, because it exists specifically to exercise the real legacy write
  * path for comparison. Run it against a disposable test database.
  *
- * The "post emails" TN API endpoint does not exist yet; this class is the
- * prep work for when it does. Two record shapes are supported so it needs
- * minimal change once the real endpoint is documented:
- *   - `raw_message` present: used verbatim as the RFC822 body (most
- *     faithful — byte-identical to what TN actually sent).
- *   - otherwise: an RFC822 message is synthesized from structured fields
- *     (see buildRawEmail()), mirroring the real TN email shape recorded in
- *     tests/fixtures/emails/tn_post.eml.
+ * Data source: https://trashnothing.com/cimg/fd-post-log.csv (downloaded
+ * with a cache-busting query string on each run). In --local-testing mode,
+ * uses tests/fixtures/tn_sync/fd_post_log.csv instead.
+ *
+ * CSV columns expected (case-insensitive):
+ *   Body, Date, From, Subject, To, X-Trash-Nothing-Ip-Hash,
+ *   X-trash-nothing-Post-Coordinates, X-trash-nothing-Post-ID,
+ *   X-trash-nothing-Source, X-trash-nothing-User-ID
+ *
+ * The TN secret (X-Trash-Nothing-Secret) is not present in the CSV export
+ * and is injected from config('freegle.mail.trashnothing_secret') so that
+ * IncomingMailService::shouldSkipSpamCheck() correctly skips spam checking
+ * for these TN posts (matching the original email path behaviour).
  */
 class EmailReplaySyncer
 {
-    private const PAGE_SIZE = 100;
+    private const CSV_URL          = 'https://trashnothing.com/cimg/fd-post-log.csv';
+    private const FIXTURE_CSV_PATH = 'tests/fixtures/tn_sync/fd_post_log.csv';
 
     public function __construct(
         private readonly bool $localTesting,
-        private readonly string $apiKey,
-        private readonly string $apiBaseUrl,
         private readonly LokiService $loki,
         private readonly MailParserService $parser,
         private readonly IncomingMailService $mailService,
     ) {}
 
     /**
-     * @return array{int, string|null} [count, maxDate]
+     * Load and replay all records from the CSV.
+     *
+     * @return array{int, string|null, string|null} [count, minDate, maxDate]
      */
-    public function sync(string $from, string $to): array
+    public function sync(): array
     {
-        $page    = 1;
+        $records = $this->loadAllRecords();
+
+        Log::info('TN-SYNC-TRACE [EMAILS-PAGE] count=' . count($records));
+
         $count   = 0;
+        $minDate = null;
         $maxDate = null;
 
-        do {
-            $emails = $this->fetchPage($page, $from, $to);
-            if ($emails === null) {
-                break;
-            }
+        foreach ($records as $record) {
+            $count++;
+            [$minDate, $maxDate] = $this->processEmail($record, $minDate, $maxDate);
+        }
 
-            Log::info('TN-SYNC-TRACE [EMAILS-PAGE] page=' . $page . ' count=' . count($emails));
+        Log::info('TN-SYNC-TRACE [EMAILS-DONE] total=' . $count . ' min_date=' . ($minDate ?? 'null') . ' max_date=' . ($maxDate ?? 'null'));
 
-            foreach ($emails as $record) {
-                $count++;
-                $maxDate = $this->processEmail($record, $maxDate);
-            }
-
-            $page++;
-        } while ($emails && count($emails) === self::PAGE_SIZE);
-
-        Log::info('TN-SYNC-TRACE [EMAILS-DONE] total=' . $count . ' max_date=' . ($maxDate ?? 'null'));
-
-        return [$count, $maxDate];
+        return [$count, $minDate, $maxDate];
     }
 
     /**
-     * @return array|null  Email records, or null on API error.
+     * Extract the date range (min, max) from raw CSV text without processing
+     * any emails. Useful for callers that want the range to pass to tn:sync.
+     *
+     * @return array{string|null, string|null} [minDate, maxDate]
      */
-    private function fetchPage(int $page, string $from, string $to): ?array
+    public static function extractDateRangeFromCsvText(string $csvText): array
+    {
+        $fh = fopen('php://temp', 'r+');
+        fwrite($fh, $csvText);
+        rewind($fh);
+
+        $headers = fgetcsv($fh);
+        if ($headers === false) {
+            fclose($fh);
+            return [null, null];
+        }
+
+        $headersLower = array_map('strtolower', array_map('trim', $headers));
+        $dateIdx      = array_search('date', $headersLower, true);
+
+        $dates = [];
+        while (($row = fgetcsv($fh)) !== false) {
+            if ($dateIdx !== false && isset($row[$dateIdx]) && $row[$dateIdx] !== '') {
+                $dates[] = $row[$dateIdx];
+            }
+        }
+
+        fclose($fh);
+
+        if (empty($dates)) {
+            return [null, null];
+        }
+
+        sort($dates);
+
+        return [reset($dates), end($dates)];
+    }
+
+    private function loadAllRecords(): array
     {
         if ($this->localTesting) {
-            return $this->fetchPageFromFixture($page);
+            return $this->loadRecordsFromFixtureCsv();
         }
 
-        // TODO: Endpoint path is a placeholder — TN hasn't documented this API yet.
-        // Update once it has: this follows the same direct-HTTP convention as
-        // RatingsSyncer/UserChangesSyncer (fd/api/*), not the generated OpenAPI
-        // client PostSyncer uses, since it's most likely another internal
-        // fd/api/* endpoint rather than a public one.
-        $response = Http::get("{$this->apiBaseUrl}/post-emails", [
-            'key'      => $this->apiKey,
-            'page'     => $page,
-            'per_page' => self::PAGE_SIZE,
-            'date_min' => $from,
-            'date_max' => $to,
-        ]);
+        // Append a random suffix to prevent any proxy or CDN from serving a stale copy.
+        $url      = self::CSV_URL . '?_=' . bin2hex(random_bytes(8));
+        $response = Http::get($url);
 
         if (!$response->successful()) {
-            Log::error('TN sync: post-emails API failed on page ' . $page, ['status' => $response->status()]);
-            return null;
-        }
-
-        return $response->json('emails', []);
-    }
-
-    /**
-     * @return array  Email records for this page (fixture mode has no separate num_pages
-     *                 signal — pagination stops when a page returns fewer than PAGE_SIZE).
-     */
-    private function fetchPageFromFixture(int $page): array
-    {
-        $fixtureFile = base_path("tests/fixtures/tn_sync/post_emails_page_{$page}.json");
-
-        if (!file_exists($fixtureFile)) {
-            Log::info('TN-SYNC-TRACE [EMAILS-PAGE] missing fixture file=' . $fixtureFile);
+            Log::error('TN sync: failed to download post-log CSV', [
+                'status' => $response->status(),
+                'url'    => self::CSV_URL,
+            ]);
             return [];
         }
 
-        $payload = json_decode(file_get_contents($fixtureFile), true);
-
-        return is_array($payload) ? ($payload['emails'] ?? []) : [];
+        return $this->parseCsvText($response->body());
     }
 
-    private function processEmail(array $record, ?string $maxDate): ?string
+    private function loadRecordsFromFixtureCsv(): array
+    {
+        $path = base_path(self::FIXTURE_CSV_PATH);
+
+        if (!file_exists($path)) {
+            Log::info('TN-SYNC-TRACE [EMAILS-PAGE] missing fixture csv path=' . $path);
+            return [];
+        }
+
+        return $this->parseCsvText((string) file_get_contents($path));
+    }
+
+    private function parseCsvText(string $csvText): array
+    {
+        $fh = fopen('php://temp', 'r+');
+        fwrite($fh, $csvText);
+        rewind($fh);
+
+        $headers = fgetcsv($fh);
+        if ($headers === false) {
+            fclose($fh);
+            return [];
+        }
+
+        $headersLower = array_map('strtolower', array_map('trim', $headers));
+
+        $records = [];
+        while (($values = fgetcsv($fh)) !== false) {
+            if (count($values) !== count($headersLower)) {
+                continue;
+            }
+            $row       = array_combine($headersLower, $values);
+            $records[] = $this->parseCsvRow($row);
+        }
+
+        fclose($fh);
+
+        return $records;
+    }
+
+    private function parseCsvRow(array $row): array
+    {
+        $record = [];
+
+        // From: "Name <email>" or bare email address.
+        $from = trim($row['from'] ?? '');
+        if (preg_match('/^"?(.+?)"?\s*<([^>]+)>$/', $from, $m)) {
+            $record['from_name']    = trim($m[1], '"');
+            $record['from_address'] = trim($m[2]);
+        } else {
+            $record['from_address'] = $from;
+        }
+
+        $record['date']        = trim($row['date'] ?? '');
+        $record['subject']     = trim($row['subject'] ?? '');
+        $record['content']     = $row['body'] ?? '';
+
+        $to                    = trim($row['to'] ?? '');
+        $record['envelope_to'] = $to;
+        if ($to !== '' && str_contains($to, '@')) {
+            // Derive group_id from the local-part of the To address
+            // ("8444" from "8444@groups.ilovefreegle.org").
+            $record['group_id'] = explode('@', $to, 2)[0];
+        }
+
+        $postId            = trim($row['x-trash-nothing-post-id'] ?? '');
+        $record['post_id'] = $postId;
+        // Synthesize a Message-ID in the same format as GroupPostIngestionService so
+        // IncomingMailService appends the group-index suffix and both paths produce an
+        // identical messages.messageid value (e.g. "tn-test-103@tn.trashnothing.com-1").
+        if ($postId !== '') {
+            $record['message_id'] = $postId . '@tn.trashnothing.com';
+        }
+        $record['source']    = trim($row['x-trash-nothing-source'] ?? '');
+        $record['sender_ip'] = trim($row['x-trash-nothing-ip-hash'] ?? '');
+
+        $coords = trim($row['x-trash-nothing-post-coordinates'] ?? '');
+        if ($coords !== '' && str_contains($coords, ',')) {
+            [$lat, $lng] = explode(',', $coords, 2);
+            $lat = trim($lat);
+            $lng = trim($lng);
+            if ($lat !== '' && $lng !== '') {
+                $record['latitude']  = (float) $lat;
+                $record['longitude'] = (float) $lng;
+            }
+        }
+
+        // Inject the TN secret so IncomingMailService::shouldSkipSpamCheck() returns true.
+        // All CSV rows are confirmed TN posts; the original email always carried the secret.
+        $record['secret'] = (string) config('freegle.mail.trashnothing_secret', '');
+
+        return $record;
+    }
+
+    /**
+     * @return array{?string, ?string} Updated [minDate, maxDate].
+     */
+    private function processEmail(array $record, ?string $minDate, ?string $maxDate): array
     {
         $postId  = $record['post_id'] ?? '';
         $groupId = $record['group_id'] ?? '';
         $date    = $record['date'] ?? null;
 
-        if ($date && (!$maxDate || $date > $maxDate)) {
-            $maxDate = $date;
+        if ($date) {
+            if (!$minDate || $date < $minDate) {
+                $minDate = $date;
+            }
+            if (!$maxDate || $date > $maxDate) {
+                $maxDate = $date;
+            }
         }
 
         Log::info('TN-SYNC-TRACE [EMAIL] post_id=' . $postId . ' group_id=' . $groupId . ' date=' . $date . ' subject=' . substr((string) ($record['subject'] ?? ''), 0, 60));
@@ -153,7 +266,7 @@ class EmailReplaySyncer
             ]);
         }
 
-        return $maxDate;
+        return [$minDate, $maxDate];
     }
 
     /**

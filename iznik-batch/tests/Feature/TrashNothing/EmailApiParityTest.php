@@ -5,6 +5,7 @@ namespace Tests\Feature\TrashNothing;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\UserEmail;
+use App\Services\TrashNothing\Sync\EmailReplaySyncer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,10 +13,13 @@ use Tests\TestCase;
 
 /**
  * Runs the legacy email path (tn:replay-emails) and the new API path
- * (tn:sync --local-testing) over the same fixture data
- * (tests/fixtures/tn_sync/post_emails_page_1.json and posts_page_1.json,
- * which describe the same four posts) and checks their TN-SYNC-TRACE log
- * output lines up.
+ * (tn:sync --local-testing) over the same fixture data and checks their
+ * TN-SYNC-TRACE log output lines up.
+ *
+ * The email path loads tests/fixtures/tn_sync/fd_post_log.csv (four posts).
+ * The API path loads tests/fixtures/tn_sync/posts_page_1.json (the same
+ * four posts). The --from/--to window passed to tn:sync is derived from the
+ * min/max Date values in the CSV so both commands operate on the same range.
  *
  * Fixture data deliberately uses MODERATED members / an unmapped member /
  * a Big-Switch-moderated group — every post routes to "Pending" on both
@@ -26,15 +30,22 @@ use Tests\TestCase;
  * divergence pending resolution, not something this test should paper over
  * by asserting a false equivalence.
  *
- * Each command runs inside its own transaction that's rolled back
+ * Each command runs inside its own transaction that is rolled back
  * afterward, so the second command sees the same starting DB state as the
  * first rather than hitting postAlreadyExists()/duplicate-messageid
  * detection from the first command's writes.
  */
 class EmailApiParityTest extends TestCase
 {
-    private const FROM = '2026-07-01T00:00:00Z';
-    private const TO = '2026-07-15T00:00:00Z';
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // The CSV fixture has no secret column; EmailReplaySyncer injects the
+        // configured secret so IncomingMailService::shouldSkipSpamCheck() returns
+        // true (all CSV rows are real TN posts that originally carried the secret).
+        config(['freegle.mail.trashnothing_secret' => 'test-secret-12345']);
+    }
 
     public function test_email_replay_and_api_dry_run_produce_matching_write_traces(): void
     {
@@ -63,33 +74,35 @@ class EmailApiParityTest extends TestCase
         ]);
 
         $groupB = Group::firstOrCreate(['nameshort' => '8445'], [
-            'namefull'         => 'TN Parity Test Group B',
-            'type'             => Group::TYPE_FREEGLE,
-            'region'           => 'TestRegion',
-            'lat'              => 55.8642,
-            'lng'              => -4.2518,
-            'onhere'           => 1,
-            'publish'          => 1,
+            'namefull'           => 'TN Parity Test Group B',
+            'type'               => Group::TYPE_FREEGLE,
+            'region'             => 'TestRegion',
+            'lat'                => 55.8642,
+            'lng'                => -4.2518,
+            'onhere'             => 1,
+            'publish'            => 1,
             'overridemoderation' => 'ModerateAll',
         ]);
 
-        // Matches user_id/from_address in posts_page_1.json / post_emails_page_1.json.
+        // Matches user_id/from_address in posts_page_1.json / fd_post_log.csv.
         $this->seedTestUser(99010001, 'usera@user.trashnothing.com', $groupA->id, 'MODERATED', $locationId);
         $this->seedTestUser(99010002, 'userb@user.trashnothing.com', $groupA->id, 'DEFAULT', null);
         $this->seedTestUser(99010003, 'userc@user.trashnothing.com', $groupB->id, 'DEFAULT', $locationId);
 
+        // Derive the date window from the fixture CSV so both commands operate
+        // on the same range without hard-coding dates here.
+        [$from, $to] = $this->getFixtureDateRange();
+
         $emailLogLines = $this->captureTraceLogs(function () {
             $this->artisan('tn:replay-emails', [
-                '--from'          => self::FROM,
-                '--to'            => self::TO,
                 '--local-testing' => true,
             ])->assertExitCode(0);
         });
 
-        $apiLogLines = $this->captureTraceLogs(function () {
+        $apiLogLines = $this->captureTraceLogs(function () use ($from, $to) {
             $this->artisan('tn:sync', [
-                '--from'          => self::FROM,
-                '--to'            => self::TO,
+                '--from'          => $from,
+                '--to'            => $to,
                 '--local-testing' => true,
             ])->assertExitCode(0);
         });
@@ -107,6 +120,21 @@ class EmailApiParityTest extends TestCase
     }
 
     /**
+     * Read the fixture CSV and return [minDate, maxDate] from its Date column.
+     * These are passed as --from/--to to tn:sync so the API-path fixture window
+     * matches the emails being replayed.
+     *
+     * @return array{string|null, string|null}
+     */
+    private function getFixtureDateRange(): array
+    {
+        $path    = base_path('tests/fixtures/tn_sync/fd_post_log.csv');
+        $csvText = (string) file_get_contents($path);
+
+        return EmailReplaySyncer::extractDateRangeFromCsvText($csvText);
+    }
+
+    /**
      * Runs $callback inside a rolled-back transaction, capturing every
      * TN-SYNC-TRACE [WRITE]/[POST-RESULT]/[POST-SKIP] log line emitted
      * during it. Rolling back means the next call starts from the same
@@ -117,7 +145,7 @@ class EmailApiParityTest extends TestCase
      */
     private function captureTraceLogs(\Closure $callback): array
     {
-        $lines = [];
+        $lines    = [];
         $listener = function ($message) use (&$lines) {
             $text = (string) $message->message;
             // [WRITE] is restricted to `table=` (DB row writes) — tn:sync also emits a
@@ -165,10 +193,10 @@ class EmailApiParityTest extends TestCase
     private function seedTestUser(int $id, string $email, int $groupId, string $postingStatus, ?int $lastLocation): void
     {
         DB::table('users')->insert([
-            'id'         => $id,
-            'fullname'   => 'TN Parity Test User ' . $id,
-            'systemrole' => 'User',
-            'added'      => now(),
+            'id'           => $id,
+            'fullname'     => 'TN Parity Test User ' . $id,
+            'systemrole'   => 'User',
+            'added'        => now(),
             'lastlocation' => $lastLocation,
         ]);
 
