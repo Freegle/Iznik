@@ -14,18 +14,19 @@ return new class extends Migration
      * micro-volunteering challenge (removed across Go/PHP/front-end earlier in
      * this change set) and are no longer read or written by any code path.
      *
-     * NOT dropped, despite the original plan for this migration: words,
-     * words_cache, items_index and messages_index. Item::typeahead()/create()/
-     * delete() (iznik-server/include/message/Item.php, live behind the item API
-     * and the item-name-suggestion UI) and Message::search()/searchActiveInBounds()
-     * (iznik-server/include/message/Message.php, live behind the ModTools message
-     * search endpoint in http/api/messages.php) still query these tables via the
-     * Search class, and Message::repost()/autoRepost() (driven by the live
-     * AutoRepostService) still call Search::bump()/delete() against
-     * messages_index. Dropping them crashed fixture setup in CI (items_index)
-     * and would have broken those live features in production. Only the
-     * message-text keyword search has actually been replaced by vector
-     * embeddings so far; item search and auto-repost have not been migrated.
+     * NOT dropped here, deferred to a follow-up: words, words_cache, items_index
+     * and messages_index. These backed the V1 keyword search - Item::typeahead()/
+     * create()/delete() and Message::search()/searchActiveInBounds() (the
+     * iznik-server PHP tree), plus Search::bump()/delete() from auto-repost. That
+     * V1 PHP tree was removed wholesale on 2026-07-09 (commit c14a7125b, an
+     * ancestor of this branch), and the Laravel port does NOT maintain these
+     * indexes (AutoRepostService deliberately skips the Search::bump() side effect,
+     * per its own header comment), so NO live code reads or writes these four
+     * tables any more - they are already dead. They are left in place only because
+     * dropping them is a separate, larger migration, and items_index in particular
+     * is still referenced by test-fixtures.sql, so dropping it now would crash CI
+     * fixture setup until that fixture is updated too. A follow-on migration can
+     * drop these four now-dead tables.
      *
      * KEPT deliberately: search_history and users_searches (search analytics, still
      * used) and the damlevlim() stored function.

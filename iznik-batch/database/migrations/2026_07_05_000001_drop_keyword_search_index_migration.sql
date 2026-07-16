@@ -5,16 +5,15 @@
 -- micro-volunteering challenge) plus the legacy VW_search_term_similarities
 -- view. The matching code removals ship in the same change set.
 --
--- NOT dropped, despite the original plan for this migration: words,
--- words_cache, items_index and messages_index. Item::typeahead()/create()/
--- delete() (iznik-server/include/message/Item.php) and
--- Message::search()/searchActiveInBounds() (iznik-server/include/message/Message.php,
--- behind the live ModTools message search endpoint in http/api/messages.php)
--- still query these tables via the Search class, and
--- Message::repost()/autoRepost() (driven by the live AutoRepostService) still
--- call Search::bump()/delete() against messages_index. Only the message-text
--- keyword search has actually been replaced by vector embeddings so far; item
--- search and auto-repost have not been migrated.
+-- NOT dropped here, deferred to a follow-up: words, words_cache, items_index and
+-- messages_index. These backed the V1 keyword search (Item::typeahead/create/delete,
+-- Message::search/searchActiveInBounds, Search::bump/delete from auto-repost) in the
+-- iznik-server PHP tree, which was removed wholesale on 2026-07-09 (commit c14a7125b,
+-- an ancestor of this branch). The Laravel port does NOT maintain these indexes, so
+-- no live code reads or writes these four tables any more - they are already dead.
+-- They are left in place only because dropping them is a separate, larger migration,
+-- and items_index in particular is still referenced by test-fixtures.sql, so dropping
+-- it now would crash CI fixture setup until that fixture is updated too.
 --
 -- KEPT deliberately: search_history and users_searches (search analytics) and the
 -- damlevlim() stored function.
