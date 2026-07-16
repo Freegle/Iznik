@@ -69,8 +69,10 @@
            out over time. The distance slider above only narrows which of those
            already-reaching posts are shown - it isn't a manual travel-time control. -->
       <div v-if="browseView === 'nearby'" class="nearby-help">
-        <p class="help-text d-none d-md-block mt-0">
-          We show posts near you first, then gradually further away.
+        <p class="help-text mt-0">
+          <span class="d-none d-md-inline"
+            >We show posts near you first, then gradually further away.
+          </span>
           <a href="#" @click.prevent="whichPostsModal?.show()">
             How does this work?
           </a>
@@ -536,7 +538,9 @@ const hasNonDefaultFilters = computed(() => {
   }
 }
 
-// Help text - hidden on mobile
+// Help text - the intro sentence is hidden on mobile to save space (see the d-none d-md-inline
+// span in the template), but the "How does this work?" / "Change postcode" links inside it must
+// stay visible at every width - they're the only way to reach the rippling explainer (Discourse 9808).
 .help-text {
   font-size: 0.8rem;
   color: var(--color-gray-600);
