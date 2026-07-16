@@ -11,6 +11,7 @@
   <div
     v-observe-visibility="onVisibility"
     class="nearby-towns text-muted small mt-1"
+    :class="{ 'nearby-towns--wrap': bits.wrap }"
     aria-live="polite"
   >
     <span v-if="loading" class="pulsate">Finding nearby places…</span>
@@ -189,6 +190,17 @@ watch(
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* The "Closer than X" name wraps rather than clips (bits.wrap -> .nt-tail--wrap).
+     That case is breakpoint-agnostic (set from server data, not viewport), so at
+     >=768px the fixed single-line box above would clip the wrapped 2nd line
+     vertically with no ellipsis. Let the container grow to fit instead (Discourse
+     9808). Must follow the .nearby-towns rule to win at equal specificity. */
+  .nearby-towns--wrap {
+    height: auto;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
   .nt-lead,
   .nt-sep,
