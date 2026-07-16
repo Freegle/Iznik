@@ -611,6 +611,37 @@ class SpamCheckServiceTest extends TestCase
         $this->assertNull($service->checkMessage($email));
     }
 
+    public function test_check_message_skips_ip_checks_for_private_range_beyond_10_prefix(): void
+    {
+        // Regression test for Discourse topic 9865 post 11: "False 'foreign
+        // IP' warning on posts submitted by email". 172.20.0.1 is a
+        // Docker-internal relay/gateway address inside the RFC1918
+        // 172.16.0.0/12 private range - not covered by the old '10.'
+        // prefix-only internal-IP check, so it used to reach GeoIP and could
+        // be geolocated as a foreign country purely because it fell outside
+        // that narrow check.
+        DB::table('spam_countries')->insert(['country' => 'TestCountry']);
+
+        $service = $this->createServiceWithMockedGeoIP('TestCountry');
+
+        $email = $this->createParsedEmailForSpamTest([
+            'senderIp' => '172.20.0.1',
+        ]);
+
+        $this->assertNull($service->checkMessage($email));
+    }
+
+    public function test_is_private_or_reserved_ip(): void
+    {
+        foreach (['10.0.0.1', '172.16.0.1', '172.20.0.1', '172.31.255.255', '192.168.1.1', '127.0.0.1', '169.254.1.1', 'not-an-ip', ''] as $ip) {
+            $this->assertTrue($this->service->isPrivateOrReservedIP($ip), "{$ip} should be treated as private/reserved");
+        }
+
+        foreach (['8.8.8.8', '1.2.3.4'] as $ip) {
+            $this->assertFalse($this->service->isPrivateOrReservedIP($ip), "{$ip} should be treated as a public address");
+        }
+    }
+
     public function test_check_message_for_chat_reply_skips_subject_reuse(): void
     {
         // A common post subject like "Washing Machine" legitimately appears on many

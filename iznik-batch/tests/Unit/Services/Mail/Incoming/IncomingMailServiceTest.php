@@ -1652,6 +1652,59 @@ class IncomingMailServiceTest extends TestCase
         $this->assertStringContainsString('score', $message->spamreason);
     }
 
+    public function test_private_relay_ip_does_not_populate_fromcountry(): void
+    {
+        // Regression test for Discourse topic 9865 post 11: "False 'foreign
+        // IP' warning on posts submitted by email". The only IP in the mail
+        // headers was 172.20.0.1, a Docker-internal relay/gateway address
+        // inside the RFC1918 172.16.0.0/12 private range. A private/reserved
+        // address can never indicate where the real sender is, so it must
+        // never be geolocated into messages.fromcountry - the field that
+        // drives the ModTools "posted from outside the UK" warning in
+        // MessageHistory.vue.
+        //
+        // The mocked GeoIP lookup below returns a non-UK country for ANY ip,
+        // so this test fails loudly if the private-IP guard is missing or
+        // broken, rather than passing by luck because the real bundled mmdb
+        // also happens to reject the address.
+        $spamCheck = new class extends \App\Services\Mail\Incoming\SpamCheckService
+        {
+            protected function readGeoIPCountry(string $ip): ?\GeoIp2\Record\Country
+            {
+                return new \GeoIp2\Record\Country(['iso_code' => 'DE', 'names' => ['en' => 'Germany']]);
+            }
+        };
+        $this->service = new IncomingMailService(spamCheck: $spamCheck);
+
+        [$user, $group, $userEmail] = $this->createPostableUser();
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'Subject' => 'OFFER: Test item (London)',
+            'X-Freegle-IP' => '172.20.0.1',
+        ], 'Normal body text');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'@groups.ilovefreegle.org'
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertContains($result, [RoutingResult::APPROVED, RoutingResult::PENDING]);
+
+        $message = DB::table('messages')
+            ->where('fromuser', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($message, 'Message should be created in database');
+        $this->assertEquals('172.20.0.1', $message->fromip);
+        $this->assertNull($message->fromcountry, 'A private/reserved sender IP must never be geolocated to a country');
+    }
+
     public function test_routing_context_includes_spam_info(): void
     {
         $group = $this->createTestGroup();

@@ -144,8 +144,10 @@ class SpamCheckService
         $fromTN = $email->isFromTrashNothing();
 
         if ($ip && ! $fromTN) {
-            // Skip internal IPs
-            if (str_starts_with($ip, '10.')) {
+            // Skip private/reserved IPs (e.g. an internal relay hop address) -
+            // they can never indicate the sender's real location, so must
+            // never reach GeoIP country blocking.
+            if ($this->isPrivateOrReservedIP($ip)) {
                 $ip = null;
             } else {
                 // Check IP whitelist
@@ -376,6 +378,20 @@ class SpamCheckService
         return DB::table('spam_whitelist_ips')
             ->where('ip', $ip)
             ->exists();
+    }
+
+    /**
+     * Check whether an IP is a private (RFC1918), loopback, link-local, or
+     * otherwise reserved address - e.g. an internal relay/gateway hop rather
+     * than a genuine public sender IP. Such addresses can never indicate
+     * where a sender really is, so must never be fed to GeoIP: the GeoLite2
+     * database doesn't cover them, and treating a lookup failure as "unknown
+     * country" rather than actively excluding them beforehand is a fragile,
+     * implicit contract to rely on for a country-based warning/block.
+     */
+    public function isPrivateOrReservedIP(string $ip): bool
+    {
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
     }
 
     /**

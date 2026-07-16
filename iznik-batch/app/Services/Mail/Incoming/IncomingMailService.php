@@ -2834,6 +2834,16 @@ class IncomingMailService
             // Strip TN pic links from textbody
             $cleanedTextBody = $this->stripTnPicLinks($email->textBody);
 
+            // Geolocate the sender IP so ModTools can flag posts from outside
+            // the UK (MessageHistory.vue). V1 (Message.php/Spam.php) stored
+            // the ISO code here; store NULL when it can't be resolved. A
+            // private/reserved IP (e.g. an internal relay hop) is never
+            // geolocated - it can't indicate the sender's real location, and
+            // doing so risks a false "posted from outside the UK" warning.
+            $fromCountry = ($email->senderIp && ! $this->spamCheck->isPrivateOrReservedIP($email->senderIp))
+                ? $this->spamCheck->lookupIPCountryCode($email->senderIp)
+                : null;
+
             // Create the message record
             $message = Message::create([
                 'date' => now(),
@@ -2847,10 +2857,7 @@ class IncomingMailService
                 'fromaddr' => $email->fromAddress,
                 'replyto' => $email->getHeader('Reply-To'),
                 'fromip' => $email->senderIp,
-                // Geolocate the sender IP so ModTools can flag posts from
-                // outside the UK (MessageHistory.vue). V1 (Message.php/Spam.php)
-                // stored the ISO code here; store NULL when it can't be resolved.
-                'fromcountry' => $email->senderIp ? $this->spamCheck->lookupIPCountryCode($email->senderIp) : null,
+                'fromcountry' => $fromCountry,
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,
