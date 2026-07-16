@@ -7,7 +7,7 @@
   >
     <template #default>
       <div class="text-center">
-        <v-icon icon="star" class="pgf-icon" />
+        <v-icon icon="heart" class="pgf-icon" />
       </div>
       <p>
         Thanks for donating with PayPal! You can make it even easier to help
@@ -22,8 +22,8 @@
       </p>
       <p class="mb-0">
         When you tap <strong>Yes please</strong> we'll open PayPal Giving Fund
-        in a new tab. Just use the button there to set Freegle as your favourite
-        charity, and you're done.
+        in a new tab. Just click the <strong>heart icon</strong> to set Freegle
+        as your favourite charity, and you're done.
       </p>
     </template>
     <template #footer>
@@ -47,7 +47,7 @@ const { modal, hide } = useOurModal()
 
 <style scoped lang="scss">
 .pgf-icon {
-  color: $color-gold;
+  color: $color-red;
   font-size: 2.5rem;
   margin-bottom: 0.5rem;
 }

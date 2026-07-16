@@ -54,10 +54,12 @@ describe('PayPalGivingFundModal', () => {
       expect(wrapper.text().toLowerCase()).toContain('favourite')
     })
 
-    it('pre-warns the member how to set the favourite', () => {
+    it('pre-warns the member to click the heart icon to set the favourite', () => {
       const wrapper = createWrapper()
-      // Should tell them what to do once PayPal opens.
-      expect(wrapper.text().toLowerCase()).toContain('set freegle')
+      // Tell them exactly what to do once PayPal opens: click the heart icon.
+      const text = wrapper.text().toLowerCase()
+      expect(text).toContain('set freegle')
+      expect(text).toContain('heart icon')
     })
 
     it('renders a No thanks button', () => {
