@@ -332,15 +332,16 @@ func TestStoreLoadReadsSubjectAndBodyColumns(t *testing.T) {
 	subjectBytes := vecToBytes(subject)
 	bodyBytes := vecToBytes(body)
 
-	e, err := decodeEntry(42, 100, "Offer", 51.5, -0.1, "OFFER: Thing", time.Now(), subjectBytes, bodyBytes)
+	e, err := decodeEntry(42, 7, 100, "Offer", 51.5, -0.1, "OFFER: Thing", time.Now(), subjectBytes, bodyBytes)
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(42), e.Msgid)
+	assert.Equal(t, uint64(7), e.Fromuser)
 	assert.Equal(t, subject, e.SubjectVec)
 	assert.NotNil(t, e.BodyVec)
 	assert.Equal(t, body, *e.BodyVec)
 
 	// NULL body → BodyVec nil
-	e2, err := decodeEntry(43, 100, "Offer", 51.5, -0.1, "OFFER: Bare", time.Now(), subjectBytes, nil)
+	e2, err := decodeEntry(43, 7, 100, "Offer", 51.5, -0.1, "OFFER: Bare", time.Now(), subjectBytes, nil)
 	assert.NoError(t, err)
 	assert.Nil(t, e2.BodyVec)
 }

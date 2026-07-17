@@ -16,6 +16,7 @@ const EmbeddingDim = 256
 // Entry holds one message's subject (and optional body) embedding plus metadata.
 type Entry struct {
 	Msgid      uint64
+	Fromuser   uint64
 	Groupid    uint64
 	Msgtype    string
 	Lat        float64
@@ -55,6 +56,7 @@ func StartRefresh(interval time.Duration) {
 // embeddingRow mirrors the columns fetched by fetchEntries.
 type embeddingRow struct {
 	Msgid            uint64    `gorm:"column:msgid"`
+	Fromuser         uint64    `gorm:"column:fromuser"`
 	SubjectEmbedding []byte    `gorm:"column:subject_embedding"`
 	BodyEmbedding    []byte    `gorm:"column:body_embedding"`
 	Groupid          uint64    `gorm:"column:groupid"`
@@ -76,7 +78,7 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 
 	var rows []embeddingRow
 	query := `
-		SELECT me.msgid, me.subject_embedding, me.body_embedding,
+		SELECT me.msgid, m.fromuser, me.subject_embedding, me.body_embedding,
 		       ms.groupid, ms.msgtype,
 		       ST_Y(ms.point) as lat, ST_X(ms.point) as lng,
 		       m.subject, ms.arrival
@@ -91,7 +93,7 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 
 	entries := make([]Entry, 0, len(rows))
 	for _, r := range rows {
-		e, err := decodeEntry(r.Msgid, r.Groupid, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
+		e, err := decodeEntry(r.Msgid, r.Fromuser, r.Groupid, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
 		if err != nil {
 			continue // wrong-sized subject blob: skip
 		}
@@ -195,19 +197,20 @@ func (s *Store) Refresh() error {
 // decodeEntry builds an Entry from raw DB columns. Subject embedding is
 // required and must match EmbeddingDim; body embedding is optional and
 // silently skipped if the wrong size.
-func decodeEntry(msgid, groupid uint64, msgtype string, lat, lng float64, subject string, arrival time.Time, subjectBytes, bodyBytes []byte) (Entry, error) {
+func decodeEntry(msgid, fromuser, groupid uint64, msgtype string, lat, lng float64, subject string, arrival time.Time, subjectBytes, bodyBytes []byte) (Entry, error) {
 	if len(subjectBytes) != EmbeddingDim*4 {
 		return Entry{}, fmt.Errorf("subject embedding wrong size: %d", len(subjectBytes))
 	}
 
 	e := Entry{
-		Msgid:   msgid,
-		Groupid: groupid,
-		Msgtype: msgtype,
-		Lat:     lat,
-		Lng:     lng,
-		Subject: subject,
-		Arrival: arrival,
+		Msgid:    msgid,
+		Fromuser: fromuser,
+		Groupid:  groupid,
+		Msgtype:  msgtype,
+		Lat:      lat,
+		Lng:      lng,
+		Subject:  subject,
+		Arrival:  arrival,
 	}
 
 	decodeFloats(subjectBytes, e.SubjectVec[:])
@@ -229,12 +232,39 @@ func decodeFloats(raw []byte, dst []float32) {
 	}
 }
 
+// DecodeVector decodes a raw subject/body embedding BLOB (EmbeddingDim
+// little-endian float32s) into a slice. Used by callers that read an embedding
+// straight from the DB (e.g. the similar-posts endpoint when the source message
+// is not in the in-memory store).
+func DecodeVector(raw []byte) ([]float32, error) {
+	if len(raw) != EmbeddingDim*4 {
+		return nil, fmt.Errorf("embedding wrong size: %d", len(raw))
+	}
+	vec := make([]float32, EmbeddingDim)
+	decodeFloats(raw, vec)
+	return vec, nil
+}
+
+// FindByMsgid returns a copy of the store entry for msgid, and whether it was
+// found. Used to reuse an already-loaded message's embedding without a DB read.
+func (s *Store) FindByMsgid(msgid uint64) (Entry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.entries {
+		if s.entries[i].Msgid == msgid {
+			return s.entries[i], true
+		}
+	}
+	return Entry{}, false
+}
+
 // VectorSearchResult from vector search. SubjectCos and BodyCos are the pure
 // per-field cosines; HasBody distinguishes "body exists but cosine is 0" from
 // "no body embedding" (BodyCos is 0 in both cases). The caller decides how to
 // tier/order results — this struct carries the raw signal.
 type VectorSearchResult struct {
 	Msgid      uint64    `json:"id"`
+	Fromuser   uint64    `json:"-"` // Used to exclude a post's own author from similar results
 	Groupid    uint64    `json:"groupid"`
 	Msgtype    string    `json:"type"`
 	Lat        float64   `json:"lat"`
@@ -342,6 +372,7 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 		e := &s.entries[r.idx]
 		out[i] = VectorSearchResult{
 			Msgid:      e.Msgid,
+			Fromuser:   e.Fromuser,
 			Groupid:    e.Groupid,
 			Msgtype:    e.Msgtype,
 			Lat:        e.Lat,

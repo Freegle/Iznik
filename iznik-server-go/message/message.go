@@ -918,26 +918,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// be reach-eligible if ANY of them is within the post's reach. Extending this to
 		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
-		if latlng.Lat != 0 || latlng.Lng != 0 {
-			var reachBlocked []struct {
-				Msgid uint64 `gorm:"column:msgid"`
-			}
-			// Ignore the error: until the reach engine (PR A) is deployed the
-			// rippling_reach table may not exist, in which case nothing is reach-blocked.
-			if err := db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
-				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error; err == nil {
-				for _, b := range reachBlocked {
-					blockedSet[b.Msgid] = true
-				}
-				if n := len(reachBlocked); n > 0 {
-					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
-					// can't reply to yet). Best-effort — errors ignored so it never affects the
-					// response.
-					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
-						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
-				}
-			}
+		reachBlocked := ReachBlockedSet(ids, float64(latlng.Lat), float64(latlng.Lng))
+		for msgid := range reachBlocked {
+			blockedSet[msgid] = true
+		}
+		if n := len(reachBlocked); n > 0 {
+			// Q5 (§15): count reply-blocked-by-reach events (one per post the member
+			// can't reply to yet). Best-effort — errors ignored so it never affects the
+			// response.
+			db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
+				"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
 		}
 
 		// Banned-blocked: the viewer is banned from every group the post is on. Only run
