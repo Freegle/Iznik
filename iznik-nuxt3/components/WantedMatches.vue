@@ -5,7 +5,7 @@
   <section v-if="!dismissed && ids.length" class="wanted-matches">
     <div class="wanted-matches__head">
       <h3 class="wanted-matches__heading">
-        Good news - people are offering these near you right now
+        People are offering these near you right now
       </h3>
       <b-button
         variant="link"
@@ -18,7 +18,20 @@
     </div>
     <div class="wanted-matches__row">
       <div v-for="mid in ids" :key="mid" class="wanted-matches__item">
-        <MessageSummary :id="mid" @expand="openInNewTab(mid)" />
+        <MessageSummary :id="mid" @expand="openInNewTab(mid)">
+          <template #footer>
+            <div class="wanted-matches__actions">
+              <b-button
+                variant="primary"
+                size="sm"
+                class="wanted-matches__view"
+                @click.stop="openInNewTab(mid)"
+              >
+                View post
+              </b-button>
+            </div>
+          </template>
+        </MessageSummary>
       </div>
     </div>
   </section>
@@ -127,6 +140,7 @@ function openInNewTab(mid) {
 
 .wanted-matches__row {
   display: flex;
+  align-items: stretch;
   gap: 0.75rem;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
@@ -138,6 +152,22 @@ function openInNewTab(mid) {
   flex: 0 0 auto;
   width: 15rem;
   scroll-snap-align: start;
+  // Stack the card and its "View post" button, and let the card grow so every
+  // card is the same height (the row stretches items to the tallest) with the
+  // button pinned to the bottom of each.
+  display: flex;
+  flex-direction: column;
+
+  // The card fills the item (rows stretch items to the tallest), and the text
+  // area grows so the "View post" button pins to the bottom — giving every card
+  // the same height with the button on the same line across the row.
+  :deep(.message-summary-mobile) {
+    flex: 1 1 auto;
+  }
+
+  :deep(.content-section) {
+    flex: 1 1 auto;
+  }
 
   @include media-breakpoint-down(sm) {
     width: 72vw;
@@ -181,5 +211,17 @@ function openInNewTab(mid) {
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+}
+
+// The footer slot sits inside the card; centre the button and let it size to its
+// label rather than stretch full width.
+.wanted-matches__actions {
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0.5rem 0.75rem;
+}
+
+.wanted-matches__view {
+  flex: 0 0 auto;
 }
 </style>

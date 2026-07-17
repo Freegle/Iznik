@@ -58,7 +58,7 @@ describe('WantedMatches', () => {
     mockMatches.mockResolvedValue([])
     const wrapper = mountWM()
     await flushPromises()
-    expect(wrapper.text()).not.toContain('Good news')
+    expect(wrapper.text()).not.toContain('offering these near you')
     expect(wrapper.findAll('.msg-summary')).toHaveLength(0)
     expect(mockMarkSeen).not.toHaveBeenCalled()
   })
@@ -68,7 +68,7 @@ describe('WantedMatches', () => {
     const wrapper = mountWM()
     await flushPromises()
     expect(mockMatches).toHaveBeenCalledWith('sofa', 51.5, -0.1, 6)
-    expect(wrapper.text()).toContain('Good news')
+    expect(wrapper.text()).toContain('offering these near you')
     expect(wrapper.findAll('.msg-summary')).toHaveLength(2)
   })
 
@@ -96,9 +96,9 @@ describe('WantedMatches', () => {
     mockMatches.mockResolvedValue([{ id: 1 }, { id: 2 }])
     const wrapper = mountWM()
     await flushPromises()
-    expect(wrapper.text()).toContain('Good news')
+    expect(wrapper.text()).toContain('offering these near you')
     await wrapper.find('.btn').trigger('click')
-    expect(wrapper.text()).not.toContain('Good news')
+    expect(wrapper.text()).not.toContain('offering these near you')
   })
 
   it('does not fetch without a location', async () => {
