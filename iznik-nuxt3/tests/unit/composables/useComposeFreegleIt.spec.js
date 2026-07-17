@@ -94,3 +94,52 @@ describe('freegleIt conversion events', () => {
     expect(mockTrackConversion).not.toHaveBeenCalled()
   })
 })
+
+// myposts identifies what you just posted from the ids in history state - that's
+// how it knows to show the matching-offers panel after a WANTED. ids used to be
+// populated for Offers only, so the panel could never appear for a real post;
+// the component test passed because it stubbed a state the app never produced.
+describe('freegleIt posted ids in history state', () => {
+  beforeEach(() => {
+    mockTrackConversion.mockReset()
+    globalThis.__mockAuthStore = {
+      user: null,
+      login: vi.fn().mockResolvedValue(undefined),
+      saveAndGet: vi.fn().mockResolvedValue(undefined),
+    }
+    mockSubmitResults = () => Promise.resolve([{ id: 123, groupid: null }])
+  })
+
+  it.each(['Offer', 'Wanted'])(
+    'passes the posted ids to myposts for a %s',
+    async (type) => {
+      const router = makeRouter()
+
+      await freegleIt(type, router)
+
+      expect(router.push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'myposts',
+          state: expect.objectContaining({ ids: [123], type }),
+        })
+      )
+    }
+  )
+
+  it('passes every posted id when several messages are submitted', async () => {
+    mockSubmitResults = () =>
+      Promise.resolve([
+        { id: 123, groupid: null },
+        { id: 456, groupid: null },
+      ])
+    const router = makeRouter()
+
+    await freegleIt('Wanted', router)
+
+    expect(router.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({ ids: [123, 456] }),
+      })
+    )
+  })
+})

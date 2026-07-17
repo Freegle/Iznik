@@ -142,5 +142,44 @@ function openInNewTab(mid) {
   @include media-breakpoint-down(sm) {
     width: 72vw;
   }
+
+  // MessageSummary is viewport-responsive, not container-responsive: at lg+ it
+  // switches to a horizontal list-row layout (a fixed 200px square photo with the
+  // text beside it) which assumes a full-width row. In a 15rem tile that leaves
+  // ~40px for the text, so subject, location and description all collapse to zero
+  // width and the card renders as a bare photo. Keep the vertical tile layout it
+  // already uses at md, at every width.
+  @include media-breakpoint-up(lg) {
+    :deep(.message-summary-mobile) {
+      flex-direction: column;
+      max-height: none;
+    }
+
+    :deep(.photo-area) {
+      width: 100%;
+      height: 0;
+      padding-bottom: 75%;
+    }
+  }
+
+  // The header puts the type tag beside the title, which costs ~70px of a tile's
+  // width. Stack it above so the title gets the full width.
+  :deep(.content-header) {
+    grid-template-columns: 1fr;
+  }
+
+  :deep(.content-tag) {
+    justify-self: start;
+  }
+
+  // A single-line ellipsis suits a full-width row, but in a tile it clips the
+  // subject to a word or two. Let it wrap to two lines instead.
+  :deep(.content-subject) {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 }
 </style>
