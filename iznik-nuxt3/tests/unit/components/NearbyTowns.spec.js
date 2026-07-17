@@ -81,4 +81,37 @@ describe('NearbyTowns', () => {
     expect(tail.text()).toBe('e.g. Preston, Lancaster, Blackpool')
     expect(tail.classes()).not.toContain('nt-tail--wrap')
   })
+
+  it('applies .nearby-towns--wrap to the container so the wrapped name is not vertically clipped at >=768px (Discourse 9808)', async () => {
+    mockFetchNear.mockResolvedValue({
+      towns: [],
+      closer_than: 'Sutton-under-Whitestonecliffe',
+      frontier_median_miles: null,
+      frontier_max_miles: null,
+    })
+    const wrapper = mountVisible()
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+
+    // The tail wraps (nt-tail--wrap); the container must also drop its fixed
+    // single-line height at >=768px (nearby-towns--wrap) or the wrapped 2nd line
+    // is clipped. happy-dom has no layout engine, so this only pins the class
+    // wiring; the visual no-clip at >=768px is covered by the e2e test.
+    expect(wrapper.find('.nt-tail').classes()).toContain('nt-tail--wrap')
+    expect(wrapper.find('.nearby-towns').classes()).toContain('nearby-towns--wrap')
+  })
+
+  it('does not apply .nearby-towns--wrap when towns are within reach (no-wrap case)', async () => {
+    mockFetchNear.mockResolvedValue({
+      towns: ['Preston', 'Lancaster'],
+      closer_than: '',
+      frontier_median_miles: 5,
+      frontier_max_miles: 8,
+    })
+    const wrapper = mountVisible()
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+
+    expect(wrapper.find('.nearby-towns').classes()).not.toContain('nearby-towns--wrap')
+  })
 })
