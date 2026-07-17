@@ -126,8 +126,9 @@ func TestMatchesReachFilter(t *testing.T) {
 	defer embedding.Global.SetEntries(nil)
 
 	db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", inID, outID)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding')", outID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", inID, outID)
 
 	// The poster's location (51.5,-0.1) is outside outID's reach polygon → outID blocked.

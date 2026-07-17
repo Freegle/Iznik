@@ -151,8 +151,9 @@ func TestSimilarReachFiltered(t *testing.T) {
 	// outReachID's reach polygon is far from the viewer's (51.5, -0.1) → blocked.
 	// inReachID has NO reach row → fail-open (kept).
 	db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", srcID, inReachID, outReachID)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding')", outReachID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outReachID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", srcID, inReachID, outReachID)
 
 	// Authenticated viewer: reach filter applies.
