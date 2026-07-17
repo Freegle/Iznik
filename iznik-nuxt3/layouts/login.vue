@@ -22,6 +22,7 @@ import { useAuthStore } from '~/stores/auth'
 import LayoutCommon from '~/components/LayoutCommon'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useMiscStore } from '~/stores/misc'
+import { bootSession } from '~/composables/useBootSession'
 import { ref, computed, watch } from '#imports'
 const GoogleOneTap = defineAsyncComponent(() =>
   import('~/components/GoogleOneTap')
@@ -80,22 +81,13 @@ function googleLoaded() {
   }
 }
 
-const jwt = authStore.auth.jwt
-const persistent = authStore.auth.persistent
+// Resolve the login state exactly once per cold start - if the default layout
+// already fetched the session moments ago (/ → /browse swap), this returns
+// immediately instead of repeating GET /session.
+const user = await bootSession()
 
-if (jwt || persistent) {
-  // We have some credentials, which may or may not be valid on the server.
-  let user = null
-
-  try {
-    user = await authStore.fetchUser()
-  } catch (e) {
-    console.log('Error fetching user', e)
-  }
-
-  if (user) {
-    ready.value = true
-  }
+if (user) {
+  ready.value = true
 }
 
 if (!ready.value && !mobileStore.isApp) {
