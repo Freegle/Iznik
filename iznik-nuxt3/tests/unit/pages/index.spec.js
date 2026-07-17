@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent, Suspense, h, nextTick } from 'vue'
+import { defineComponent, Suspense, h, nextTick, reactive } from 'vue'
 
 import IndexPage from '~/pages/index.vue'
 
@@ -81,13 +81,16 @@ function mountPage() {
 }
 
 function setAuth(overrides = {}) {
-  globalThis.__mockAuthStore = {
+  // reactive so the page's watch on [me, loginStateKnown] responds to
+  // changes, as it does against the real Pinia store.
+  globalThis.__mockAuthStore = reactive({
     groups: [],
     user: null,
     auth: { jwt: null, persistent: null },
     loginStateKnown: false,
     ...overrides,
-  }
+  })
+  return globalThis.__mockAuthStore
 }
 
 function setAppBuild(isApp) {
@@ -125,8 +128,10 @@ describe('pages/index boot data cascade', () => {
     expect(mockFetchInBounds).not.toHaveBeenCalled()
   })
 
-  it('app build logged out renders immediately and fetches after mount', async () => {
+  it('app build logged out renders immediately and fetches without blocking', async () => {
     setAppBuild(true)
+    // Boot resolved as logged out.
+    setAuth({ loginStateKnown: true })
     // Landing fetches hang forever - the page must still render.
     mockGroupFetch.mockReturnValue(new Promise(() => {}))
 
@@ -137,8 +142,57 @@ describe('pages/index boot data cascade', () => {
     // Page rendered despite the pending fetch → fetch is not blocking paint.
     expect(wrapper.find('.landing-page').exists()).toBe(true)
 
-    // And the fetch was kicked off (after mount).
+    // And the fetch was kicked off.
     expect(mockGroupFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('app build waits for the boot session to resolve before fetching or redirecting', async () => {
+    setAppBuild(true)
+    const auth = setAuth() // loginStateKnown false - boot still in flight
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    // Nothing decided yet: renders, but no fetch.
+    expect(wrapper.find('.landing-page').exists()).toBe(true)
+    expect(mockGroupFetch).not.toHaveBeenCalled()
+
+    // Boot resolves as logged out → landing fetch fires exactly once.
+    auth.loginStateKnown = true
+    await nextTick()
+    await flushPromises()
+
+    expect(mockGroupFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('app build redirects when the boot session resolves as logged in', async () => {
+    setAppBuild(true)
+    const auth = setAuth()
+    const push = vi.fn()
+    globalThis.__testUseRouter = () => ({
+      push,
+      replace: vi.fn(),
+      currentRoute: { value: { path: '/' } },
+    })
+
+    try {
+      mountPage()
+      await flushPromises()
+      expect(push).not.toHaveBeenCalled()
+
+      // Boot resolves as logged in - user must be bounced home, not left on
+      // the landing page (me was null at mount time under non-blocking boot).
+      auth.user = { id: 9 }
+      auth.loginStateKnown = true
+      await nextTick()
+      await flushPromises()
+      await nextTick()
+
+      expect(push).toHaveBeenCalledWith('/browse')
+      expect(mockGroupFetch).not.toHaveBeenCalled()
+    } finally {
+      delete globalThis.__testUseRouter
+    }
   })
 
   it('web build (client) keeps the blocking prefetch', async () => {

@@ -114,6 +114,7 @@ import ProxyImage from '~/components/ProxyImage.vue'
 import {
   computed,
   ref,
+  watch,
   onMounted,
   onBeforeUnmount,
   nextTick,
@@ -186,27 +187,41 @@ async function fetchLandingData() {
 const authStore = useAuthStore()
 const isAppBuild = !!runtimeConfig.public.ISAPP
 
+// Computed properties
+const me = computed(() => authStore?.user)
+
 if (!isAppBuild || import.meta.server) {
   // Web build: unchanged blocking prefetch (server render and the matching
   // client hydration pass).
   await fetchLandingData()
 } else {
-  // App build: never block first paint on these three round trips. By
-  // onMounted the root Suspense has resolved, so the layout's session fetch
-  // has finished and we know whether we're really logged in: logged-in users
-  // are redirected to /browse by goHome() and never see this data, so only
-  // fetch it when we ended up logged out.
-  onMounted(() => {
-    if (!me.value) {
-      fetchLandingData().catch((e) => {
-        console.log('Landing data fetch failed', e?.message)
-      })
-    }
-  })
-}
+  // App build: never block first paint on these three round trips. The boot
+  // session now resolves in the BACKGROUND (layouts no longer await it), so
+  // we can't decide at mount time - react to the login state instead, once:
+  // logged-in users bounce home and never see this data; logged-out ones get
+  // the landing fetch. The boot's safety timeout guarantees loginStateKnown
+  // flips even if the API hangs.
+  let bootHandled = false
+  const stopBootWatch = watch(
+    [me, () => authStore.loginStateKnown],
+    ([newMe, known]) => {
+      if (!known || bootHandled) return
+      bootHandled = true
 
-// Computed properties
-const me = computed(() => authStore?.user)
+      if (newMe) {
+        goHome()
+      } else {
+        fetchLandingData().catch((e) => {
+          console.log('Landing data fetch failed', e?.message)
+        })
+      }
+
+      // Can't call stop inside the immediate invocation (TDZ); defer it.
+      nextTick(() => stopBootWatch?.())
+    },
+    { immediate: true }
+  )
+}
 
 const isApp = ref(mobileStore.isApp) // APP
 

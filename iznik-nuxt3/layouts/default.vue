@@ -12,10 +12,10 @@
 <script setup>
 import { useMiscStore } from '~/stores/misc'
 import LayoutCommon from '~/components/LayoutCommon'
-import { ref } from '#imports'
+import { ref, useRuntimeConfig } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMobileStore } from '@/stores/mobile' // APP
-import { bootSession } from '~/composables/useBootSession'
+import { bootSession, bootSessionDeferred } from '~/composables/useBootSession'
 const GoogleOneTap = defineAsyncComponent(() =>
   import('~/components/GoogleOneTap')
 )
@@ -23,7 +23,6 @@ const LoginModal = defineAsyncComponent(() => import('~/components/LoginModal'))
 
 const mobileStore = useMobileStore()
 
-let ready = false
 const oneTap = ref(false)
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
@@ -57,19 +56,41 @@ watch(
   }
 )
 
-// For this layout we don't need to be logged in.  So can just continue.  But we want to know first whether or
-// not we are logged in.  bootSession() resolves that exactly once per cold
-// start (and doesn't repeat the fetch when another layout just did it).
-const user = await bootSession()
+// For this layout we don't need to be logged in.  So can just continue.
+// bootSession() resolves the login state exactly once per cold start (and
+// doesn't repeat the fetch when another layout just did it).
+//
+// In the APP build (ssr:false) we deliberately do NOT await: first paint used
+// to be blocked on this network round trip under the root Suspense
+// (multi-second white screen; stuck forever if the API hung).  The shell
+// renders immediately and the existing loginStateKnown/bump watcher above
+// re-renders when the session resolves - the same reveal mechanism this
+// layout has always used for the logged-out → logged-in flip.
+// bootSessionDeferred adds a safety timeout so a hung API proceeds as logged
+// out.
+//
+// On the WEB we keep the await, on the server (no stored credentials, so no
+// network call) and during client hydration alike: the server-rendered HTML
+// is already painted while hydration runs, so blocking here costs no white
+// screen - and an interactive page whose session is still unresolved opens
+// real races (login modal intercepting clicks, session-gated buttons
+// disabled), which Playwright caught when this was tried web-wide.
+const runtimeConfig = useRuntimeConfig()
 
-if (user) {
-  ready = true
-}
-
-if (!ready && !mobileStore.isApp) {
-  // APP
-  // We don't have a valid JWT.  See if OneTap can sign us in.
-  oneTap.value = true
+if (import.meta.server || !runtimeConfig.public.ISAPP) {
+  await bootSession()
+  if (!authStore.user && !mobileStore.isApp) {
+    // We don't have a valid JWT.  See if OneTap can sign us in.
+    oneTap.value = true
+  }
+} else {
+  bootSessionDeferred().then(({ user }) => {
+    if (!user && !mobileStore.isApp) {
+      // APP build without a valid JWT - OneTap isn't used in the app, but
+      // keep the same logic shape for layer consumers.
+      oneTap.value = true
+    }
+  })
 }
 
 function googleLoggedIn() {

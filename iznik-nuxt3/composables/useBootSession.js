@@ -7,6 +7,12 @@ import { fetchMe } from '~/composables/useMe'
 // must not repeat the GET /session the first one just did.
 export const BOOT_SESSION_FRESH_MS = 30_000
 
+// How long the deferred boot waits for the session before letting the UI
+// proceed as logged out. Same safety-timeout idea as pages/marketing-optout
+// (commit 51615e57): a hung login API must never strand the user on a
+// skeleton.
+export const BOOT_SESSION_TIMEOUT_MS = 10_000
+
 // Shared boot gate for layouts/default.vue and layouts/login.vue.
 //
 // Resolves the login state exactly once per cold start: if we have stored
@@ -58,4 +64,32 @@ export async function bootSession() {
   }
 
   return authStore.user
+}
+
+// Non-blocking boot for client layouts: starts bootSession() and resolves
+// with { user, timedOut } when the session resolves or after timeoutMs,
+// whichever is first. On timeout, loginStateKnown is forced true so anything
+// gated on it (login modal, OneTap) proceeds as logged out; the underlying
+// fetch keeps going, and a late success re-renders via the existing
+// loginStateKnown/bump watchers.
+//
+// Do NOT await this at the top level of a layout's script setup - the whole
+// point is that first paint no longer waits for the network.
+export function bootSessionDeferred(timeoutMs = BOOT_SESSION_TIMEOUT_MS) {
+  const authStore = useAuthStore()
+  let timer = null
+
+  const boot = bootSession().then((user) => ({ user, timedOut: false }))
+
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      if (!authStore.loginStateKnown) {
+        console.log('Session boot timed out - proceeding as logged out')
+        authStore.loginStateKnown = true
+      }
+      resolve({ user: authStore.user, timedOut: true })
+    }, timeoutMs)
+  })
+
+  return Promise.race([boot, timeout]).finally(() => clearTimeout(timer))
 }
