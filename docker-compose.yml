@@ -466,7 +466,7 @@ services:
   # dev / CI. Heap kept small (512m) as this box is shared. ES 7.10.2 matches the CirrusSearch
   # REL1_43 that the (bind-mounted 1.43) wiki core runs.
   wiki-elastic:
-    image: elasticsearch:7.10.2
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.2
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-elastic
     profiles:
       - edge
