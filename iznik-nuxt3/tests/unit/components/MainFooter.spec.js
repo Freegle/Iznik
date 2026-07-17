@@ -84,6 +84,13 @@ describe('MainFooter', () => {
       expect(link.attributes('href')).toBe('/about')
     })
 
+    it('has Compare link', () => {
+      const wrapper = createWrapper()
+      const link = wrapper.find('.test-footer-compare')
+      expect(link.exists()).toBe(true)
+      expect(link.attributes('href')).toBe('/compare')
+    })
+
     it('has Terms link', () => {
       const wrapper = createWrapper()
       const link = wrapper.find('.test-footer-terms')
@@ -114,7 +121,7 @@ describe('MainFooter', () => {
 
     it('shows navigation dividers', () => {
       const wrapper = createWrapper()
-      expect(wrapper.findAll('.nav-divider').length).toBe(5)
+      expect(wrapper.findAll('.nav-divider').length).toBe(6)
     })
   })
 })
