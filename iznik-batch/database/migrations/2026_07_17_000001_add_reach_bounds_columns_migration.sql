@@ -1,0 +1,35 @@
+-- Production runbook for 2026_07_17_000001_add_reach_bounds_columns.php
+--
+-- DO NOT run the Laravel migration's ALTERs directly on production: the NOT NULL
+-- conversion and SPATIAL index build rebuild the ~10 GB rippling_reach tablespace, and
+-- on Galera every DDL runs TOI — the whole cluster blocks writes for the rebuild.
+-- (Verified on Percona 8.0.43: ALGORITHM=INSTANT is refused for both the NOT NULL
+-- geometry column and any index add; only the plain nullable ADD COLUMN is INSTANT.)
+--
+-- Production path: pt-osc-style shadow copy, run from the batch host:
+--
+--     php artisan ripple:migrate-reach-bounds-schema           # dry-run report
+--     php artisan ripple:migrate-reach-bounds-schema --execute # do it
+--
+-- What the command does (see MigrateReachBoundsSchemaCommand.php):
+--   1. Preflight: refuses if the ripple crons are running (quiesce: comment out
+--      ripple:expand / ripple:rebuild-reach in the scheduler or set RIPPLE_ENABLED=false
+--      and wait for the current tick to finish). Reply/clip writes may continue — they
+--      are caught by the delta pass.
+--   2. Creates rippling_reach_shadow with the FULL target schema (bounds columns
+--      NOT NULL + SPATIAL INDEX rippling_reach_outer) — empty, so index build is free.
+--   3. Chunked INSERT..SELECT copy (500 rows/chunk, paced, resumable), deriving
+--      outer/inner per row with the sentinel ladder:
+--      real bounds > ST_Envelope > degenerate POINT (completed posts get POINT so the
+--      new R-tree prunes them from day one).
+--   4. Delta pass: re-copies rows whose updated_at changed after the copy started
+--      (catches the rare Go clip/status writes during the copy).
+--   5. Atomic swap: RENAME TABLE rippling_reach TO rippling_reach_old,
+--      rippling_reach_shadow TO rippling_reach. (No inbound FKs reference
+--      rippling_reach, so the rename is clean; its own FK to messages is recreated on
+--      the shadow at step 2.)
+--   6. Post-verify (row counts, sandwich validity sample); rippling_reach_old is kept
+--      for manual DROP once satisfied.
+--
+-- Then re-enable the ripple crons and restart the Go API (its schema check is
+-- process-cached).

@@ -49,19 +49,19 @@ func TestNearbyReachFeed(t *testing.T) {
 
 	// 'near': small reach polygon centred on the viewer -> post origin == viewer, so
 	// distance ≈ 0 and the closeness term is ≈ 1 (highest possible).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
 	// 'far': reach polygon is well away (~53N, 2E) and does NOT cover the viewer -> excluded.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 53.0, 2.0, "+
-		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 53.0, 2.0, "+
+		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
 	// 'midfar': a much bigger reach polygon whose origin (51.9,-0.1, ~44km from the viewer) is
 	// still far from the viewer, but the polygon is large enough to also cover the viewer -> the
 	// post IS in reach, but its origin is much less close than 'near's, so its closeness (and
 	// hence total) score must be lower.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", midfar)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
@@ -147,13 +147,13 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 
 	// 'near': origin == viewer -> blurred distance is a small fraction of a mile (BLUR_USER is
 	// only 400m).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
 	// 'far': origin ~44km (~27 miles) from the viewer, but its (large) reach polygon still
 	// covers the viewer, so it IS in the reach set -> counted when there's no distance limit.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
 
 	// No limit: both unseen reach-covered posts are counted (the sentinel/absent default).
@@ -217,11 +217,11 @@ func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
 
 	// 'near' reach polygon covers the viewer; 'far' is ~27 miles away but its large reach
 	// polygon still covers the viewer, so both are in the reach set.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
 
 	inFeed := func(url string) map[float64]bool {
@@ -284,8 +284,8 @@ func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Reach polygon covers the viewer so the post is on the nearby feed.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", msg)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
@@ -332,11 +332,11 @@ func TestNearbyReachFeedExcludesHeld(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Both reach polygons cover the viewer - only the status differs.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", live)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'held') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
@@ -385,11 +385,11 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// Both reach polygons cover the viewer; 'near' is at the viewer (~0mi), 'far' is ~27mi away.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", near)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.9, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.9, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 52.0, -0.3 52.0, -0.3 51.3))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", far)
 
 	inFeed := func(url string) map[float64]bool {

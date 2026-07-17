@@ -585,17 +585,19 @@ class MessageSpatialServiceTest extends TestCase
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1,
                      ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+                     ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)),
                      ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, now()->subDays(2)]
         );
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
-                        ST_GeomFromText('POLYGON((-0.18 51.42,-0.02 51.42,-0.02 51.58,-0.18 51.58,-0.18 51.42))', 3857))",
+            "UPDATE rippling_reach
+                SET outer_bound = ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
+                    inner_bound = ST_GeomFromText('POLYGON((-0.18 51.42,-0.02 51.42,-0.02 51.58,-0.18 51.58,-0.18 51.42))', 3857)
+              WHERE msgid = ?",
             [$message->id]
         );
 
@@ -625,10 +627,10 @@ class MessageSpatialServiceTest extends TestCase
         );
         $row = DB::selectOne(
             'SELECT ST_GeometryType(outer_bound) AS outer_type, inner_bound IS NULL AS inner_null
-               FROM rippling_reach_bounds WHERE msgid = ?',
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
-        $this->assertNotNull($row, 'bounds row survives completion (degraded, not deleted)');
+        $this->assertNotNull($row, 'the reach row survives completion (bounds degraded, polygon intact)');
         $this->assertSame('POINT', $row->outer_type, 'outer bound degrades to a degenerate point');
         $this->assertSame(1, (int) $row->inner_null, 'inner bound is cleared');
         $this->assertSame(
@@ -650,7 +652,7 @@ class MessageSpatialServiceTest extends TestCase
         $this->service->updateSpatialIndex();
         $this->assertSame(
             'POINT',
-            DB::selectOne('SELECT ST_GeometryType(outer_bound) AS t FROM rippling_reach_bounds WHERE msgid = ?', [$msgid])->t
+            DB::selectOne('SELECT ST_GeometryType(outer_bound) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
         );
 
         // …then reopened.
@@ -663,12 +665,10 @@ class MessageSpatialServiceTest extends TestCase
             'the spatial row is back in the browsable set'
         );
         $check = DB::selectOne(
-            'SELECT ST_GeometryType(b.outer_bound) AS outer_type,
-                    ST_Contains(b.outer_bound, rr.polygon) AS o,
-                    (b.inner_bound IS NULL OR ST_Contains(rr.polygon, b.inner_bound)) AS i
-               FROM rippling_reach_bounds b
-               JOIN rippling_reach rr ON rr.msgid = b.msgid
-              WHERE b.msgid = ?',
+            'SELECT ST_GeometryType(outer_bound) AS outer_type,
+                    ST_Contains(outer_bound, polygon) AS o,
+                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
         $this->assertNotNull($check);

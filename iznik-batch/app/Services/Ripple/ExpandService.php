@@ -27,12 +27,53 @@ class ExpandService
     /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
     private const BLUR_USER = 400;
 
-    /** Maintains the sandwich-bounds sibling table alongside every polygon write. */
+    /** Maintains the sandwich-bounds columns alongside every polygon write. */
     private ReachBoundsService $bounds;
 
     public function __construct(private ReachService $reach, ?ReachBoundsService $bounds = null)
     {
         $this->bounds = $bounds ?? new ReachBoundsService();
+    }
+
+    /**
+     * SET-clause fragment (+ its params) deriving the sandwich bounds from the SAME
+     * polygon WKT being written, so polygon and bounds land in ONE statement — no
+     * timing window in which a new polygon has stale bounds. Empty pre-migration.
+     *
+     * @return array{0:string,1:array<int,string>}
+     */
+    private function boundsSetSql(string $storeWkt): array
+    {
+        if (!$this->bounds->ready()) {
+            return ['', []];
+        }
+        $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+
+        return [
+            ', outer_bound = ' . ReachBoundsService::outerExpr($poly)
+            . ', inner_bound = ' . ReachBoundsService::innerExpr($poly),
+            [$storeWkt, $storeWkt],
+        ];
+    }
+
+    /**
+     * As boundsSetSql, but the envelope fallback for polygons whose derivation THROWS
+     * (~94% of production polygons are technically invalid): the MBR still finds the
+     * row, the exact polygon decides. Never a degenerate POINT for an open post — that
+     * would prune it from the browse R-tree.
+     *
+     * @return array{0:string,1:array<int,string>}
+     */
+    private function boundsEnvelopeSql(string $storeWkt): array
+    {
+        if (!$this->bounds->ready()) {
+            return ['', []];
+        }
+
+        return [
+            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
+            [$storeWkt],
+        ];
     }
 
     /**
@@ -185,26 +226,37 @@ class ExpandService
 
             // `updated_at = updated_at` preserves the timestamp (suppresses the ON
             // UPDATE auto-bump) so the reach mailer never reconsiders this row.
-            DB::statement(
-                'UPDATE rippling_reach
-                    SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+            // Polygon + derived bounds in ONE statement; envelope retry on throw.
+            [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
+            $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
+                    SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
                         schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?,
                         updated_at = updated_at
-                  WHERE msgid = ?',
-                [
-                    $storeWkt,
-                    json_encode($ticks),
-                    json_encode($this->tickReachableIds($entry, $schedule)),
-                    (int) $schedule['total_freeglers'],
-                    $schedule['max_drive_min'],
-                    $row->msgid,
-                ]
-            );
-            // Preserve any secondary-group "out of area" rejection clips.
+                  WHERE msgid = ?';
+            $shrinkTail = [
+                json_encode($ticks),
+                json_encode($this->tickReachableIds($entry, $schedule)),
+                (int) $schedule['total_freeglers'],
+                $schedule['max_drive_min'],
+                $row->msgid,
+            ];
+            try {
+                DB::statement($shrinkSql($boundsSet), array_merge([$storeWkt], $boundsParams, $shrinkTail));
+            } catch (\Throwable $e) {
+                if ($boundsSet === '') {
+                    throw $e;
+                }
+                [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
+                DB::statement($shrinkSql($envSet), array_merge([$storeWkt], $envParams, $shrinkTail));
+            }
+            // Preserve any secondary-group "out of area" rejection clips (the clip
+            // statement shrinks polygon and NULLs inner_bound atomically).
             $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-            // Sandwich bounds: prefer the routing server's (verified against the FINAL,
-            // post-clip polygon), else derive from it in SQL.
-            $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+            // Routing-provided bounds upgrade the columns after the clips, verified
+            // against the FINAL stored polygon.
+            if ($tickGeom['outer'] !== null) {
+                $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+            }
 
             $stats['shrunk']++;
             $this->logEvent((int) $row->msgid, 'reach_shrunk', (int) $row->tick, $entry);
@@ -809,33 +861,57 @@ class ExpandService
                     // Upsert, not plain INSERT: the anti-join guarantees no existing row so this
                     // behaves exactly like INSERT, while staying safe against a concurrent run
                     // seeding the same msgid (created_at is preserved - not in the SET).
-                    DB::statement(
-                        'INSERT INTO rippling_reach
-                           (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
+                    // Polygon + derived bounds land in the SAME statement (outer_bound is
+                    // NOT NULL, and there must never be a window with stale/absent bounds);
+                    // envelope retry if derivation throws on pathological geometry.
+                    $ready = $this->bounds->ready();
+                    $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $poly): string {
+                        $cols = $ready ? ', outer_bound, inner_bound' : '';
+                        $vals = $ready ? ", $outerExpr, $innerExpr" : '';
+                        $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
+
+                        return 'INSERT INTO rippling_reach
+                           (msgid, lat, lng, polygon' . $cols . ', arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
                             next_expansion_at, status, created_at, updated_at)
-                         VALUES (?, ?, ?, ST_GeomFromText(?, ' . self::SRID . '), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                         VALUES (?, ?, ?, ' . $poly . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
-                            lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon),
+                            lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon)' . $dup . ',
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
                             reachable_group_ids = VALUES(reachable_group_ids),
                             next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
-                            updated_at = NOW()',
-                        [
-                            $row->msgid, $lat, $lng, $storeWkt, $arrival,
-                            $this->reach->mode(), $tick, $total,
-                            $schedule['total_freeglers'], $schedule['max_drive_min'],
-                            json_encode($schedule['ticks']),
-                            json_encode($this->tickReachableIds($entry, $schedule)),
-                            $next, $status,
-                        ]
-                    );
-                    // New reach row → its sandwich bounds (no clips can exist yet: the
-                    // anti-join guarantees this is the row's first write). Routing-provided
-                    // when the slim schedule fetched a catchment, else derived in SQL.
-                    $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+                            updated_at = NOW()';
+                    };
+                    $initTail = [
+                        $arrival, $this->reach->mode(), $tick, $total,
+                        $schedule['total_freeglers'], $schedule['max_drive_min'],
+                        json_encode($schedule['ticks']),
+                        json_encode($this->tickReachableIds($entry, $schedule)),
+                        $next, $status,
+                    ];
+                    $initHead = [$row->msgid, $lat, $lng, $storeWkt];
+                    try {
+                        DB::statement(
+                            $initSql(ReachBoundsService::outerExpr($poly), ReachBoundsService::innerExpr($poly)),
+                            array_merge($initHead, $ready ? [$storeWkt, $storeWkt] : [], $initTail)
+                        );
+                    } catch (\Throwable $e) {
+                        if (!$ready) {
+                            throw $e; // same failure the legacy statement would have had
+                        }
+                        DB::statement(
+                            $initSql('ST_Envelope(' . $poly . ')', 'NULL'),
+                            array_merge($initHead, [$storeWkt], $initTail)
+                        );
+                    }
+                    // Routing-provided bounds (tighter than derived) upgrade the columns,
+                    // verified against the stored polygon.
+                    if ($tickGeom['outer'] !== null) {
+                        $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+                    }
                     $this->rippleIntoNewGroups(
                         (int) $row->msgid, $storeWkt, $stats,
                         $this->tickReachableIdsOrNull($entry, $schedule)
@@ -958,22 +1034,34 @@ class ExpandService
                     }
                     $tickWkt = $tickGeom['wkt'];
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
-                    DB::statement(
-                        'UPDATE rippling_reach
-                         SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                    // Polygon + derived bounds in ONE statement (no stale-bounds window);
+                    // envelope retry if the derivation throws on pathological geometry.
+                    [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
+                    $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
+                         SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
-                         WHERE msgid = ?',
-                        [$storeWkt, $this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid]
-                    );
+                         WHERE msgid = ?';
+                    $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
+                    try {
+                        DB::statement($advanceSql($boundsSet), array_merge([$storeWkt], $boundsParams, $advanceTail));
+                    } catch (\Throwable $e) {
+                        if ($boundsSet === '') {
+                            throw $e; // same failure the legacy statement would have had
+                        }
+                        [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
+                        DB::statement($advanceSql($envSet), array_merge([$storeWkt], $envParams, $advanceTail));
+                    }
                     // The polygon was just overwritten from the cached schedule, which does NOT
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
+                    // (The clip statement shrinks polygon and NULLs inner_bound atomically.)
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                    // Sandwich bounds against the FINAL polygon, after the clips — a pre-clip
-                    // inner bound would cheap-accept viewers in the rejected area (sync()
-                    // verifies provided bounds against the stored polygon for that reason).
-                    $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+                    // Routing-provided bounds (tighter than the derived ones) upgrade the
+                    // columns AFTER the clips, verified against the FINAL stored polygon.
+                    if ($tickGeom['outer'] !== null) {
+                        $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+                    }
                     // Targeting ids for THIS tick: prefer the stored slim schedule's
                     // per-tick set (exact for this drive-time); fall back to the cached
                     // column (schedules stored before per-tick ids existed).
@@ -1643,26 +1731,37 @@ class ExpandService
                 }
 
                 $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
-                DB::statement(
-                    'UPDATE rippling_reach
-                        SET polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                // Polygon + derived bounds in ONE statement; envelope retry on throw.
+                [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
+                $backfillSql = fn (string $set): string => 'UPDATE rippling_reach
+                        SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
                             schedule = ?, reachable_group_ids = ?,
                             total_freeglers = ?, max_drive_min = ?,
                             updated_at = updated_at
-                      WHERE msgid = ?',
-                    [
-                        $storeWkt,
-                        json_encode($ticks),
-                        json_encode($ids),
-                        (int) $schedule['total_freeglers'],
-                        $schedule['max_drive_min'],
-                        $row->msgid,
-                    ]
-                );
-                // Secondary "out of area" rejection clips must survive the rewrite.
+                      WHERE msgid = ?';
+                $backfillTail = [
+                    json_encode($ticks),
+                    json_encode($ids),
+                    (int) $schedule['total_freeglers'],
+                    $schedule['max_drive_min'],
+                    $row->msgid,
+                ];
+                try {
+                    DB::statement($backfillSql($boundsSet), array_merge([$storeWkt], $boundsParams, $backfillTail));
+                } catch (\Throwable $e) {
+                    if ($boundsSet === '') {
+                        throw $e;
+                    }
+                    [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
+                    DB::statement($backfillSql($envSet), array_merge([$storeWkt], $envParams, $backfillTail));
+                }
+                // Secondary "out of area" rejection clips must survive the rewrite
+                // (the clip statement shrinks polygon and NULLs inner_bound atomically).
                 $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
-                // Sandwich bounds against the FINAL polygon, after the clips.
-                $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+                // Routing-provided bounds upgrade the columns after the clips.
+                if ($tickGeom['outer'] !== null) {
+                    $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
+                }
                 // Retract copies (and their ripple-only memberships) the new reach no
                 // longer covers - polygon-based always, ids-based when the gate is on.
                 $this->retractOutOfReachCopies((int) $row->msgid, false, $stats);
@@ -1760,10 +1859,14 @@ class ExpandService
         if (!is_array($gids) || empty($gids)) {
             return;
         }
+        // The polygon SHRINKS here: a stale inner bound could cheap-accept viewers in
+        // the clipped-out area, so it is NULLed in the SAME statement. The outer bound
+        // is left stale-loose (safe — the MBR/exact tests still decide correctly).
+        $innerClear = $this->bounds->ready() ? ', mr.inner_bound = NULL' : '';
         foreach ($gids as $gid) {
             DB::statement(
                 'UPDATE rippling_reach mr JOIN `groups` g ON g.id = ?
-                 SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)
+                 SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)' . $innerClear . '
                  WHERE mr.msgid = ? AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> \'POINT\'
                    AND ST_Intersects(mr.polygon, g.polyindex)

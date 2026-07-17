@@ -932,7 +932,6 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				expr, exprArgs := rippling.ReachInReachExpr(float64(latlng.Lng), float64(latlng.Lat), utils.SRID)
 				args := append([]interface{}{ids}, exprArgs...)
 				probeErr = db.Raw("SELECT rr.msgid FROM rippling_reach rr "+
-					rippling.ReachBoundsJoin+
 					"WHERE rr.msgid IN (?) AND NOT "+expr, args...).Scan(&reachBlocked).Error
 			} else {
 				probeErr = db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
@@ -2278,18 +2277,19 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 
 	// Trim where the reach extends beyond the rejected group (skip the wholly-within
 	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
+	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
+	// viewers inside the clipped-out area, so it is NULLed in the SAME statement. The
+	// outer bound is left stale-loose (safe) and the next expander tick re-derives both.
+	innerClear := ""
+	if rippling.ReachBoundsReady(db) {
+		innerClear = ", mr.inner_bound = NULL"
+	}
 	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+
-		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) "+
+		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)"+innerClear+" "+
 		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 		"AND ST_Intersects(mr.polygon, g.polyindex) "+
 		"AND NOT ST_Within(mr.polygon, g.polyindex)", gid, msgid)
-
-	// The polygon just SHRANK: a stale sandwich inner bound could keep cheap-accepting
-	// viewers inside the clipped-out area, so clear it synchronously. The outer bound is
-	// merely stale-loose (safe) and the next expander tick re-derives both. Best-effort
-	// like everything else here — the bounds table may not exist yet.
-	db.Exec("UPDATE rippling_reach_bounds SET inner_bound = NULL WHERE msgid = ?", msgid)
 
 	// Reach wholly inside the rejected group → no area remains: drop the reach row.
 	db.Exec("DELETE mr FROM rippling_reach mr JOIN `groups` g ON g.id = ? "+

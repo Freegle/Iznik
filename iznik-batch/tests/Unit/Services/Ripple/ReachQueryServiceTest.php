@@ -34,10 +34,10 @@ class ReachQueryServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::POLY, self::POLY]
         );
 
         return (int) $message->id;
@@ -75,11 +75,9 @@ class ReachQueryServiceTest extends TestCase
     private function seedBounds(int $msgid, string $outerWkt, ?string $innerWkt): void
     {
         DB::statement(
-            'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText(?, 3857), '
-                . ($innerWkt !== null ? 'ST_GeomFromText(?, 3857)' : 'NULL') . ')
-             ON DUPLICATE KEY UPDATE outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)',
-            $innerWkt !== null ? [$msgid, $outerWkt, $innerWkt] : [$msgid, $outerWkt]
+            'UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = '
+                . ($innerWkt !== null ? 'ST_GeomFromText(?, 3857)' : 'NULL') . ' WHERE msgid = ?',
+            $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
         );
     }
 
@@ -131,8 +129,8 @@ class ReachQueryServiceTest extends TestCase
         // exact polygon decides, so held-reply release for a taken post still works.
         $degraded = $this->seedReach();
         DB::statement(
-            'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), NULL)',
+            'UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), inner_bound = NULL
+              WHERE msgid = ?',
             [$degraded]
         );
         $this->assertTrue(

@@ -159,7 +159,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
 	// Visibility is unaffected: the WHERE below still tests containment on the FULL polygon
 	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
-	boundsJoin, reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
+	reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
 	args := []interface{}{
 		utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
 		myid, utils.MESSAGE_LIKES_VIEW,
@@ -183,7 +183,6 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			// users au = the post AUTHOR, for the outbound distance cap below.
 			"INNER JOIN users au ON au.id = m.fromuser "+
 			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
-			boundsJoin+
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 "+
 			unseenFilter+
@@ -686,7 +685,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
 		// Viewer sets no inbound limit, but the OUTBOUND author cap still applies (and must match
 		// the feed), so join the author and add authorReachCapWhere here too.
-		boundsJoin, reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
+		reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
 		args := []interface{}{myid, utils.MESSAGE_LIKES_VIEW}
 		args = append(args, pointArgs...)
 		args = append(args, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
@@ -696,7 +695,6 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			"INNER JOIN messages m ON m.id = ms.msgid "+
 			"INNER JOIN users au ON au.id = m.fromuser "+
 			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
-			boundsJoin+
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
 			reachWhere+

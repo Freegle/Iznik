@@ -1250,8 +1250,8 @@ class UnifiedDigestServiceTest extends TestCase
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($cheapReject->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText('POLYGON((5 5,5.1 5,5.1 5.1,5 5.1,5 5))', 3857), NULL)",
+            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText('POLYGON((5 5,5.1 5,5.1 5.1,5 5.1,5 5))', 3857),
+                    inner_bound = NULL WHERE msgid = ?",
             [$cheapReject->id]
         );
 
@@ -1261,9 +1261,10 @@ class UnifiedDigestServiceTest extends TestCase
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($cheapAccept->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
-                        ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857))",
+            "UPDATE rippling_reach
+                SET outer_bound = ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
+                    inner_bound = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)
+              WHERE msgid = ?",
             [$cheapAccept->id]
         );
 
@@ -1299,9 +1300,8 @@ class UnifiedDigestServiceTest extends TestCase
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($bandIn->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText(?, 3857), NULL)",
-            [$bandIn->id, $outerWkt]
+            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?",
+            [$outerWkt, $bandIn->id]
         );
 
         // Band post whose exact polygon does NOT cover the member → excluded.
@@ -1310,9 +1310,8 @@ class UnifiedDigestServiceTest extends TestCase
             ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
         $this->seedReach($bandOut->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText(?, 3857), NULL)",
-            [$bandOut->id, $outerWkt]
+            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?",
+            [$outerWkt, $bandOut->id]
         );
 
         $tracker = UserDigest::create([
@@ -1349,8 +1348,8 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_outcomes')->insert(['msgid' => $taken->id, 'outcome' => Message::OUTCOME_TAKEN]);
         // Degraded bounds, as completion pruning writes them.
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), NULL)",
+            "UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), inner_bound = NULL
+              WHERE msgid = ?",
             [$taken->id]
         );
 
@@ -1409,10 +1408,10 @@ class UnifiedDigestServiceTest extends TestCase
     protected function seedReach(int $msgid, string $wkt): void
     {
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$msgid, $wkt]
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$msgid, $wkt, $wkt]
         );
     }
 
@@ -2521,10 +2520,10 @@ class UnifiedDigestServiceTest extends TestCase
         ]);
         // Reach polygon (status 'expanding', just updated) covering the member's location.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
 
         return [$message, $member];

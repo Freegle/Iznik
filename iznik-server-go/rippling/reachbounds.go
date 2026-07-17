@@ -8,35 +8,35 @@ import (
 
 // Shared sandwich-bounds SQL for the reach containment tests
 // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md). rippling_reach.polygon averages
-// ~11k vertices / 178 KB, so every reach consumer — browse (package isochrone), the
-// message-list replyeligible probe (package message), the chat reply hold (package chat)
-// — consults the small verified bounds in rippling_reach_bounds first: outside
-// outer_bound is an authoritative reject, inside inner_bound an authoritative accept,
-// and only the band between them touches the exact polygon, via a correlated EXISTS
-// (measured MySQL executor behaviour: lazy BLOB fetch does not cross OR items, so any
-// direct reference to the polygon in an OR arm would fetch it for every evaluated row).
+// ~11k vertices / 178 KB; the bounds live as SAME-ROW columns (outer_bound NOT NULL and
+// spatially indexed, inner_bound nullable), written in the same statement as the polygon
+// so no timing window can exist between them.
+//
+// Sentinel ladder for outer_bound, which every consumer here relies on:
+//
+//	real bound   — cheap reject/accept work; browse drives its R-tree from it
+//	ST_Envelope  — derivation failed: the MBR still finds the row, the exact
+//	               polygon decides (correct, just less pruning)
+//	POINT        — completed posts ONLY: pruned from the browse R-tree entirely;
+//	               consumers that still serve completed posts (digest came-and-went,
+//	               held replies) treat POINT as "no bounds info" and use the exact test
+//
+// The exact polygon is referenced ONLY inside correlated EXISTS arms (measured MySQL
+// executor behaviour: lazy BLOB fetch does not cross OR items, so a direct reference
+// in an OR arm would fetch it for every evaluated row).
 //
 // This lives in package rippling because it is imported by chat, message AND isochrone
 // without cycles (isochrone imports message, so neither of those can host it).
-//
-// The join skips DEGRADED bounds (outer collapsed to a POINT when a post completes):
-// they mean "stop matching cheaply in browse", and consumers that still serve completed
-// posts (digest came-and-went, held replies to taken posts) must fall back to the exact
-// polygon for them. A missing bounds row falls back to the exact polygon, so every
-// rollout state is correct.
-
-// ReachBoundsJoin pairs each reach row (alias rr required) with its non-degraded
-// sandwich bounds (alias b).
-const ReachBoundsJoin = "LEFT JOIN rippling_reach_bounds b ON b.msgid = rr.msgid AND ST_GeometryType(b.outer_bound) <> 'POINT' "
 
 // ReachInReachExpr returns a boolean SQL expression — true when rr's reach contains the
-// point — plus its args. Requires ReachBoundsJoin in the query. The exact polygon is
-// referenced ONLY inside correlated EXISTS arms. Consumes FOUR (lng, lat, srid) triples.
+// point — for consumers that may serve COMPLETED posts (single-point gates): a POINT
+// outer falls back to the exact polygon rather than rejecting. Consumes FOUR
+// (lng, lat, srid) triples.
 func ReachInReachExpr(lng, lat float64, srid int) (string, []interface{}) {
-	expr := "((b.msgid IS NOT NULL AND ST_Contains(b.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
-		"AND (COALESCE(ST_Contains(b.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 " +
+	expr := "((ST_GeometryType(rr.outer_bound) <> 'POINT' AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+		"AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 " +
 		"OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))))) " +
-		"OR (b.msgid IS NULL AND EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))))"
+		"OR (ST_GeometryType(rr.outer_bound) = 'POINT' AND EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))))"
 	args := make([]interface{}, 0, 12)
 	for i := 0; i < 4; i++ {
 		args = append(args, lng, lat, srid)
@@ -44,17 +44,34 @@ func ReachInReachExpr(lng, lat float64, srid int) (string, []interface{}) {
 	return expr, args
 }
 
+// ReachBrowseWhere returns the browse-feed containment conjuncts (leading "AND ..."):
+// the R-tree is DRIVEN from the small outer_bound index — the design's target shape —
+// so degraded (POINT) bounds of completed posts are pruned by the index itself and no
+// POINT special-case is needed (browse additionally filters ms.successful = 0).
+// Consumes FOUR (lng, lat, srid) triples.
+func ReachBrowseWhere(lng, lat float64, srid int) (string, []interface{}) {
+	where := "AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+		"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+		"AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 " +
+		"OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) "
+	args := make([]interface{}, 0, 12)
+	for i := 0; i < 4; i++ {
+		args = append(args, lng, lat, srid)
+	}
+	return where, args
+}
+
 var reachBoundsOnce sync.Once
 var reachBoundsExists bool
 
-// ReachBoundsReady reports whether the rippling_reach_bounds table has been migrated.
-// Checked once per process (like chat's AttributionSchemaReady): deploying this code
-// before the migration keeps the legacy exact-polygon queries; restart the Go API after
-// running the migration to pick the sandwich up.
+// ReachBoundsReady reports whether the sandwich-bounds columns have been migrated onto
+// rippling_reach. Checked once per process (like chat's AttributionSchemaReady):
+// deploying this code before the migration keeps the legacy exact-polygon queries;
+// restart the Go API after the schema migration to pick the sandwich up.
 func ReachBoundsReady(db *gorm.DB) bool {
 	reachBoundsOnce.Do(func() {
 		var n int
-		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_bounds'").Scan(&n)
+		db.Raw("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'outer_bound'").Scan(&n)
 		reachBoundsExists = n > 0
 	})
 	return reachBoundsExists

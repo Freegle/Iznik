@@ -18,20 +18,20 @@ class ReachQueryService
 {
     private const SRID = 3857;
 
-    /** Memoized: whether the sandwich-bounds table exists (pre-migration deploys fall back). */
-    private static ?bool $boundsTableExists = null;
+    /** Memoized: whether the sandwich-bounds columns exist (pre-migration deploys fall back). */
+    private static ?bool $boundsColumnsExist = null;
 
     private function boundsAvailable(): bool
     {
-        if (self::$boundsTableExists === null) {
+        if (self::$boundsColumnsExist === null) {
             try {
-                self::$boundsTableExists = Schema::hasTable('rippling_reach_bounds');
+                self::$boundsColumnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
             } catch (\Throwable) {
-                self::$boundsTableExists = false;
+                self::$boundsColumnsExist = false;
             }
         }
 
-        return self::$boundsTableExists;
+        return self::$boundsColumnsExist;
     }
 
     /**
@@ -53,14 +53,13 @@ class ReachQueryService
                 $row = DB::selectOne(
                     "SELECT EXISTS(
                         SELECT 1 FROM rippling_reach rr
-                        LEFT JOIN rippling_reach_bounds b ON b.msgid = rr.msgid
-                            AND ST_GeometryType(b.outer_bound) <> 'POINT'
                         WHERE rr.msgid = ?
-                          AND ((b.msgid IS NOT NULL AND ST_Contains(b.outer_bound, $point)
-                                AND (COALESCE(ST_Contains(b.inner_bound, $point), 0) = 1
+                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
+                                AND ST_Contains(rr.outer_bound, $point)
+                                AND (COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 1
                                      OR EXISTS (SELECT 1 FROM rippling_reach r2
                                          WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
-                               OR (b.msgid IS NULL
+                               OR (ST_GeometryType(rr.outer_bound) = 'POINT'
                                    AND EXISTS (SELECT 1 FROM rippling_reach r2
                                        WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
                      ) AS within",

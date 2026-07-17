@@ -28,7 +28,6 @@ import (
 // TestReplyEligibleSandwichBounds: the message-list reach probe (replyeligible).
 func TestReplyEligibleSandwichBounds(t *testing.T) {
 	db := database.DBConn
-	ensureReachBoundsTable()
 
 	prefix := uniquePrefix("spbre")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
@@ -52,7 +51,7 @@ func TestReplyEligibleSandwichBounds(t *testing.T) {
 	// Cheap reject: polygon COVERS the viewer, but outer_bound excludes them — the
 	// bounds are authoritative, so the post reads as not-yet-reached (view-only).
 	insertReachPolygon(mid, coversViewerWkt)
-	insertBounds(mid, farAwayWkt, nil)
+	setBounds(mid, farAwayWkt, nil)
 	if e := eligibility(); assert.NotNil(t, e, "outside outer_bound → replyeligible set") {
 		assert.False(t, *e, "a viewer outside outer_bound is reach-blocked without testing the polygon")
 	}
@@ -60,19 +59,18 @@ func TestReplyEligibleSandwichBounds(t *testing.T) {
 	// Cheap accept: polygon does NOT cover the viewer, but inner_bound does.
 	inner := coversViewerWkt
 	insertReachPolygon(mid, missesViewerWkt)
-	insertBounds(mid, bigCoversViewerWkt, &inner)
+	setBounds(mid, bigCoversViewerWkt, &inner)
 	assert.Nil(t, eligibility(), "a viewer inside inner_bound is eligible without testing the polygon")
 
-	// Degraded bounds (completion pruning) are treated as ABSENT: the exact polygon
-	// decides, so a viewer inside the polygon stays eligible.
+	// Degraded bounds (completion pruning) are treated as ABSENT by the single-point
+	// gates: the exact polygon decides, so a viewer inside the polygon stays eligible.
 	insertReachPolygon(mid, coversViewerWkt)
-	db.Exec("UPDATE rippling_reach_bounds SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), "+
-		"inner_bound = NULL WHERE msgid = ?", mid)
+	degradeBounds(mid)
 	assert.Nil(t, eligibility(), "degraded bounds fall back to the exact polygon (covered → eligible)")
 
 	// Band (inside outer, no inner): the exact polygon decides — not covered → blocked.
 	insertReachPolygon(mid, missesViewerWkt)
-	insertBounds(mid, bigCoversViewerWkt, nil)
+	setBounds(mid, bigCoversViewerWkt, nil)
 	if e := eligibility(); assert.NotNil(t, e, "band + polygon misses → replyeligible set") {
 		assert.False(t, *e, "boundary band falls back to the exact polygon (not covered → blocked)")
 	}
@@ -81,7 +79,6 @@ func TestReplyEligibleSandwichBounds(t *testing.T) {
 // TestChatReplyGateSandwichBounds: the write-path reply hold consults the bounds too.
 func TestChatReplyGateSandwichBounds(t *testing.T) {
 	db := database.DBConn
-	ensureReachBoundsTable()
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_held_replies (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		chatid BIGINT UNSIGNED NOT NULL, chatmsgid BIGINT UNSIGNED NOT NULL,
@@ -129,13 +126,13 @@ func TestChatReplyGateSandwichBounds(t *testing.T) {
 	// verified inner is authoritative, so the reply is delivered, not held.
 	inner := coversViewerWkt
 	insertReachPolygon(msgID, missesViewerWkt)
-	insertBounds(msgID, bigCoversViewerWkt, &inner)
+	setBounds(msgID, bigCoversViewerWkt, &inner)
 	assert.Equal(t, fiber.StatusOK, post())
 	assert.Equal(t, 0, heldCount(), "a replier inside inner_bound is in reach without testing the polygon — not held")
 
 	// Cheap reject: polygon COVERS the replier, but outer_bound excludes them — held.
 	insertReachPolygon(msgID, coversViewerWkt)
-	insertBounds(msgID, farAwayWkt, nil)
+	setBounds(msgID, farAwayWkt, nil)
 	assert.Equal(t, fiber.StatusOK, post())
 	assert.Equal(t, 1, heldCount(), "a replier outside outer_bound is out of reach without testing the polygon — held")
 }

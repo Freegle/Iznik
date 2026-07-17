@@ -423,10 +423,10 @@ class ExpandServiceTest extends TestCase
         // Start the post stuck at tick 1 with an overdue expansion.
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
         );
         Http::fake(); // no routing call expected on advance (uses cached schedule)
 
@@ -461,10 +461,10 @@ class ExpandServiceTest extends TestCase
         // Stuck at tick 1, overdue, with the rejected group recorded.
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-            [$msgid, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
         );
         Http::fake();
 
@@ -513,10 +513,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, now()->subDays(1)]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
         );
 
         $stats = $this->service()->process(false, 500);
@@ -547,10 +547,10 @@ class ExpandServiceTest extends TestCase
         // retraction paths would normally fire and delete the copies + reach row.
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'held', NOW(), NOW())",
-            [$message->id, self::WKT, now()->subDay()]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'held', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDay()]
         );
 
         $this->service()->process(false, 500);
@@ -580,10 +580,10 @@ class ExpandServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
-            [$message->id, self::WKT, now()->subDay()]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDay()]
         );
 
         $this->service()->process(false, 500);
@@ -792,10 +792,10 @@ class ExpandServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, now()->subDay(), json_encode(array_values($reachableIds))]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDay(), json_encode(array_values($reachableIds))]
         );
         return [(int) $message->id, (int) $rippled->id];
     }
@@ -834,10 +834,10 @@ class ExpandServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
         );
 
         $stats = [];
@@ -2187,10 +2187,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, self::WKT, now()->subHours(2)]
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
         );
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
@@ -2374,10 +2374,10 @@ class ExpandServiceTest extends TestCase
         );
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, self::WKT, now()->subHours(2)]
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
         );
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
@@ -2592,8 +2592,8 @@ class ExpandServiceTest extends TestCase
         }
         // Capped reach polygon = unit square at origin (overlaps near, not far).
         DB::statement(
-            "INSERT INTO rippling_reach (msgid,lat,lng,polygon,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
-             VALUES (?,?,?,ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
+            "INSERT INTO rippling_reach (msgid,lat,lng,polygon, outer_bound,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
+             VALUES (?,?,?,ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid),ST_Envelope(ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid)),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
             [$msg->id, 0.5, 0.5, now(), 'drive', 1, 1, 5000, 10, json_encode([]), null, 'expanding']
         );
 
@@ -2752,11 +2752,11 @@ class ExpandServiceTest extends TestCase
         ];
         DB::statement(
             'INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, ?, 1, 3, 90, 30, ?, ?, ?, ?, NOW(), NOW())',
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, ?, 1, 3, 90, 30, ?, ?, ?, ?, NOW(), NOW())',
             [
-                $msgid, self::WKT, now()->subHours(4), 'drive',
+                $msgid, self::WKT, self::WKT, now()->subHours(4), 'drive',
                 json_encode($ticks), json_encode([$originGid]), now()->subMinutes(5), 'expanding',
             ]
         );
@@ -2941,14 +2941,12 @@ class ExpandServiceTest extends TestCase
     private function assertBoundsSandwich(int $msgid, string $context): void
     {
         $check = DB::selectOne(
-            'SELECT ST_Contains(b.outer_bound, rr.polygon) AS o,
-                    (b.inner_bound IS NULL OR ST_Contains(rr.polygon, b.inner_bound)) AS i
-               FROM rippling_reach_bounds b
-               JOIN rippling_reach rr ON rr.msgid = b.msgid
-              WHERE b.msgid = ?',
+            'SELECT ST_Contains(outer_bound, polygon) AS o,
+                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
-        $this->assertNotNull($check, "$context: a bounds row exists");
+        $this->assertNotNull($check, "$context: the reach row exists with bounds");
         $this->assertSame(1, (int) $check->o, "$context: outer_bound contains the stored polygon");
         $this->assertSame(1, (int) $check->i, "$context: inner_bound is NULL or inside the stored polygon");
     }
@@ -3001,7 +2999,7 @@ class ExpandServiceTest extends TestCase
         $check = DB::selectOne(
             'SELECT ST_Equals(outer_bound, ST_GeomFromText(?, 3857)) AS oe,
                     ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS ie
-               FROM rippling_reach_bounds WHERE msgid = ?',
+               FROM rippling_reach WHERE msgid = ?',
             [$outerWkt, $innerWkt, $msgid]
         );
         $this->assertNotNull($check);
@@ -3022,14 +3020,14 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
         );
         DB::statement(
-            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-             VALUES (?, ST_GeomFromText('POLYGON((5 5, 5.1 5, 5.1 5.1, 5 5.1, 5 5))', 3857), NULL)",
+            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText('POLYGON((5 5, 5.1 5, 5.1 5.1, 5 5.1, 5 5))', 3857),
+                    inner_bound = NULL WHERE msgid = ?",
             [$msgid]
         );
         Http::fake(); // no routing call expected on advance (uses cached schedule)
@@ -3061,10 +3059,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-            [$msgid, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
         );
         Http::fake();
 
@@ -3075,7 +3073,7 @@ class ExpandServiceTest extends TestCase
         // cheap-accepted by the inner bound.
         $innerAccepts = (int) DB::selectOne(
             'SELECT IFNULL(ST_Contains(inner_bound, ST_SRID(POINT(-0.12, 51.55), 3857)), 0) AS c
-               FROM rippling_reach_bounds WHERE msgid = ?',
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         )->c;
         $this->assertSame(0, $innerAccepts, 'inner bound must not cover the clipped-out rejected area');

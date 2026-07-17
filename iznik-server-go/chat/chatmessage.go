@@ -581,7 +581,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
 					args := append(exprArgs, *payload.Refmsgid)
 					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach "+
-						"FROM rippling_reach rr "+rippling.ReachBoundsJoin+
+						"FROM rippling_reach rr "+
 						"WHERE rr.msgid = ?", args...).Scan(&rc).Error
 				} else {
 					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, "+

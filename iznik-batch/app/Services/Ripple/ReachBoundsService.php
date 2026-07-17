@@ -7,24 +7,24 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Sandwich bounds for rippling_reach.polygon (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+ * Sandwich bounds for rippling_reach.polygon, stored as same-row columns
+ * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
  *
- * The exact reach polygons are grid-fill isochrones averaging ~11k vertices / 178 KB, and
- * the reach browse/count/digest queries were paying a full BLOB fetch + point-in-polygon
- * test for every spatial-index candidate. This service maintains two SMALL derived
- * polygons per reach in the sibling table rippling_reach_bounds:
+ *   outer_bound ⊇ polygon (NOT NULL, spatially indexed — the R-tree browse drives)
+ *   inner_bound ⊆ polygon, or NULL (no cheap accept)
  *
- *   outer_bound ⊇ polygon  — viewer outside it is DEFINITELY out of reach (cheap reject)
- *   inner_bound ⊆ polygon  — viewer inside it is DEFINITELY in reach (cheap accept);
- *                            NULL simply disables the cheap accept.
+ * Sentinel ladder for outer_bound, which the readers rely on:
+ *   real derived/provided bound  — cheap reject/accept work
+ *   ST_Envelope(polygon)         — derivation failed: MBR still finds the row, the
+ *                                  exact polygon decides (correct, just less pruning)
+ *   degenerate POINT             — completed posts ONLY: pruned from the R-tree itself
  *
- * Readers only touch the exact polygon for the thin band between the two. The exact
- * polygon stays authoritative throughout: bounds are verified at write time
- * (ST_Contains(outer_bound, polygon) AND ST_Contains(polygon, inner_bound)) and anything
- * that cannot be verified falls back — outer to ST_Envelope (always safe, just loose),
- * inner to NULL. ~94% of production polygons are technically invalid geometry that can
- * make GIS functions THROW, so every step is wrapped: a failed derivation must never
- * abort the calling expander tick.
+ * Same-row storage means the expander writes bounds IN THE SAME STATEMENT as the
+ * polygon (no cross-row/table timing window). This service holds the shared pieces:
+ * the derivation SQL fragments, write-time verification for routing-provided bounds,
+ * the completion degrade/restore hooks, and the fallback ladder. ~94% of production
+ * polygons are technically invalid geometry that can make GIS functions THROW, so
+ * every step is wrapped: a failed derivation must never abort the calling tick.
  *
  * TOLERANCE is in DEGREES: the polygons are lng/lat degree coordinates stored under an
  * SRID-3857 label (see ExpandService), which MySQL treats as Cartesian. 0.002° was
@@ -35,57 +35,64 @@ class ReachBoundsService
 {
     public const TOLERANCE = 0.002;
 
-    /** Cached table-existence check so a pre-migration deploy degrades to a no-op. */
-    private static ?bool $tableExists = null;
+    /** Cached column-existence check so a pre-migration deploy degrades to a no-op. */
+    private static ?bool $columnsExist = null;
 
-    private function ready(): bool
+    /**
+     * SQL expression deriving the outer bound from a polygon expression, for embedding
+     * in the same statement that writes the polygon.
+     */
+    public static function outerExpr(string $polyExpr): string
     {
-        if (self::$tableExists === null) {
+        return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), ' . self::TOLERANCE . ')';
+    }
+
+    /** As outerExpr, for the inner bound (negative buffer). */
+    public static function innerExpr(string $polyExpr): string
+    {
+        return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), -' . self::TOLERANCE . ')';
+    }
+
+    public function ready(): bool
+    {
+        if (self::$columnsExist === null) {
             try {
-                self::$tableExists = Schema::hasTable('rippling_reach_bounds');
+                self::$columnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
             } catch (\Throwable) {
-                self::$tableExists = false;
+                self::$columnsExist = false;
             }
         }
 
-        return self::$tableExists;
+        return self::$columnsExist;
     }
 
     /**
-     * Sync the bounds row for a post after a polygon write: prefer bounds the routing
-     * server derived on its own rasterisation grid (shipped with the tick's catchment —
-     * always valid geometry, superset/subset by construction), fall back to deriving
-     * from the stored polygon in SQL. Provided bounds are verified against the stored
-     * polygon exactly like derived ones — they bound the raw tick isochrone, while the
-     * stored polygon may have been unioned with the origin group's area and clipped by
-     * rejections, so verbatim trust would be wrong.
+     * Set the bounds for a post whose polygon was JUST written without inline bounds
+     * (or needs them re-verified): prefer bounds the routing server derived on its own
+     * rasterisation grid, fall back to deriving from the stored polygon. Provided
+     * bounds are verified against the stored polygon — they bound the raw tick
+     * isochrone, while the stored polygon may have been unioned with the origin
+     * group's area and clipped by rejections, so verbatim trust would be wrong.
      */
     public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null): void
     {
+        if (!$this->ready()) {
+            return;
+        }
         if ($outerWkt === null) {
             $this->syncFromPolygon($msgid);
 
             return;
         }
-        if (!$this->ready()) {
-            return;
-        }
-        $rows = DB::select('SELECT 1 AS x FROM rippling_reach WHERE msgid = ?', [$msgid], false);
-        if (empty($rows)) {
-            return;
-        }
 
         $stored = false;
         try {
-            DB::statement(
-                'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-                 SELECT rr.msgid, ST_GeomFromText(?, 3857), '
-                    . ($innerWkt !== null ? 'ST_GeomFromText(?, 3857)' : 'NULL') . '
-                   FROM rippling_reach rr
-                  WHERE rr.msgid = ?
-                 ON DUPLICATE KEY UPDATE
-                    outer_bound = VALUES(outer_bound),
-                    inner_bound = VALUES(inner_bound)',
+            DB::update(
+                'UPDATE rippling_reach
+                    SET outer_bound = ST_GeomFromText(?, 3857), '
+                    . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, 3857), ' : 'inner_bound = NULL, ') .
+                    'updated_at = updated_at
+                  WHERE msgid = ?',
                 $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
             );
             $stored = true;
@@ -119,9 +126,8 @@ class ReachBoundsService
     }
 
     /**
-     * Derive (or re-derive) the bounds for a post from its FINAL stored polygon — call
-     * after every rippling_reach.polygon write, AFTER any rejection clips have been
-     * re-applied. Pure SQL: no routing call, safe for reopened posts too.
+     * Derive (or re-derive) the bounds from the FINAL stored polygon — used for
+     * reopened posts and as the fallback when no routing bounds exist. Pure SQL.
      */
     public function syncFromPolygon(int $msgid): void
     {
@@ -129,33 +135,15 @@ class ReachBoundsService
             return;
         }
 
-        // No reach row → nothing to bound (any stale bounds row would already have been
-        // removed by the FK cascade). useReadPdo=false: we may be called immediately
-        // after the reach row was written, and Galera apply on a read node can lag the
-        // certified commit — this check and the verification below must see our own
-        // writes, so both stay on the write connection.
-        $rows = DB::select('SELECT 1 AS x FROM rippling_reach WHERE msgid = ?', [$msgid], false);
-        if (empty($rows)) {
-            return;
-        }
-
-        // Preferred derivation: simplify then buffer outward/inward by the same tolerance,
-        // so the simplification error can never poke through the buffer. NB: success is
-        // "did not throw" — INSERT..ON DUPLICATE reports 0 affected rows when the derived
-        // values are unchanged, so the row count cannot distinguish no-op from failure.
         $derived = false;
         try {
-            DB::statement(
-                'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-                 SELECT rr.msgid,
-                        ST_Buffer(ST_Simplify(rr.polygon, ?), ?),
-                        ST_Buffer(ST_Simplify(rr.polygon, ?), ?)
-                   FROM rippling_reach rr
-                  WHERE rr.msgid = ?
-                 ON DUPLICATE KEY UPDATE
-                    outer_bound = VALUES(outer_bound),
-                    inner_bound = VALUES(inner_bound)',
-                [self::TOLERANCE, self::TOLERANCE, self::TOLERANCE, -self::TOLERANCE, $msgid]
+            DB::update(
+                'UPDATE rippling_reach
+                    SET outer_bound = ' . self::outerExpr('polygon') . ',
+                        inner_bound = ' . self::innerExpr('polygon') . ',
+                        updated_at = updated_at
+                  WHERE msgid = ?',
+                [$msgid]
             );
             $derived = true;
         } catch (\Throwable) {
@@ -168,25 +156,23 @@ class ReachBoundsService
             return;
         }
 
-        // Write-time verification: the sandwich is only safe if outer ⊇ polygon ⊇ inner.
-        // Errors count as failures (invalid geometry ⇒ fallbacks), per the design doc.
+        // Derived-from-polygon bounds are supersets/subsets by buffer construction, but
+        // verify anyway — GIS edge cases on invalid geometry are exactly what the
+        // fallback ladder exists for. Errors count as failures.
         [$outerOk, $innerOk] = $this->verifySandwich($msgid);
-
         if ($outerOk !== 1) {
             $this->fallbackToEnvelope($msgid);
         } elseif ($innerOk !== 1) {
-            // Outer verified but inner didn't (e.g. negative buffer artefacts on a
-            // near-degenerate polygon): keep the good outer, drop the cheap accept.
             $this->nullInner($msgid);
         }
     }
 
     /**
      * A Taken/Received post has left the browsable candidate set: collapse its OUTER
-     * bound to a degenerate point (the reach origin) and clear the inner bound, so the
-     * cheap path stops matching it. The exact polygon is deliberately untouched — the
-     * digest's "came and went" section, held replies to taken posts and un-completion
-     * all still read it (pruning rippling_reach itself was verified UNSAFE).
+     * bound to a degenerate point (the reach origin) and clear the inner bound. With
+     * the browse R-tree driven from outer_bound, this prunes the post from the index
+     * itself. The exact polygon is deliberately untouched — the digest's "came and
+     * went" section, held replies to taken posts and un-completion all still read it.
      */
     public function degradeForCompleted(int $msgid): void
     {
@@ -196,11 +182,11 @@ class ReachBoundsService
 
         try {
             DB::update(
-                'UPDATE rippling_reach_bounds b
-                   JOIN rippling_reach rr ON rr.msgid = b.msgid
-                    SET b.outer_bound = ST_SRID(POINT(rr.lng, rr.lat), 3857),
-                        b.inner_bound = NULL
-                  WHERE b.msgid = ?',
+                'UPDATE rippling_reach
+                    SET outer_bound = ST_SRID(POINT(lng, lat), 3857),
+                        inner_bound = NULL,
+                        updated_at = updated_at
+                  WHERE msgid = ?',
                 [$msgid]
             );
         } catch (\Throwable $e) {
@@ -218,11 +204,10 @@ class ReachBoundsService
     {
         try {
             $check = DB::select(
-                'SELECT ST_Contains(b.outer_bound, rr.polygon) AS o,
-                        (b.inner_bound IS NULL OR ST_Contains(rr.polygon, b.inner_bound)) AS i
-                   FROM rippling_reach_bounds b
-                   JOIN rippling_reach rr ON rr.msgid = b.msgid
-                  WHERE b.msgid = ?',
+                'SELECT ST_Contains(outer_bound, polygon) AS o,
+                        (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+                   FROM rippling_reach
+                  WHERE msgid = ?',
                 [$msgid],
                 false
             )[0] ?? null;
@@ -242,18 +227,19 @@ class ReachBoundsService
     {
         try {
             DB::update(
-                'UPDATE rippling_reach_bounds b
-                    SET b.outer_bound = COALESCE(
-                        (SELECT ST_Union(b.outer_bound, g.polyindex)
+                'UPDATE rippling_reach rr
+                    SET rr.outer_bound = COALESCE(
+                        (SELECT ST_Union(rr.outer_bound, g.polyindex)
                            FROM messages_groups mg
                            JOIN `groups` g ON g.id = mg.groupid
-                          WHERE mg.msgid = b.msgid AND mg.deleted = 0
+                          WHERE mg.msgid = rr.msgid AND mg.deleted = 0
                             AND g.polyindex IS NOT NULL
                             AND ST_GeometryType(g.polyindex) <> \'POINT\'
                           ORDER BY mg.arrival ASC
                           LIMIT 1),
-                        b.outer_bound)
-                  WHERE b.msgid = ?',
+                        rr.outer_bound),
+                        rr.updated_at = rr.updated_at
+                  WHERE rr.msgid = ?',
                 [$msgid]
             );
         } catch (\Throwable) {
@@ -261,28 +247,25 @@ class ReachBoundsService
         }
     }
 
-    /** Envelope outer (always a superset, MBR-only so it works on invalid geometry) + no inner. */
+    /**
+     * Envelope outer (always a superset — MBR-only, works on invalid geometry) + no
+     * inner. The MBR still finds the row, so the post stays visible via the exact test.
+     */
     private function fallbackToEnvelope(int $msgid): void
     {
         try {
             DB::update(
-                'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
-                 SELECT rr.msgid, ST_Envelope(rr.polygon), NULL
-                   FROM rippling_reach rr
-                  WHERE rr.msgid = ?
-                 ON DUPLICATE KEY UPDATE
-                    outer_bound = VALUES(outer_bound),
-                    inner_bound = NULL',
+                'UPDATE rippling_reach
+                    SET outer_bound = ST_Envelope(polygon), inner_bound = NULL,
+                        updated_at = updated_at
+                  WHERE msgid = ?',
                 [$msgid]
             );
         } catch (\Throwable $e) {
-            // Even the envelope failed: remove any stale bounds row so readers use the
-            // exact polygon (a missing row is the readers' fail-safe path).
-            try {
-                DB::delete('DELETE FROM rippling_reach_bounds WHERE msgid = ?', [$msgid]);
-            } catch (\Throwable) {
-                // Nothing more we can safely do.
-            }
+            // Even the envelope failed. The column keeps its previous value: a stale
+            // outer is safe-loose, but a stale INNER could cheap-accept a clipped-out
+            // area, so clear it if we possibly can.
+            $this->nullInner($msgid);
             Log::warning("ripple: bounds derivation failed for msg {$msgid}: {$e->getMessage()}");
         }
     }
@@ -290,7 +273,10 @@ class ReachBoundsService
     private function nullInner(int $msgid): void
     {
         try {
-            DB::update('UPDATE rippling_reach_bounds SET inner_bound = NULL WHERE msgid = ?', [$msgid]);
+            DB::update(
+                'UPDATE rippling_reach SET inner_bound = NULL, updated_at = updated_at WHERE msgid = ?',
+                [$msgid]
+            );
         } catch (\Throwable $e) {
             Log::warning("ripple: bounds inner-null failed for msg {$msgid}: {$e->getMessage()}");
         }

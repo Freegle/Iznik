@@ -37,17 +37,17 @@ class UnifiedDigestService
     /** Memoized once per run: whether the optional messages_pinned table exists. */
     private ?bool $messagesPinnedTableExists = null;
 
-    /** Memoized once per run: whether the sandwich-bounds table has been migrated. */
-    private ?bool $reachBoundsTableExists = null;
+    /** Memoized once per run: whether the sandwich-bounds columns have been migrated. */
+    private ?bool $reachBoundsColumnsExist = null;
 
     /** True when the reach-gate can use the sandwich-bounds prefilter. */
     private function reachBoundsAvailable(): bool
     {
-        if ($this->reachBoundsTableExists === null) {
-            $this->reachBoundsTableExists = Schema::hasTable('rippling_reach_bounds');
+        if ($this->reachBoundsColumnsExist === null) {
+            $this->reachBoundsColumnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
         }
 
-        return $this->reachBoundsTableExists;
+        return $this->reachBoundsColumnsExist;
     }
 
     /**
@@ -1538,25 +1538,24 @@ class UnifiedDigestService
         if ($latlng !== null) {
             if ($this->reachBoundsAvailable()) {
                 // Sandwich-bounds prefilter (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
-                // the exact polygon averages ~178 KB, so consult the small derived bounds
-                // first — outside outer_bound is an authoritative reject, inside
-                // inner_bound an authoritative accept — and only test the exact polygon
-                // for the thin band between them (or when no bounds row exists). The
-                // 178 KB polygon is referenced ONLY inside a correlated EXISTS: MySQL's
-                // lazy BLOB fetch does not cross OR/CASE expression items, so any direct
-                // reference would fetch it for every evaluated row and defeat the point.
-                // The join skips DEGRADED bounds (outer collapsed to a POINT on
-                // completion): this query has no successful=0 filter — it still shows
-                // "came and went" posts — so a degraded row must fall back to the exact
-                // polygon rather than reject them.
+                // the exact polygon averages ~178 KB, so consult the small same-row bounds
+                // columns first — outside a real outer_bound is an authoritative reject,
+                // inside inner_bound an authoritative accept — and only test the exact
+                // polygon for the band between them. The 178 KB polygon is referenced
+                // ONLY inside a correlated EXISTS: MySQL's lazy BLOB fetch does not cross
+                // OR expression items, so any direct reference would fetch it for every
+                // evaluated row and defeat the point. A POINT outer_bound (completion
+                // pruning) is treated as ABSENT here: this query has no successful=0
+                // filter — it still shows "came and went" posts — so degraded bounds must
+                // fall back to the exact polygon rather than reject them.
                 $point = 'ST_SRID(POINT(?, ?), 3857)';
                 $query->whereRaw(
                     "NOT EXISTS (SELECT 1 FROM rippling_reach rr
-                        LEFT JOIN rippling_reach_bounds b ON b.msgid = rr.msgid
-                            AND ST_GeometryType(b.outer_bound) <> 'POINT'
                         WHERE rr.msgid = messages.id
-                          AND ((b.msgid IS NOT NULL AND NOT ST_Contains(b.outer_bound, $point))
-                               OR ((b.msgid IS NULL OR COALESCE(ST_Contains(b.inner_bound, $point), 0) = 0)
+                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
+                                AND NOT ST_Contains(rr.outer_bound, $point))
+                               OR ((ST_GeometryType(rr.outer_bound) = 'POINT'
+                                    OR COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 0)
                                    AND NOT EXISTS (SELECT 1 FROM rippling_reach r2
                                        WHERE r2.msgid = rr.msgid
                                          AND ST_Contains(r2.polygon, $point)))))",

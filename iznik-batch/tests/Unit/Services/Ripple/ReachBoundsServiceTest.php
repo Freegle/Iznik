@@ -50,10 +50,10 @@ class ReachBoundsServiceTest extends TestCase
             'lng' => -0.1,
         ]);
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $wkt]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $wkt, $wkt]
         );
 
         return (int) $message->id;
@@ -65,7 +65,7 @@ class ReachBoundsServiceTest extends TestCase
             'SELECT msgid,
                     ST_GeometryType(outer_bound) AS outer_type,
                     inner_bound IS NULL AS inner_null
-               FROM rippling_reach_bounds WHERE msgid = ?',
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
     }
@@ -82,11 +82,9 @@ class ReachBoundsServiceTest extends TestCase
         // The safety invariants: outer contains the exact polygon; inner (when present)
         // is contained by it.
         $check = DB::selectOne(
-            'SELECT ST_Contains(b.outer_bound, rr.polygon) AS o,
-                    (b.inner_bound IS NULL OR ST_Contains(rr.polygon, b.inner_bound)) AS i
-               FROM rippling_reach_bounds b
-               JOIN rippling_reach rr ON rr.msgid = b.msgid
-              WHERE b.msgid = ?',
+            'SELECT ST_Contains(outer_bound, polygon) AS o,
+                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
         $this->assertSame(1, (int) $check->o, 'outer_bound must contain the exact polygon');
@@ -104,11 +102,7 @@ class ReachBoundsServiceTest extends TestCase
         $this->service()->syncFromPolygon($msgid);
         $this->service()->syncFromPolygon($msgid);
 
-        $this->assertSame(
-            1,
-            (int) DB::table('rippling_reach_bounds')->where('msgid', $msgid)->count(),
-            'repeated syncs keep a single bounds row'
-        );
+        $this->assertNotNull($this->boundsRow($msgid), 'the reach row still carries bounds');
         // A no-change re-sync must not degrade the bounds (INSERT..ON DUPLICATE reports
         // 0 affected rows for identical values — that is not a failure).
         $this->assertSame(
@@ -133,10 +127,8 @@ class ReachBoundsServiceTest extends TestCase
             // MBR containment is well-defined even for invalid geometry: the stored
             // outer bound must at least cover the polygon's extent.
             $check = DB::selectOne(
-                'SELECT MBRContains(b.outer_bound, rr.polygon) AS o
-                   FROM rippling_reach_bounds b
-                   JOIN rippling_reach rr ON rr.msgid = b.msgid
-                  WHERE b.msgid = ?',
+                'SELECT MBRContains(outer_bound, polygon) AS o
+                   FROM rippling_reach WHERE msgid = ?',
                 [$msgid]
             );
             $this->assertSame(1, (int) $check->o, 'fallback outer bound covers the polygon extent');
@@ -150,10 +142,7 @@ class ReachBoundsServiceTest extends TestCase
     {
         $this->service()->syncFromPolygon(999999999);
 
-        $this->assertSame(
-            0,
-            (int) DB::table('rippling_reach_bounds')->where('msgid', 999999999)->count()
-        );
+        $this->assertNull($this->boundsRow(999999999));
     }
 
     public function test_degrade_for_completed_collapses_outer_and_nulls_inner(): void
@@ -191,9 +180,9 @@ class ReachBoundsServiceTest extends TestCase
         $this->service()->sync($msgid, $outer, $inner);
 
         $check = DB::selectOne(
-            'SELECT ST_Equals(b.outer_bound, ST_GeomFromText(?, 3857)) AS oe,
-                    ST_Equals(b.inner_bound, ST_GeomFromText(?, 3857)) AS ie
-               FROM rippling_reach_bounds b WHERE b.msgid = ?',
+            'SELECT ST_Equals(outer_bound, ST_GeomFromText(?, 3857)) AS oe,
+                    ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS ie
+               FROM rippling_reach WHERE msgid = ?',
             [$outer, $inner, $msgid]
         );
         $this->assertNotNull($check, 'provided bounds are stored');
@@ -216,9 +205,8 @@ class ReachBoundsServiceTest extends TestCase
         $this->assertNotNull($row);
         $this->assertSame(1, (int) $row->inner_null, 'unverifiable provided inner is NULLed');
         $ok = DB::selectOne(
-            'SELECT ST_Contains(b.outer_bound, rr.polygon) AS o
-               FROM rippling_reach_bounds b JOIN rippling_reach rr ON rr.msgid = b.msgid
-              WHERE b.msgid = ?',
+            'SELECT ST_Contains(outer_bound, polygon) AS o
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
         $this->assertSame(1, (int) $ok->o, 'the good provided outer is kept');
@@ -235,9 +223,8 @@ class ReachBoundsServiceTest extends TestCase
         $this->service()->sync($msgid, $badOuter, null);
 
         $ok = DB::selectOne(
-            'SELECT ST_Contains(b.outer_bound, rr.polygon) AS o
-               FROM rippling_reach_bounds b JOIN rippling_reach rr ON rr.msgid = b.msgid
-              WHERE b.msgid = ?',
+            'SELECT ST_Contains(outer_bound, polygon) AS o
+               FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
         $this->assertNotNull($ok, 'a bounds row is still written');
