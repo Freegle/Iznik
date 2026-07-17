@@ -7581,6 +7581,112 @@ func TestPatchMessageEditReviewRequiredGroupModerated(t *testing.T) {
 	assert.Equal(t, 1, reviewRequired, "Group-moderated edit of approved message should set reviewrequired=1")
 }
 
+// TestPatchMessageTextEditResetsContentCheck: a message that has already passed the
+// automated content-check (contentcheck_checked_at stamped, e.g. because it was
+// approved) must be re-queued for a fresh check when the owner edits its textbody.
+// Without this, content added via an edit (worry words, phone numbers, banned
+// keywords, ...) is never scanned by ContentCheckService.processUnprocessed(),
+// which only picks up rows where contentcheck_checked_at IS NULL — so the automated
+// moderation filters silently skip edited content forever, and it can only be
+// caught by a mod noticing it manually.
+func TestPatchMessageTextEditResetsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_text")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW(), contentcheck_reasons = ? WHERE msgid = ? AND groupid = ?",
+		`[{"check":"Vague","detail":"stale reason from the original check"}]`, msgID, groupID)
+
+	var checkedAtSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtSet)
+	require.True(t, checkedAtSet, "test setup: message should start already content-checked")
+
+	body := map[string]interface{}{
+		"id":       msgID,
+		"textbody": prefix + " edited body with newly added content",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet bool
+	var reasons *string
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &reasons)
+	assert.False(t, checkedAtStillSet, "editing the textbody should clear contentcheck_checked_at so the batch job re-checks the new content")
+	assert.Nil(t, reasons, "stale contentcheck_reasons from the pre-edit check should be cleared too")
+}
+
+// TestPatchMessageSubjectEditResetsContentCheck mirrors the textbody case for the
+// subject field, which checkMessage() also scans (Vague/NotAnItem/SubjectRepeat).
+func TestPatchMessageSubjectEditResetsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_subj")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"subject": prefix + " edited subject",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtStillSet)
+	assert.False(t, checkedAtStillSet, "editing the subject should clear contentcheck_checked_at so the batch job re-checks the new content")
+}
+
+// TestPatchMessageNonContentEditKeepsContentCheck: editing a field that
+// ContentCheckService::checkMessage() never inspects (availablenow) must NOT
+// discard the existing content-check stamp — only subject/textbody/item edits
+// should trigger a re-check.
+func TestPatchMessageNonContentEditKeepsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_noop")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":           msgID,
+		"availablenow": 1,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtStillSet)
+	assert.True(t, checkedAtStillSet, "a non-content edit should not discard the existing content-check stamp")
+}
+
 // --- tnpostid and expiresat tests ---
 
 func TestGetMessageTnpostid(t *testing.T) {
