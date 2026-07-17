@@ -286,4 +286,52 @@ class ReachServiceTest extends TestCase
         Http::fake(['*catchment*' => Http::response('', 500)]);
         $this->assertNull($this->service()->catchmentWkt(51.5, -0.1, 12.5));
     }
+
+    /** A GeoJSON polygon Feature around the given square, as the routing server ships it. */
+    private function geoSquare(float $w, float $s, float $e, float $n): array
+    {
+        return [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [$w, $s], [$e, $s], [$e, $n], [$w, $n], [$w, $s],
+            ]]],
+        ];
+    }
+
+    public function test_catchment_geometry_parses_polygon_and_sandwich_bounds(): void
+    {
+        // The routing server ships sandwich bounds alongside the exact catchment
+        // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md); catchmentGeometry exposes
+        // all three as WKT for the reach writers.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+            'catchment_outer' => $this->geoSquare(-0.21, 51.39, 0.01, 51.61),
+            'catchment_inner' => $this->geoSquare(-0.19, 51.41, -0.01, 51.59),
+        ], 200)]);
+
+        $geom = $this->service()->catchmentGeometry(51.5, -0.1, 12.5);
+
+        $this->assertNotNull($geom);
+        $this->assertStringStartsWith('POLYGON((', $geom['wkt']);
+        $this->assertStringStartsWith('POLYGON((', $geom['outer']);
+        $this->assertStringStartsWith('POLYGON((', $geom['inner']);
+        $this->assertStringContainsString('-0.21 51.39', $geom['outer']);
+        $this->assertStringContainsString('-0.19 51.41', $geom['inner']);
+    }
+
+    public function test_catchment_geometry_tolerates_absent_bounds(): void
+    {
+        // Old routing servers (or an eroded-to-nothing inner) simply omit the bounds:
+        // the polygon still comes through and the bounds are null.
+        Http::fake(['*catchment*' => Http::response([
+            'catchment' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+        ], 200)]);
+
+        $geom = $this->service()->catchmentGeometry(51.5, -0.1, 12.5);
+
+        $this->assertNotNull($geom);
+        $this->assertStringStartsWith('POLYGON((', $geom['wkt']);
+        $this->assertNull($geom['outer']);
+        $this->assertNull($geom['inner']);
+    }
 }

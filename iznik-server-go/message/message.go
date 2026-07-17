@@ -26,6 +26,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -924,9 +925,21 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			}
 			// Ignore the error: until the reach engine (PR A) is deployed the
 			// rippling_reach table may not exist, in which case nothing is reach-blocked.
-			if err := db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
-				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error; err == nil {
+			// Containment consults the sandwich bounds when migrated (see
+			// rippling/reachbounds.go); degraded bounds fall back to the exact polygon.
+			var probeErr error
+			if rippling.ReachBoundsReady(db) {
+				expr, exprArgs := rippling.ReachInReachExpr(float64(latlng.Lng), float64(latlng.Lat), utils.SRID)
+				args := append([]interface{}{ids}, exprArgs...)
+				probeErr = db.Raw("SELECT rr.msgid FROM rippling_reach rr "+
+					rippling.ReachBoundsJoin+
+					"WHERE rr.msgid IN (?) AND NOT "+expr, args...).Scan(&reachBlocked).Error
+			} else {
+				probeErr = db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
+					"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+					ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error
+			}
+			if probeErr == nil {
 				for _, b := range reachBlocked {
 					blockedSet[b.Msgid] = true
 				}
@@ -2271,6 +2284,12 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 		"AND ST_Intersects(mr.polygon, g.polyindex) "+
 		"AND NOT ST_Within(mr.polygon, g.polyindex)", gid, msgid)
+
+	// The polygon just SHRANK: a stale sandwich inner bound could keep cheap-accepting
+	// viewers inside the clipped-out area, so clear it synchronously. The outer bound is
+	// merely stale-loose (safe) and the next expander tick re-derives both. Best-effort
+	// like everything else here — the bounds table may not exist yet.
+	db.Exec("UPDATE rippling_reach_bounds SET inner_bound = NULL WHERE msgid = ?", msgid)
 
 	// Reach wholly inside the rejected group → no area remains: drop the reach row.
 	db.Exec("DELETE mr FROM rippling_reach mr JOIN `groups` g ON g.id = ? "+

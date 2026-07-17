@@ -60,8 +60,11 @@ func List(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	// Update last-active timestamp so the system knows the user is online.
-	db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ?", myid)
+	// NOTE: users.lastaccess is deliberately NOT updated here. The auth middleware
+	// already maintains it (throttled to 10 minutes, guarded in SQL); an extra
+	// unthrottled same-row UPDATE on every 60s navbar poll sprayed same-row writes
+	// across the Galera hosts and caused certification conflicts
+	// (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent fix 1).
 
 	// V1 parity: notification.php GET calls $me->recordActive() which inserts a row into
 	// users_active (userid, timestamp) with timestamp truncated to the hour. This is used by

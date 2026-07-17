@@ -552,4 +552,128 @@ class MessageSpatialServiceTest extends TestCase
             'the single spatial row must be removed when the message is withdrawn'
         );
     }
+
+    /**
+     * Seed an approved message present in messages_spatial with a rippling_reach row +
+     * derived sandwich bounds; returns the message id. Shared by the completed/reopened
+     * bounds-pruning tests (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+     */
+    private function seedSpatialWithReachAndBounds(): int
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: bounds pruning (London)',
+            'textbody' => 'A thing.',
+            'source' => 'Platform',
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+        ]);
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
+        );
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1,
+                     ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+                     ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, now()->subDays(2)]
+        );
+        DB::statement(
+            "INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
+             VALUES (?, ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
+                        ST_GeomFromText('POLYGON((-0.18 51.42,-0.02 51.42,-0.02 51.58,-0.18 51.58,-0.18 51.42))', 3857))",
+            [$message->id]
+        );
+
+        return (int) $message->id;
+    }
+
+    public function test_completed_post_degrades_reach_bounds_but_not_polygon(): void
+    {
+        // A Taken/Received post leaves the browsable candidate set. Its sandwich bounds
+        // are degraded (degenerate outer, no inner) so reach queries stop matching it
+        // cheaply — but the exact polygon must stay untouched: the digest's "came and
+        // went" section, held replies to taken posts and un-completion all still read it
+        // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md: pruning rippling_reach itself
+        // was verified UNSAFE).
+        $msgid = $this->seedSpatialWithReachAndBounds();
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid,
+            'outcome' => Message::OUTCOME_TAKEN,
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            1,
+            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('successful'),
+            'the spatial row is flagged successful'
+        );
+        $row = DB::selectOne(
+            'SELECT ST_GeometryType(outer_bound) AS outer_type, inner_bound IS NULL AS inner_null
+               FROM rippling_reach_bounds WHERE msgid = ?',
+            [$msgid]
+        );
+        $this->assertNotNull($row, 'bounds row survives completion (degraded, not deleted)');
+        $this->assertSame('POINT', $row->outer_type, 'outer bound degrades to a degenerate point');
+        $this->assertSame(1, (int) $row->inner_null, 'inner bound is cleared');
+        $this->assertSame(
+            'POLYGON',
+            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t,
+            'the exact reach polygon is untouched'
+        );
+    }
+
+    public function test_reopened_post_restores_reach_bounds_from_stored_polygon(): void
+    {
+        // Un-completion is a real automated flow (outcome removed → successful flips back
+        // to 0). The bounds must be re-derived from the stored polygon — pure SQL, no
+        // routing call — or the reopened post would stay invisible to the cheap path.
+        $msgid = $this->seedSpatialWithReachAndBounds();
+
+        // Completed first…
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN]);
+        $this->service->updateSpatialIndex();
+        $this->assertSame(
+            'POINT',
+            DB::selectOne('SELECT ST_GeometryType(outer_bound) AS t FROM rippling_reach_bounds WHERE msgid = ?', [$msgid])->t
+        );
+
+        // …then reopened.
+        DB::table('messages_outcomes')->where('msgid', $msgid)->delete();
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            0,
+            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('successful'),
+            'the spatial row is back in the browsable set'
+        );
+        $check = DB::selectOne(
+            'SELECT ST_GeometryType(b.outer_bound) AS outer_type,
+                    ST_Contains(b.outer_bound, rr.polygon) AS o,
+                    (b.inner_bound IS NULL OR ST_Contains(rr.polygon, b.inner_bound)) AS i
+               FROM rippling_reach_bounds b
+               JOIN rippling_reach rr ON rr.msgid = b.msgid
+              WHERE b.msgid = ?',
+            [$msgid]
+        );
+        $this->assertNotNull($check);
+        $this->assertNotSame('POINT', $check->outer_type, 'real bounds are restored on reopen');
+        $this->assertSame(1, (int) $check->o, 'restored outer bound contains the polygon');
+        $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the polygon');
+    }
 }

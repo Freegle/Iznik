@@ -355,6 +355,20 @@ class ReachService
      */
     public function catchmentWkt(float $lat, float $lng, float $minutes): ?string
     {
+        return $this->catchmentGeometry($lat, $lng, $minutes)['wkt'] ?? null;
+    }
+
+    /**
+     * As catchmentWkt, but also returns the routing server's sandwich bounds when it
+     * ships them (catchment_outer / catchment_inner — derived on the routing server's
+     * own rasterisation grid, see iznik-routing-go bounds.go):
+     * ['wkt' => string, 'outer' => ?string, 'inner' => ?string], or null when the
+     * routing server is unreachable / the origin is off-graph. The bounds are null on
+     * older servers or when a small reach eroded to no inner — callers fall back to
+     * SQL derivation (ReachBoundsService).
+     */
+    public function catchmentGeometry(float $lat, float $lng, float $minutes): ?array
+    {
         try {
             $response = Http::timeout($this->requestTimeout)
                 ->get("{$this->url}/v1/catchment", [
@@ -371,7 +385,17 @@ class ReachService
             Log::warning("ripple: catchment HTTP {$response->status()}", ['lat' => $lat, 'lng' => $lng]);
             return null;
         }
-        return $this->polygonToWkt(($response->json() ?? [])['catchment'] ?? null);
+        $body = $response->json() ?? [];
+        $wkt = $this->polygonToWkt($body['catchment'] ?? null);
+        if ($wkt === null) {
+            return null;
+        }
+
+        return [
+            'wkt' => $wkt,
+            'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
+            'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
+        ];
     }
 
     private function polygonToWkt(?array $polygon): ?string

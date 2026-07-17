@@ -55,4 +55,3 @@ func IsModOfUser(myid, targetid uint64) bool {
 	}
 	return count > 0
 }
-

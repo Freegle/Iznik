@@ -29,8 +29,8 @@ var attributionSchemaWide bool
 func AttributionSchemaReady(db *gorm.DB) bool {
 	attributionSchemaOnce.Do(func() {
 		var n int
-		db.Raw("SELECT COUNT(*) FROM information_schema.COLUMNS "+
-			"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'rippling_reply_attribution' "+
+		db.Raw("SELECT COUNT(*) FROM information_schema.COLUMNS " +
+			"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'rippling_reply_attribution' " +
 			"AND COLUMN_NAME = 'attribution'").Scan(&n)
 		attributionSchemaWide = n > 0
 	})

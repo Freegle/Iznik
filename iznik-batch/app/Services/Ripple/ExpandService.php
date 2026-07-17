@@ -27,8 +27,12 @@ class ExpandService
     /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
     private const BLUR_USER = 400;
 
-    public function __construct(private ReachService $reach)
+    /** Maintains the sandwich-bounds sibling table alongside every polygon write. */
+    private ReachBoundsService $bounds;
+
+    public function __construct(private ReachService $reach, ?ReachBoundsService $bounds = null)
     {
+        $this->bounds = $bounds ?? new ReachBoundsService();
     }
 
     /**
@@ -158,11 +162,12 @@ class ExpandService
             }
 
             $entry = $this->entryForTick($ticks, (int) $row->tick);
-            $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
-            if ($tickWkt === null) {
+            $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+            if ($tickGeom === null) {
                 $stats['skipped']++;
                 continue;
             }
+            $tickWkt = $tickGeom['wkt'];
 
             $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
 
@@ -197,6 +202,9 @@ class ExpandService
             );
             // Preserve any secondary-group "out of area" rejection clips.
             $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+            // Sandwich bounds: prefer the routing server's (verified against the FINAL,
+            // post-clip polygon), else derive from it in SQL.
+            $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
 
             $stats['shrunk']++;
             $this->logEvent((int) $row->msgid, 'reach_shrunk', (int) $row->tick, $entry);
@@ -789,13 +797,14 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $tickWkt = $this->resolveTickWkt($entry, (float) $lat, (float) $lng);
-                    if ($tickWkt === null) {
+                    $tickGeom = $this->resolveTickGeometry($entry, (float) $lat, (float) $lng);
+                    if ($tickGeom === null) {
                         // Routing unreachable mid-run - leave the post for the next pass
                         // rather than storing a reach with no polygon.
                         $stats['skipped']++;
                         continue;
                     }
+                    $tickWkt = $tickGeom['wkt'];
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     // Upsert, not plain INSERT: the anti-join guarantees no existing row so this
                     // behaves exactly like INSERT, while staying safe against a concurrent run
@@ -823,6 +832,10 @@ class ExpandService
                             $next, $status,
                         ]
                     );
+                    // New reach row → its sandwich bounds (no clips can exist yet: the
+                    // anti-join guarantees this is the row's first write). Routing-provided
+                    // when the slim schedule fetched a catchment, else derived in SQL.
+                    $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
                     $this->rippleIntoNewGroups(
                         (int) $row->msgid, $storeWkt, $stats,
                         $this->tickReachableIdsOrNull($entry, $schedule)
@@ -936,13 +949,14 @@ class ExpandService
                 $status = $next === null ? 'done' : 'expanding';
 
                 if (!$dryRun) {
-                    $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
-                    if ($tickWkt === null) {
+                    $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+                    if ($tickGeom === null) {
                         // Routing unreachable - keep the previous polygon and retry this
                         // tick on the next run (next_expansion_at is already due).
                         $stats['skipped']++;
                         continue;
                     }
+                    $tickWkt = $tickGeom['wkt'];
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     DB::statement(
                         'UPDATE rippling_reach
@@ -956,6 +970,10 @@ class ExpandService
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
                     $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+                    // Sandwich bounds against the FINAL polygon, after the clips — a pre-clip
+                    // inner bound would cheap-accept viewers in the rejected area (sync()
+                    // verifies provided bounds against the stored polygon for that reason).
+                    $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
                     // Targeting ids for THIS tick: prefer the stored slim schedule's
                     // per-tick set (exact for this drive-time); fall back to the cached
                     // column (schedules stored before per-tick ids existed).
@@ -1600,11 +1618,12 @@ class ExpandService
                 $ticks = $schedule['ticks'];
                 $tick = min(max((int) $row->tick, 1), count($ticks));
                 $entry = $this->entryForTick($ticks, $tick);
-                $tickWkt = $this->resolveTickWkt($entry, (float) $row->lat, (float) $row->lng);
-                if ($tickWkt === null) {
+                $tickGeom = $this->resolveTickGeometry($entry, (float) $row->lat, (float) $row->lng);
+                if ($tickGeom === null) {
                     $stats['skipped']++;
                     continue;
                 }
+                $tickWkt = $tickGeom['wkt'];
                 $ids = $this->tickReachableIds($entry, $schedule);
 
                 if ($dryRun) {
@@ -1642,6 +1661,8 @@ class ExpandService
                 );
                 // Secondary "out of area" rejection clips must survive the rewrite.
                 $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
+                // Sandwich bounds against the FINAL polygon, after the clips.
+                $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
                 // Retract copies (and their ripple-only memberships) the new reach no
                 // longer covers - polygon-based always, ids-based when the gate is on.
                 $this->retractOutOfReachCopies((int) $row->msgid, false, $stats);
@@ -1656,25 +1677,27 @@ class ExpandService
     }
 
     /**
-     * The polygon WKT for a schedule tick. Full schedules (old servers / rows stored
-     * before the slim form) carry it inline; slim schedules (polygons=0) don't, so it
-     * is fetched as a single point-form catchment at the tick's drive-time. Null when
-     * the entry is unusable or the routing server is unreachable - callers skip the
-     * row and retry on a later run.
+     * The geometry for a schedule tick: ['wkt' => string, 'outer' => ?string,
+     * 'inner' => ?string]. Full schedules (old servers / rows stored before the slim
+     * form) carry the polygon inline with no bounds; slim schedules (polygons=0) fetch
+     * a point-form catchment at the tick's drive-time, which also ships the routing
+     * server's sandwich bounds (ReachService::catchmentGeometry). Null when the entry
+     * is unusable or the routing server is unreachable - callers skip the row and
+     * retry on a later run.
      */
-    private function resolveTickWkt(?array $entry, float $lat, float $lng): ?string
+    private function resolveTickGeometry(?array $entry, float $lat, float $lng): ?array
     {
         if ($entry === null) {
             return null;
         }
         if (!empty($entry['wkt'])) {
-            return (string) $entry['wkt'];
+            return ['wkt' => (string) $entry['wkt'], 'outer' => null, 'inner' => null];
         }
         $driveMin = (float) ($entry['drive_min'] ?? 0);
         if ($driveMin <= 0) {
             return null;
         }
-        return $this->reach->catchmentWkt($lat, $lng, $driveMin);
+        return $this->reach->catchmentGeometry($lat, $lng, $driveMin);
     }
 
     /**

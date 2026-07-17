@@ -70,4 +70,74 @@ class ReachQueryServiceTest extends TestCase
         // All outside → not eligible.
         $this->assertFalse($svc->isWithinReachAny($msgid, [[52.0, 1.0], [40.0, 0.0]]));
     }
+
+    /** Adversarial sandwich bounds for the msgid (contradicting the polygon on purpose). */
+    private function seedBounds(int $msgid, string $outerWkt, ?string $innerWkt): void
+    {
+        DB::statement(
+            'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
+             VALUES (?, ST_GeomFromText(?, 3857), '
+                . ($innerWkt !== null ? 'ST_GeomFromText(?, 3857)' : 'NULL') . ')
+             ON DUPLICATE KEY UPDATE outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)',
+            $innerWkt !== null ? [$msgid, $outerWkt, $innerWkt] : [$msgid, $outerWkt]
+        );
+    }
+
+    public function test_within_reach_consults_sandwich_bounds(): void
+    {
+        // The single-point gate consults the sandwich bounds before the ~178KB exact
+        // polygon (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md). Adversarial
+        // fixtures — bounds contradicting the polygon, impossible for verified
+        // writer-derived bounds — are the only way to observe which shape was trusted.
+        $svc = new ReachQueryService();
+
+        // Cheap reject: polygon COVERS the point, outer_bound doesn't.
+        $cheapReject = $this->seedReach();
+        $this->seedBounds($cheapReject, 'POLYGON((5 5, 5.1 5, 5.1 5.1, 5 5.1, 5 5))', null);
+        $this->assertFalse(
+            $svc->isWithinReach($cheapReject, 51.5, -0.1),
+            'a point outside outer_bound is rejected without testing the polygon'
+        );
+
+        // Cheap accept: polygon does NOT cover the point, inner_bound does.
+        $cheapAccept = $this->seedReach();
+        DB::statement(
+            "UPDATE rippling_reach SET polygon = ST_GeomFromText(
+                'POLYGON((5.0 51.4, 5.2 51.4, 5.2 51.6, 5.0 51.6, 5.0 51.4))', 3857) WHERE msgid = ?",
+            [$cheapAccept]
+        );
+        $this->seedBounds(
+            $cheapAccept,
+            'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))',
+            self::POLY
+        );
+        $this->assertTrue(
+            $svc->isWithinReach($cheapAccept, 51.5, -0.1),
+            'a point inside inner_bound is accepted without testing the polygon'
+        );
+    }
+
+    public function test_within_reach_band_and_degraded_bounds_use_exact_polygon(): void
+    {
+        $svc = new ReachQueryService();
+
+        // Band (inside outer, no inner): the exact polygon decides.
+        $bandIn = $this->seedReach();
+        $this->seedBounds($bandIn, 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', null);
+        $this->assertTrue($svc->isWithinReach($bandIn, 51.5, -0.1), 'band falls back to the exact polygon (covered)');
+        $this->assertFalse($svc->isWithinReach($bandIn, 51.55, -0.25), 'band falls back to the exact polygon (inside outer, outside polygon)');
+
+        // Degraded (POINT outer, from completion pruning): treated as absent — the
+        // exact polygon decides, so held-reply release for a taken post still works.
+        $degraded = $this->seedReach();
+        DB::statement(
+            'INSERT INTO rippling_reach_bounds (msgid, outer_bound, inner_bound)
+             VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), NULL)',
+            [$degraded]
+        );
+        $this->assertTrue(
+            $svc->isWithinReach($degraded, 51.5, -0.15),
+            'degraded bounds fall back to the exact polygon (covered → within reach)'
+        );
+    }
 }

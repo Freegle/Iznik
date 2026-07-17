@@ -3,6 +3,7 @@
 namespace App\Services\Ripple;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Read-side reach test: "is this location inside a post's current rippled-out
@@ -17,21 +18,64 @@ class ReachQueryService
 {
     private const SRID = 3857;
 
+    /** Memoized: whether the sandwich-bounds table exists (pre-migration deploys fall back). */
+    private static ?bool $boundsTableExists = null;
+
+    private function boundsAvailable(): bool
+    {
+        if (self::$boundsTableExists === null) {
+            try {
+                self::$boundsTableExists = Schema::hasTable('rippling_reach_bounds');
+            } catch (\Throwable) {
+                self::$boundsTableExists = false;
+            }
+        }
+
+        return self::$boundsTableExists;
+    }
+
     /**
      * Is (lat,lng) inside the post's current reach polygon? False if the post has
      * no reach row yet (not rippling / not in messages_spatial).
+     *
+     * Consults the sandwich bounds first (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
+     * outside outer_bound is an authoritative reject, inside inner_bound an authoritative
+     * accept, and only the band between them touches the ~178KB exact polygon — always via
+     * a correlated EXISTS (lazy BLOB fetch does not cross OR items). Degraded (POINT)
+     * bounds are treated as absent: held-reply release serves completed posts, which must
+     * resolve against the exact polygon.
      */
     public function isWithinReach(int $msgid, float $lat, float $lng): bool
     {
         try {
-            $row = DB::selectOne(
-                'SELECT EXISTS(
-                    SELECT 1 FROM rippling_reach
-                    WHERE msgid = ?
-                      AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
-                 ) AS within',
-                [$msgid, $lng, $lat]
-            );
+            if ($this->boundsAvailable()) {
+                $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
+                $row = DB::selectOne(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM rippling_reach rr
+                        LEFT JOIN rippling_reach_bounds b ON b.msgid = rr.msgid
+                            AND ST_GeometryType(b.outer_bound) <> 'POINT'
+                        WHERE rr.msgid = ?
+                          AND ((b.msgid IS NOT NULL AND ST_Contains(b.outer_bound, $point)
+                                AND (COALESCE(ST_Contains(b.inner_bound, $point), 0) = 1
+                                     OR EXISTS (SELECT 1 FROM rippling_reach r2
+                                         WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
+                               OR (b.msgid IS NULL
+                                   AND EXISTS (SELECT 1 FROM rippling_reach r2
+                                       WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
+                     ) AS within",
+                    [$msgid, $lng, $lat, $lng, $lat, $lng, $lat, $lng, $lat]
+                );
+            } else {
+                $row = DB::selectOne(
+                    'SELECT EXISTS(
+                        SELECT 1 FROM rippling_reach
+                        WHERE msgid = ?
+                          AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
+                     ) AS within',
+                    [$msgid, $lng, $lat]
+                );
+            }
 
             return (bool) ($row->within ?? 0);
         } catch (\Throwable $e) {

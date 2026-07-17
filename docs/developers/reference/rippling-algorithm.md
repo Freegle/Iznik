@@ -222,6 +222,37 @@ retracted, so re-approval restores the copy without re-rippling.
   own distance) and OUTBOUND (a post is only shown/mailed to people within the *poster's*
   distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
   the digest's `DistancePreferenceFilter::passesBothPreferences`).
+
+  The containment test itself is served through **sandwich bounds**
+  (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
+  isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
+  derived polygons per reach in `rippling_reach_bounds` — `outer_bound` (a verified
+  superset: outside it = definitely out) and `inner_bound` (a verified subset: inside it =
+  definitely in) — and only fetch the exact polygon for the thin band between them, always
+  via a correlated `EXISTS` (MySQL's lazy BLOB fetch does not cross OR items). The exact
+  polygon stays authoritative, and bounds are maintained by `Ripple\ReachBoundsService`
+  from all four `ExpandService` write paths, after clips re-apply. The bounds themselves
+  preferentially come from the routing server (`iznik-routing-go/bounds.go`): it derives
+  them on the same rasterisation grid the exact polygon is traced from (morphological
+  dilate/erode + simplification budgeted inside that margin, so superset/subset hold by
+  construction) and ships them as `catchment_outer`/`catchment_inner` on point-form
+  `/v1/catchment`. When absent (old cached schedules, older servers), the service derives
+  them in SQL (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). Either way every
+  write is verified (`outer ⊇ polygon ⊇ inner`); anything unverifiable falls back to
+  `ST_Envelope` / NULL, and a missing row means readers fall back to the exact test.
+  Completion (Taken/Received) degrades a post's `outer_bound` to a point so browse stops
+  matching it cheaply — the polygon itself is never pruned (the digest's "came and went"
+  section, held replies to taken posts and un-completion all still read it; the digest gate
+  therefore skips degraded bounds). A rejection clip that shrinks the polygon NULLs
+  `inner_bound` synchronously (`ClipReachForRejectedGroup`), since a stale inner bound
+  would keep showing the post in the just-rejected area.
+
+  The single-point gates consult the same sandwich: `ReachQueryService::isWithinReach`
+  (browse Nearby / reply-eligibility / held-reply release in batch), the message-list
+  replyeligible probe and the chat reply hold (shared Go fragments in
+  `rippling/reachbounds.go`). Being PK lookups they skip the MBR conjunct, and they too
+  treat degraded bounds as absent so completed posts still resolve against the exact
+  polygon.
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
 - **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
@@ -242,6 +273,10 @@ retracted, so re-approval restores the copy without re-rippling.
   slim `schedule` (per-tick drive-time / audience / reached-group ids, no geometry), `tick`,
   `status` (expanding / stopped / done / held), `reachable_group_ids` (the current tick's
   set, used by retraction).
+- `rippling_reach_bounds` - sibling table (FK `ON DELETE CASCADE`): per reach, the small
+  verified `outer_bound` / `inner_bound` sandwich polygons the hot read queries consult
+  before the exact polygon (see §7). Maintained by `Ripple\ReachBoundsService`; backfillable
+  with `ripple:backfill-reach-bounds`.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
