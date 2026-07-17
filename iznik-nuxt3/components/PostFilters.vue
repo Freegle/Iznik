@@ -502,8 +502,12 @@ const hasNonDefaultFilters = computed(() => {
     min-width: 0;
 
     @include media-breakpoint-up(md) {
-      grid-column: 1 / 2;
-      grid-row: 3 / 4;
+      /* Span the FULL panel width on its own row rather than sharing the 2fr column
+         with Sort. The reach hint / nearby-towns list then has the whole panel to use,
+         so its (deliberate) ellipsis-truncation only bites when genuinely tight instead
+         of at every larger width (Discourse 9808, Neville #600). */
+      grid-column: 1 / 4;
+      grid-row: 2 / 3;
     }
   }
 
@@ -512,7 +516,8 @@ const hasNonDefaultFilters = computed(() => {
     grid-row: 4 / 5;
 
     @include media-breakpoint-up(md) {
-      grid-column: 2 / 3;
+      /* Sort drops below the now full-width distance slider. */
+      grid-column: 1 / 2;
       grid-row: 3 / 4;
     }
   }
