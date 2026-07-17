@@ -371,6 +371,12 @@
                 {{ fromUser.activedistance }} miles apart.
               </NoticeMessage>
             </div>
+            <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
+              We couldn't work out where this post is (often an emailed post whose
+              subject has no recognised place name). Please click
+              <strong>Edit</strong> and add a postcode (it doesn't have to be
+              exactly right - do your best) so members can find it.
+            </NoticeMessage>
             <NoticeMessage v-if="outsideUK" variant="warning" class="mb-2">
               This message may be from outside the UK ({{ position.lat }},
               {{ position.lng }}), which means it might be a scam. Please check
@@ -1153,8 +1159,19 @@ const position = computed(() => {
   return ret
 })
 
+// No resolved location: either the API returned no point, or the point collapsed
+// to ~(0,0) - an unset/ungeocoded lat/lng (e.g. an email post whose subject location
+// couldn't be geocoded, stored NULL and read back as 0). That is "location unknown",
+// NOT a real foreign location, so it must not trip the outside-UK scam warning
+// (Discourse #9865). UK lat is ~49-61, so a real post is never within 0.5deg of (0,0).
+const noLocation = computed(() => {
+  const p = position.value
+  return !p || (Math.abs(p.lat) < 0.5 && Math.abs(p.lng) < 0.5)
+})
+
 const outsideUK = computed(() => {
   return (
+    !noLocation.value &&
     position.value &&
     (position.value.lng < -16 ||
       position.value.lat < 49 ||

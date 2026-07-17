@@ -566,9 +566,30 @@ describe('ModMessage', () => {
       ['UK position', { lat: 52.0, lng: -1.0 }, false],
       ['outside UK (west)', { lat: 52.0, lng: -20.0 }, true],
       ['outside UK (south)', { lat: 40.0, lng: -1.0 }, true],
+      // (0,0) and its blurred form are unresolved locations, not foreign ones -
+      // they must NOT trip the scam warning (Discourse #9865).
+      ['null island (0,0) is not outside UK', { lat: 0, lng: 0 }, false],
+      ['blurred null island (0.004,0) is not outside UK', { lat: 0.004, lng: 0 }, false],
     ])('%s returns %s', (_desc, location, expected) => {
       const wrapper = mountComponent({}, { location })
       expect(wrapper.vm.outsideUK).toBe(expected)
+    })
+  })
+
+  describe('Computed: noLocation', () => {
+    it.each([
+      ['real UK location', { lat: 51.5, lng: -0.1 }, false],
+      ['genuinely foreign location (New York)', { lat: 40.7, lng: -74.0 }, false],
+      ['null island (0,0)', { lat: 0, lng: 0 }, true],
+      ['blurred null island (0.004,0)', { lat: 0.004, lng: 0 }, true],
+    ])('%s -> %s', (_desc, location, expected) => {
+      const wrapper = mountComponent({}, { location })
+      expect(wrapper.vm.noLocation).toBe(expected)
+    })
+
+    it('is true when there is no position at all', () => {
+      const wrapper = mountComponent({}, { location: null, lat: null, lng: null })
+      expect(wrapper.vm.noLocation).toBe(true)
     })
   })
 

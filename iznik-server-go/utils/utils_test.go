@@ -277,6 +277,17 @@ func TestBlur_ZeroDistanceNoChange(t *testing.T) {
 	assert.InDelta(t, -0.1, lng, 0.001)
 }
 
+func TestBlur_ZeroZeroIsNotFabricated(t *testing.T) {
+	// (0,0) is an unset/unresolved location (e.g. an email post whose subject
+	// location couldn't be geocoded, stored NULL and read back as 0), not a real
+	// point. Blurring must leave it at exactly (0,0) rather than stepping off Null
+	// Island to ~(0.004, 0) - which would fabricate a fake location that then reads
+	// as "outside the UK" and hides the "add a postcode" prompt (Discourse #9865).
+	lat, lng := Blur(0, 0, BLUR_USER)
+	assert.Equal(t, 0.0, lat)
+	assert.Equal(t, 0.0, lng)
+}
+
 // ---------------------------------------------------------------------------
 // Haversine
 // ---------------------------------------------------------------------------

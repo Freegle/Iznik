@@ -285,7 +285,13 @@ class ContentCheckService
 
                         $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser)
                                     || $this->isGroupModerated((int) $row->groupid);
-                        $promote     = empty($reasons) && !$isModerated;
+                        // Never auto-promote an Offer/Wanted we couldn't locate (NULL lat -
+                        // subject didn't geocode and no usable poster fallback): it would go
+                        // live undiscoverable. Keep it in the mod queue so a moderator adds a
+                        // postcode via the "add a postcode" prompt (Discourse #9865).
+                        $missingLocation = $row->lat === null
+                                        && in_array($row->msgtype, ['Offer', 'Wanted'], true);
+                        $promote     = empty($reasons) && !$isModerated && !$missingLocation;
                         $hasBlock    = !$promote && !empty(array_filter(
                             $reasons,
                             fn($r) => ($r['action'] ?? 'flag') === 'block'
@@ -381,7 +387,7 @@ class ContentCheckService
         $base = fn () => DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'mg.collection', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
             ->whereNull('mg.contentcheck_checked_at')
             ->where('mg.deleted', 0)
             // Never fight a mod: a held message has been deliberately pulled back /
