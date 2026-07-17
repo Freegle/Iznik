@@ -84,9 +84,17 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		}
 
 		// Update the last access time for the user if it is null or older than ten minutes.
+		// The throttle MUST live in the SQL guard (matching sessions.lastactive below), not
+		// only in the app-side check: N parallel requests all read the same stale value, all
+		// pass the check, and all UPDATE the same row — and with writes sprayed across the
+		// Galera hosts those same-row writes cause certification conflicts (387ms avg,
+		// ~197 DB-hours/10d — plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent
+		// fix 1). With the guard, the racers match zero rows and are cheap no-ops. The
+		// app-side staleness check is kept as a fast path only: it skips issuing the
+		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {
 			db := database.DBConn
-			db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ?", userIdInDB.Id)
+			db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id)
 		}
 
 		// Refresh sessions.lastactive if older than 10 minutes — this gives the session
