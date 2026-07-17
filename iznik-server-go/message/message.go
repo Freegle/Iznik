@@ -3959,35 +3959,45 @@ func PutMessage(c *fiber.Ctx) error {
 		saveAccessInstructions(db, newMsgID, req.Accessinstructions)
 	}
 
-	// Add spatial data if locationid is provided, and update the user's last known location
-	// (so that GET /isochrone can auto-create an isochrone for the user).
+	// If the user explicitly chose a location, remember it (GET /isochrone
+	// auto-creates an isochrone for the user from lastlocation).
 	if req.Locationid != nil && *req.Locationid > 0 {
 		db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", *req.Locationid, myid)
+	}
 
-		var lat, lng float64
-		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&lat, &lng)
-		if lat != 0 || lng != 0 {
-			db.Exec("UPDATE messages SET locationid = ?, lat = ?, lng = ? WHERE id = ?",
-				*req.Locationid, lat, lng, newMsgID)
-			// Do NOT insert into messages_spatial here — drafts must not appear
-			// in browse/search results. Spatial index is populated by handleJoinAndPost
-			// after the message is submitted to a group (matching V1 behaviour).
-		}
+	// Denormalise the post's location onto the message so it is discoverable in
+	// browse/search, which read messages.lat/lng directly (see bounds.go). Prefer
+	// the chosen locationid; if the client didn't send one, fall back to the user's
+	// last known location so the post is still findable (parity with the email path,
+	// IncomingMailService). Resolve lat/lng with a JOIN on the WRITE connection in a
+	// single statement: the previous SELECT-then-guarded-UPDATE could be routed to a
+	// read replica that missed the location and, with the Scan error unchecked, would
+	// silently leave lat/lng NULL — an undiscoverable post (Discourse 9865). If
+	// nothing resolves (no locationid and no lastlocation), lat/lng stay NULL and
+	// ContentCheckService holds the post for a moderator to add a postcode.
+	db.Exec("UPDATE messages m "+
+		"JOIN users u ON u.id = ? "+
+		"JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation) "+
+		"SET m.locationid = l.id, m.lat = l.lat, m.lng = l.lng "+
+		"WHERE m.id = ? AND (m.lat IS NULL OR m.lng IS NULL)",
+		myid, newMsgID)
+	// Do NOT insert into messages_spatial here — drafts must not appear in
+	// browse/search results. Spatial index is populated by handleJoinAndPost
+	// after the message is submitted to a group (matching V1 behaviour).
 
-		// Reconstruct subject with location.
-		// The initial subject was set as "Type: Item" without location.
-		// Now that locationid is set, rebuild as "KEYWORD: Item (Area PC)".
-		locStr := constructLocationString(db, newMsgID)
-		if locStr != "" && req.Item != "" {
-			groupid := req.Groupid
-			if groupid == 0 {
-				// Draft may not have a group yet; use item name without location keyword.
-				groupid = getPrimaryGroupForMessage(db, newMsgID)
-			}
-			keyword := getGroupKeyword(db, groupid, req.Type)
-			newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
-			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
+	// Reconstruct subject with location, now that locationid is set.
+	// The initial subject was set as "Type: Item" without location; rebuild as
+	// "KEYWORD: Item (Area PC)". Skipped when no location could be resolved.
+	locStr := constructLocationString(db, newMsgID)
+	if locStr != "" && req.Item != "" {
+		groupid := req.Groupid
+		if groupid == 0 {
+			// Draft may not have a group yet; use item name without location keyword.
+			groupid = getPrimaryGroupForMessage(db, newMsgID)
 		}
+		keyword := getGroupKeyword(db, groupid, req.Type)
+		newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
+		db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
 	}
 
 	resp := fiber.Map{"ret": 0, "status": "Success", "id": newMsgID}
