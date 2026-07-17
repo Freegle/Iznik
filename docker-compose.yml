@@ -460,6 +460,40 @@ services:
       wiki-mysql:
         condition: service_healthy
 
+  # Elasticsearch backing the wiki's full-text search (CirrusSearch), replacing the old
+  # GoogleCustomWikiSearch. Single-node cluster on the private wikinet; wiki-media reaches it
+  # as http://wiki-elastic:9200. Edge profile only (prod wiki host) so it is inert for local
+  # dev / CI. Heap kept small (512m) as this box is shared. ES 7.10.2 matches the CirrusSearch
+  # REL1_43 that the (bind-mounted 1.43) wiki core runs.
+  wiki-elastic:
+    image: elasticsearch:7.10.2
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-elastic
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wiki-elastic-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
   # Grafana Alloy (edge) — ships the edge container logs (frontend-nginx
   # uploads/delivery/tiles access + tusd events) to the Loki container via Docker
   # service discovery, closing the edge log blind spot (plan §10). Distinct from
@@ -532,8 +566,13 @@ services:
     environment:
       # Anthropic API key for Claude API calls
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Go API base URL used to verify the caller is an authenticated moderator
-      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
+      # Go API base URL used to verify the caller is an authenticated moderator.
+      # Point at apiv2-live (live DB) by container name: the helper works on live,
+      # de-anonymised data, and a live mod's Support/Admin token only validates
+      # against the live backend - not the local test-DB apiv2. apiv2-live:8192 is
+      # a plain container-to-container hostname on the shared network (apiv2.localhost
+      # is a host-only Traefik route and doesn't resolve from inside this container).
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
@@ -1906,6 +1945,8 @@ volumes:
     driver: local   # tile-server rendered tiles (~44 GB)
   alloy-data:
     driver: local   # Grafana Alloy positions/WAL (edge log shipping)
+  wiki-elastic-data:
+    driver: local   # Elasticsearch index for the wiki's CirrusSearch (edge)
 
 networks:
   default:
