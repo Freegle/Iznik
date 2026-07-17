@@ -45,9 +45,9 @@ describe('NearbyTowns', () => {
   })
 
   // Nothing is within reach, so the API falls back to naming the single nearest town
-  // ("Closer than: X" per the server comment in iznik-server-go/town/town.go) - the only
+  // (rendered as "Close to X" from the server's closer_than fallback field) - the only
   // content in that message, unlike the safe-to-truncate "e.g. Town, Town" examples list.
-  it('does not ellipsis-truncate the single nearest-town name in "Closer than X" (Discourse 9808)', async () => {
+  it('does not ellipsis-truncate the single nearest-town name in "Close to X" (Discourse 9808)', async () => {
     mockFetchNear.mockResolvedValue({
       towns: [],
       closer_than: 'Barrow-in-Furness',
@@ -59,7 +59,7 @@ describe('NearbyTowns', () => {
     await flushPromises()
 
     const tail = wrapper.find('.nt-tail')
-    expect(tail.text()).toBe('Closer than Barrow-in-Furness')
+    expect(tail.text()).toBe('Close to Barrow-in-Furness')
     // A CSS class that keeps this specific message from being ellipsis-clipped at mobile
     // widths - clipping it would hide the one piece of information ("Barrow-in-Furness")
     // the message exists to convey.
@@ -98,7 +98,9 @@ describe('NearbyTowns', () => {
     // is clipped. happy-dom has no layout engine, so this only pins the class
     // wiring; the visual no-clip at >=768px is covered by the e2e test.
     expect(wrapper.find('.nt-tail').classes()).toContain('nt-tail--wrap')
-    expect(wrapper.find('.nearby-towns').classes()).toContain('nearby-towns--wrap')
+    expect(wrapper.find('.nearby-towns').classes()).toContain(
+      'nearby-towns--wrap'
+    )
   })
 
   it('does not apply .nearby-towns--wrap when towns are within reach (no-wrap case)', async () => {
@@ -112,6 +114,8 @@ describe('NearbyTowns', () => {
     await vi.advanceTimersByTimeAsync(350)
     await flushPromises()
 
-    expect(wrapper.find('.nearby-towns').classes()).not.toContain('nearby-towns--wrap')
+    expect(wrapper.find('.nearby-towns').classes()).not.toContain(
+      'nearby-towns--wrap'
+    )
   })
 })
