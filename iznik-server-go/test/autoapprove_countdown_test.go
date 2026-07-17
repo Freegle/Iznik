@@ -260,8 +260,9 @@ func TestMarkCheckedReject(t *testing.T) {
 	// group. The reject must hard-stop the reach and must NOT touch the rippled-in copy
 	// (the engine's own retraction handles those).
 	groupB := CreateTestGroup(t, prefix+"_b")
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, arrival) "+
-		"VALUES (?, 52.0, -1.0, ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857), NOW())", approved)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival) "+
+		"VALUES (?, 52.0, -1.0, ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857)), NOW())", approved)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", approved, groupB)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid=?", approved)
