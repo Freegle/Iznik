@@ -43,12 +43,14 @@ func TestGetMicrovolunteering_CheckMessage_ReachBounded(t *testing.T) {
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", farID)
 
 	// Near: max_drive_min=60 -> ~84 km radius; reviewer at the origin -> included.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, max_drive_min) VALUES "+
-		"(?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), 60) "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, max_drive_min) VALUES "+
+		"(?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), 60) "+
 		"ON DUPLICATE KEY UPDATE max_drive_min=60", nearID)
 	// Far: max_drive_min=30 -> ~42 km radius; reviewer ~600 km away -> excluded.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, max_drive_min) VALUES "+
-		"(?, 57.0, -3.0, ST_GeomFromText('POLYGON((-3.1 56.9,-2.9 56.9,-2.9 57.1,-3.1 57.1,-3.1 56.9))', 3857), 30) "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, max_drive_min) VALUES "+
+		"(?, 57.0, -3.0, ST_GeomFromText('POLYGON((-3.1 56.9,-2.9 56.9,-2.9 57.1,-3.1 57.1,-3.1 56.9))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-3.1 56.9,-2.9 56.9,-2.9 57.1,-3.1 57.1,-3.1 56.9))', 3857)), 30) "+
 		"ON DUPLICATE KEY UPDATE max_drive_min=30", farID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", nearID, farID)
 
@@ -109,11 +111,13 @@ func TestGetMicrovolunteering_CheckMessage_NearFirst(t *testing.T) {
 	defer db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", nearID)
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", nearID)
 
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, max_drive_min) VALUES "+
-		"(?, 52.4, -1.9, ST_GeomFromText('POLYGON((-2.0 52.3,-1.8 52.3,-1.8 52.5,-2.0 52.5,-2.0 52.3))', 3857), 180) "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, max_drive_min) VALUES "+
+		"(?, 52.4, -1.9, ST_GeomFromText('POLYGON((-2.0 52.3,-1.8 52.3,-1.8 52.5,-2.0 52.5,-2.0 52.3))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-2.0 52.3,-1.8 52.3,-1.8 52.5,-2.0 52.5,-2.0 52.3))', 3857)), 180) "+
 		"ON DUPLICATE KEY UPDATE max_drive_min=180", farNorthID)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, max_drive_min) VALUES "+
-		"(?, 51.51, -0.09, ST_GeomFromText('POLYGON((-0.1 51.5,0.0 51.5,0.0 51.52,-0.1 51.52,-0.1 51.5))', 3857), 60) "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, max_drive_min) VALUES "+
+		"(?, 51.51, -0.09, ST_GeomFromText('POLYGON((-0.1 51.5,0.0 51.5,0.0 51.52,-0.1 51.52,-0.1 51.5))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.1 51.5,0.0 51.5,0.0 51.52,-0.1 51.52,-0.1 51.5))', 3857)), 60) "+
 		"ON DUPLICATE KEY UPDATE max_drive_min=60", nearID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", farNorthID, nearID)
 
