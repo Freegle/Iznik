@@ -58,11 +58,11 @@
           record.
         </p>
         <p>
-          We keep the original voice recording for no more than
-          <strong>90 days</strong>, after which it is deleted automatically -
-          after that, only the text of your post remains. When you record, we ask
-          whether you're happy for other freeglers to hear your recording, and we
-          will only ever let someone else hear it if you choose to allow that.
+          Your recording is only ever used to produce that transcript - we never
+          play it to other freeglers. We keep it no longer than is needed to write
+          your post, and in any event no more than <strong>90 days</strong>, after
+          which it is deleted automatically. After that, only the text of your post
+          remains.
         </p>
         <h2>3. Cookies and Tracking</h2>
         <p>
@@ -236,6 +236,10 @@
         <h3>Change History</h3>
         <p>Here are the changes to this page.</p>
         <ul class>
+          <li>
+            17/07/2026: Section 2.1: we no longer ask whether other freeglers may
+            hear your voice recording, because we never play it to them.
+          </li>
           <li>
             09/07/2026: Clarify in section 2.1 that a voice recording may be
             shared with other freeglers, not only the person collecting, if you

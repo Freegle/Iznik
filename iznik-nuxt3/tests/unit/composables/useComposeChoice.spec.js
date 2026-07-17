@@ -18,7 +18,8 @@ vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({ breakpoint: mockBreakpoint }),
 }))
 vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => ({ user: { id: mockUserId } }),
+  // mockUserId null => logged out, so authStore.user?.id is undefined.
+  useAuthStore: () => ({ user: mockUserId ? { id: mockUserId } : null }),
 }))
 vi.mock('~/stores/mobile', () => ({
   useMobileStore: () => ({ isApp: mockIsApp }),
@@ -80,6 +81,75 @@ describe('useComposeChoice rollout from config', () => {
     const { loadRollout } = useComposeChoice()
 
     await expect(loadRollout()).resolves.toBeUndefined()
+  })
+})
+
+// Regression for the flaw that invalidated the first run: the bucket is keyed on the
+// user id, so logged-out users all hashed 'voice:0' -> bucket 45 -> control, every
+// time. 23% of mobile compose entries were logged out and every one of them landed in
+// control, so control held a population voice could never contain and the arms weren't
+// comparable. Logged-out users must now sit the experiment out entirely.
+describe('useComposeChoice logged-out users are not enrolled', () => {
+  beforeEach(() => {
+    mockFetch.mockReset()
+    mockBandit.shown.mockReset()
+    mockRoute.query = {}
+    mockBreakpoint = 'sm'
+    mockIsApp = false
+    mockUserId = null // logged out
+  })
+
+  it('reports it cannot bucket a logged-out user', () => {
+    const { canBucket } = useComposeChoice()
+    expect(canBucket()).toBe(false)
+  })
+
+  it('leaves the experiment inactive when logged out, even at 100% rollout', async () => {
+    mockFetch.mockResolvedValue([{ value: '100' }])
+    const { loadRollout, experimentActive } = useComposeChoice()
+
+    await loadRollout()
+
+    // Inactive => the entry point never records exposure and keeps the typed flow.
+    expect(experimentActive()).toBe(false)
+  })
+
+  it('assigns control rather than hashing a missing id', async () => {
+    mockFetch.mockResolvedValue([{ value: '100' }])
+    const { loadRollout, assign } = useComposeChoice()
+
+    await loadRollout()
+
+    // At 100% a bucketable user would get voice; a logged-out one must not.
+    expect(assign()).toBe('control')
+  })
+
+  it('enrols the same user once they are logged in', async () => {
+    mockFetch.mockResolvedValue([{ value: '100' }])
+    const loggedOut = useComposeChoice()
+
+    await loggedOut.loadRollout()
+    expect(loggedOut.experimentActive()).toBe(false)
+
+    // The composable reads the auth store once, on creation, so logging in means a
+    // fresh instance - which is what the compose entry gets on its next visit.
+    mockUserId = 42
+    const loggedIn = useComposeChoice()
+    expect(loggedIn.canBucket()).toBe(true)
+    expect(loggedIn.experimentActive()).toBe(true)
+    expect(loggedIn.assign()).toBe('voice')
+  })
+
+  it('still honours the ?voice=1 demo override when logged out', async () => {
+    mockFetch.mockResolvedValue([{ value: '0' }])
+    mockRoute.query = { voice: '1' }
+    const { loadRollout, experimentActive, assign } = useComposeChoice()
+
+    await loadRollout()
+
+    // The override forces an arm, so it needs no bucket - demos keep working.
+    expect(experimentActive()).toBe(true)
+    expect(assign()).toBe('voice')
   })
 })
 
