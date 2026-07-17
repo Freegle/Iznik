@@ -15,6 +15,7 @@ import LayoutCommon from '~/components/LayoutCommon'
 import { ref } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMobileStore } from '@/stores/mobile' // APP
+import { bootSession } from '~/composables/useBootSession'
 const GoogleOneTap = defineAsyncComponent(() =>
   import('~/components/GoogleOneTap')
 )
@@ -57,40 +58,18 @@ watch(
 )
 
 // For this layout we don't need to be logged in.  So can just continue.  But we want to know first whether or
-// not we are logged in.  We might already know that from the server via cookies, but if not, find out.
-const jwt = authStore.auth.jwt
-const persistent = authStore.auth.persistent
+// not we are logged in.  bootSession() resolves that exactly once per cold
+// start (and doesn't repeat the fetch when another layout just did it).
+const user = await bootSession()
 
-if (jwt || persistent) {
-  // We have some credentials, which may or may not be valid on the server.  If they are, then we can crack on and
-  // start rendering the page.  This will be quicker than waiting for GoogleOneTap to load on the client and tell us
-  // whether or not we can log in that way.
-  let user = null
-
-  try {
-    user = await authStore.fetchUser()
-  } catch (e) {
-    console.log('Error fetching user', e)
-  }
-
-  if (user) {
-    ready = true
-  }
+if (user) {
+  ready = true
 }
 
 if (!ready && !mobileStore.isApp) {
   // APP
   // We don't have a valid JWT.  See if OneTap can sign us in.
   oneTap.value = true
-}
-
-if (!loginStateKnown.value) {
-  try {
-    await authStore.fetchUser()
-  } catch (e) {
-    // Can fail during SSR if API is not accessible - don't fail the page
-    console.log('Error in second fetchUser', e?.message)
-  }
 }
 
 function googleLoggedIn() {

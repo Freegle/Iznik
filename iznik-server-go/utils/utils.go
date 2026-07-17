@@ -249,6 +249,16 @@ func NilIfZero(v uint64) interface{} {
 func Blur(lat float64, lng float64, dist float64) (float64, float64) {
 	var dlat, dlng float64
 
+	// (0,0) is not a real location - it's what an unset/unresolved lat/lng (e.g. an
+	// email post whose subject location couldn't be geocoded, stored NULL and read
+	// back as 0) collapses to. Blurring it would step off Null Island to ~(0.004, 0),
+	// fabricating a fake location that then reads as "outside the UK" (ModMessage.vue
+	// outsideUK bbox check) and hides the "add a postcode" edit prompt. Leave it at
+	// (0,0) so downstream can treat it as "no location known" (Discourse #9865).
+	if lat == 0 && lng == 0 {
+		return 0, 0
+	}
+
 	// Some old posts have invalid lat/lng values, which would result in us returning NaN.
 	if lat > 90 || lat < -90 || lng > 180 || lng < -180 {
 		// Use the center of Britain.  Dunsop Bridge has lovely ducks.

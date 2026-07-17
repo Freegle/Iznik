@@ -2,9 +2,11 @@ package test
 
 import (
 	"bytes"
+	"encoding/base64"
 	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -258,8 +260,19 @@ func TestGetTrystSingleIncludesCalendarLink(t *testing.T) {
 	tryst := result["tryst"].(map[string]interface{})
 	calLink, ok := tryst["calendarLink"].(string)
 	assert.True(t, ok, "calendarLink should be a string")
-	assert.Contains(t, calLink, "google.com/calendar", "calendarLink should be a Google Calendar URL")
-	assert.Contains(t, calLink, "Freegle", "calendarLink should mention Freegle")
+
+	// AddToCalendar.vue's download() extracts and decodes this the same way.
+	u, err := url.Parse(calLink)
+	assert.NoError(t, err)
+	encoded := u.Query().Get("data")
+	assert.NotEmpty(t, encoded, "calendarLink should have a data= param the frontend can parse")
+
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	assert.NoError(t, err)
+
+	var eventData map[string]string
+	assert.NoError(t, json2.Unmarshal(decoded, &eventData))
+	assert.Contains(t, eventData["name"], "Freegle", "calendarLink event data should mention Freegle")
 }
 
 func TestGetTrystListIncludesCalendarLink(t *testing.T) {
@@ -286,7 +299,10 @@ func TestGetTrystListIncludesCalendarLink(t *testing.T) {
 	first := trysts[0].(map[string]interface{})
 	calLink, ok := first["calendarLink"].(string)
 	assert.True(t, ok, "calendarLink should be present in tryst list items")
-	assert.Contains(t, calLink, "google.com/calendar")
+
+	u, err := url.Parse(calLink)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, u.Query().Get("data"), "calendarLink should have a data= param the frontend can parse")
 }
 
 func TestGetTrystV2Path(t *testing.T) {

@@ -10,7 +10,8 @@ import { useNuxtApp, useRoute } from '#imports'
 // mobileStore.isApp guards below).
 //
 // Assignment is a fixed per-user % bucket (a clean A/B holdout, not the adaptive
-// bandit) so a stable slice of mobile users sees the voice option. Exposure and
+// bandit) so a stable slice of mobile users sees the voice option. It needs a user
+// id to hash, so only logged-in users are enrolled - see canBucket(). Exposure and
 // completion are still recorded through the existing bandit endpoints
 // (uid = COMPOSE_CHOICE_UID) so the abtest table accumulates shown/action rates
 // per variant that we can compare.
@@ -63,10 +64,20 @@ export function useComposeChoice() {
 
   const isMobile = () => ['xs', 'sm', 'md'].includes(miscStore.breakpoint)
 
+  // The bucket is keyed on the user id, so a logged-out user has nothing stable to
+  // hash. Enrolling them anyway is what broke the first run of this experiment: they
+  // all hashed the same string ('voice:0' -> bucket 45) and so landed in control
+  // *every* time, never voice. 23% of mobile compose entries were logged out, which
+  // meant control carried a whole population the voice arm could not contain, and the
+  // two arms were no longer comparable. Only enrol users we can actually bucket.
+  function canBucket() {
+    return Boolean(authStore.user?.id)
+  }
+
   // Deterministic 0..99 bucket per user (FNV-1a hash) so a given user always
-  // gets the same experience across visits.
+  // gets the same experience across visits. Only meaningful once canBucket().
   function bucket() {
-    const id = authStore.user?.id || 0
+    const id = authStore.user?.id
     let h = 2166136261
     const s = 'voice:' + id
     for (let i = 0; i < s.length; i++) {
@@ -82,8 +93,13 @@ export function useComposeChoice() {
   function experimentActive() {
     // Web-only: never run the experiment inside the native app, even with ?voice.
     if (mobileStore.isApp) return false
+    // An explicit ?voice= override forces an arm, so it needs no bucket and still
+    // works logged out - that's what demos use.
     const q = route?.query?.voice
     if (q === '1' || q === '0') return true
+    // Logged out: sit the experiment out entirely rather than silently stacking
+    // control. No exposure recorded, original typed flow unchanged.
+    if (!canBucket()) return false
     return rolloutPct > 0
   }
 
@@ -95,6 +111,9 @@ export function useComposeChoice() {
     if (q === '1') return 'voice'
     if (q === '0') return 'control'
     if (!isMobile()) return 'control'
+    // Belt and braces: experimentActive() already excludes these, so we never
+    // hash a missing id into a bucket.
+    if (!canBucket()) return 'control'
     return bucket() < rolloutPct ? 'voice' : 'control'
   }
 
@@ -165,6 +184,7 @@ export function useComposeChoice() {
     COMPOSE_CHOICE_UID,
     COMPOSE_METHOD_UID,
     isMobile,
+    canBucket,
     loadRollout,
     experimentActive,
     assign,

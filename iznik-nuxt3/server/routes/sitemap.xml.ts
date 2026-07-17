@@ -1,5 +1,6 @@
 import { Readable } from 'stream'
 import { SitemapStream, streamToPromise } from 'sitemap'
+import { comparisonList } from '../../constants/comparisons'
 
 // We want to return a sitemap which has the normal page routes, but also our dynamic routes.
 // So far as I can tell Nuxt3 isn't evolved enough for use with a sitemap, so we have to do this
@@ -24,6 +25,7 @@ export default defineEventHandler(async (event) => {
     { url: '/volunteerings', changefreq: 'monthly', priority: 0.1 },
     { url: '/mobile', changefreq: 'monthly', priority: 0.3 },
     { url: '/about', changefreq: 'monthly', priority: 0.3 },
+    { url: '/compare', changefreq: 'monthly', priority: 0.5 },
     { url: '/disclaimer', changefreq: 'monthly', priority: 0.1 },
     { url: '/terms', changefreq: 'monthly', priority: 0.1 },
     { url: '/privacy', changefreq: 'monthly', priority: 0.1 },
@@ -31,6 +33,16 @@ export default defineEventHandler(async (event) => {
     { url: '/giftaid', changefreq: 'monthly', priority: 0.1 },
     { url: '/stories/summary', changefreq: 'weekly', priority: 0.1 },
   ]
+
+  // The "Freegle vs ..." comparison pages, driven off the same data as the pages
+  // themselves so the two can't drift apart.
+  comparisonList.forEach((comparison) => {
+    links.push({
+      url: '/compare/' + comparison.slug,
+      changefreq: 'monthly',
+      priority: 0.5,
+    })
+  })
 
   // Fetch all the groups.
   try {

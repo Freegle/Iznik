@@ -21,7 +21,11 @@ export function useNuxtApp() {
   }
 }
 
+// Default mock for useRuntimeConfig - tests override via globalThis, e.g.
+// globalThis.__testRuntimeConfig = () => ({ public: { ISAPP: true } })
 export function useRuntimeConfig() {
+  if (typeof globalThis.__testRuntimeConfig === 'function')
+    return globalThis.__testRuntimeConfig()
   return {
     public: {},
   }

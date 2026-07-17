@@ -55,8 +55,12 @@ real give flow routes users here at all.
   the durable artifact. Per the privacy policy a *retained* recording would be kept
   at most **90 days** then deleted — the prototype doesn't persist audio beyond the
   compose session.
-- **Consent captured, playback deferred.** A "let the person collecting hear my
-  voice" toggle is captured; the recipient-side player is intentionally not built.
+- **No playback to others, so no consent question.** The recipient-side player was
+  never built, and the first run showed nobody opted in anyway (0 of 3 posts ticked
+  the box). Asking for consent to something that cannot happen is just friction and
+  a promise to keep, so the toggle is gone: recordings are never played to anyone
+  else, and the review screen simply says so. If a player is ever built, the consent
+  question has to come back with it.
 
 ## A/B experiment (mobile)
 
@@ -70,6 +74,12 @@ Two things are measured, both through the existing bandit endpoints
    `?voice=1`/`?voice=0` overrides for demos), and `pages/give/mobile/index.vue`
    routes the `variant` cohort to `/voicepost`, everyone else to the typed form.
    To run the test, raise `ROLLOUT_PCT`.
+
+   **Logged-in only.** The bucket hashes the user id, so logged-out users have
+   nothing stable to hash. They are excluded from the experiment entirely (no
+   exposure recorded, typed flow unchanged) — see `canBucket()`. They used to be
+   enrolled and all hashed `voice:0` → bucket 45 → control, every time, which is
+   what invalidated the first run (see Results).
 2. **Method** (uid `mobile-compose-method`): of those shown the choice, whether
    they picked `voice` or `keyboard` (recorded on the choice screen).
 
@@ -92,7 +102,7 @@ prefixed `voicepost_`:
 | `voicepost_finish_error` | transcription / finish failed | `reason`, `duration_s` |
 | `voicepost_played_recording` | first playback of their own recording | – |
 | `voicepost_rerecord` | Re-record tapped | `count` |
-| `voicepost_posted` | "post it" | `consent_play_voice`, `title_edited`, `desc_edited`, `desc_char_delta`, `had_photo`, `played_back`, `rerecord_count`, `seconds_on_review` |
+| `voicepost_posted` | "post it" | `title_edited`, `desc_edited`, `desc_char_delta`, `had_photo`, `played_back`, `rerecord_count`, `seconds_on_review` |
 | `voicepost_review_abandoned` | left review without posting | `has_photo`, `rerecord_count` |
 
 Together these answer: how often it was shown, the voice-vs-keyboard split,
@@ -133,12 +143,53 @@ Config (local only, not committed): `GROQ_API_KEY` in the worktree `.env`.
 - Full browser flow: choice → Say it → photo → record → review → Re-record →
   Type it → existing form. No console errors from the page.
 
+## Results: first run (11–17 July 2026, 10% rollout)
+
+**The headline A/B question was not answered — the run was invalid.** Do not quote
+the `abtest` rates for `mobile-compose-variant` from this period (they read control
+27.8% vs voice 18.5%). Two independent flaws:
+
+- **Arms measured at different funnel points.** Control recorded *zero* conversions
+  until `307ec9eb5` (14 Jul) while its `shown` counter had been climbing since the
+  11th, so its rate is a real numerator over an inflated denominator. Voice's
+  pre-fix conversions were recorded at review-finish, before the post existed.
+- **Logged-out users could never be voice** (fixed here). 403 of 1769 mobile entries
+  (23%) were logged out and every one landed in control, so control carried a
+  population voice could not contain.
+
+Both are fixed, but **the counters must be reset before the next run** or the old
+contaminated totals keep dominating.
+
+What *is* readable, from the `voicepost_` clientlog funnel (Loki, ~14d retention):
+
+| Stage | Count |
+|---|---|
+| entry (mobile) | 1769 (1677 control / 92 voice) |
+| choice shown | 87 |
+| method chosen | 85 — **58 keyboard / 27 voice** |
+| record start | 16 |
+| transcribed | 15 |
+| **posted** | **3** |
+
+- **Only ~1/3 pick voice when offered it.** The cheapest, least ambiguous result,
+  and it depends on none of the broken counters.
+- **Mic permission is a wall**: all 6 `record_error`s were `permission_denied`,
+  ~22% of everyone who chose voice.
+- **Nobody wanted playback**: `consent_play_voice` false on all 3 posts → the
+  consent question has been removed (see Design decisions).
+- Recordings are short (median ~11s). The transcript-verbatim fix (`a22fad7d2`)
+  is confirmed working: description length matches transcript length after 11 Jul,
+  versus the LLM inventing 200+ chars from a 41-char transcript before it.
+
+Three posts is far too little to conclude anything about completion rate.
+
 ## Not done / next steps
 
-- Wire "post it" and the typed branch into real compose completion (and record the
-  control-variant conversion there, not just voice).
-- Persistent 90-day audio store + consent-gated recipient player (needs a new
-  `messages_audio` mechanism; the attachment pipeline is image-only).
+- **Reset the `abtest` rows for `mobile-compose-variant` / `mobile-compose-method`
+  before re-running**, otherwise the invalid first-run totals swamp the new data.
+- Persistent 90-day audio store + a recipient player (needs a new `messages_audio`
+  mechanism; the attachment pipeline is image-only). This is what would bring back
+  the consent question — it must not ship without it.
 - In-memory session store is single-instance; production needs sticky routing or
   shared storage for the in-flight buffer.
 - iOS Safari records `audio/mp4`; confirm Groq handling on-device.

@@ -123,7 +123,7 @@
         <p class="voicepost__lead">Writing down what you said&hellip;</p>
       </div>
 
-      <!-- REVIEW: editable result + consent -->
+      <!-- REVIEW: editable result -->
       <div v-else-if="phase === 'review'" class="voicepost__review">
         <h1 class="voicepost__title voicepost__title--sm">
           Here's your post - have a read
@@ -164,17 +164,11 @@
         </button>
         <p v-if="showRaw" class="raw-transcript">"{{ rawTranscript }}"</p>
 
-        <div class="consent">
-          <b-form-checkbox v-model="letThemHear">
-            Let other freeglers hear my voice description
-          </b-form-checkbox>
-          <p class="consent__help">
-            Optional. Your recording is kept for up to 90 days and then deleted -
-            see our
-            <nuxt-link no-prefetch to="/privacy">privacy policy</nuxt-link>. We'll
-            only ever play it to someone if you tick this.
-          </p>
-        </div>
+        <p class="recording-note">
+          Your recording is only used to write this down, and isn't played to
+          anyone else - see our
+          <nuxt-link no-prefetch to="/privacy">privacy policy</nuxt-link>.
+        </p>
 
         <div class="review-actions">
           <b-button variant="primary" size="lg" class="w-100" @click="postIt">
@@ -302,7 +296,6 @@ const title = ref('')
 const description = ref('')
 const rawTranscript = ref('')
 const showRaw = ref(false)
-const letThemHear = ref(false)
 const audioBlob = ref(null)
 const audioUrl = ref(null)
 const audioEl = ref(null)
@@ -541,9 +534,10 @@ function postIt() {
   const descEdited = description.value !== originalDescription.value
   posted = true
   // The full picture of a completed voice post: did they trust the words (edit
-  // or not), allow playback, listen back, re-record, and how long they mulled it.
+  // or not), listen back, re-record, and how long they mulled it. No
+  // consent_play_voice: nobody is asked any more and playback to others never
+  // happens, so there is nothing to vary.
   logVpEvent('voicepost_posted', {
-    consent_play_voice: letThemHear.value,
     title_edited: titleEdited,
     desc_edited: descEdited,
     title_chars: title.value.length,
@@ -607,7 +601,6 @@ function clearVoice() {
   playing.value = false
   played = false
   showRaw.value = false
-  letThemHear.value = false
   title.value = ''
   description.value = ''
   rawTranscript.value = ''
@@ -643,8 +636,8 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  // Reserve room at the bottom so the fixed sticky-ad banner never covers the
-  // buttons or consent toggle (the banner is 73-273px depending on screen).
+  /* Reserve room at the bottom so the fixed sticky-ad banner never covers the
+     buttons (the banner is 73-273px depending on screen). */
   padding: 1rem 1rem 40px;
 
   &.has-sticky-ad {
@@ -971,17 +964,10 @@ onBeforeUnmount(() => {
   margin: 0.25rem 0;
 }
 
-.consent {
-  margin: 0.75rem 0;
-  background: $color-gray--lighter;
-  border-radius: 10px;
-  padding: 0.9rem;
-
-  &__help {
-    font-size: 0.85rem;
-    color: $color-gray--normal;
-    margin: 0.4rem 0 0;
-  }
+.recording-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  color: $color-gray--normal;
 }
 
 .review-actions {

@@ -139,6 +139,8 @@
         </span>
       </div>
     </div>
+    <!-- Empty by default; callers (e.g. WantedMatches) can put actions inside the card. -->
+    <slot name="footer" />
   </div>
 </template>
 

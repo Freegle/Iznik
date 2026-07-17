@@ -98,6 +98,17 @@
             :key="'rippling-analytics-' + ripplingBump"
           />
         </b-tab>
+
+        <!-- Recommendations Tab -->
+        <b-tab @click="onRecommendationsTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Recommendations</h2>
+          </template>
+          <ModSysAdminRecommendations
+            v-if="showRecommendations"
+            :key="'recommendations-' + recommendationsBump"
+          />
+        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -129,6 +140,8 @@ const showIncomingEmail = ref(false)
 const incomingEmailBump = ref(0)
 const showRippling = ref(false)
 const ripplingBump = ref(0)
+const showRecommendations = ref(false)
+const recommendationsBump = ref(0)
 
 const topTabMap = {
   housekeeping: 0,
@@ -137,6 +150,7 @@ const topTabMap = {
   digest: 3,
   incoming: 4,
   rippling: 5,
+  recommendations: 6,
 }
 
 function onHousekeepingTab() {
@@ -169,6 +183,11 @@ function onRipplingTab() {
   ripplingBump.value = Date.now()
 }
 
+function onRecommendationsTab() {
+  showRecommendations.value = true
+  recommendationsBump.value = Date.now()
+}
+
 onMounted(() => {
   const tab = route.query.tab
   if (tab && topTabMap[tab] !== undefined) {
@@ -180,6 +199,7 @@ onMounted(() => {
     else if (tab === 'digest') onDigestClicksTab()
     else if (tab === 'incoming') onIncomingEmailTab()
     else if (tab === 'rippling') onRipplingTab()
+    else if (tab === 'recommendations') onRecommendationsTab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()

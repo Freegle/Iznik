@@ -2176,6 +2176,97 @@ func TestPostMessageJoinAndPost(t *testing.T) {
 	assert.Equal(t, int64(1), logCount, "JoinAndPost should create a Joined log entry")
 }
 
+// A web/app Offer created without a locationid must still get a discoverable
+// location: the create path falls back to the user's last known location and
+// denormalises lat/lng onto the message. Otherwise the post has NULL lat/lng and
+// is invisible in browse/search (which read messages.lat/lng directly) — the
+// Discourse 9865 "why is this outside the UK?" bug, where NULL lat/lng blurred to
+// Null Island (0.004, 0). Live: 4+ Platform Offers reached this state.
+func TestPutMessageBackfillsLocationFromUserWhenNoLocationid(t *testing.T) {
+	prefix := uniquePrefix("msg_noloc_backfill")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Give the user a last known location (a real postcode with lat/lng).
+	var locID uint64
+	var locLat, locLng float64
+	db.Raw("SELECT id, lat, lng FROM locations WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat <> 0 LIMIT 1").
+		Row().Scan(&locID, &locLat, &locLng)
+	require.NotZero(t, locID, "test DB needs a location with lat/lng")
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locID, userID)
+
+	// Create a draft WITHOUT a locationid — the client omitted it (the 9865 bug).
+	body := map[string]interface{}{
+		"messagetype": "Offer",
+		"item":        "Located Chair",
+		"collection":  "Draft",
+		"groupid":     groupID,
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgID := uint64(result["id"].(float64))
+	require.NotZero(t, msgID)
+
+	// The post must be discoverable: lat/lng backfilled from the user's lastlocation.
+	var gotLat, gotLng *float64
+	db.Raw("SELECT lat, lng FROM messages WHERE id = ?", msgID).Row().Scan(&gotLat, &gotLng)
+	require.NotNil(t, gotLat, "message lat must be backfilled from user location, not left NULL (9865)")
+	require.NotNil(t, gotLng, "message lng must be backfilled from user location, not left NULL (9865)")
+	assert.InDelta(t, locLat, *gotLat, 0.0001)
+	assert.InDelta(t, locLng, *gotLng, 0.0001)
+}
+
+// A location-only edit (client sends locationid but no lat/lng) must denormalise
+// lat/lng from the chosen location, not leave them stale/NULL. Otherwise the post
+// becomes undiscoverable - browse/search read messages.lat/lng directly. This is
+// the live msg 119554658 shape: a valid locationid, but NULL lat/lng (Discourse 9865).
+func TestPatchMessageLocationOnlyEditDenormalisesLatLng(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("patch_locdenorm")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	token := getToken(t, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" chair", 55.95, -3.18)
+
+	// A real location (postcode) with its own lat/lng.
+	var locID uint64
+	var locLat, locLng float64
+	db.Raw("SELECT id, lat, lng FROM locations WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat <> 0 LIMIT 1").
+		Row().Scan(&locID, &locLat, &locLng)
+	require.NotZero(t, locID, "test DB needs a location with lat/lng")
+
+	// Edit ONLY the location - send locationid, deliberately no lat/lng.
+	body := map[string]interface{}{"id": msgID, "locationid": locID}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+token, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// lat/lng must now match the chosen location, derived server-side.
+	var gotLat, gotLng *float64
+	var gotLoc *uint64
+	db.Raw("SELECT lat, lng, locationid FROM messages WHERE id = ?", msgID).Row().Scan(&gotLat, &gotLng, &gotLoc)
+	require.NotNil(t, gotLoc)
+	assert.Equal(t, locID, *gotLoc)
+	require.NotNil(t, gotLat, "location-only edit must derive lat from the location, not leave it NULL (9865)")
+	require.NotNil(t, gotLng, "location-only edit must derive lng from the location, not leave it NULL (9865)")
+	assert.InDelta(t, locLat, *gotLat, 0.0001)
+	assert.InDelta(t, locLng, *gotLng, 0.0001)
+}
+
 func TestJoinAndPostSavesDeadline(t *testing.T) {
 	prefix := uniquePrefix("msgmod_jap_dl")
 	db := database.DBConn
@@ -4932,6 +5023,68 @@ func TestMessagePageviewSource(t *testing.T) {
 		doView(token, msgID, "")
 		assert.Equal(t, "", getSource(msgID, userID), "organic open leaves source NULL")
 	}
+}
+
+// TestMarkSeenSource verifies a source-tagged impression (MarkSeen with a source,
+// e.g. from the similar-posts widget) records pageview=0 + the source on the
+// fresh row, that a later genuine open upgrades pageview to 1 while PRESERVING
+// the source, and that a subsequent differently-tagged impression does not
+// overwrite the first-touch source.
+func TestMarkSeenSource(t *testing.T) {
+	db := database.DBConn
+
+	get := func(msgID, userID uint64) (pv int, source string) {
+		db.Raw("SELECT COALESCE(pageview, -1), COALESCE(source, '') FROM messages_likes "+
+			"WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Row().Scan(&pv, &source)
+		return
+	}
+	doMarkSeen := func(token string, msgID uint64, source string) {
+		var body string
+		if source != "" {
+			body = fmt.Sprintf(`{"ids": [%d], "source": "%s"}`, msgID, source)
+		} else {
+			body = fmt.Sprintf(`{"ids": [%d]}`, msgID)
+		}
+		req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	doView := func(token string, msgID uint64) {
+		b, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "View"})
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	prefix := uniquePrefix("markseen_src")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewerID, groupID, "Member")
+	_, token := CreateTestSession(t, viewerID)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
+
+	// Source-tagged impression: pageview=0 + source recorded.
+	doMarkSeen(token, msgID, "similar_posts")
+	pv, src := get(msgID, viewerID)
+	assert.Equal(t, 0, pv, "impression => pageview=0")
+	assert.Equal(t, "similar_posts", src, "impression records its source")
+
+	// Genuine open (untagged): pageview upgraded to 1, source preserved.
+	doView(token, msgID)
+	pv, src = get(msgID, viewerID)
+	assert.Equal(t, 1, pv, "open after impression => pageview upgraded to 1")
+	assert.Equal(t, "similar_posts", src, "genuine open must not clear the impression source")
+
+	// A later differently-tagged impression must not overwrite first-touch source.
+	doMarkSeen(token, msgID, "wanted_match")
+	_, src = get(msgID, viewerID)
+	assert.Equal(t, "similar_posts", src, "first-touch source wins; later impressions do not overwrite")
 }
 
 // --- Adversarial tests ---

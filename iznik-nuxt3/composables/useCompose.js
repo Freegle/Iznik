@@ -347,7 +347,10 @@ export async function freegleIt(type, router, options = {}) {
     await Promise.all(
       results.map(async (res) => {
         console.log('Consider result', res, type)
-        if (type === 'Offer' && res.id) {
+        if (res.id) {
+          // Both types: myposts needs the ids to show what you just posted.
+          // The Offer-only consumers (donation ask, "viewed after Offer") gate
+          // on type themselves, so they're unaffected.
           params.ids.push(res.id)
         }
 

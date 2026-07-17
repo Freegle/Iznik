@@ -919,37 +919,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// be reach-eligible if ANY of them is within the post's reach. Extending this to
 		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
-		if latlng.Lat != 0 || latlng.Lng != 0 {
-			var reachBlocked []struct {
-				Msgid uint64 `gorm:"column:msgid"`
-			}
-			// Ignore the error: until the reach engine (PR A) is deployed the
-			// rippling_reach table may not exist, in which case nothing is reach-blocked.
-			// Containment consults the sandwich bounds when migrated (see
-			// rippling/reachbounds.go); degraded bounds fall back to the exact polygon.
-			var probeErr error
-			if rippling.ReachBoundsReady(db) {
-				expr, exprArgs := rippling.ReachInReachExpr(float64(latlng.Lng), float64(latlng.Lat), utils.SRID)
-				args := append([]interface{}{ids}, exprArgs...)
-				probeErr = db.Raw("SELECT rr.msgid FROM rippling_reach rr "+
-					"WHERE rr.msgid IN (?) AND NOT "+expr, args...).Scan(&reachBlocked).Error
-			} else {
-				probeErr = db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
-					"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-					ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error
-			}
-			if probeErr == nil {
-				for _, b := range reachBlocked {
-					blockedSet[b.Msgid] = true
-				}
-				if n := len(reachBlocked); n > 0 {
-					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
-					// can't reply to yet). Best-effort — errors ignored so it never affects the
-					// response.
-					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
-						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
-				}
-			}
+		reachBlocked := ReachBlockedSet(ids, float64(latlng.Lat), float64(latlng.Lng))
+		for msgid := range reachBlocked {
+			blockedSet[msgid] = true
+		}
+		if n := len(reachBlocked); n > 0 {
+			// Q5 (§15): count reply-blocked-by-reach events (one per post the member
+			// can't reply to yet). Best-effort — errors ignored so it never affects the
+			// response.
+			db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
+				"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
 		}
 
 		// Banned-blocked: the viewer is banned from every group the post is on. Only run
@@ -3133,13 +3112,30 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
 	}
-	if req.Lat != nil {
-		setClauses = append(setClauses, "lat = ?")
-		args = append(args, *req.Lat)
+	// Effective coordinates for this edit. Use the coords the client sent; but if the
+	// location changed without matching coords, derive lat/lng from the chosen location.
+	// Without this a location-only edit sets locationid yet leaves lat/lng stale or NULL,
+	// making the post undiscoverable — browse/search read messages.lat/lng directly
+	// (Discourse 9865). Locations are static reference data, so this lookup returns the
+	// row reliably; it is not a timing/race concern.
+	effLat, effLng := req.Lat, req.Lng
+	if req.Locationid != nil && (effLat == nil || effLng == nil) {
+		var llat, llng *float64
+		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&llat, &llng)
+		if effLat == nil {
+			effLat = llat
+		}
+		if effLng == nil {
+			effLng = llng
+		}
 	}
-	if req.Lng != nil {
+	if effLat != nil {
+		setClauses = append(setClauses, "lat = ?")
+		args = append(args, *effLat)
+	}
+	if effLng != nil {
 		setClauses = append(setClauses, "lng = ?")
-		args = append(args, *req.Lng)
+		args = append(args, *effLng)
 	}
 
 	if len(setClauses) > 0 {
@@ -3151,9 +3147,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// changes. We deliberately UPDATE only — never INSERT — so editing a Pending
 	// message's location cannot leak it into messages_spatial (which backs the public
 	// browse). Only Approved messages have a spatial row; the approval path inserts.
-	if req.Lat != nil && req.Lng != nil {
+	if effLat != nil && effLng != nil {
 		db.Exec("UPDATE messages_spatial SET point = ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857) WHERE msgid = ?",
-			*req.Lng, *req.Lat, req.ID)
+			*effLng, *effLat, req.ID)
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
@@ -3978,35 +3974,46 @@ func PutMessage(c *fiber.Ctx) error {
 		saveAccessInstructions(db, newMsgID, req.Accessinstructions)
 	}
 
-	// Add spatial data if locationid is provided, and update the user's last known location
-	// (so that GET /isochrone can auto-create an isochrone for the user).
+	// If the user explicitly chose a location, remember it (GET /isochrone
+	// auto-creates an isochrone for the user from lastlocation).
 	if req.Locationid != nil && *req.Locationid > 0 {
 		db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", *req.Locationid, myid)
+	}
 
-		var lat, lng float64
-		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&lat, &lng)
-		if lat != 0 || lng != 0 {
-			db.Exec("UPDATE messages SET locationid = ?, lat = ?, lng = ? WHERE id = ?",
-				*req.Locationid, lat, lng, newMsgID)
-			// Do NOT insert into messages_spatial here — drafts must not appear
-			// in browse/search results. Spatial index is populated by handleJoinAndPost
-			// after the message is submitted to a group (matching V1 behaviour).
-		}
+	// Denormalise the post's location onto the message so it is discoverable in
+	// browse/search, which read messages.lat/lng directly (see bounds.go). Prefer
+	// the chosen locationid; if the client didn't send one, fall back to the user's
+	// last known location so the post is still findable (parity with the email path,
+	// IncomingMailService). Resolve lat/lng with a JOIN on the WRITE connection in a
+	// single statement. The previous code only denormalised when the client sent a
+	// locationid, and did it via a separate best-effort SELECT whose Scan error was
+	// unchecked and whose !=0 guard silently skipped the UPDATE on any miss — so a post
+	// could go live with no lat/lng and be undiscoverable (Discourse 9865). If nothing
+	// resolves (no locationid and no lastlocation), lat/lng stay NULL and
+	// ContentCheckService holds the post for a moderator to add a postcode.
+	db.Exec("UPDATE messages m "+
+		"JOIN users u ON u.id = ? "+
+		"JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation) "+
+		"SET m.locationid = l.id, m.lat = l.lat, m.lng = l.lng "+
+		"WHERE m.id = ? AND (m.lat IS NULL OR m.lng IS NULL)",
+		myid, newMsgID)
+	// Do NOT insert into messages_spatial here — drafts must not appear in
+	// browse/search results. Spatial index is populated by handleJoinAndPost
+	// after the message is submitted to a group (matching V1 behaviour).
 
-		// Reconstruct subject with location.
-		// The initial subject was set as "Type: Item" without location.
-		// Now that locationid is set, rebuild as "KEYWORD: Item (Area PC)".
-		locStr := constructLocationString(db, newMsgID)
-		if locStr != "" && req.Item != "" {
-			groupid := req.Groupid
-			if groupid == 0 {
-				// Draft may not have a group yet; use item name without location keyword.
-				groupid = getPrimaryGroupForMessage(db, newMsgID)
-			}
-			keyword := getGroupKeyword(db, groupid, req.Type)
-			newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
-			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
+	// Reconstruct subject with location, now that locationid is set.
+	// The initial subject was set as "Type: Item" without location; rebuild as
+	// "KEYWORD: Item (Area PC)". Skipped when no location could be resolved.
+	locStr := constructLocationString(db, newMsgID)
+	if locStr != "" && req.Item != "" {
+		groupid := req.Groupid
+		if groupid == 0 {
+			// Draft may not have a group yet; use item name without location keyword.
+			groupid = getPrimaryGroupForMessage(db, newMsgID)
 		}
+		keyword := getGroupKeyword(db, groupid, req.Type)
+		newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
+		db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
 	}
 
 	resp := fiber.Map{"ret": 0, "status": "Success", "id": newMsgID}
