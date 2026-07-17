@@ -81,10 +81,12 @@ const bits = computed(() => {
     // example or two still leaves a useful hint), this tail is a single town name and IS the
     // whole message. Ellipsis-truncating it can hide the only information it conveys, so it
     // wraps instead of clipping (`wrap: true` -> .nt-tail--wrap, Discourse 9808).
+    // "Close to X" not "Closer than X": at the minimum setting the reach still includes
+    // areas beyond X, so "closer than" is misleading (Neville, Discourse 9808/584).
     return {
       lead,
       sep: lead ? '. ' : '',
-      tail: `Closer than ${closer.value}`,
+      tail: `Close to ${closer.value}`,
       wrap: true,
     }
   }
@@ -170,7 +172,7 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The "Closer than X" nearest-town name IS the whole message, unlike the "e.g. Town, Town"
+/* The "Close to X" nearest-town name IS the whole message, unlike the "e.g. Town, Town"
    examples list above (safe to ellipsis-clip - losing an example or two still leaves a useful
    hint). Clipping the single town name could hide the only information it conveys, so it wraps
    onto another line instead of truncating (Discourse 9808). */
@@ -191,7 +193,7 @@ watch(
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The "Closer than X" name wraps rather than clips (bits.wrap -> .nt-tail--wrap).
+  /* The "Close to X" name wraps rather than clips (bits.wrap -> .nt-tail--wrap).
      That case is breakpoint-agnostic (set from server data, not viewport), so at
      >=768px the fixed single-line box above would clip the wrapped 2nd line
      vertically with no ellipsis. Let the container grow to fit instead (Discourse

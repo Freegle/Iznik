@@ -70,9 +70,7 @@
            already-reaching posts are shown - it isn't a manual travel-time control. -->
       <div v-if="browseView === 'nearby'" class="nearby-help">
         <p class="help-text mt-0">
-          <span class="d-none d-md-inline"
-            >We show posts near you first, then gradually further away.
-          </span>
+          We show posts near you first, then gradually further away.
           <a href="#" @click.prevent="whichPostsModal?.show()">
             How does this work?
           </a>
@@ -543,9 +541,10 @@ const hasNonDefaultFilters = computed(() => {
   }
 }
 
-// Help text - the intro sentence is hidden on mobile to save space (see the d-none d-md-inline
-// span in the template), but the "How does this work?" / "Change postcode" links inside it must
-// stay visible at every width - they're the only way to reach the rippling explainer (Discourse 9808).
+// Help text - the whole rippling explanation ("We show posts near you first ..." plus the
+// "How does this work?" / "Change postcode" links) stays visible at every width. It was
+// previously hidden on mobile, which lost the explanatory line members asked for (Discourse
+// 9808, Neville #585/#600).
 .help-text {
   font-size: 0.8rem;
   color: var(--color-gray-600);
