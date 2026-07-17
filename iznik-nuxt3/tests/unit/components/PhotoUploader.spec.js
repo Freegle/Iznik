@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
+import { Camera } from '@capacitor/camera'
 import PhotoUploader from '~/components/PhotoUploader.vue'
 
 // Mock defineAsyncComponent to return a stub for vuedraggable
@@ -233,6 +234,11 @@ describe('PhotoUploader', () => {
           DashboardModal: {
             template: '<div class="uppy-dashboard-modal" />',
             props: ['uppy', 'open', 'props'],
+          },
+          'b-alert': {
+            template:
+              '<div v-if="modelValue" class="alert" :class="variant"><slot /></div>',
+            props: ['variant', 'modelValue'],
           },
         },
       },
@@ -661,6 +667,88 @@ describe('PhotoUploader', () => {
       await wrapper.find('.add-photos-button').trigger('click')
       const options = wrapper.findAll('.source-option')
       expect(options[1].text()).toContain('Gallery')
+    })
+  })
+
+  // AssertFlip test — declining the OS camera/photos permission must show a
+  // human-readable error instead of the attach silently going nowhere.
+  // Verified against the pre-fix code: all tests in this block fail red
+  // without the fix (the catch blocks only console.log the error) and pass
+  // once photoError is surfaced via a b-alert. Topic 9900/13.
+  describe('camera/gallery permission denied (app mode) — topic 9900/13', () => {
+    beforeEach(() => {
+      mockMobileStore.isApp = true
+    })
+
+    it('shows a human-readable error when the camera permission is declined', async () => {
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      const options = wrapper.findAll('.source-option')
+      await options[0].trigger('click') // Take Photo
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+      // No stalled/uploading photo entry left behind.
+      expect(wrapper.vm.photos.length).toBe(0)
+    })
+
+    it('shows a human-readable error when the gallery/photos permission is declined', async () => {
+      Camera.pickImages.mockRejectedValueOnce(
+        new Error('User denied access to photos')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      const options = wrapper.findAll('.source-option')
+      await options[1].trigger('click') // Choose from Gallery
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+    })
+
+    it('stays silent when the user simply cancels (not a permission error)', async () => {
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      const options = wrapper.findAll('.source-option')
+      await options[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
+    })
+
+    it('clears a previous permission error as soon as a new attempt starts', async () => {
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      let options = wrapper.findAll('.source-option')
+      await options[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.alert').exists()).toBe(true)
+
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      await wrapper.find('.add-photos-button').trigger('click')
+      options = wrapper.findAll('.source-option')
+      await options[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
     })
   })
 

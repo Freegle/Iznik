@@ -236,8 +236,7 @@ const router = useRouter()
 const composeStore = useComposeStore()
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
-const { recordConversion, recordMethodShown, recordMethodChosen } =
-  useComposeChoice()
+const { recordMethodShown, recordMethodChosen } = useComposeChoice()
 // Rich, session-correlated analytics for the whole funnel (see useClientLog).
 const { action: logVpEvent } = useClientLog()
 
@@ -557,8 +556,12 @@ function postIt() {
       ? Math.round((Date.now() - reviewShownAt) / 1000)
       : null,
   })
-  recordConversion('voice')
 
+  // NB: the compose-experiment conversion is NOT recorded here. Finishing the voice
+  // review is not the same as creating a post — the user still has to complete the
+  // final "Freegle it!" step. Conversion is recorded there (give/mobile/whereami) for
+  // both arms so voice and control are measured at the same funnel point.
+  //
   // Hand the reviewed words to the compose draft (the photo and type=Offer are
   // already on it) and continue into the normal final step - postcode, community
   // and "Freegle it!" - which is what actually creates the post.

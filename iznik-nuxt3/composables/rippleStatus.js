@@ -132,6 +132,76 @@ export function homeGroupFirst(groups) {
 }
 
 /**
+ * For a post viewed by a member, work out whether it rippled into the member's OWN area on a
+ * later calendar day than it was first posted, and if so return the two dates to surface
+ * ("first posted X, available in your area from Y").
+ *
+ *   firstPosted   = the home/origin group's arrival - when it was first posted.
+ *   availableFrom = the arrival of the rippled-in copy on one of the viewer's groups - when it
+ *                   became available in their area.
+ *
+ * Returns null when there's no ripple to surface: a single-group post, no group of the viewer's
+ * received a rippled-in copy (e.g. the viewer is the poster, or the post is local to them), the
+ * origin arrival is unknown, or the ripple landed on the SAME calendar day as the original post
+ * (surfacing "first posted today, available today" would be noise - we only flag cross-day gaps).
+ *
+ * @param {Array<{groupid:number|string, arrival?:string, rippled_in?:number|boolean}>} groups message.groups
+ * @param {Iterable<{id:number|string}|number|string>} myGroups the viewer's groups (useMe().myGroups) or ids
+ * @returns {{firstPosted:string, availableFrom:string}|null}
+ */
+export function rippledInAreaDates(groups, myGroups) {
+  if (!Array.isArray(groups) || groups.length < 2) return null
+
+  // Normalise the viewer's group ids into a set (accepts {id} objects or bare ids).
+  const mine = new Set()
+  for (const g of myGroups || []) {
+    const raw = g && typeof g === 'object' ? g.id ?? g.groupid : g
+    const n = parseInt(raw)
+    if (!Number.isNaN(n)) mine.add(n)
+  }
+  if (!mine.size) return null
+
+  // The rippled-in copy on one of the viewer's own groups - i.e. when it reached their area.
+  const myRipple = groups.find(
+    (g) =>
+      (g.rippled_in === 1 || g.rippled_in === true) &&
+      g.arrival &&
+      mine.has(parseInt(g.groupid))
+  )
+  if (!myRipple) return null
+
+  // When it was first posted: the home/origin group's arrival.
+  const homeId = homeGroupId(groups)
+  const home = groups.find((g) => parseInt(g.groupid) === homeId)
+  const firstPosted = home?.arrival
+  if (!firstPosted) return null
+
+  const posted = new Date(firstPosted)
+  const reached = new Date(myRipple.arrival)
+  if (Number.isNaN(posted.getTime()) || Number.isNaN(reached.getTime())) {
+    return null
+  }
+
+  // Only surface when it reached the viewer's area on a strictly LATER calendar day.
+  // Same-day ripples aren't worth explaining; and a reached-before-posted anomaly (the
+  // approve path can stamp the origin row's arrival to NOW, making it look newer than the
+  // rippled-in copy - see homeGroupId) would read backwards, so suppress that too.
+  const postedDay = new Date(
+    posted.getFullYear(),
+    posted.getMonth(),
+    posted.getDate()
+  )
+  const reachedDay = new Date(
+    reached.getFullYear(),
+    reached.getMonth(),
+    reached.getDate()
+  )
+  if (reachedDay <= postedDay) return null
+
+  return { firstPosted, availableFrom: myRipple.arrival }
+}
+
+/**
  * Is this group the post's home/origin group? Used to mark it with a home icon in the
  * group lists. Accepts either a raw messages_groups entry ({groupid}) or a resolved
  * group-store object ({id}); `groups` must be the raw message.groups array (it carries

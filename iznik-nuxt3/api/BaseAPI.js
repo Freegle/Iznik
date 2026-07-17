@@ -200,11 +200,25 @@ export default class BaseAPI {
       }
 
       if (status === 401) {
-        // Not authorised - our JWT and/or persistent token must be wrong.  Clear them.  This may force a login, or
-        // not, depending on whether the page requires it.
-        console.log('Not authorised - force logged out')
-        authStore.setAuth(null, null)
-        authStore.setUser(null)
+        // A 401 on THIS request doesn't prove the whole session is dead - only
+        // GET/PATCH/DELETE /session, the authoritative "am I logged in" check,
+        // does (fetchUser() in stores/auth.js already handles that case on its
+        // own 401/404).  Clearing auth here unconditionally, for every one of
+        // the many background calls a page fires (chat polls, notification
+        // counts, ModTools work-count refresh, newsfeed, etc.), meant a single
+        // transient/edge-case 401 on any of them force-logged the user out even
+        // though the session was still good - the cause of moderators being
+        // asked to log in to ModTools unexpectedly often (Discourse #9893).
+        const isSessionCheck =
+          path === '/session' || path.startsWith('/session?')
+
+        if (isSessionCheck) {
+          console.log('Not authorised on /session - force logged out')
+          authStore.setAuth(null, null)
+          authStore.setUser(null)
+        } else {
+          console.log('Not authorised for this request - session left intact')
+        }
 
         // For specific paths, we want to silently allow 401 errors and swallow them.
         // This can happen if a login token is invalid, and we don't want to show errors to the user.

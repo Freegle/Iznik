@@ -1124,3 +1124,114 @@ func TestClosestGroupsContainingPolygonIsAuthoritative(t *testing.T) {
 			"non-containing group B must not appear when a containing group exists")
 	}
 }
+
+// Reproduces Discourse #9905 post #1: an FD member posted to their second-nearest
+// group instead of their nearest.
+//
+// ClosestGroups' radius-stepping search fires one query per doubling radius band
+// (currradius = NEARBY/16, then x2, x4, x8...) CONCURRENTLY, and stops as soon as
+// ANY completed band has accumulated `limit` candidates - it does not wait for the
+// other, larger-radius bands still in flight (see the "done"/wg.Done() handling in
+// ClosestGroups). A band's HAVING clause admits a group only if that group's
+// registered *centre* ("hav"/haversine distance) is within that band's own radius -
+// independent of "dist", the distance to the group's actual polygon boundary, which
+// is what determines "nearest" for ranking. A group whose boundary is very close to
+// the point but whose registered centre is comparatively far away (a large or
+// awkwardly-shaped catchment - the exact case the alt-lat/lng workaround at the top
+// of ClosestGroups exists for) is therefore only discoverable via a wider, slower
+// band. If enough closer-centred (but farther-boundary) decoy groups are found by
+// the faster, narrower bands first, the early exit fires and the genuinely nearest
+// group is silently dropped from the result - so groups[0] ends up being a group
+// that is not actually nearest.
+func TestClosestGroupsFarCentreNearBoundaryGroupNotDroppedByEarlyExit(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("closest_earlyexit")
+
+	pointLat := 20.0
+	pointLng := 20.0
+
+	// The true nearest group: polygon boundary ~0.05 miles from the point (closer
+	// than any decoy below), but a registered centre ~20 miles away - inside
+	// NEARBY(50mi) overall, but only found by the currradius=32 band (16 <= 20 < 32),
+	// which is dispatched last and has the largest bounding box to scan.
+	nameNorth := "EarlyExitNorth_" + prefix
+	db.Exec(fmt.Sprintf(
+		"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
+			"VALUES (?, ?, 'Freegle', 1, 1, 1, %f, %f, NULL, NULL, ST_GeomFromText('POLYGON((20.0005 20.0005, 20.0005 20.0015, 20.0015 20.0015, 20.0015 20.0005, 20.0005 20.0005))', %d))",
+		pointLat+0.29, pointLng, utils.SRID), nameNorth, "Nearest North Group")
+	var groupNorth uint64
+	db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", nameNorth).Scan(&groupNorth)
+	assert.Greater(t, groupNorth, uint64(0))
+
+	// Ten decoy groups: registered centre right next to the point (hav ~0.07mi, so
+	// every band's HAVING clause admits them from the very first, narrowest band),
+	// but a polygon boundary further away (~0.3mi) than the true nearest group's -
+	// a correct, complete search still ranks them all behind it.
+	groupIDs := []uint64{groupNorth}
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("EarlyExitDecoy%d_%s", i, prefix)
+		off := float64(i) * 0.0001
+		db.Exec(fmt.Sprintf(
+			"INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) "+
+				"VALUES (?, ?, 'Freegle', 1, 1, 1, %f, %f, NULL, NULL, ST_GeomFromText('POLYGON((%f 20.003, %f 20.004, 20.004 20.004, 20.004 20.003, %f 20.003))', %d))",
+			pointLat+0.001, pointLng+off, 20.003+off, 20.003+off, 20.003+off, utils.SRID), name, "Decoy Group "+name)
+		var decoyID uint64
+		db.Raw("SELECT id FROM `groups` WHERE nameshort = ? ORDER BY id DESC LIMIT 1", name).Scan(&decoyID)
+		assert.Greater(t, decoyID, uint64(0))
+		groupIDs = append(groupIDs, decoyID)
+	}
+
+	// ClosestGroups fires one query per radius band CONCURRENTLY and races them -
+	// whichever band's goroutine grabs the results-slice mutex first and already
+	// has `limit` candidates wins, regardless of which bands have or haven't
+	// finished. Bands 1-3 (radius 4/8/16) reach the decoys' 10-of-10 quickly
+	// because their bounding box is tiny. Band 4 (radius 32, the one that can also
+	// see the true nearest group) has to spatially scan a much wider box - in real
+	// production that is exactly the "may be slow even with a spatial index"
+	// tradeoff ClosestGroups' own top-of-function comment describes for a wide
+	// search area with many candidate groups. Reproduce that cost differential here
+	// (rather than relying on incidental goroutine-scheduling luck) by seeding a
+	// wide ring of filler groups that only band 4's bounding box scans: they never
+	// satisfy any band's HAVING clause (their registered centre is far outside even
+	// band 4's radius), so they can never appear in the result, but they force
+	// band 4's query to do real extra spatial + haversine work band 1-3 don't.
+	fillerPrefix := "EarlyExitFiller_" + prefix
+	var fillerValues strings.Builder
+	for i := 0; i < 3000; i++ {
+		if i > 0 {
+			fillerValues.WriteString(",")
+		}
+		// Tiny jitter (<=0.005 degrees) just to keep polygons distinct - the whole
+		// cluster stays well inside band 4's ~0.2 degree bounding box and well
+		// outside band 3's ~0.1 degree one.
+		jitter := float64(i%50) * 0.0001
+		fillerValues.WriteString(fmt.Sprintf(
+			"('%s%d', '%s%d', 'Freegle', 1, 1, 1, 29.0, 29.0, NULL, NULL, "+
+				"ST_GeomFromText('POLYGON((%f %f, %f %f, %f %f, %f %f, %f %f))', %d))",
+			fillerPrefix, i, fillerPrefix, i,
+			20.15+jitter, 20.15, 20.15+jitter, 20.151, 20.151+jitter, 20.151, 20.151+jitter, 20.15, 20.15+jitter, 20.15,
+			utils.SRID))
+	}
+	db.Exec("INSERT INTO `groups` (nameshort, namefull, type, onhere, publish, listable, lat, lng, altlat, altlng, polyindex) VALUES " +
+		fillerValues.String())
+
+	defer func() {
+		db.Exec("DELETE FROM `groups` WHERE id IN (?)", groupIDs)
+		db.Exec("DELETE FROM `groups` WHERE nameshort LIKE ?", fillerPrefix+"%")
+	}()
+
+	groups := location.ClosestGroups(pointLat, pointLng, float64(location.NEARBY), 10)
+	assert.Greater(t, len(groups), 0, "should find some groups near the point")
+
+	found := false
+	for _, g := range groups {
+		if g.ID == groupNorth {
+			found = true
+		}
+	}
+	assert.True(t, found, "the group that is genuinely nearest by polygon boundary distance must not be dropped just because narrower/faster search bands already filled the result up to the limit")
+
+	if found && len(groups) > 0 {
+		assert.Equal(t, groupNorth, groups[0].ID, "the genuinely nearest group must rank first")
+	}
+}

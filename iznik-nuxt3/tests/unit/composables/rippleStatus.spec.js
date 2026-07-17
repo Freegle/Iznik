@@ -5,6 +5,7 @@ import {
   homeGroupId,
   homeGroupFirst,
   isHomeGroup,
+  rippledInAreaDates,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
 
@@ -359,5 +360,84 @@ describe('isHomeGroup', () => {
     expect(isHomeGroup(null, groups)).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, [])).toBe(false)
     expect(isHomeGroup({ groupid: 1 }, null)).toBe(false)
+  })
+})
+
+describe('rippledInAreaDates', () => {
+  // Viewer is a member of group 10 (their area).
+  const mine = [{ id: 10 }]
+
+  it('returns the two dates when it rippled into the viewer area a later day', () => {
+    const groups = [
+      { groupid: 20, arrival: '2026-07-10T09:00:00Z', rippled_in: 0 }, // origin
+      { groupid: 10, arrival: '2026-07-13T14:00:00Z', rippled_in: 1 }, // viewer area
+    ]
+    expect(rippledInAreaDates(groups, mine)).toEqual({
+      firstPosted: '2026-07-10T09:00:00Z',
+      availableFrom: '2026-07-13T14:00:00Z',
+    })
+  })
+
+  it('accepts bare ids and {groupid} entries for the viewer groups', () => {
+    const groups = [
+      { groupid: 20, arrival: '2026-07-10T09:00:00Z', rippled_in: 0 },
+      { groupid: 10, arrival: '2026-07-13T14:00:00Z', rippled_in: 1 },
+    ]
+    expect(rippledInAreaDates(groups, [10])).not.toBeNull()
+    expect(rippledInAreaDates(groups, [{ groupid: '10' }])).not.toBeNull()
+  })
+
+  it('is null for a non-rippled (single-group) post', () => {
+    const groups = [
+      { groupid: 10, arrival: '2026-07-10T09:00:00Z', rippled_in: 0 },
+    ]
+    expect(rippledInAreaDates(groups, mine)).toBeNull()
+  })
+
+  it('is null when nothing rippled into one of the viewer groups', () => {
+    // Rippled, but the rippled-in copy is on a group the viewer is not in (30).
+    const groups = [
+      { groupid: 20, arrival: '2026-07-10T09:00:00Z', rippled_in: 0 },
+      { groupid: 30, arrival: '2026-07-13T14:00:00Z', rippled_in: 1 },
+    ]
+    expect(rippledInAreaDates(groups, mine)).toBeNull()
+  })
+
+  it('is null for the poster (their group is the origin, not a rippled-in copy)', () => {
+    // Viewer is in the origin group 10; the ripple went out to 30.
+    const groups = [
+      { groupid: 10, arrival: '2026-07-10T09:00:00Z', rippled_in: 0 },
+      { groupid: 30, arrival: '2026-07-13T14:00:00Z', rippled_in: 1 },
+    ]
+    expect(rippledInAreaDates(groups, mine)).toBeNull()
+  })
+
+  it('is null when it rippled in on the SAME calendar day', () => {
+    const groups = [
+      { groupid: 20, arrival: '2026-07-13T09:00:00Z', rippled_in: 0 },
+      { groupid: 10, arrival: '2026-07-13T14:30:00Z', rippled_in: 1 }, // same day
+    ]
+    expect(rippledInAreaDates(groups, mine)).toBeNull()
+  })
+
+  it('is null when the rippled-in copy is dated before the origin (data anomaly)', () => {
+    // The approve path can stamp the origin arrival to NOW, making it look newer;
+    // a reached-before-posted gap would read backwards, so it must be suppressed.
+    const groups = [
+      { groupid: 20, arrival: '2026-07-13T09:00:00Z', rippled_in: 0 },
+      { groupid: 10, arrival: '2026-07-10T14:00:00Z', rippled_in: 1 },
+    ]
+    expect(rippledInAreaDates(groups, mine)).toBeNull()
+  })
+
+  it('is null for empty/invalid inputs and when the viewer has no groups', () => {
+    const groups = [
+      { groupid: 20, arrival: '2026-07-10T09:00:00Z', rippled_in: 0 },
+      { groupid: 10, arrival: '2026-07-13T14:00:00Z', rippled_in: 1 },
+    ]
+    expect(rippledInAreaDates(null, mine)).toBeNull()
+    expect(rippledInAreaDates([], mine)).toBeNull()
+    expect(rippledInAreaDates(groups, [])).toBeNull()
+    expect(rippledInAreaDates(groups, null)).toBeNull()
   })
 })

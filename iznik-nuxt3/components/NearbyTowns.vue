@@ -11,13 +11,16 @@
   <div
     v-observe-visibility="onVisibility"
     class="nearby-towns text-muted small mt-1"
+    :class="{ 'nearby-towns--wrap': bits.wrap }"
     aria-live="polite"
   >
     <span v-if="loading" class="pulsate">Finding nearby places…</span>
     <template v-else-if="bits.lead || bits.tail">
       <span class="nt-lead">{{ bits.lead }}</span
       ><span v-if="bits.sep" class="nt-sep">{{ bits.sep }}</span
-      ><span class="nt-tail">{{ bits.tail }}</span>
+      ><span class="nt-tail" :class="{ 'nt-tail--wrap': bits.wrap }">{{
+        bits.tail
+      }}</span>
     </template>
   </div>
 </template>
@@ -70,12 +73,22 @@ const bits = computed(() => {
       lead,
       sep: lead ? ', ' : '',
       tail: `e.g. ${towns.value.join(', ')}`,
+      wrap: false,
     }
   }
   if (closer.value) {
-    return { lead, sep: lead ? '. ' : '', tail: `Closer than ${closer.value}` }
+    // Unlike the "e.g. Town, Town" examples list above (safe to ellipsis-clip - losing an
+    // example or two still leaves a useful hint), this tail is a single town name and IS the
+    // whole message. Ellipsis-truncating it can hide the only information it conveys, so it
+    // wraps instead of clipping (`wrap: true` -> .nt-tail--wrap, Discourse 9808).
+    return {
+      lead,
+      sep: lead ? '. ' : '',
+      tail: `Closer than ${closer.value}`,
+      wrap: true,
+    }
   }
-  return { lead, sep: '', tail: '' }
+  return { lead, sep: '', tail: '', wrap: false }
 })
 
 // Debounce so dragging the slider doesn't spam the (expensive) routing pass.
@@ -157,6 +170,15 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The "Closer than X" nearest-town name IS the whole message, unlike the "e.g. Town, Town"
+   examples list above (safe to ellipsis-clip - losing an example or two still leaves a useful
+   hint). Clipping the single town name could hide the only information it conveys, so it wraps
+   onto another line instead of truncating (Discourse 9808). */
+.nt-tail--wrap {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
 
 /* Tablet and up: a single line, ellipsis-truncated. Inline (not flex) so a parent text-align:center
    actually centres the line when it fits; when it overflows, the container's own ellipsis clips the
@@ -168,6 +190,17 @@ watch(
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* The "Closer than X" name wraps rather than clips (bits.wrap -> .nt-tail--wrap).
+     That case is breakpoint-agnostic (set from server data, not viewport), so at
+     >=768px the fixed single-line box above would clip the wrapped 2nd line
+     vertically with no ellipsis. Let the container grow to fit instead (Discourse
+     9808). Must follow the .nearby-towns rule to win at equal specificity. */
+  .nearby-towns--wrap {
+    height: auto;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
   .nt-lead,
   .nt-sep,

@@ -251,10 +251,24 @@ export function makeCanSubmit({
   })
 }
 
-export async function deleteItem(id) {
+// "Clear and start over": reset the current item to empty IN PLACE, keeping its id and
+// type, so the store-bound inputs clear reactively and the compose form stays mounted.
+// The old handler deleted the message instead, which left the compose page with no item
+// to render - ids went empty, so the form disappeared (leaving just the stepper and the
+// "Add an item name..." hint) and the rest of the wizard read as invalid, e.g. the
+// whoami step showed a disabled "Enter email to continue" even for a logged-in user
+// (Discourse 9915). If there's somehow no message of this type yet, seed a blank one so
+// the form still renders.
+export function clearItem(id) {
   const composeStore = useComposeStore()
+  const type = postType.value
 
-  await composeStore.deleteMessage(id)
+  if (id !== undefined && id !== null && composeStore.message(id)) {
+    composeStore.clearMessage(id)
+  } else if (type && !composeStore.messages.some((m) => m && m.type === type)) {
+    const newId = composeStore.add()
+    composeStore.setType({ id: newId, type })
+  }
 }
 
 export function postcodeClear() {

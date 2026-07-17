@@ -21,6 +21,13 @@ return [
     // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
     'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
 
+    'digest' => [
+        // Score multiplier for a daily-digest post the recipient has already had a
+        // chance to see (an in-app view, or an opened/clicked digest that contained
+        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
+        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
+    ],
+
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),

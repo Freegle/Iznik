@@ -419,6 +419,7 @@ import {
   computed,
   watch,
   onMounted,
+  onBeforeUnmount,
   nextTick,
   defineAsyncComponent,
 } from 'vue'
@@ -432,6 +433,7 @@ import { useMiscStore } from '~/stores/misc'
 import { fetchOurOffers } from '~/composables/useThrottle'
 import { useAuthStore } from '~/stores/auth'
 import { useAddressStore } from '~/stores/address'
+import { useChatDraftStore } from '~/stores/chatdraft'
 import { untwem } from '~/composables/useTwem'
 import 'floating-vue/dist/style.css'
 import Api from '~/api'
@@ -499,10 +501,15 @@ const authStore = useAuthStore()
 const miscStore = useMiscStore()
 const addressStore = useAddressStore()
 const userStore = useUserStore()
+const chatDraftStore = useChatDraftStore()
 
-// Setup chat data using MT-specific composable
+// Setup chat data using MT-specific composable. setupChatMT() is synchronous and must NOT
+// be awaited: a top-level await in <script setup> makes Vue treat setup as async and
+// silently detaches watch()/onBeforeUnmount() registered afterwards (they never fire),
+// which would break the compose-draft flush-on-switch below. Mirrors the same fix in the
+// Freegle ChatFooter (topic 9884).
 const { chat, otheruser, tooSoonToNudge, chatStore, chatmessages } =
-  await setupChatMT(props.id)
+  setupChatMT(props.id)
 
 // Extract writable state from store
 const { lastTyping } = storeToRefs(miscStore)
@@ -518,6 +525,9 @@ const showPromiseMaybe = ref(false)
 const showProfileModal = ref(false)
 const showAddress = ref(false)
 const sendmessage = ref(null)
+// Composing-draft persistence: how long after the last keystroke the draft is saved.
+const DRAFT_SAVE_DEBOUNCE = 500
+let draftSaveTimer = null
 const RSVP = ref(false)
 const likelymsg = ref(null)
 const ouroffers = ref([])
@@ -822,8 +832,10 @@ const send = async (callback) => {
       // Send it
       await chatStore.send(props.id, msg)
 
-      // Clear the message now it's sent.
+      // Clear the message now it's sent - and drop the saved draft so it can't be restored.
       sendmessage.value = ''
+      if (draftSaveTimer) clearTimeout(draftSaveTimer)
+      chatDraftStore.clearDraft(props.id)
 
       await _updateAfterSend()
 
@@ -898,6 +910,37 @@ watch(sendmessage, (newVal, oldVal) => {
   if ((newVal && !oldVal) || (!newVal && oldVal)) {
     emit('typing', newVal?.length)
   }
+
+  // Persist the typed-but-unsent text (debounced) so switching to another chat - or reloading -
+  // doesn't lose it. Cleared on a successful send and when the box is emptied.
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(() => {
+    chatDraftStore.saveDraft(props.id, sendmessage.value)
+  }, DRAFT_SAVE_DEBOUNCE)
+})
+
+// Restore this chat's saved draft into the compose box. On an in-place id change, save the
+// previous chat's draft first so switching never loses text. Only fills an empty box, never
+// clobbering live typing.
+watch(
+  () => props.id,
+  (newId, oldId) => {
+    if (oldId && oldId !== newId) {
+      chatDraftStore.saveDraft(oldId, sendmessage.value)
+    }
+    const saved = chatDraftStore.getDraft(newId)
+    if (saved && !sendmessage.value) {
+      sendmessage.value = saved
+    }
+  },
+  { immediate: true }
+)
+
+// A draft typed just before switching may still be sitting in the debounce timer when this
+// component is torn down on the switch - flush it so nothing is lost.
+onBeforeUnmount(() => {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  chatDraftStore.saveDraft(props.id, sendmessage.value)
 })
 
 watch(

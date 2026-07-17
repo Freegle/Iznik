@@ -416,6 +416,52 @@ describe('ModMessage', () => {
     })
   })
 
+  describe('Back to Pending explanation', () => {
+    // A "Back to Pending" on any community pulls every copy of a rippled post back to
+    // Pending for per-group review, and stores the reason on THAT group's copy
+    // (contextGroup.spamreason). Without surfacing it, a mod who already approved the post
+    // sees it reappear in Pending with no explanation and clicks Approve repeatedly
+    // (Discourse 9909). We show the per-group reason so they understand what happened.
+    it('surfaces the per-group reason when a copy is back in Pending', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              namedisplay: 'Test Group',
+              collection: 'Pending',
+              spamreason:
+                'A moderator moved this post back to pending for review.',
+            },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.contextGroup.spamreason).toBe(
+        'A moderator moved this post back to pending for review.'
+      )
+      expect(wrapper.text()).toContain(
+        'A moderator moved this post back to pending for review.'
+      )
+    })
+
+    it('does not duplicate the message-level spamreason', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          spamreason: 'Flagged as spam',
+          groups: [
+            { groupid: 789, collection: 'Pending', spamreason: 'Flagged as spam' },
+          ],
+        }
+      )
+      await flushPromises()
+      const count = wrapper.text().split('Flagged as spam').length - 1
+      expect(count).toBe(1)
+    })
+  })
+
   describe('Computed: alreadyOnHomeGroup', () => {
     // Regression: a post must not be told it "Possibly should be on" a group it is ALREADY
     // on (its origin, or a group it has rippled onto). The hint previously fired whenever the
@@ -1507,6 +1553,49 @@ describe('ModMessage', () => {
         expect(wrapper.vm.currentGroupid).toBe(111)
       } finally {
         mockMyModGroups.pop()
+      }
+    })
+
+    // Discourse 9862/15: a mod found a standard message configured only for other
+    // groups (Newham/Hackney) available on a rippled post, auto-signed as Tower
+    // Hamlets (the group they were actually moderating it under). configid drives
+    // which group's stdmsg config is offered/substituted, so it must anchor to
+    // currentGroupid (the group being moderated) - not groups[0], which has no
+    // guaranteed order and can be the rippled-in copy.
+    it('resolves configid from the group being moderated (currentGroupid), not groups[0], for a rippled post with no contextGroupid', () => {
+      mockMyModGroups.push({ id: 111 })
+      mockAuthStore.groups.push({ groupid: 111, configid: 2 })
+      try {
+        const wrapper = mountComponent(
+          {},
+          {
+            groups: [
+              // Rippled-in copy (e.g. Newham/Hackney): approved most recently, so
+              // its arrival is the NEWEST, and it happens to be groups[0].
+              {
+                groupid: 789,
+                namedisplay: 'Rippled-in',
+                collection: 'Approved',
+                arrival: rippleLater,
+                rippled_in: 1,
+              },
+              // Origin (e.g. Tower Hamlets): where the mod is actually administering
+              // this post from - currentGroupid anchors here.
+              {
+                groupid: 111,
+                namedisplay: 'Origin',
+                collection: 'Approved',
+                arrival: rippleEarlier,
+                rippled_in: 0,
+              },
+            ],
+          }
+        )
+        expect(wrapper.vm.currentGroupid).toBe(111)
+        expect(wrapper.vm.configid).toBe(2)
+      } finally {
+        mockMyModGroups.pop()
+        mockAuthStore.groups.pop()
       }
     })
 

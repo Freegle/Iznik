@@ -1,9 +1,34 @@
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import { describe, it, expect } from 'vitest'
 
 /*
  * ChatMobileNavbar component uses top-level await for setupChat which causes
  * test timeout issues. We test component structure and prop definitions.
  */
+
+// ChatMobileNavbar awaits setupChat() in <script setup>, so it can't be cleanly
+// mounted here; assert on the source (as ChatPane.spec.js does).
+const navbarSource = readFileSync(
+  resolve(__dirname, '../../../components/ChatMobileNavbar.vue'),
+  'utf-8'
+)
+
+describe('profile popover hidden for User2Mod (Discourse 9918)', () => {
+  it('gates the profile popover on User2User only', () => {
+    // A User2Mod (contact-the-volunteers) chat has no other-user profile, so the
+    // popover must not enable for it - it rendered as an empty white box.
+    expect(navbarSource).toMatch(
+      /<b-popover\s+v-if="cssReady && chat\.chattype === 'User2User'"/
+    )
+  })
+
+  it('makes the header avatar toggle the profile card only for User2User', () => {
+    expect(navbarSource).toMatch(
+      /@click="chat\.chattype === 'User2User' \? toggleProfileCard\(\) : null"/
+    )
+  })
+})
 
 describe('ChatMobileNavbar', () => {
   describe('component structure', () => {

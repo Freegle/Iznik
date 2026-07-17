@@ -55,6 +55,7 @@ import {
 import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
+import { sanitizeLLMDecision } from './llm-json.js'
 import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
@@ -240,62 +241,6 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
     console.error('[red-pr] list failed:', err.message)
     return { redPRs: [] }
   }
-}
-
-/**
- * Repair common Claude JSON shape errors before ai-flower validates.
- *
- * Seen in the wild:
- *   - `contextUpdates: "{...}"` (stringified object) — validator wants object
- *   - `actions: "[{...}]"` (stringified array) — validator wants array
- *   - leading/trailing markdown fences (ai-flower strips these, but only the
- *     first and last — if Claude wraps in ```json ... ``` twice it breaks)
- *
- * We only rewrite fields we're confident about. If parsing fails at any point,
- * return the input unchanged so ai-flower's own error surfaces.
- */
-function sanitizeLLMDecision(raw: string): string {
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/m, '')
-    .replace(/\s*```\s*$/m, '')
-    .trim()
-  let parsed: any
-  try {
-    parsed = JSON.parse(cleaned)
-  } catch {
-    return raw
-  }
-  if (typeof parsed !== 'object' || parsed === null) return raw
-
-  let changed = false
-  if (typeof parsed.contextUpdates === 'string') {
-    try {
-      const inner = JSON.parse(parsed.contextUpdates)
-      if (typeof inner === 'object' && inner !== null) {
-        parsed.contextUpdates = inner
-        changed = true
-      }
-    } catch { /* leave as-is, validator will reject */ }
-  }
-  if (parsed.contextUpdates === undefined || parsed.contextUpdates === null) {
-    parsed.contextUpdates = {}
-    changed = true
-  }
-  if (typeof parsed.actions === 'string') {
-    try {
-      const inner = JSON.parse(parsed.actions)
-      if (Array.isArray(inner)) {
-        parsed.actions = inner
-        changed = true
-      }
-    } catch { /* leave */ }
-  }
-  if (parsed.actions === undefined) {
-    parsed.actions = []
-    changed = true
-  }
-
-  return changed ? JSON.stringify(parsed) : raw
 }
 
 function logInstance(i: WorkflowInstance, note: string) {

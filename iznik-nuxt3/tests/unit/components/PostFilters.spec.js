@@ -424,6 +424,17 @@ describe('PostFilters', () => {
       await link.trigger('click')
       expect(mockWhichPostsShow).toHaveBeenCalled()
     })
+
+    it('keeps the "How does this work?" / "Change postcode" links reachable at small (mobile) widths (Discourse 9808)', () => {
+      const wrapper = createWrapper({ forceShowFilters: true })
+
+      // Bootstrap's `d-none d-md-block` hides an element below the md breakpoint - the whole
+      // paragraph (including the only links that open the rippling explainer and change
+      // postcode) carried that class, so mobile users had no way to reach either.
+      const helpText = wrapper.find('.help-text')
+      expect(helpText.exists()).toBe(true)
+      expect(helpText.classes()).not.toContain('d-none')
+    })
   })
 
   describe('search functionality', () => {

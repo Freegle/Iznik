@@ -19,6 +19,14 @@ export const COMPOSE_CHOICE_UID = 'mobile-compose-variant'
 // Method measurement: of those offered the choice, did they pick voice or keyboard?
 export const COMPOSE_METHOD_UID = 'mobile-compose-method'
 
+// The compose flow spans several route changes and BOTH arms converge on the final
+// "Freegle it!" step (give/mobile/whereami), which is what actually creates the post.
+// The assigned variant is stashed here at entry so that shared step records the
+// conversion for both arms at the SAME funnel point. Without it, control never gets a
+// conversion (its typed flow doesn't know about the experiment) and voice was recorded
+// too early — at review-finish, before the post exists.
+const CONVERSION_PENDING_KEY = 'compose-experiment-variant'
+
 // Percentage of eligible (mobile) users shown the voice option. Read from SERVER
 // config at runtime (key `voicepost_rollout_pct`) so the rollout can be raised or
 // lowered WITHOUT a new frontend build/deploy: loadRollout() fetches it (cached in
@@ -108,6 +116,31 @@ export function useComposeChoice() {
     }
   }
 
+  // Stash the assigned variant at compose entry so the shared final step can record
+  // the conversion for whichever arm the user is in. Session-scoped and per-tab.
+  function markConversionPending(variant) {
+    try {
+      sessionStorage.setItem(CONVERSION_PENDING_KEY, variant)
+    } catch (e) {
+      // No sessionStorage (SSR/private mode) just means no conversion row — non-fatal.
+    }
+  }
+
+  // Record a completed post for whichever variant is pending, then clear it. A no-op
+  // when the user didn't enter through the experiment (no marker), so it is safe to
+  // call unconditionally from the shared final "Freegle it!" step.
+  function recordConversionIfPending(score) {
+    try {
+      const variant = sessionStorage.getItem(CONVERSION_PENDING_KEY)
+      if (variant) {
+        sessionStorage.removeItem(CONVERSION_PENDING_KEY)
+        recordConversion(variant, score)
+      }
+    } catch (e) {
+      // Non-fatal: never block the compose flow on tracking.
+    }
+  }
+
   // Record that the voice/keyboard choice was presented (both methods) so the
   // pick-rate per method is comparable.
   function recordMethodShown() {
@@ -137,6 +170,8 @@ export function useComposeChoice() {
     assign,
     recordShown,
     recordConversion,
+    markConversionPending,
+    recordConversionIfPending,
     recordMethodShown,
     recordMethodChosen,
   }

@@ -26,10 +26,7 @@
     >
       <!-- Profile header for desktop (md+) - mobile uses ChatMobileNavbar -->
       <VisibleWhen :at="['md', 'lg', 'xl', 'xxl']">
-        <div
-          v-if="chat"
-          class="desktop-profile-header"
-        >
+        <div v-if="chat" class="desktop-profile-header">
           <div class="profile-header-main">
             <ProfileImage
               :image="chat.icon"
@@ -47,7 +44,10 @@
                   class="supporter-badge"
                 />
               </div>
-              <div v-if="otheruser && otheruser.info" class="profile-header-stats">
+              <div
+                v-if="otheruser && otheruser.info"
+                class="profile-header-stats"
+              >
                 <UserRatings
                   :id="chat.otheruid"
                   :key="'otheruser-' + chat.otheruid"
@@ -183,6 +183,13 @@
       <div v-else-if="chatBusy" class="text-center">
         <Spinner :size="50" class="float-end" />
       </div>
+      <!-- Empty chat with no messages yet (e.g. first contact with a group's
+           volunteers). Keep a growing area here so the compose footer stays pinned
+           to the bottom of the pane. Without it the footer becomes the only child of
+           the column (the profile header is desktop-only and the message list is not
+           rendered when empty), so it jumps up under the mobile navbar leaving a large
+           blank space below - Discourse 9918. -->
+      <div v-else class="chatContentEmpty" />
       <ChatFooter
         v-bind="$props"
         class="chatFooter"
@@ -576,6 +583,19 @@ function typing() {
 
 .chatFooter {
   order: 4;
+}
+
+/* Placeholder that fills the space of an empty chat (no messages yet) so the
+   compose footer stays pinned to the bottom rather than jumping up under the
+   header. Mirrors .chatContent's background so an empty chat still looks like a
+   chat, not a blank white void (Discourse 9918). */
+.chatContentEmpty {
+  order: 3;
+  flex-grow: 1;
+  background-color: $color-gray--lighter;
+  background-image: url('/chat-pattern.svg');
+  background-repeat: repeat;
+  background-size: 200px 200px;
 }
 
 .itemwrapper {

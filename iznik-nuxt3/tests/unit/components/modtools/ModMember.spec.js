@@ -208,8 +208,10 @@ describe('ModMember', () => {
             ],
           },
           OurToggle: {
+            // Matches the real OurToggle contract: change emits the new value
+            // directly (emit('change', newVal)), NOT wrapped as { value } (9923).
             template:
-              '<button class="our-toggle" :data-checked="modelValue" @click="$emit(\'change\', { value: !modelValue })"><slot /></button>',
+              '<button class="our-toggle" :data-checked="modelValue" @click="$emit(\'change\', !modelValue)"><slot /></button>',
             props: [
               'modelValue',
               'height',
@@ -718,13 +720,24 @@ describe('ModMember', () => {
       })
     })
 
-    it('changeNotification sends only notifications field', async () => {
+    // OurToggle emits the new value directly (a boolean), so the handlers receive
+    // it as `e`, not `e.value` (9923). Passing `{ value }` here previously masked
+    // the bug where the toggled field was sent as `undefined` and stripped.
+    it('changeNotification sends the toggled key with the emitted value', async () => {
       const wrapper = mountComponent()
-      await wrapper.vm.changeNotification({ value: false }, 'email')
+      await wrapper.vm.changeNotification(false, 'email')
       expect(mockUserStore.edit).toHaveBeenCalledWith({
         id: 123,
         settings: { notifications: expect.objectContaining({ email: false }) },
       })
+      // Regression: the toggled key must actually be present (not undefined /
+      // stripped by JSON.stringify) so JSON_MERGE_PATCH changes it.
+      const sentNotifications =
+        mockUserStore.edit.mock.calls[0][0].settings.notifications
+      expect(Object.prototype.hasOwnProperty.call(sentNotifications, 'email')).toBe(
+        true
+      )
+      expect(sentNotifications.email).toBe(false)
       // Must NOT send mod-specific fields like modnotifs/backupmodnotifs.
       const sentSettings = mockUserStore.edit.mock.calls[0][0].settings
       expect(sentSettings).not.toHaveProperty('modnotifs')
@@ -733,7 +746,7 @@ describe('ModMember', () => {
 
     it('changeRelevant updates relevantallowed', async () => {
       const wrapper = mountComponent()
-      await wrapper.vm.changeRelevant({ value: false })
+      await wrapper.vm.changeRelevant(false)
       expect(mockUserStore.edit).toHaveBeenCalledWith({
         id: 123, // user.value.id is member.id, not member.userid
         relevantallowed: false,
@@ -742,7 +755,7 @@ describe('ModMember', () => {
 
     it('changeNotifChitchat sends only notificationmails field', async () => {
       const wrapper = mountComponent()
-      await wrapper.vm.changeNotifChitchat({ value: true })
+      await wrapper.vm.changeNotifChitchat(true)
       expect(mockUserStore.edit).toHaveBeenCalledWith({
         id: 123,
         settings: { notificationmails: true },
@@ -751,7 +764,7 @@ describe('ModMember', () => {
 
     it('changeNewsletter updates newslettersallowed', async () => {
       const wrapper = mountComponent()
-      await wrapper.vm.changeNewsletter({ value: false })
+      await wrapper.vm.changeNewsletter(false)
       expect(mockUserStore.edit).toHaveBeenCalledWith({
         id: 123, // user.value.id is member.id, not member.userid
         newslettersallowed: false,
@@ -760,10 +773,13 @@ describe('ModMember', () => {
 
     it('changeAutorepost sends only autorepostsdisable field', async () => {
       const wrapper = mountComponent()
-      await wrapper.vm.changeAutorepost({ value: false })
+      // Toggle Autorepost ON (e=true) => autorepostsdisable=false. Uses `true`
+      // deliberately: with the old `!e.value` bug this evaluated to `!undefined`
+      // = true regardless, so testing with false would not catch the regression.
+      await wrapper.vm.changeAutorepost(true)
       expect(mockUserStore.edit).toHaveBeenCalledWith({
         id: 456,
-        settings: { autorepostsdisable: true },
+        settings: { autorepostsdisable: false },
       })
     })
 

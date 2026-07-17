@@ -2227,6 +2227,13 @@ func PatchUser(c *fiber.Ctx) error {
 		}
 	}
 
+	// Note: when a caller targets another user they aren't authorised to moderate,
+	// targetID intentionally falls back to their own id - the mod-editable fields
+	// then apply to self and the other user is left untouched (see
+	// TestPatchUserSettingsNonModCannotUpdateOther). This is a deliberate safe
+	// default, not the cause of the 9923 "settings won't stick" report (that was a
+	// frontend value-reading bug, fixed separately).
+
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
 		db.Exec("UPDATE users SET fullname = ?, firstname = NULL, lastname = NULL WHERE id = ?",
@@ -2243,7 +2250,11 @@ func PatchUser(c *fiber.Ctx) error {
 			setClauses = append(setClauses, "settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON))")
 			setArgs = append(setArgs, string(settingsJSON))
 			setArgs = append(setArgs, targetID)
-			db.Exec("UPDATE users SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", setArgs...)
+			// Surface a failed write rather than swallowing it and returning 200
+			// (a silent no-op is how "settings won't stick" bugs hide).
+			if res := db.Exec("UPDATE users SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", setArgs...); res.Error != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to update settings")
+			}
 		}
 	}
 

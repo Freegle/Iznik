@@ -146,24 +146,23 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	results := []ClosestGroup{}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	count := 0
 
+	// Every band's query must complete before we can trust `results`: a group's
+	// "hav" (distance to its registered centre) gates which band can see it at
+	// all, independent of "dist" (distance to its actual polygon boundary), which
+	// is what determines "nearest" for ranking. A large or awkwardly-shaped group
+	// can have a polygon boundary very close to the point while its registered
+	// centre is comparatively far away, so it is only discoverable via a wider
+	// (and slower) band. Stopping as soon as any one band alone had accumulated
+	// `limit` candidates - as this used to do - could return before a still-running
+	// wider band completed, silently dropping a genuinely nearer group in favour of
+	// worse-but-faster-to-find ones (Discourse #9905).
 	for {
-		count++
-		currradius = currradius * 2
+		wg.Add(1)
 
-		if currradius >= radius {
-			break
-		}
-	}
-
-	currradius = math.Round(float64(radius)/16.0 + 0.5)
-	wg.Add(1)
-
-	done := false
-
-	for {
 		go func(currradius float64) {
+			defer wg.Done()
+
 			batch := []ClosestGroup{}
 			var nelat, nelng, swlat, swlng float64
 			p := geo.NewPoint(lat, lng)
@@ -196,39 +195,18 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 				currradius,
 				limit).Scan(&batch)
 
-			mu.Lock()
-			defer mu.Unlock()
-
-			count--
-
-			if len(results) < limit {
-				if len(batch) > 0 {
-					// We found some.
-					for i, r := range batch {
-						if len(r.Namefull) > 0 {
-							batch[i].Namedisplay = r.Namefull
-						} else {
-							batch[i].Namedisplay = r.Nameshort
-						}
-					}
-
-					results = append(results, batch...)
-
-					if len(results) >= limit {
-						if !done {
-							done = true
-							defer wg.Done()
-						}
+			if len(batch) > 0 {
+				for i, r := range batch {
+					if len(r.Namefull) > 0 {
+						batch[i].Namedisplay = r.Namefull
+					} else {
+						batch[i].Namedisplay = r.Nameshort
 					}
 				}
 
-				if count == 0 {
-					// We've run out of areas to search.
-					if !done {
-						done = true
-						defer wg.Done()
-					}
-				}
+				mu.Lock()
+				results = append(results, batch...)
+				mu.Unlock()
 			}
 		}(currradius)
 

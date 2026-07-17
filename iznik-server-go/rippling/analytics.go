@@ -8,7 +8,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -130,62 +129,45 @@ type DriveStat struct {
 	Available bool    `json:"available"`
 }
 
-// scoreSample runs one ripple-eval per sampled post (bounded concurrency) and returns the scored
-// replies. Best-effort: routing/parse failures drop that post. This is the ONLY routing pass -
-// every drive-time figure (overall, rippled-only, per-day trend) is derived from its output.
-func scoreSample(posts []samplePost) []driveObs {
-	var mu sync.Mutex
-	obs := []driveObs{}
-
-	sem := make(chan struct{}, driveConcurrency())
-	var wg sync.WaitGroup
-	for i := range posts {
-		p := posts[i]
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			body, _ := json.Marshal(rippleEvalReq{
-				Lat: p.lat, Lng: p.lng, Mode: "drive", MaxMinutes: driveMaxMinutes, Points: p.points,
-			})
-			resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval",
-				"application/json", bytes.NewReader(body))
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return
-			}
-			var r rippleEvalResp
-			if json.NewDecoder(resp.Body).Decode(&r) != nil || len(r.Results) != len(p.points) {
-				return
-			}
-			local := []driveObs{}
-			for j, res := range r.Results {
-				if res.DriveMin == nil {
-					continue
-				}
-				o := driveObs{min: *res.DriveMin}
-				if j < len(p.rippled) {
-					o.rippled = p.rippled[j]
-				}
-				if j < len(p.days) {
-					o.day = p.days[j]
-				}
-				if j < len(p.takers) {
-					o.taker = p.takers[j]
-				}
-				local = append(local, o)
-			}
-			mu.Lock()
-			obs = append(obs, local...)
-			mu.Unlock()
-		}()
+// scoreOnePost runs ONE ripple-eval for a single sampled post and returns its scored replies.
+// Serial and best-effort: a routing/parse failure yields no observations for that post. The whole
+// sample is scored one post at a time by the client calling /drivetime/score repeatedly, so a
+// single request never runs long enough to hit the gateway timeout (the 504 this replaces).
+func scoreOnePost(p samplePost) []driveObs {
+	body, _ := json.Marshal(rippleEvalReq{
+		Lat: p.lat, Lng: p.lng, Mode: "drive", MaxMinutes: driveMaxMinutes, Points: p.points,
+	})
+	resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval",
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil
 	}
-	wg.Wait()
-	return obs
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var r rippleEvalResp
+	if json.NewDecoder(resp.Body).Decode(&r) != nil || len(r.Results) != len(p.points) {
+		return nil
+	}
+	out := []driveObs{}
+	for j, res := range r.Results {
+		if res.DriveMin == nil {
+			continue
+		}
+		o := driveObs{min: *res.DriveMin}
+		if j < len(p.rippled) {
+			o.rippled = p.rippled[j]
+		}
+		if j < len(p.days) {
+			o.day = p.days[j]
+		}
+		if j < len(p.takers) {
+			o.taker = p.takers[j]
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // statFromObs is the mean drive-time (+95% CI) over the observations, optionally restricted to
@@ -383,17 +365,17 @@ func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
 // The headline reply rate is WITHIN 36H (the settling-window convention, comparable to the old
 // dashboard); RepliedEverPct is the eventual total, shown smaller as context.
 type Section1KPI struct {
-	Stratum       string    `json:"stratum"`
-	Posts         int       `json:"posts"`
-	Replied36h    int       `json:"replied_36h"`
-	Replied36hPct float64   `json:"replied_36h_pct"`
-	RepliedEver   int       `json:"replied_ever"`
-	RepliedEverPct float64  `json:"replied_ever_pct"`
-	Taken         int       `json:"taken"`
-	TakenPct      float64   `json:"taken_pct"`
-	MeanReplies   float64   `json:"mean_replies"`
-	MeanFreeglers float64   `json:"mean_freeglers_reached"`
-	ReplyDrive    DriveStat `json:"reply_drive_min"`
+	Stratum        string    `json:"stratum"`
+	Posts          int       `json:"posts"`
+	Replied36h     int       `json:"replied_36h"`
+	Replied36hPct  float64   `json:"replied_36h_pct"`
+	RepliedEver    int       `json:"replied_ever"`
+	RepliedEverPct float64   `json:"replied_ever_pct"`
+	Taken          int       `json:"taken"`
+	TakenPct       float64   `json:"taken_pct"`
+	MeanReplies    float64   `json:"mean_replies"`
+	MeanFreeglers  float64   `json:"mean_freeglers_reached"`
+	ReplyDrive     DriveStat `json:"reply_drive_min"`
 	// Reply friction: share of replies that were HELD (an email/TN reply held because the post
 	// had not yet rippled to the replier's location).
 	HeldReplies    int     `json:"held_replies"`
@@ -530,21 +512,107 @@ func Analytics(c *fiber.Ctx) error {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
+// The ~250-post routing pass takes tens of seconds — longer than the production gateway's
+// timeout — so scoring the whole sample inside one request 504s (which surfaces on the client as
+// a misleading CORS error, since the gateway's 504 has no Access-Control-Allow-Origin). So the
+// work is driven by the CLIENT, one post at a time, and no server-side state (the old
+// rippling_drivetime_cache job table) is needed. prod apiv2 is multi-node, but each request is
+// self-contained, so there is no shared state to keep either:
+//
+//	1. GET  /rippling/analytics/drivetime            -> the random sample to score { posts, total }
+//	2. POST /rippling/analytics/drivetime/score      -> score a chunk serially     { obs }   (repeat)
+//	3. POST /rippling/analytics/drivetime/aggregate  -> obs -> the drive-time stats { reply_drive_min, ... }
+//
+// The client loops step 2 over the sample (one call after another), showing a progress bar, then
+// aggregates. Each request does at most a few routing calls, so none runs long enough to 504.
+
+// AnalyticsDriveTimes returns the random drive-time SAMPLE for the client to score serially.
+// Fast (one sampling query, no routing).
 func AnalyticsDriveTimes(c *fiber.Ctx) error {
 	stratum, start, end, stratumSQL := analyticsWindow(c)
-
-	// ONE sampled routing pass feeds every drive-time figure.
-	obs := scoreSample(fetchDriveSample(start, end, stratumSQL, driveSampleSize()))
-
+	posts := fetchDriveSample(start, end, stratumSQL, driveSampleSize())
+	wire := make([]samplePostWire, len(posts))
+	for i, p := range posts {
+		wire[i] = samplePostWire{Lat: p.lat, Lng: p.lng, Points: p.points, Rippled: p.rippled, Days: p.days, Takers: p.takers}
+	}
 	return c.JSON(fiber.Map{
-		"stratum":          stratum,
-		"start":            start,
-		"end":              end,
-		"sample_target":    driveSampleSize(),
-		"reply_drive_min":  statFromObs(obs, false), // Section 1 overall mean
-		"ripple_drive_min": statFromObs(obs, true),  // Section 3 rippled-out mean
-		"drive_time":       driveTrendFromObs(obs),  // Section 2 per-day trend
-		"bullseye":         bullseyeFromObs(obs),    // reply->take conversion by drive-time ring
+		"posts": wire, "total": len(wire),
+		"stratum": stratum, "start": start, "end": end, "sample_target": driveSampleSize(),
+	})
+}
+
+// samplePostWire is samplePost over the wire (exported JSON). The sample is random per fetch, so
+// it cannot be re-derived server-side by offset — the client holds one run's sample and sends
+// each post back to /score.
+type samplePostWire struct {
+	Lat     float64      `json:"lat"`
+	Lng     float64      `json:"lng"`
+	Points  [][2]float64 `json:"points"`
+	Rippled []bool       `json:"rippled"`
+	Days    []string     `json:"days"`
+	Takers  []bool       `json:"takers"`
+}
+
+// driveObsWire is one scored observation over the wire.
+type driveObsWire struct {
+	Min     float64 `json:"min"`
+	Rippled bool    `json:"rippled"`
+	Day     string  `json:"day"`
+	Taker   bool    `json:"taker"`
+}
+
+// AnalyticsDriveScore scores a chunk of the sample SERIALLY (one routing call per post) and
+// returns the observations. The client calls this repeatedly, one chunk after another.
+//
+// @Router /rippling/analytics/drivetime/score [post]
+// @Summary Score a chunk of the drive-time sample (sysadmin)
+// @Tags rippling
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+func AnalyticsDriveScore(c *fiber.Ctx) error {
+	var req struct {
+		Posts []samplePostWire `json:"posts"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "bad body")
+	}
+	out := []driveObsWire{}
+	for _, w := range req.Posts {
+		p := samplePost{lat: w.Lat, lng: w.Lng, points: w.Points, rippled: w.Rippled, days: w.Days, takers: w.Takers}
+		for _, o := range scoreOnePost(p) {
+			out = append(out, driveObsWire{Min: o.min, Rippled: o.rippled, Day: o.day, Taker: o.taker})
+		}
+	}
+	return c.JSON(fiber.Map{"obs": out})
+}
+
+// AnalyticsDriveAggregate turns the client's accumulated observations into the drive-time stats
+// (overall mean, rippled-only mean, per-day trend, reply->take bullseye). Pure — no routing.
+//
+// @Router /rippling/analytics/drivetime/aggregate [post]
+// @Summary Aggregate scored drive-time observations (sysadmin)
+// @Tags rippling
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+func AnalyticsDriveAggregate(c *fiber.Ctx) error {
+	var req struct {
+		Obs []driveObsWire `json:"obs"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "bad body")
+	}
+	obs := make([]driveObs, len(req.Obs))
+	for i, w := range req.Obs {
+		obs[i] = driveObs{min: w.Min, rippled: w.Rippled, day: w.Day, taker: w.Taker}
+	}
+	return c.JSON(fiber.Map{
+		"status":           "done",
+		"reply_drive_min":  statFromObs(obs, false),
+		"ripple_drive_min": statFromObs(obs, true),
+		"drive_time":       driveTrendFromObs(obs),
+		"bullseye":         bullseyeFromObs(obs),
 	})
 }
 
@@ -591,6 +659,7 @@ func trendSeries(start, end, stratumSQL string) []TrendRow {
 //     Without rippling those posts go silent, so those takes definitely would not have happened.
 //   - Ceiling = RippledTakers: every take by a rippled replier (assumes no home member would have
 //     taken it instead).
+//
 // Rippling's true contribution to reuse sits between the two.
 //
 // HomeConvPct / RippledConvPct give the reply->take comparison you'd expect rippled to lose (it's

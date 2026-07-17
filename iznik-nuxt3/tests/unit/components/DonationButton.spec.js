@@ -40,11 +40,16 @@ const DonationButtonSimplified = defineComponent({
       type: String,
       default: null,
     },
+    suggestGivingFund: {
+      type: Boolean,
+      default: true,
+    },
   },
   emits: ['clicked'],
   setup(props, { emit }) {
     const paypalbutton = ref(null)
     const bump = ref(1)
+    const showGivingFund = ref(false)
 
     const uniqueId = computed(() => 'donation-test-id')
 
@@ -71,13 +76,24 @@ const DonationButtonSimplified = defineComponent({
       emit('clicked')
     }
 
+    // Mirrors the real PayPal onComplete callback: emit the amount, then
+    // optionally offer the PayPal Giving Fund favourite suggestion.
+    function complete(amt) {
+      emit('clicked', amt)
+      if (props.suggestGivingFund) {
+        showGivingFund.value = true
+      }
+    }
+
     return {
       paypalbutton,
       bump,
       uniqueId,
       buttonId,
       show,
+      showGivingFund,
       clicked,
+      complete,
     }
   },
   template: `
@@ -95,6 +111,7 @@ const DonationButtonSimplified = defineComponent({
           <div v-else>{{ show }}</div>
         </div>
       </b-button>
+      <div v-if="showGivingFund" class="pgf-modal-stub" />
     </div>
   `,
 })
@@ -187,6 +204,29 @@ describe('DonationButton', () => {
       const button = wrapper.find('button')
       await button.trigger('click')
       expect(wrapper.emitted('clicked')).toBeTruthy()
+    })
+  })
+
+  describe('PayPal Giving Fund suggestion', () => {
+    it('emits clicked with the donated amount when a donation completes', () => {
+      const wrapper = createWrapper()
+      wrapper.vm.complete('5')
+      expect(wrapper.emitted('clicked')[0]).toEqual(['5'])
+    })
+
+    it('shows the Giving Fund suggestion after a completed donation by default', async () => {
+      const wrapper = createWrapper()
+      expect(wrapper.find('.pgf-modal-stub').exists()).toBe(false)
+      wrapper.vm.complete('5')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.pgf-modal-stub').exists()).toBe(true)
+    })
+
+    it('does not show the suggestion when suggestGivingFund is false', async () => {
+      const wrapper = createWrapper({ suggestGivingFund: false })
+      wrapper.vm.complete('5')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.pgf-modal-stub').exists()).toBe(false)
     })
   })
 

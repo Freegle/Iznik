@@ -28,6 +28,14 @@
           <p v-if="isApp">{{ loading }}</p>
         </div>
       </div>
+      <b-alert
+        v-if="photoError"
+        variant="danger"
+        :model-value="true"
+        class="mt-2"
+      >
+        {{ photoError }}
+      </b-alert>
       <DashboardModal
         v-if="!isApp"
         ref="dashboard"
@@ -67,6 +75,7 @@ import { useImageStore } from '~/stores/image'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
+import { reportCameraError } from '~/composables/useCameraErrorMessage'
 
 const runtimeConfig = useRuntimeConfig()
 
@@ -175,6 +184,7 @@ async function openModal() {
   if (isApp.value) {
     // console.log('openModal A')
     resetUpload()
+    photoError.value = null
     try {
       const image = await Camera.getPhoto({
         quality: 75,
@@ -202,6 +212,7 @@ async function openModal() {
     } catch (e) {
       loading.value = ''
       console.log('openModal', e.message)
+      photoError.value = reportCameraError(e)
     }
     return
   }
@@ -221,6 +232,10 @@ function closeModal() {
 const uploaderUid = ref(uid('uploader'))
 
 const loading = ref('')
+// Human-readable message shown when a Camera/gallery call fails (e.g. the OS
+// permission prompt was declined) - see useCameraErrorMessage for what does
+// and doesn't count as an error worth telling the user about.
+const photoError = ref(null)
 const emit = defineEmits(['update:modelValue', 'closed', 'photoProcessed'])
 const uploadedPhotos = ref([])
 const busy = ref(false)
@@ -355,6 +370,7 @@ function uploadOneFile(file) {
 
 async function choosePhoto() {
   // console.log('choosePhoto A')
+  photoError.value = null
   try {
     const images = await Camera.pickImages({
       quality: 75,
@@ -373,6 +389,7 @@ async function choosePhoto() {
   } catch (e) {
     loading.value = ''
     console.log('choosePhoto', e.message)
+    photoError.value = reportCameraError(e)
   }
 }
 

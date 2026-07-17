@@ -158,7 +158,16 @@ const message = computed(() => {
 })
 
 async function doCopy() {
-  await navigator.clipboard.writeText(message.value.url)
+  // Match the "email" ShareNetwork payload (subject/description/url), so Copy
+  // is consistent with the Email share button rather than a bare link. Guard
+  // each field and drop empty parts: body-less messages (subject-only OFFERs /
+  // WANTEDs, or a nulled textbody) must never paste the literal "undefined" or
+  // "null" that a raw template literal would stringify.
+  const m = message.value
+  const shareText = [m?.subject, m?.textbody, m?.url]
+    .filter((part) => part != null && part !== '')
+    .join('\n\n')
+  await navigator.clipboard.writeText(shareText)
   copied.value = true
 }
 
