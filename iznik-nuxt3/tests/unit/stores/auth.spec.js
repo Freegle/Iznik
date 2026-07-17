@@ -71,12 +71,15 @@ vi.mock('~/stores/mobile', () => ({
   useMobileStore: () => ({ isApp: false }),
 }))
 
+const mockMiscStoreState = {
+  modtools: false,
+  source: null,
+  marketingConsent: undefined,
+  setAppOutOfDate: (...args) => mockSetAppOutOfDate(...args),
+}
+
 vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({
-    modtools: false,
-    source: null,
-    setAppOutOfDate: mockSetAppOutOfDate,
-  }),
+  useMiscStore: () => mockMiscStoreState,
 }))
 
 describe('auth store', () => {
@@ -85,6 +88,7 @@ describe('auth store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockMiscStoreState.marketingConsent = undefined
     store = useAuthStore()
     store.init({ public: { BUILD_DATE: '2026-01-01' }, app: {} })
   })
@@ -550,6 +554,54 @@ describe('auth store', () => {
       await store.fetchUser()
 
       expect(store.userFetchedAt).toBeGreaterThanOrEqual(before)
+    })
+  })
+
+  describe('fetchUser critical path (PR2: non-blocking side effects)', () => {
+    it('resolves without waiting for savePushId', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+      // Push registration hangs (e.g. native bridge stall) - the session
+      // result must not be held hostage.
+      const savePushSpy = vi
+        .spyOn(store, 'savePushId')
+        .mockReturnValue(new Promise(() => {}))
+
+      const result = await Promise.race([
+        store.fetchUser().then(() => 'fetchUser'),
+        new Promise((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+      ])
+
+      expect(result).toBe('fetchUser')
+      expect(store.user.id).toBe(5)
+      expect(savePushSpy).toHaveBeenCalled()
+    })
+
+    it('resolves without waiting for the marketing consent sync', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({
+        me: { id: 5, marketingconsent: false },
+        groups: [],
+      })
+      mockMiscStoreState.marketingConsent = true
+      // The PATCH /session for consent hangs - must not block the session.
+      mockSave.mockReturnValue(new Promise(() => {}))
+
+      // The consent block is client-only; vitest has no Nuxt build-time
+      // process.client define, so set it for this test.
+      process.client = true
+      try {
+        const result = await Promise.race([
+          store.fetchUser().then(() => 'fetchUser'),
+          new Promise((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+        ])
+
+        expect(result).toBe('fetchUser')
+        expect(store.user.id).toBe(5)
+        expect(mockSave).toHaveBeenCalledWith({ marketingconsent: true })
+      } finally {
+        delete process.client
+      }
     })
   })
 

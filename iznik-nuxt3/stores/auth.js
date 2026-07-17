@@ -432,7 +432,12 @@ export const useAuthStore = defineStore({
         this.setUser(me)
         this.userFetchedAt = Date.now()
 
-        await this.savePushId() // Tell server our mobile push notification id, if available
+        // Tell server our mobile push notification id, if available. Not
+        // awaited: a stalled native bridge must not hold up the session
+        // result (and therefore first paint).
+        Promise.resolve(this.savePushId()).catch((e) => {
+          console.log('savePushId failed', e?.message)
+        })
 
         const composeStore = useComposeStore()
         const email = composeStore.email
@@ -444,7 +449,8 @@ export const useAuthStore = defineStore({
         }
 
         if (process.client) {
-          // Sync marketing consent from local storage to user profile if needed
+          // Sync marketing consent from local storage to user profile if needed.
+          // Fire-and-forget: this PATCH is housekeeping, not session-critical.
           const miscStore = useMiscStore()
 
           if (miscStore.marketingConsent !== undefined) {
@@ -457,16 +463,17 @@ export const useAuthStore = defineStore({
             )
 
             if (me.marketingconsent !== localConsent) {
-              try {
-                await this.$api.session.save({
+              this.$api.session
+                .save({
                   marketingconsent: localConsent,
                 })
-
-                me.marketingconsent = localConsent
-                console.log("Sync'd marketing consent")
-              } catch (e) {
-                console.log('Failed to sync marketing consent', e)
-              }
+                .then(() => {
+                  me.marketingconsent = localConsent
+                  console.log("Sync'd marketing consent")
+                })
+                .catch((e) => {
+                  console.log('Failed to sync marketing consent', e)
+                })
             } else {
               console.log("Marketing consent already sync'd")
             }
