@@ -50,6 +50,10 @@
         About
       </nuxt-link>
       <span class="nav-divider">·</span>
+      <nuxt-link no-prefetch to="/compare" class="nav-link test-footer-compare">
+        Compare
+      </nuxt-link>
+      <span class="nav-divider">·</span>
       <nuxt-link no-prefetch to="/terms" class="nav-link test-footer-terms">
         Terms
       </nuxt-link>

@@ -217,6 +217,10 @@ export default defineNuxtConfig({
     '/volunteering/**': { isr: 3600 },
     '/volunteerings/**': { isr: 3600 },
 
+    // Static comparison pages ("Freegle vs ..."). Server-rendered so crawlers and
+    // AI answer engines can read them; cached on the CDN until the next deploy.
+    '/compare/**': { isr: true },
+
     // Allow CORS for chunk fetches - required for Netlify hosting.
     // Immutable cache for hashed assets — these filenames change on every build.
     '/_nuxt/**': {
