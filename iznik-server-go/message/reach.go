@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -16,9 +17,15 @@ import (
 // endpoint so the SQL lives in exactly one place.
 //
 // Fail-open semantics (matching the existing guards): a msgid is blocked only
-// when a reach row exists AND its polygon does not contain the point. Any error
+// when a reach row exists AND its reach does not contain the point. Any error
 // (e.g. rippling_reach not yet deployed) yields an empty set, and a viewer with
 // no location (0,0) is never blocked.
+//
+// Containment consults the sandwich bounds when migrated (see
+// rippling/reachbounds.go): outside a real outer_bound is an authoritative
+// reject, inside inner_bound an authoritative accept, and only the band between
+// touches the ~178KB exact polygon; POINT (completed) bounds fall back to the
+// exact test.
 func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 	blocked := make(map[uint64]bool)
 	if len(msgids) == 0 || (lat == 0 && lng == 0) {
@@ -29,9 +36,18 @@ func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 	var rows []struct {
 		Msgid uint64 `gorm:"column:msgid"`
 	}
-	if err := db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
-		"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-		msgids, lng, lat, utils.SRID).Scan(&rows).Error; err == nil {
+	var err error
+	if rippling.ReachBoundsReady(db) {
+		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
+		args := append([]interface{}{msgids}, exprArgs...)
+		err = db.Raw("SELECT rr.msgid FROM rippling_reach rr "+
+			"WHERE rr.msgid IN (?) AND NOT "+expr, args...).Scan(&rows).Error
+	} else {
+		err = db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
+			"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+			msgids, lng, lat, utils.SRID).Scan(&rows).Error
+	}
+	if err == nil {
 		for _, r := range rows {
 			blocked[r.Msgid] = true
 		}

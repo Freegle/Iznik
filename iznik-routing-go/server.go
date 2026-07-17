@@ -149,8 +149,21 @@ func handleCatchment(g *Graph) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
 		iso := Isochrone(g, lat, lng, secs, mode)
-		poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, mode))
-		return c.JSON(fiber.Map{"catchment": poly})
+		res := NetworkResolution(g, iso.ReachedNodes, mode)
+		poly := IsochronePolygon(g, iso.ReachedNodes, res)
+		// Sandwich bounds for the reach containment queries (see bounds.go): derived on
+		// the same grid as the exact polygon, so the superset/subset guarantees hold by
+		// construction. Shipped only on the point form — it is what materialises
+		// rippling_reach tick polygons; the groupid form is a display view.
+		bounds := IsochroneBounds(g, iso.ReachedNodes, res)
+		resp := fiber.Map{"catchment": poly}
+		if bounds.Outer != nil {
+			resp["catchment_outer"] = bounds.Outer
+		}
+		if bounds.Inner != nil {
+			resp["catchment_inner"] = bounds.Inner
+		}
+		return c.JSON(resp)
 	}
 }
 

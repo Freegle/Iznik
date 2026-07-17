@@ -568,14 +568,28 @@ func CreateChatMessage(c *fiber.Ctx) error {
 				// row exists that does NOT contain the point, and the attribution capture
 				// below reuses the containment result instead of repeating the spatial query.
 				// rippling_reach may not exist until the reach engine (PR A) ships → fail open (allow).
+				// Containment consults the sandwich bounds when migrated (see
+				// rippling/reachbounds.go): the ~178KB exact polygon is only touched for the
+				// boundary band, and degraded bounds fall back to it so replies to completed
+				// posts still resolve exactly (held-then-taken-gone flow).
 				var rc struct {
 					ReachRows int `gorm:"column:reach_rows"`
 					InReach   int `gorm:"column:in_reach"`
 				}
-				if err := db.Raw("SELECT COUNT(*) AS reach_rows, "+
-					"COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach "+
-					"FROM rippling_reach WHERE msgid = ?",
-					latlng.Lng, latlng.Lat, utils.SRID, *payload.Refmsgid).Scan(&rc).Error; err == nil {
+				var gateErr error
+				if rippling.ReachBoundsReady(db) {
+					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
+					args := append(exprArgs, *payload.Refmsgid)
+					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach "+
+						"FROM rippling_reach rr "+
+						"WHERE rr.msgid = ?", args...).Scan(&rc).Error
+				} else {
+					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, "+
+						"COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach "+
+						"FROM rippling_reach WHERE msgid = ?",
+						latlng.Lng, latlng.Lat, utils.SRID, *payload.Refmsgid).Scan(&rc).Error
+				}
+				if gateErr == nil {
 					reach.checked = true
 					reach.reachRows = rc.ReachRows
 					reach.inReach = rc.InReach

@@ -157,7 +157,16 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// timed out and saw NO posts. The WKT is only consumed by ReachRadiusMetres (the score's
 	// 'close' term), which takes the farthest vertex from the origin; the envelope's 5 points
 	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
-	// Visibility is unaffected: the WHERE below still tests ST_Contains on the FULL polygon.
+	// Visibility is unaffected: the WHERE below still tests containment on the FULL polygon
+	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
+	reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
+	args := []interface{}{
+		utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
+		myid, utils.MESSAGE_LIKES_VIEW,
+	}
+	args = append(args, pointArgs...)
+	args = append(args, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
+
 	var candidates []reachCandidateRow
 	db.Raw(
 		"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
@@ -182,13 +191,10 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			// consumer already skips held rows; without this filter the reported
 			// post kept appearing in the nearby browse feed (Discourse 9862).
 			"AND rr.status != 'held' "+
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+			reachWhere+
 			// Outbound cap: only show this post to viewers within the author's chosen distance.
 			authorReachCapWhere,
-		utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
-		myid, utils.MESSAGE_LIKES_VIEW,
-		latlng.Lng, latlng.Lat, utils.SRID,
-		BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat,
+		args...,
 	).Scan(&candidates)
 
 	return candidates
@@ -679,6 +685,11 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
 		// Viewer sets no inbound limit, but the OUTBOUND author cap still applies (and must match
 		// the feed), so join the author and add authorReachCapWhere here too.
+		reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
+		args := []interface{}{myid, utils.MESSAGE_LIKES_VIEW}
+		args = append(args, pointArgs...)
+		args = append(args, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
+
 		db.Raw("SELECT COUNT(DISTINCT ms.msgid) "+
 			"FROM messages_spatial ms "+
 			"INNER JOIN messages m ON m.id = ms.msgid "+
@@ -686,10 +697,9 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
 			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
 			"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+			reachWhere+
 			authorReachCapWhere,
-			myid, utils.MESSAGE_LIKES_VIEW, latlng.Lng, latlng.Lat, utils.SRID,
-			BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat).Scan(&count)
+			args...).Scan(&count)
 		return count
 	}
 

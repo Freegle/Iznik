@@ -59,8 +59,9 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach reply test item", 51.5, -0.1)
 
 	// Reach exists but does NOT cover the replier (far to the east). lat/lng are NOT NULL.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
-		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857))", msgID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857)))", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
 
@@ -104,7 +105,10 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 
 	// Reach grows to cover the replier → the reply is delivered normally (no new hold row).
 	db.Exec("UPDATE rippling_reach SET polygon = ST_GeomFromText("+
-		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857) WHERE msgid = ?", msgID)
+		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+		"outer_bound = ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
+		"inner_bound = NULL WHERE msgid = ?", msgID)
 	assert.Equal(t, fiber.StatusOK, post(), "in-app reply accepted once the reach covers the replier")
 	var heldCount int
 	db.Raw("SELECT COUNT(*) FROM rippling_held_replies WHERE msgid = ? AND replieruserid = ?",
@@ -142,8 +146,9 @@ func TestCreateChatMessage_ReportToModsNotReachGated(t *testing.T) {
 
 	// Reach exists but does NOT cover the reporter (far to the east) — this is exactly the polygon
 	// that 403s a User2User reply in the test above.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
-		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857))", msgID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857)))", msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	// Report chat: reporter -> the group's mods (User2Mod), reporter is user1 so is authorised.
@@ -290,8 +295,9 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 	db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText("+
 		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', %d) WHERE id = ?", utils.SRID),
 		originGroup)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
-		"'POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))', 3857))", msgID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))', 3857)))", msgID)
 	// The post rippled into a second group just now.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)

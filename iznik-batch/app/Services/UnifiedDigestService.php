@@ -37,6 +37,19 @@ class UnifiedDigestService
     /** Memoized once per run: whether the optional messages_pinned table exists. */
     private ?bool $messagesPinnedTableExists = null;
 
+    /** Memoized once per run: whether the sandwich-bounds columns have been migrated. */
+    private ?bool $reachBoundsColumnsExist = null;
+
+    /** True when the reach-gate can use the sandwich-bounds prefilter. */
+    private function reachBoundsAvailable(): bool
+    {
+        if ($this->reachBoundsColumnsExist === null) {
+            $this->reachBoundsColumnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
+        }
+
+        return $this->reachBoundsColumnsExist;
+    }
+
     /**
      * Digest mode constants.
      */
@@ -1523,11 +1536,39 @@ class UnifiedDigestService
         // open — no regression for locationless members).
         $latlng = $this->resolveUserLatLng($user);
         if ($latlng !== null) {
-            $query->whereRaw(
-                'NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
-                    AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), 3857)) = 0)',
-                [$latlng[1], $latlng[0]] // POINT(lng, lat)
-            );
+            if ($this->reachBoundsAvailable()) {
+                // Sandwich-bounds prefilter (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
+                // the exact polygon averages ~178 KB, so consult the small same-row bounds
+                // columns first — outside a real outer_bound is an authoritative reject,
+                // inside inner_bound an authoritative accept — and only test the exact
+                // polygon for the band between them. The 178 KB polygon is referenced
+                // ONLY inside a correlated EXISTS: MySQL's lazy BLOB fetch does not cross
+                // OR expression items, so any direct reference would fetch it for every
+                // evaluated row and defeat the point. A POINT outer_bound (completion
+                // pruning) is treated as ABSENT here: this query has no successful=0
+                // filter — it still shows "came and went" posts — so degraded bounds must
+                // fall back to the exact polygon rather than reject them.
+                $point = 'ST_SRID(POINT(?, ?), 3857)';
+                $query->whereRaw(
+                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr
+                        WHERE rr.msgid = messages.id
+                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
+                                AND NOT ST_Contains(rr.outer_bound, $point))
+                               OR ((ST_GeometryType(rr.outer_bound) = 'POINT'
+                                    OR COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 0)
+                                   AND NOT EXISTS (SELECT 1 FROM rippling_reach r2
+                                       WHERE r2.msgid = rr.msgid
+                                         AND ST_Contains(r2.polygon, $point)))))",
+                    [$latlng[1], $latlng[0], $latlng[1], $latlng[0], $latlng[1], $latlng[0]] // POINT(lng, lat) x3
+                );
+            } else {
+                // Bounds table not migrated yet — the original exact-polygon gate.
+                $query->whereRaw(
+                    'NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
+                        AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), 3857)) = 0)',
+                    [$latlng[1], $latlng[0]] // POINT(lng, lat)
+                );
+            }
         }
 
         // Bound the load (see DIGEST_LOAD_CAP): oldest-first + this limit means a member who

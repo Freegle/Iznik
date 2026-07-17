@@ -1,15 +1,15 @@
 package user
 
 import (
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"crypto/rand"
-	"math/big"
 	"log"
 	"math"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -57,39 +57,39 @@ type User struct {
 	// db.Create(&ljuser) when first creating an LJ-linked user; making it
 	// read-only would silently drop the value and cause a fresh user to be
 	// created on every LJ call (TestCreateChatMessageLoveJunk regression).
-	Ljuserid        *uint64     `json:"ljuserid,omitempty"`
-	Deleted         *time.Time  `json:"deleted"`
-	Forgotten       *time.Time  `json:"forgotten"`
+	Ljuserid        *uint64          `json:"ljuserid,omitempty"`
+	Deleted         *time.Time       `json:"deleted"`
+	Forgotten       *time.Time       `json:"forgotten"`
 	Lastlocation    *uint64          `json:"lastlocation"`
 	Privateposition *PrivatePosition `json:"privateposition,omitempty" gorm:"-"`
 
 	// Only returned for logged-in user.
-	Email              string          `json:"email" gorm:"-"`
-	Emails             []UserEmail     `json:"emails" gorm:"-"`
-	Memberships        []Membership          `json:"memberships" gorm:"-"`
-	MessageHistory     []UserMessageHistory  `json:"messagehistory,omitempty" gorm:"-"`
-	Systemrole         string          `json:"systemrole""`
-	Settings           json.RawMessage `json:"settings"` // This is JSON stored in the DB as a string.
-	Relevantallowed    bool            `json:"relevantallowed"`
-	Newslettersallowed bool            `json:"newslettersallowed"`
-	Bouncing           bool            `json:"bouncing"`
-	Bouncereason       *string         `json:"bouncereason,omitempty" gorm:"-"`
-	Bounceat           *string         `json:"bounceat,omitempty" gorm:"-"`
-	Trustlevel         *string         `json:"trustlevel"`
-	Marketingconsent   bool            `json:"marketingconsent"`
-	Source             *string         `json:"source"`
-	Modmails           uint64          `json:"modmails" gorm:"-"`
-	Suspectreason      *string         `json:"suspectreason,omitempty" gorm:"-"`
-	Activedistance     *float64        `json:"activedistance" gorm:"-"`
-	Locationchanges    *int            `json:"locationchanges,omitempty" gorm:"-"`
-	Chatmodstatus      *string         `json:"chatmodstatus,omitempty" gorm:"->"`
-	Newsfeedmodstatus  *string         `json:"newsfeedmodstatus,omitempty" gorm:"->"`
-	Tnuserid           *uint64         `json:"tnuserid,omitempty" gorm:"->"`
-	Lastpush           *time.Time      `json:"lastpush,omitempty" gorm:"-"`
-	Donations          []UserDonation  `json:"donations,omitempty" gorm:"-"`
-	Giftaid            *UserGiftAid    `json:"giftaid,omitempty" gorm:"-"`
-	Loginlink          string          `json:"loginlink,omitempty" gorm:"-"`
-	Engagement         *string         `json:"engagement" gorm:"->"`
+	Email              string               `json:"email" gorm:"-"`
+	Emails             []UserEmail          `json:"emails" gorm:"-"`
+	Memberships        []Membership         `json:"memberships" gorm:"-"`
+	MessageHistory     []UserMessageHistory `json:"messagehistory,omitempty" gorm:"-"`
+	Systemrole         string               `json:"systemrole""`
+	Settings           json.RawMessage      `json:"settings"` // This is JSON stored in the DB as a string.
+	Relevantallowed    bool                 `json:"relevantallowed"`
+	Newslettersallowed bool                 `json:"newslettersallowed"`
+	Bouncing           bool                 `json:"bouncing"`
+	Bouncereason       *string              `json:"bouncereason,omitempty" gorm:"-"`
+	Bounceat           *string              `json:"bounceat,omitempty" gorm:"-"`
+	Trustlevel         *string              `json:"trustlevel"`
+	Marketingconsent   bool                 `json:"marketingconsent"`
+	Source             *string              `json:"source"`
+	Modmails           uint64               `json:"modmails" gorm:"-"`
+	Suspectreason      *string              `json:"suspectreason,omitempty" gorm:"-"`
+	Activedistance     *float64             `json:"activedistance" gorm:"-"`
+	Locationchanges    *int                 `json:"locationchanges,omitempty" gorm:"-"`
+	Chatmodstatus      *string              `json:"chatmodstatus,omitempty" gorm:"->"`
+	Newsfeedmodstatus  *string              `json:"newsfeedmodstatus,omitempty" gorm:"->"`
+	Tnuserid           *uint64              `json:"tnuserid,omitempty" gorm:"->"`
+	Lastpush           *time.Time           `json:"lastpush,omitempty" gorm:"-"`
+	Donations          []UserDonation       `json:"donations,omitempty" gorm:"-"`
+	Giftaid            *UserGiftAid         `json:"giftaid,omitempty" gorm:"-"`
+	Loginlink          string               `json:"loginlink,omitempty" gorm:"-"`
+	Engagement         *string              `json:"engagement" gorm:"->"`
 }
 
 type UserGiftAid struct {
@@ -100,13 +100,13 @@ type UserGiftAid struct {
 }
 
 type UserDonation struct {
-	ID              uint64     `json:"id"`
-	Userid          *uint64    `json:"userid"`
-	Timestamp       time.Time  `json:"timestamp"`
-	GrossAmount     float64    `json:"GrossAmount"`
-	Source          string     `json:"source"`
-	TransactionType *string    `json:"TransactionType"`
-	Giftaidconsent  bool       `json:"giftaidconsent"`
+	ID              uint64    `json:"id"`
+	Userid          *uint64   `json:"userid"`
+	Timestamp       time.Time `json:"timestamp"`
+	GrossAmount     float64   `json:"GrossAmount"`
+	Source          string    `json:"source"`
+	TransactionType *string   `json:"TransactionType"`
+	Giftaidconsent  bool      `json:"giftaidconsent"`
 }
 
 type Tabler interface {
@@ -322,7 +322,6 @@ func GetUser(c *fiber.Ctx) error {
 			var latlng utils.LatLng
 			var emails []UserEmail
 
-	
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -715,9 +714,9 @@ func GetUserById(id uint64, myid uint64) User {
 	}()
 
 	var supporter struct {
-		Supporter     bool       `json:"supporter"`
-		Donated       *time.Time `json:"donated"`
-		DonatedType   *string    `json:"donatedtype"`
+		Supporter   bool       `json:"supporter"`
+		Donated     *time.Time `json:"donated"`
+		DonatedType *string    `json:"donatedtype"`
 	}
 
 	wg.Add(1)
@@ -1167,7 +1166,6 @@ func SearchUsers(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"users": userIDs})
 }
 
-
 func generateRandomKey(length int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, length)
@@ -1277,7 +1275,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			callerIsMod = IsModOfUser(myid, id)
 		}()
 	}
-
 
 	if modtools {
 		wg.Add(1)
@@ -1557,20 +1554,20 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 }
 
 type UserPostRequest struct {
-	Action    string           `json:"action"`
-	Engageid  utils.FlexUint64 `json:"engageid"`
-	Ratee     uint64           `json:"ratee"`
-	Rating    *string          `json:"rating"`
-	Reason    *string          `json:"reason"`
-	Text      *string          `json:"text"`
-	Ratingid  uint64           `json:"ratingid"`
-	ID        uint64           `json:"id"`
-	Email     string           `json:"email"`
-	Primary   *bool            `json:"primary"`
-	ID1       utils.FlexUint64 `json:"id1"`
-	ID2       utils.FlexUint64 `json:"id2"`
-	Email1    string           `json:"email1"`
-	Email2    string           `json:"email2"`
+	Action   string           `json:"action"`
+	Engageid utils.FlexUint64 `json:"engageid"`
+	Ratee    uint64           `json:"ratee"`
+	Rating   *string          `json:"rating"`
+	Reason   *string          `json:"reason"`
+	Text     *string          `json:"text"`
+	Ratingid uint64           `json:"ratingid"`
+	ID       uint64           `json:"id"`
+	Email    string           `json:"email"`
+	Primary  *bool            `json:"primary"`
+	ID1      utils.FlexUint64 `json:"id1"`
+	ID2      utils.FlexUint64 `json:"id2"`
+	Email1   string           `json:"email1"`
+	Email2   string           `json:"email2"`
 }
 
 func PostUser(c *fiber.Ctx) error {
@@ -3212,7 +3209,6 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 	return c.JSON(history)
 }
 
-
 // GetUserLogins returns login history for a user.
 //
 // @Summary Get login history for a user (mod-only)
@@ -3227,10 +3223,10 @@ func GetUserLogins(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	type LoginRow struct {
-		ID        uint64     `json:"id"`
-		Userid    uint64     `json:"userid"`
-		Type      string     `json:"type"`
-		Added     *time.Time `json:"added"`
+		ID         uint64     `json:"id"`
+		Userid     uint64     `json:"userid"`
+		Type       string     `json:"type"`
+		Added      *time.Time `json:"added"`
 		Lastaccess *time.Time `json:"lastaccess"`
 	}
 
@@ -3245,4 +3241,3 @@ func GetUserLogins(c *fiber.Ctx) error {
 
 	return c.JSON(logins)
 }
-

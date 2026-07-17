@@ -26,6 +26,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -2255,8 +2256,15 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 
 	// Trim where the reach extends beyond the rejected group (skip the wholly-within
 	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
+	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
+	// viewers inside the clipped-out area, so it is NULLed in the SAME statement. The
+	// outer bound is left stale-loose (safe) and the next expander tick re-derives both.
+	innerClear := ""
+	if rippling.ReachBoundsReady(db) {
+		innerClear = ", mr.inner_bound = NULL"
+	}
 	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+
-		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) "+
+		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)"+innerClear+" "+
 		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 		"AND ST_Intersects(mr.polygon, g.polyindex) "+

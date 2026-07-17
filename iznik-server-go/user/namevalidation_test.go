@@ -131,13 +131,13 @@ func TestDamerauLevenshtein(t *testing.T) {
 	}{
 		{"", "", 2, 0},
 		{"abc", "abc", 2, 0},
-		{"abc", "abd", 2, 1},      // substitution
-		{"abc", "ab", 2, 1},       // deletion
-		{"abc", "abcd", 2, 1},     // insertion
-		{"abc", "acb", 2, 1},      // transposition
-		{"freegle", "freegel", 2, 1},   // transposition: gl ↔ lg
-		{"freegle", "freeggle", 2, 1},  // insertion
-		{"freegle", "supp", 2, 3},      // capped at max+1
+		{"abc", "abd", 2, 1},          // substitution
+		{"abc", "ab", 2, 1},           // deletion
+		{"abc", "abcd", 2, 1},         // insertion
+		{"abc", "acb", 2, 1},          // transposition
+		{"freegle", "freegel", 2, 1},  // transposition: gl ↔ lg
+		{"freegle", "freeggle", 2, 1}, // insertion
+		{"freegle", "supp", 2, 3},     // capped at max+1
 	}
 	for _, c := range cases {
 		got := damerauLevenshtein(c.a, c.b, c.max)

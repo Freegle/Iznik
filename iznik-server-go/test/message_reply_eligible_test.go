@@ -47,8 +47,8 @@ func TestReplyEligibleReach(t *testing.T) {
 	}
 
 	// 2) Reach row whose polygon does NOT contain the viewer → not eligible (false).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
 	db.Exec("DELETE FROM rippling_event_metrics WHERE event = 'reply_blocked' AND day = CURDATE()")
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
@@ -62,7 +62,9 @@ func TestReplyEligibleReach(t *testing.T) {
 
 	// 3) Reach row containing the viewer → eligible (nil).
 	db.Exec("UPDATE rippling_reach SET polygon = "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857) WHERE msgid = ?", mid)
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), "+
+		"outer_bound = ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), "+
+		"inner_bound = NULL WHERE msgid = ?", mid)
 	msgs = message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) {
 		assert.Nil(t, msgs[0].ReplyEligible, "inside reach → eligible (omitted)")
@@ -110,8 +112,8 @@ func TestReplyEligibleReachWhenMasterSwitchOff(t *testing.T) {
 
 	// Reach row whose polygon does NOT contain the viewer → out of reach → replyeligible=false,
 	// even though RIPPLE_ENABLED is off (the post is rippling via the per-group trial).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding') "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", mid)
 	msgs := message.GetMessagesByIds(viewerID, []string{idStr}, false)
 	if assert.Len(t, msgs, 1) && assert.NotNil(t, msgs[0].ReplyEligible, "trial post, master off → replyeligible set") {
