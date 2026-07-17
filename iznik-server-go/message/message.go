@@ -3114,13 +3114,30 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
 	}
-	if req.Lat != nil {
-		setClauses = append(setClauses, "lat = ?")
-		args = append(args, *req.Lat)
+	// Effective coordinates for this edit. Use the coords the client sent; but if the
+	// location changed without matching coords, derive lat/lng from the chosen location.
+	// Without this a location-only edit sets locationid yet leaves lat/lng stale or NULL,
+	// making the post undiscoverable — browse/search read messages.lat/lng directly
+	// (Discourse 9865). Locations are static reference data, so this lookup returns the
+	// row reliably; it is not a timing/race concern.
+	effLat, effLng := req.Lat, req.Lng
+	if req.Locationid != nil && (effLat == nil || effLng == nil) {
+		var llat, llng *float64
+		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&llat, &llng)
+		if effLat == nil {
+			effLat = llat
+		}
+		if effLng == nil {
+			effLng = llng
+		}
 	}
-	if req.Lng != nil {
+	if effLat != nil {
+		setClauses = append(setClauses, "lat = ?")
+		args = append(args, *effLat)
+	}
+	if effLng != nil {
 		setClauses = append(setClauses, "lng = ?")
-		args = append(args, *req.Lng)
+		args = append(args, *effLng)
 	}
 
 	if len(setClauses) > 0 {
@@ -3132,9 +3149,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// changes. We deliberately UPDATE only — never INSERT — so editing a Pending
 	// message's location cannot leak it into messages_spatial (which backs the public
 	// browse). Only Approved messages have a spatial row; the approval path inserts.
-	if req.Lat != nil && req.Lng != nil {
+	if effLat != nil && effLng != nil {
 		db.Exec("UPDATE messages_spatial SET point = ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857) WHERE msgid = ?",
-			*req.Lng, *req.Lat, req.ID)
+			*effLng, *effLat, req.ID)
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
@@ -3970,10 +3987,11 @@ func PutMessage(c *fiber.Ctx) error {
 	// the chosen locationid; if the client didn't send one, fall back to the user's
 	// last known location so the post is still findable (parity with the email path,
 	// IncomingMailService). Resolve lat/lng with a JOIN on the WRITE connection in a
-	// single statement: the previous SELECT-then-guarded-UPDATE could be routed to a
-	// read replica that missed the location and, with the Scan error unchecked, would
-	// silently leave lat/lng NULL — an undiscoverable post (Discourse 9865). If
-	// nothing resolves (no locationid and no lastlocation), lat/lng stay NULL and
+	// single statement. The previous code only denormalised when the client sent a
+	// locationid, and did it via a separate best-effort SELECT whose Scan error was
+	// unchecked and whose !=0 guard silently skipped the UPDATE on any miss — so a post
+	// could go live with no lat/lng and be undiscoverable (Discourse 9865). If nothing
+	// resolves (no locationid and no lastlocation), lat/lng stay NULL and
 	// ContentCheckService holds the post for a moderator to add a postcode.
 	db.Exec("UPDATE messages m "+
 		"JOIN users u ON u.id = ? "+
