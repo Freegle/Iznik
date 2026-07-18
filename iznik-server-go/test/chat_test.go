@@ -1627,6 +1627,98 @@ func TestAllSeenNoChats(t *testing.T) {
 	assert.Equal(t, "Success", result["status"])
 }
 
+func TestAllSeenModtoolsScopedToModChats(t *testing.T) {
+	prefix := uniquePrefix("allseen_mt")
+	db := database.DBConn
+
+	// A moderator with a group, an unread User2Mod chat, an unread Mod2Mod chat
+	// (no roster row), and an unread personal User2User chat.
+	modID, _, groupID, u2mChatID, token := setupModChatData(t, prefix)
+
+	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	m2mChatID := CreateTestChatRoom(t, mod2ID, &modID, &groupID, "Mod2Mod")
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Mod chat msg', NOW(), 1, 0, 0)",
+		m2mChatID, mod2ID)
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	personalChatID := CreateTestChatRoom(t, modID, &otherID, nil, "User2User")
+	personalMsgID := CreateTestChatMessage(t, personalChatID, otherID, "Unread personal message")
+
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", personalChatID, modID)
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", u2mChatID, modID)
+
+	// ModTools "Mark all read".
+	payload := map[string]interface{}{"action": "AllSeen", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Moderator chats are cleared: existing roster row updated...
+	var u2mSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", u2mChatID, modID).Scan(&u2mSeen)
+	assert.NotEqual(t, uint64(0), u2mSeen, "User2Mod chat should be marked seen")
+
+	// ...and a roster row inserted where none existed.
+	var m2mSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", m2mChatID, modID).Scan(&m2mSeen)
+	assert.NotEqual(t, uint64(0), m2mSeen, "Mod2Mod chat should get a seen pointer")
+
+	// The personal member chat is untouched - its message is still unread, so the
+	// FD badge can still show it.
+	var personalSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", personalChatID, modID).Scan(&personalSeen)
+	assert.Equal(t, uint64(0), personalSeen, "ModTools Mark all read must not mark personal member chats seen")
+	assert.Less(t, personalSeen, personalMsgID)
+}
+
+func TestAllSeenFDDoesNotTouchModChats(t *testing.T) {
+	prefix := uniquePrefix("allseen_fd")
+	db := database.DBConn
+
+	// A moderator with an unread User2Mod chat (mod side) and an unread personal
+	// User2User chat, including one with no roster row yet.
+	modID, _, _, u2mChatID, token := setupModChatData(t, prefix)
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	personalChatID := CreateTestChatRoom(t, modID, &otherID, nil, "User2User")
+	CreateTestChatMessage(t, personalChatID, otherID, "Unread personal message")
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", personalChatID, modID)
+
+	// A second personal chat where the recipient has no roster row at all (the
+	// state a brand-new incoming conversation is in).
+	other2ID := CreateTestUser(t, prefix+"_other2", "User")
+	noRosterChatID := CreateTestChatRoom(t, modID, &other2ID, nil, "User2User")
+	CreateTestChatMessage(t, noRosterChatID, other2ID, "Unread in rosterless chat")
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ? AND userid = ?", noRosterChatID, modID)
+
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", u2mChatID, modID)
+
+	// FD "Mark all read".
+	payload := map[string]interface{}{"action": "AllSeen", "modtools": false}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Personal chats are cleared, including the one with no roster row.
+	var personalSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", personalChatID, modID).Scan(&personalSeen)
+	assert.NotEqual(t, uint64(0), personalSeen, "FD Mark all read should mark personal chats seen")
+
+	var noRosterSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", noRosterChatID, modID).Scan(&noRosterSeen)
+	assert.NotEqual(t, uint64(0), noRosterSeen, "FD Mark all read should insert a seen pointer for rosterless chats")
+
+	// The mod-side User2Mod roster row is untouched.
+	var u2mSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", u2mChatID, modID).Scan(&u2mSeen)
+	assert.Equal(t, uint64(0), u2mSeen, "FD Mark all read must not touch moderator-side chats")
+}
+
 // =============================================================================
 // ReferToSupport tests
 // =============================================================================
@@ -4448,8 +4540,9 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	assert.GreaterOrEqual(t, countBefore, int64(numChats),
 		"should have at least %d unread messages before markAllRead", numChats)
 
-	// Call mark-all-read (POST /chatrooms with action=AllSeen).
-	payload := map[string]interface{}{"action": "AllSeen"}
+	// Call mark-all-read (POST /chatrooms with action=AllSeen). The ModTools client
+	// sends modtools:true, which scopes AllSeen to moderator chats (User2Mod/Mod2Mod).
+	payload := map[string]interface{}{"action": "AllSeen", "modtools": true}
 	s, _ := json2.Marshal(payload)
 	req2 := httptest.NewRequest("POST", "/api/chatrooms?jwt="+modToken, bytes.NewBuffer(s))
 	req2.Header.Set("Content-Type", "application/json")
