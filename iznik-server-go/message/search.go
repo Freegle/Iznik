@@ -129,22 +129,38 @@ func msgidFilter(msgids []uint64) string {
 // open posts. Only spatial posts are searchable (both search arms index messages_spatial), so
 // the own-posts arm here is spatial-limited: a PENDING own post appears on the feed but is not
 // in the search index, so it cannot appear in search results either way. Keep this predicate
-// in sync with isochrone/message.go fetchReachCandidates.
+// in sync with isochrone/message.go fetchReachCandidates (same reach semantics; the SQL shape
+// differs deliberately - see the query comment below).
 func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint64 {
 	var ids []uint64
 
+	// Two arms UNIONed rather than one `own OR reach` predicate. The OR form cost 32s in
+	// production (Sentry NUXT3-DP1) because it forced a full messages_spatial scan: with
+	// rippling_reach only LEFT JOINed, neither spatial index can be the access path, and
+	// referencing the ~178KB polygon BLOB inside an OR branch defeats MySQL's lazy conjunct
+	// evaluation, so every scanned row paid the fetch. Splitting the arms lets the reach arm
+	// DRIVE from rippling_reach on the rippling_reach_polygon R-tree (MBRContains narrows to
+	// the candidates, ST_Contains then decides exactly) - same 472 rows, 32s -> ~3s.
+	//
+	// Deliberately NOT prefiltered on outer_bound: measured against production data, 422
+	// reach rows contain a point in `polygon` that their `outer_bound` does NOT contain, so
+	// as a hard filter it silently drops posts the member should be able to search. Its
+	// derivation (ST_Buffer(ST_Simplify(polygon, tol), tol)) can simplify away a thin spike
+	// that the buffer does not restore, so it is not a true superset. MBRContains(polygon)
+	// IS sound (verified: 0 rows exact-but-not-MBR) and is what the R-tree evaluates anyway.
 	db.Raw(
 		"SELECT ms.msgid FROM messages_spatial ms "+
 			"INNER JOIN messages m ON m.id = ms.msgid "+
+			"WHERE ms.successful = 0 AND m.fromuser = ? "+
+			"UNION "+
+			"SELECT ms.msgid FROM rippling_reach rr "+
+			"INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid "+
+			"INNER JOIN messages m ON m.id = ms.msgid "+
 			"INNER JOIN users au ON au.id = m.fromuser "+
-			"LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
-			"WHERE ms.successful = 0 AND (m.fromuser = ? "+
-			"OR (rr.msgid IS NOT NULL AND rr.status != 'held' "+
-			// Sandwich-bounds prefilter: outer_bound is a cheap superset of the exact polygon.
-			"AND (rr.outer_bound IS NULL OR ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?))) "+
+			"WHERE ms.successful = 0 AND rr.status != 'held' "+
+			"AND MBRContains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
 			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
-			utils.AuthorReachCapWhere+
-			"))",
+			utils.AuthorReachCapWhere,
 		myid,
 		lng, lat, utils.SRID,
 		lng, lat, utils.SRID,
