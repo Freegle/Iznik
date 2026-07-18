@@ -26,6 +26,11 @@ type SearchResult struct {
 	Word      string    `json:"word"`
 	Type      string    `json:"type"`
 	Matchedon Matchedon `json:"matchedon" gorm:"-"`
+	// Distance is the great-circle miles from the searching member to this post (blurred coords,
+	// the same measure the browse feed exposes). Populated by the Search handler so search can
+	// reflect the member's "How far away" slider and "Closest" sort. 0 when the member has no
+	// known location (logged out).
+	Distance float64 `json:"distance" gorm:"-"`
 }
 
 func GetWords(search string) []string {
@@ -92,6 +97,63 @@ func groupFilter(groupids []uint64) string {
 	return ret
 }
 
+// msgidFilter restricts a keyword-search query to an explicit msgid universe - for a
+// browse-scoped Nearby search, the member's reach feed (see nearbyFeedMsgIDs). Applying it
+// INSIDE the query matters: each search arm caps its results (LIMIT/top-K), so filtering
+// afterwards would let out-of-feed posts crowd in-feed posts out of the capped candidate
+// set. Empty = no restriction. The ids come from our own queries, never user input, so the
+// IN list is built directly (same pattern as groupFilter).
+func msgidFilter(msgids []uint64) string {
+	if len(msgids) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(" AND messages_spatial.msgid IN (")
+	for i, id := range msgids {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(strconv.FormatUint(id, 10))
+	}
+	sb.WriteString(") ")
+	return sb.String()
+}
+
+// nearbyFeedMsgIDs returns the msgids of the posts that make up the member's Nearby browse
+// feed - the universe a browse-scoped search must search within (Discourse 9933: "the set of
+// posts you search in should precisely match the set you'd see if you scrolled to the very
+// bottom of the infinite scroll"). It mirrors the reach arm of isochrone.Messages: open posts
+// whose rippling reach polygon covers the member (skipping held reaches, and respecting the
+// post AUTHOR's outbound distance cap via utils.AuthorReachCapWhere), plus the member's own
+// open posts. Only spatial posts are searchable (both search arms index messages_spatial), so
+// the own-posts arm here is spatial-limited: a PENDING own post appears on the feed but is not
+// in the search index, so it cannot appear in search results either way. Keep this predicate
+// in sync with isochrone/message.go fetchReachCandidates.
+func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint64 {
+	var ids []uint64
+
+	db.Raw(
+		"SELECT ms.msgid FROM messages_spatial ms "+
+			"INNER JOIN messages m ON m.id = ms.msgid "+
+			"INNER JOIN users au ON au.id = m.fromuser "+
+			"LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
+			"WHERE ms.successful = 0 AND (m.fromuser = ? "+
+			"OR (rr.msgid IS NOT NULL AND rr.status != 'held' "+
+			// Sandwich-bounds prefilter: outer_bound is a cheap superset of the exact polygon.
+			"AND (rr.outer_bound IS NULL OR ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?))) "+
+			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+			utils.AuthorReachCapWhere+
+			"))",
+		myid,
+		lng, lat, utils.SRID,
+		lng, lat, utils.SRID,
+		float64(9007199254740991), lat, lng, lat,
+	).Scan(&ids)
+
+	return ids
+}
+
 func typeFilter(msgtype string) string {
 	var ret string
 
@@ -129,7 +191,7 @@ func boxFilter(nelatf float32, nelngf float32, swlatf float32, swlngf float32) s
 	return ret
 }
 
-func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
+func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
 	bf := boxFilter(nelat, nelng, swlat, swlng)
 
 	if len(bf) > 0 {
@@ -156,6 +218,7 @@ func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, 
 
 	sql += ") " +
 		groupFilter(groupids) +
+		msgidFilter(msgids) +
 		typeFilter(msgtype) +
 		"GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?;"
 
@@ -167,7 +230,7 @@ func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, 
 	return processResults("Exact", res)
 }
 
-func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
+func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
 	var res []SearchResult
 
 	if len(words) > 0 {
@@ -196,6 +259,7 @@ func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, m
 		}
 
 		sql += ")" + groupFilter(groupids) +
+			msgidFilter(msgids) +
 			typeFilter(msgtype) +
 			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
 
@@ -207,7 +271,7 @@ func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, m
 	return processResults("Typo", res)
 }
 
-func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
+func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
 	var res []SearchResult
 
 	if len(words) > 0 {
@@ -238,6 +302,7 @@ func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64,
 		}
 
 		sql += ") " + groupFilter(groupids) +
+			msgidFilter(msgids) +
 			typeFilter(msgtype) +
 			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
 
@@ -249,7 +314,7 @@ func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64,
 	return processResults("StartsWith", res)
 }
 
-func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
+func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
 	var res []SearchResult
 
 	if len(words) > 0 {
@@ -278,6 +343,7 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 		}
 
 		sql += ") " + groupFilter(groupids) +
+			msgidFilter(msgids) +
 			typeFilter(msgtype) +
 			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
 

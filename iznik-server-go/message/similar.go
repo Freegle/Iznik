@@ -106,7 +106,7 @@ func Similar(c *fiber.Ctx) error {
 	// Over-fetch so post-filtering (self, same author, threshold, reach) still
 	// leaves enough. Same-type only; no group/bbox filter (nearby handled by the
 	// recommendation being about this post; reach handles "can I reply").
-	candidates := embedding.Global.Search(srcVec, limit*3, srcType, nil, 0, 0, 0, 0)
+	candidates := embedding.Global.Search(srcVec, limit*3, srcType, nil, nil, 0, 0, 0, 0)
 
 	// Reach filter: for a logged-in viewer with a known location, drop candidates
 	// they could not reply to (rippled out but not yet to them). Fail-open.

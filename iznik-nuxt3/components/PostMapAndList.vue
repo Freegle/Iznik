@@ -26,6 +26,7 @@
       :isochrone-override="isochroneOverride"
       :authorityid="authorityid"
       :selected-max-distance="selectedMaxDistance"
+      :browse-search="browseSearch"
       @searched="searched"
       @messages="messagesChanged($event)"
       @groups="groupsChanged($event)"
@@ -233,6 +234,14 @@ const props = defineProps({
     type: Number,
     required: false,
     default: null,
+  },
+  // Set by the Browse page: searches pass browse=1 so the server scopes the
+  // search universe to the member's browse feed for their current filters
+  // (see PostMap's prop of the same name).
+  browseSearch: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
   // Rippling-out relevance ordering + distance slider: the member's current maximum
   // distance preference (miles), or BROWSE_DISTANCE_UNLIMITED (the default) to defer to

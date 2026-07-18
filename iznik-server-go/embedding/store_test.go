@@ -51,31 +51,66 @@ func TestStoreSearch(t *testing.T) {
 	}
 
 	// Search with sofa-like query should return sofa and chair first
-	results := s.Search(sofaVec[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(sofaVec[:], 10, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 3)
 	// Sofa should be first (highest similarity to itself)
 	assert.Equal(t, uint64(1), results[0].Msgid)
 
 	// Filter by msgtype
-	results = s.Search(sofaVec[:], 10, "Offer", nil, 0, 0, 0, 0)
+	results = s.Search(sofaVec[:], 10, "Offer", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 2)
 	for _, r := range results {
 		assert.Equal(t, "Offer", r.Msgtype)
 	}
 
 	// Filter by groupid
-	results = s.Search(sofaVec[:], 10, "", []uint64{200}, 0, 0, 0, 0)
+	results = s.Search(sofaVec[:], 10, "", []uint64{200}, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(3), results[0].Msgid)
 
 	// Filter by bounding box (only London area, excludes bike at 52.0,0.0)
-	results = s.Search(sofaVec[:], 10, "", nil, 51.0, -0.5, 51.9, 0.5)
+	results = s.Search(sofaVec[:], 10, "", nil, nil, 51.0, -0.5, 51.9, 0.5)
 	assert.Len(t, results, 2) // sofa and chair are at 51.5,-0.1
 
 	// Limit results
-	results = s.Search(sofaVec[:], 1, "", nil, 0, 0, 0, 0)
+	results = s.Search(sofaVec[:], 1, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(1), results[0].Msgid) // sofa
+}
+
+func TestStoreSearchAllowedIDs(t *testing.T) {
+	// Browse-scoped search restricts the scan to the member's feed universe. The
+	// allowlist must exclude non-members BEFORE the top-K cut, so a strong match
+	// outside the universe (msgid 1, the query vector itself) never crowds out a
+	// weaker in-universe match.
+	s := &Store{}
+
+	sofaVec := makeVec(0.5)
+	chairVec := makeVec(0.51)
+	bikeVec := makeVec(5.0)
+
+	s.entries = []Entry{
+		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Sofa", Arrival: time.Now(), SubjectVec: sofaVec},
+		{Msgid: 2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "OFFER: Chair", Arrival: time.Now(), SubjectVec: chairVec},
+		{Msgid: 3, Groupid: 200, Msgtype: "Wanted", Lat: 52.0, Lng: 0.0, Subject: "WANTED: Bike", Arrival: time.Now(), SubjectVec: bikeVec},
+	}
+
+	// Universe = {2, 3}: the best match (1) is outside it and must not appear,
+	// even with limit 1 (the cut happens within the universe).
+	allowed := map[uint64]bool{2: true, 3: true}
+	results := s.Search(sofaVec[:], 1, "", nil, allowed, 0, 0, 0, 0)
+	assert.Len(t, results, 1)
+	assert.Equal(t, uint64(2), results[0].Msgid)
+
+	results = s.Search(sofaVec[:], 10, "", nil, allowed, 0, 0, 0, 0)
+	assert.Len(t, results, 2)
+	for _, r := range results {
+		assert.True(t, allowed[r.Msgid])
+	}
+
+	// nil allowlist = no restriction.
+	results = s.Search(sofaVec[:], 10, "", nil, nil, 0, 0, 0, 0)
+	assert.Len(t, results, 3)
 }
 
 func TestStoreSearchSortOrder(t *testing.T) {
@@ -93,7 +128,7 @@ func TestStoreSearchSortOrder(t *testing.T) {
 	}
 
 	// Request limit=10 (more than 3 entries) — all results returned, must still be sorted
-	results := s.Search(vec1[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(vec1[:], 10, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 3)
 	// Exact match (msgid 3) should be first
 	assert.Equal(t, uint64(3), results[0].Msgid)
@@ -154,7 +189,7 @@ func TestStoreSearchMsgtypeAllReturnsAll(t *testing.T) {
 		{Msgid: 3, Groupid: 100, Msgtype: "Taken", SubjectVec: v},
 	}
 
-	results := s.Search(v[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(v[:], 10, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 3)
 }
 
@@ -170,7 +205,7 @@ func TestStoreSearchBoundingBoxTolerance(t *testing.T) {
 	}
 
 	// Request box: swlat=51.52 swlng=-0.10 nelat=51.58 nelng=0.00
-	results := s.Search(v[:], 10, "", nil, 51.52, -0.10, 51.58, 0.00)
+	results := s.Search(v[:], 10, "", nil, nil, 51.52, -0.10, 51.58, 0.00)
 	ids := make(map[uint64]bool, len(results))
 	for _, r := range results {
 		ids[r.Msgid] = true
@@ -184,7 +219,7 @@ func TestStoreSearchEmptyStore(t *testing.T) {
 	// Searching an empty store must return an empty slice, not panic.
 	s := &Store{}
 	v := makeVec(1.0)
-	results := s.Search(v[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(v[:], 10, "", nil, nil, 0, 0, 0, 0)
 	assert.Empty(t, results)
 }
 
@@ -251,7 +286,7 @@ func TestStoreSearchReturnsBothCosinesSeparately(t *testing.T) {
 			SubjectVec: noise, BodyVec: vecPtr(query)},
 	}
 
-	results := s.Search(query[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(query[:], 10, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 3)
 
 	byId := make(map[uint64]VectorSearchResult)
@@ -282,7 +317,7 @@ func TestStoreSearchMarksBodyAbsent(t *testing.T) {
 		{Msgid: 1, Msgtype: "Offer", Subject: "subject only", SubjectVec: query, BodyVec: nil},
 	}
 
-	results := s.Search(query[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(query[:], 10, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 1)
 	assert.InDelta(t, float32(1.0), results[0].SubjectCos, 1e-5)
 	assert.False(t, results[0].HasBody)
@@ -306,7 +341,7 @@ func TestStoreSearchTopKUsesMaxOfCosines(t *testing.T) {
 		{Msgid: 3, Msgtype: "Offer", SubjectVec: noise, BodyVec: vecPtr(query)},
 	}
 
-	results := s.Search(query[:], 2, "", nil, 0, 0, 0, 0)
+	results := s.Search(query[:], 2, "", nil, nil, 0, 0, 0, 0)
 	assert.Len(t, results, 2)
 
 	ids := map[uint64]bool{}

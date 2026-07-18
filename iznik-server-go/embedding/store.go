@@ -281,8 +281,12 @@ type VectorSearchResult struct {
 // caller order subject-matches ahead of body-matches (what users expect:
 // a literal "table" in the subject should come before a message that only
 // mentions "table" in the body).
+// allowedIDs, when non-nil, restricts the scan to those msgids - used by browse-scoped
+// search to make the top-K selection happen WITHIN the member's feed universe rather than
+// filtering afterwards (which would let out-of-feed posts crowd feed posts out of the
+// candidate set). nil = no restriction.
 func (s *Store) Search(query []float32, limit int, msgtype string, groupids []uint64,
-	swlat, swlng, nelat, nelng float32) []VectorSearchResult {
+	allowedIDs map[uint64]bool, swlat, swlng, nelat, nelng float32) []VectorSearchResult {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -314,6 +318,9 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 			continue
 		}
 		if hasGroupFilter && !groupSet[e.Groupid] {
+			continue
+		}
+		if allowedIDs != nil && !allowedIDs[e.Msgid] {
 			continue
 		}
 		if hasBoxFilter {

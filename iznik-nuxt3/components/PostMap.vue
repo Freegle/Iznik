@@ -206,6 +206,16 @@ const props = defineProps({
     required: false,
     default: BROWSE_DISTANCE_UNLIMITED,
   },
+  // True when this map serves the Browse page. Searches then pass browse=1 so the
+  // server scopes the search universe to exactly the member's browse feed for their
+  // current filters (reach for Nearby, their groups otherwise) plus their distance
+  // slider and sort (Discourse 9933). Explore/place/region pages leave this false
+  // and keep viewport/group-scoped search without the member's personal filters.
+  browseSearch: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const { myGroups, myGroupsBoundingBox, myGroupIds } = useMe()
@@ -838,12 +848,14 @@ async function getMessages() {
   } else if (props.groupid) {
     // We have been asked to show a specific group.
     if (props.search) {
-      // So search within that group.
+      // So search within that group. On the Browse page, browse=1 additionally applies
+      // the member's distance slider and sort so results match their filtered feed.
       console.log('GetMessages - search on specific group')
       ret = await messageStore.search({
         messagetype: props.type,
         search: props.search,
         groupids: [props.groupid],
+        ...(props.browseSearch ? { browse: 1 } : {}),
       })
     } else {
       // Just fetch that the messages on that group.
@@ -874,31 +886,18 @@ async function getMessages() {
     if (me?.lat || me?.lng) {
       // We know where the member is, so ask the server for their nearby feed.
       if (props.search) {
-        // We don't have a search-within-nearby-feed call.  But we can fetch all the messages in the
-        // nearby feed, and also search within the map, and take the intersection.
+        // Search within the nearby feed: browse=1 makes the server scope the search
+        // universe to exactly the member's reach feed (plus their distance slider and
+        // sort), so this is a single call. The old approach - fetch the feed, run a
+        // separate map-bounds search, intersect client-side - lost in-feed matches
+        // whenever the capped viewport search filled up with out-of-feed posts
+        // (Discourse 9933).
         console.log('GetMessages - search in nearby feed')
-        const nearbyret = await nearbyStore.fetchMessages()
-        const searchret = await messageStore.search({
+        ret = await messageStore.search({
           messagetype: props.type,
           search: props.search,
-          swlat,
-          swlng,
-          nelat,
-          nelng,
+          browse: 1,
         })
-
-        const ids = {}
-
-        ret = searchret.filter((i) => {
-          if (nearbyret.find((el) => el.id === i.id) && !ids[i.id]) {
-            ids[i.id] = true
-            return true
-          } else {
-            return false
-          }
-        })
-
-        secondaryMessageList.value = searchret
       }
       // The non-search nearby case is handled by the early reach-feed return above, so
       // there's nothing to do here for it - we never fetch by map bounds for nearby.
@@ -961,22 +960,38 @@ async function getMessages() {
     }
   } else if (myGroups.value?.length) {
     if (props.search) {
-      const groupbounds = myGroupsBoundingBox.value
+      if (props.browseSearch) {
+        // Browse "All my communities": the member's groups ARE the universe, and browse=1
+        // applies their distance slider and sort server-side. No bounds - a bounding box
+        // over scattered groups both leaks other groups' posts and clips nothing useful.
+        console.log(
+          'GetMessages - browse search across my communities',
+          myGroupIds
+        )
+        ret = await messageStore.search({
+          messagetype: props.type,
+          search: props.search,
+          groupids: myGroupIds,
+          browse: 1,
+        })
+      } else {
+        const groupbounds = myGroupsBoundingBox.value
 
-      console.log(
-        'GetMessages - some groups, search within group bounds',
-        groupbounds,
-        myGroupIds
-      )
-      ret = await messageStore.search({
-        messagetype: props.type,
-        search: props.search,
-        swlat: groupbounds[0][0],
-        swlng: groupbounds[0][1],
-        nelat: groupbounds[1][0],
-        nelng: groupbounds[1][1],
-        groupids: myGroupIds,
-      })
+        console.log(
+          'GetMessages - some groups, search within group bounds',
+          groupbounds,
+          myGroupIds
+        )
+        ret = await messageStore.search({
+          messagetype: props.type,
+          search: props.search,
+          swlat: groupbounds[0][0],
+          swlng: groupbounds[0][1],
+          nelat: groupbounds[1][0],
+          nelng: groupbounds[1][1],
+          groupids: myGroupIds,
+        })
+      }
     } else {
       // We have groups, so fetch the messages in those groups.
       console.log('GetMessages - some groups, fetch groups')

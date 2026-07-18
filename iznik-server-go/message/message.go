@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +24,8 @@ import (
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
-	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
@@ -40,10 +41,13 @@ import (
 var emailRegexp = regexp.MustCompile(utils.EMAIL_REGEXP)
 var phoneRegexp = regexp.MustCompile(utils.PHONE_REGEXP)
 var tnRegexp = regexp.MustCompile(utils.TN_REGEXP)
+
 // tnPicPageURLRegexp finds each TN "pics" page link embedded in a textbody.
 var tnPicPageURLRegexp = regexp.MustCompile(`(?m)https://trashnothing\.com/pics/\S+`)
+
 // tnPicHeaderRegexp strips the "Check out the pictures…" intro line.
 var tnPicHeaderRegexp = regexp.MustCompile(`(?m)^Check out the pictures[^\n]*\n?`)
+
 // tnPicURLLineRegexp strips individual trashnothing.com/pics/ URL lines.
 var tnPicURLLineRegexp = regexp.MustCompile(`(?m)^https://trashnothing\.com/pics/[^\n]*\n?`)
 
@@ -225,22 +229,22 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby           *uint64    `json:"heldby"`
-	Source           *string    `json:"source"`
-	Sourceheader     *string    `json:"sourceheader"`
-	Fromaddr         *string    `json:"fromaddr"`
-	Fromip           *string    `json:"fromip"`
-	Fromcountry      *string    `json:"fromcountry"`
+	Heldby             *uint64             `json:"heldby"`
+	Source             *string             `json:"source"`
+	Sourceheader       *string             `json:"sourceheader"`
+	Fromaddr           *string             `json:"fromaddr"`
+	Fromip             *string             `json:"fromip"`
+	Fromcountry        *string             `json:"fromcountry"`
 	Repostat           *time.Time          `json:"repostat"`
-	Canrepost        bool       `json:"canrepost"`
-	Deliverypossible bool       `json:"deliverypossible"`
-	Deadline         *time.Time `json:"deadline"`
-	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
-	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
-	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
-	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
-	Tnpostid         *string          `json:"tnpostid"`
-	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	Canrepost          bool                `json:"canrepost"`
+	Deliverypossible   bool                `json:"deliverypossible"`
+	Deadline           *time.Time          `json:"deadline"`
+	Edits              []MessageEdit       `json:"edits,omitempty" gorm:"-"`
+	RawMessage         *string             `json:"message,omitempty" gorm:"column:message"`
+	Worry              []WorryMatch        `json:"worry,omitempty" gorm:"-"`
+	Postings           []MessagePosting    `json:"postings,omitempty" gorm:"-"`
+	Tnpostid           *string             `json:"tnpostid"`
+	Expiresat          *time.Time          `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -282,13 +286,13 @@ type WorryWord struct {
 }
 
 type MessageEdit struct {
-	ID              uint64     `json:"id"`
-	Oldsubject      *string    `json:"oldsubject"`
-	Newsubject      *string    `json:"newsubject"`
-	Oldtext         *string    `json:"oldtext"`
-	Newtext         *string    `json:"newtext"`
-	Reviewrequired  int        `json:"reviewrequired"`
-	Timestamp       *time.Time `json:"timestamp"`
+	ID             uint64     `json:"id"`
+	Oldsubject     *string    `json:"oldsubject"`
+	Newsubject     *string    `json:"newsubject"`
+	Oldtext        *string    `json:"oldtext"`
+	Newtext        *string    `json:"newtext"`
+	Reviewrequired int        `json:"reviewrequired"`
+	Timestamp      *time.Time `json:"timestamp"`
 }
 
 // computeExpiresat calculates when a message expires based on group settings.
@@ -468,7 +472,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages "+
 					"LEFT JOIN users ON users.id = messages.fromuser "+
 					"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE messages.id = ? AND messages.deleted IS NULL " + userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
+					"WHERE messages.id = ? AND messages.deleted IS NULL "+userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
 				found = !errors.Is(err, gorm.ErrRecordNotFound)
 			}()
 
@@ -517,9 +521,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			go func() {
 				defer wg.Done()
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
-			// that is no longer active, return an empty externaluid so the frontend shows
-			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
+				// that is no longer active, return an empty externaluid so the frontend shows
+				// a placeholder instead of the rejected illustration.
+				db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
@@ -1040,7 +1044,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 		if strings.Contains(scan, "\u00a3") {
 			if !found["\u00a3"] {
 				matches = append(matches, WorryMatch{
-					Word: "\u00a3",
+					Word:      "\u00a3",
 					Worryword: WorryWord{Keyword: "\u00a3", Type: "Review"},
 				})
 				found["\u00a3"] = true
@@ -1066,7 +1070,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 			}
 			if strings.Contains(subjectLower, kw) || strings.Contains(textbodyLower, kw) {
 				matches = append(matches, WorryMatch{
-					Word: w.Keyword,
+					Word:      w.Keyword,
 					Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 				})
 				found[kw] = true
@@ -1089,7 +1093,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 				ratio := float64(len(token)) / float64(len(kw))
 				if ratio >= 0.75 && ratio <= 1.25 && strings.EqualFold(token, kw) {
 					matches = append(matches, WorryMatch{
-						Word: w.Keyword,
+						Word:      w.Keyword,
 						Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 					})
 					found[kw] = true
@@ -1117,7 +1121,6 @@ func splitOnWordBoundary(text string) []string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	return re.Split(text, -1)
 }
-
 
 func GetMessagesForUser(c *fiber.Ctx) error {
 	db := database.DBConn
@@ -1499,6 +1502,108 @@ func Search(c *fiber.Ctx) error {
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
 	swlng, _ := strconv.ParseFloat(c.Query("swlng", "0"), 32)
 
+	// --- Browse-scoped search (Discourse group-listings 9933). When the client passes
+	// browse=1, the universe searched must be EXACTLY the set of posts the member would see
+	// scrolling to the bottom of their browse feed for their current filters:
+	//   Nearby             -> posts whose rippling reach covers the member (+ their own posts)
+	//   All my communities -> their member groups (the client sends the groupids)
+	//   A specific group   -> that group (the client sends the groupid)
+	// plus their "How far away" slider cap and "Sort by" order. Previously search applied no
+	// location scope at all, so the vector store returned nationwide semantic matches while
+	// genuinely-in-feed posts were crowded out. Without the flag (ModTools, explore pages,
+	// map-viewport searches) behaviour is unchanged.
+	const browseDistanceUnlimited = 9007199254740991.0 // Number.MAX_SAFE_INTEGER: slider at max ("no limit")
+
+	browseScoped := c.Query("browse", "") == "1" && myid > 0
+	var memberLat, memberLng float64
+	browseMaxMiles := float64(browseDistanceUnlimited)
+	var browseSort string
+
+	if browseScoped {
+		if ll := user.GetLatLng(myid); ll.Lat != 0 || ll.Lng != 0 {
+			memberLat, memberLng = float64(ll.Lat), float64(ll.Lng)
+		}
+		var rawDist, rawSort string
+		db.Raw("SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
+			"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '') FROM users WHERE id = ?", myid).
+			Row().Scan(&rawDist, &rawSort)
+		if rawDist != "" {
+			if v, err := strconv.ParseFloat(rawDist, 64); err == nil && v > 0 {
+				browseMaxMiles = v
+			}
+		}
+		browseSort = rawSort
+	}
+
+	// Nearby view (browse-scoped, no group selected): compute the feed's msgid universe up
+	// front and give it to BOTH search arms, so their internal LIMIT/top-K cuts happen WITHIN
+	// the feed universe. Filtering afterwards does not work: for a common term the capped
+	// candidate sets fill up with out-of-feed posts first (measured live: only 4 of the 16
+	// in-feed "table" posts survived to the candidate pool).
+	var universeIDs []uint64
+	var universeSet map[uint64]bool
+
+	if browseScoped && len(groupids) == 0 && (memberLat != 0 || memberLng != 0) {
+		universeIDs = nearbyFeedMsgIDs(db, myid, memberLat, memberLng)
+
+		if len(universeIDs) == 0 {
+			// An empty feed means there is nothing to search.
+			wg.Wait()
+			return c.JSON([]SearchResult{})
+		}
+
+		universeSet = make(map[uint64]bool, len(universeIDs))
+		for _, id := range universeIDs {
+			universeSet[id] = true
+		}
+	}
+
+	// applyBrowseFilters completes feed parity for browse-scoped searches: stamp each result's
+	// distance from the member, apply the "How far away" slider cap, and order by "Sort by".
+	// (The universe itself is enforced at candidate selection above.) Applied at every return.
+	applyBrowseFilters := func(rs []SearchResult) []SearchResult {
+		if !browseScoped || (memberLat == 0 && memberLng == 0) {
+			return rs
+		}
+		for i := range rs {
+			rs[i].Distance = utils.Haversine(memberLat, memberLng, rs[i].Lat, rs[i].Lng)
+		}
+		if browseMaxMiles < browseDistanceUnlimited {
+			kept := rs[:0]
+			for _, r := range rs {
+				if r.Distance <= browseMaxMiles {
+					kept = append(kept, r)
+				}
+			}
+			rs = kept
+		}
+		switch browseSort {
+		case "Nearby": // the client's "Closest" option
+			sort.SliceStable(rs, func(i, j int) bool { return rs[i].Distance < rs[j].Distance })
+		case "Newest":
+			// Sort by ORIGINAL post time (messages.arrival), not SearchResult.Arrival, which is
+			// the ripple-bumped messages_spatial arrival - ordering by that floats days-old posts
+			// to the top whenever their reach grows (same trap as Discourse 9844 on the feed).
+			if len(rs) > 0 {
+				ids := make([]uint64, 0, len(rs))
+				for _, r := range rs {
+					ids = append(ids, r.Msgid)
+				}
+				var rows []struct {
+					ID      uint64    `gorm:"column:id"`
+					Arrival time.Time `gorm:"column:arrival"`
+				}
+				db.Raw("SELECT id, arrival FROM messages WHERE id IN (?)", ids).Scan(&rows)
+				posted := make(map[uint64]time.Time, len(rows))
+				for _, row := range rows {
+					posted[row.ID] = row.Arrival
+				}
+				sort.SliceStable(rs, func(i, j int) bool { return posted[rs[i].Msgid].After(posted[rs[j].Msgid]) })
+			}
+		}
+		return rs
+	}
+
 	searchmode := c.Query("searchmode", defaultSearchMode())
 
 	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
@@ -1528,16 +1633,16 @@ func Search(c *fiber.Ctx) error {
 
 			go func() {
 				defer hybridWg.Done()
-				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, universeSet, msgtype,
 					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			go func() {
 				defer hybridWg.Done()
 				if len(expandedWords) > 0 {
-					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
 						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
 						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 				}
 			}()
@@ -1557,7 +1662,7 @@ func Search(c *fiber.Ctx) error {
 
 			if len(merged) > 0 {
 				wg.Wait()
-				return c.JSON(merged)
+				return c.JSON(applyBrowseFilters(merged))
 			}
 			// Both vector and keyword exact/starts returned nothing; fall through to
 			// typo and soundex cascade.
@@ -1571,13 +1676,13 @@ func Search(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			go func() {
 				defer wg.Done()
 				// Add in prefix matches, which helps with plurals.
-				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			wg.Wait()
@@ -1585,11 +1690,11 @@ func Search(c *fiber.Ctx) error {
 			res = append(res, res2...)
 
 			if len(res) == 0 {
-				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
 			if len(res) == 0 {
-				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
 			// Blur
@@ -1618,7 +1723,7 @@ func Search(c *fiber.Ctx) error {
 
 	wg.Wait()
 
-	return c.JSON(filtered)
+	return c.JSON(applyBrowseFilters(filtered))
 }
 
 // Activity represents a recent activity in groups
@@ -2184,8 +2289,8 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
 		var remainingGroups int64
 		// Pin to the write host: this gates the parent-message soft-delete on rows we
-	// just modified, so it must read the source, not a possibly-lagging replica.
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		// just modified, so it must read the source, not a possibly-lagging replica.
+		db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 		if remainingGroups == 0 {
 			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
@@ -4044,21 +4149,21 @@ func PutMessage(c *fiber.Ctx) error {
 
 // PostMessageRequest handles action-based POST to /message.
 type PostMessageRequest struct {
-	ID        uint64  `json:"id"`
-	Action    string  `json:"action"`
-	Userid    *uint64 `json:"userid"`
-	Count     *int    `json:"count"`
-	Outcome   string  `json:"outcome"`
-	Happiness *string `json:"happiness"`
-	Comment   *string `json:"comment"`
-	Message   *string `json:"message"`
-	Subject   *string `json:"subject"`
-	Body      *string `json:"body"`
-	Stdmsgid  *uint64 `json:"stdmsgid"`
-	Groupid   *uint64 `json:"groupid"`
-	Type      string  `json:"type"`
-	Textbody  *string `json:"textbody"`
-	Item      *string `json:"item"`
+	ID               uint64  `json:"id"`
+	Action           string  `json:"action"`
+	Userid           *uint64 `json:"userid"`
+	Count            *int    `json:"count"`
+	Outcome          string  `json:"outcome"`
+	Happiness        *string `json:"happiness"`
+	Comment          *string `json:"comment"`
+	Message          *string `json:"message"`
+	Subject          *string `json:"subject"`
+	Body             *string `json:"body"`
+	Stdmsgid         *uint64 `json:"stdmsgid"`
+	Groupid          *uint64 `json:"groupid"`
+	Type             string  `json:"type"`
+	Textbody         *string `json:"textbody"`
+	Item             *string `json:"item"`
 	Partner          *string `json:"partner"`
 	Deadline         *string `json:"deadline"`
 	Deliverypossible *bool   `json:"deliverypossible"`
