@@ -2,13 +2,49 @@ package message
 
 // Tests for pure (no-DB) functions in message_list.go.
 // buildMTUnionAllMsgIDQuery is a pure SQL-builder: no database or fiber context needed.
+// isQueryTimeoutErr is a pure error classifier: no database needed either.
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	rawmysql "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 )
+
+// TestIsQueryTimeoutErr_DetectsERQueryTimeout verifies the MySQL error raised
+// by the MAX_EXECUTION_TIME optimizer hint (error 3024, ER_QUERY_TIMEOUT) is
+// recognised as a timeout, not treated as a genuine zero-rows result.
+func TestIsQueryTimeoutErr_DetectsERQueryTimeout(t *testing.T) {
+	err := &rawmysql.MySQLError{Number: 3024, Message: "Query execution was interrupted, maximum statement execution time exceeded"}
+	assert.True(t, isQueryTimeoutErr(err))
+}
+
+// TestIsQueryTimeoutErr_WrappedError verifies detection still works when the
+// MySQLError has been wrapped by another error (as GORM/database-sql do).
+func TestIsQueryTimeoutErr_WrappedError(t *testing.T) {
+	err := errors.New("wrapped: " + (&rawmysql.MySQLError{Number: 3024, Message: "timeout"}).Error())
+	// A plain string-wrapped error (not errors.Wrap/fmt.Errorf %w) cannot be
+	// unwrapped, so this must NOT be misdetected as a timeout — errors.As only
+	// matches the concrete *MySQLError type through the error chain.
+	assert.False(t, isQueryTimeoutErr(err))
+
+	wrapped := fmt.Errorf("query failed: %w", &rawmysql.MySQLError{Number: 3024, Message: "timeout"})
+	assert.True(t, isQueryTimeoutErr(wrapped))
+}
+
+// TestIsQueryTimeoutErr_IgnoresOtherErrors verifies unrelated errors (a
+// different MySQL error number, a generic error, or nil) are not
+// misclassified as a query timeout.
+func TestIsQueryTimeoutErr_IgnoresOtherErrors(t *testing.T) {
+	assert.False(t, isQueryTimeoutErr(nil))
+	assert.False(t, isQueryTimeoutErr(errors.New("connection refused")))
+	assert.False(t, isQueryTimeoutErr(&rawmysql.MySQLError{Number: 1146, Message: "Table doesn't exist"}))
+	// gorm.ErrRecordNotFound-shaped generic error, still not a timeout.
+	assert.False(t, isQueryTimeoutErr(errors.New("record not found")))
+}
 
 // branchSQL with a single %GID% placeholder, one extra arg, plus the trailing LIMIT arg.
 const testBranchSQL = "SELECT mg.msgid, mg.arrival FROM messages_groups mg WHERE mg.groupid = %GID% AND mg.collection = ? ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"

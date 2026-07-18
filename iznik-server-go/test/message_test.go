@@ -5742,6 +5742,42 @@ func TestListMessagesSearchMembByID(t *testing.T) {
 	assert.Greater(t, len(result.Messages), 0, "Should find messages by numeric member ID")
 }
 
+// TestListMessagesMT_SearchMembAllCommunities verifies that a ModTools
+// member-name search with no groupid (i.e. "all my communities") finds a
+// message that exists in one of the mod's several groups. Discourse 9938:
+// this exact search sometimes returned nothing even though the message
+// existed, because a query aborted by buildMTUnionAllMsgIDQuery's
+// MAX_EXECUTION_TIME cap looked identical to a genuinely empty result. This
+// guards the everyday (fast, non-aborted) path: it must keep finding real
+// matches and must not report timedOut for them.
+func TestListMessagesMT_SearchMembAllCommunities(t *testing.T) {
+	prefix := uniquePrefix("listmt_srchmb_all")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	CreateTestMessage(t, posterID, groupA, prefix+" Offer Bicycle", 55.9533, -3.1883)
+
+	// No groupid => search across all of the mod's communities (groupA + groupB).
+	mtURL := fmt.Sprintf("/api/modtools/messages?collection=Approved&subaction=searchmemb&search=%s&jwt=%s",
+		url.QueryEscape(prefix+"_poster"), modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", mtURL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgs, _ := result["messages"].([]interface{})
+	assert.Greater(t, len(msgs), 0, "all-communities member search should find the message")
+	assert.Nil(t, result["timedOut"], "a fast, well-scoped search must not be reported as timed out")
+}
+
 func TestListMessagesInvalidCollection(t *testing.T) {
 	prefix := uniquePrefix("lstmsg_badcoll")
 	groupID := CreateTestGroup(t, prefix)

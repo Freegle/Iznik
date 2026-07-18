@@ -2,11 +2,14 @@ package message
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	rawmysql "github.com/go-sql-driver/mysql"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
@@ -14,6 +17,15 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
+
+// isQueryTimeoutErr reports whether err is the abort raised by the
+// MAX_EXECUTION_TIME optimizer hint used in buildMTUnionAllMsgIDQuery
+// (MySQL error 3024, ER_QUERY_TIMEOUT), as opposed to a genuine
+// zero-rows result or an unrelated error.
+func isQueryTimeoutErr(err error) bool {
+	var mysqlErr *rawmysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 3024
+}
 
 // --- Message List types and handler ---
 
@@ -450,6 +462,13 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
 
 	var msgIDs []uint64
+	// timedOut records whether any search query below was aborted by the
+	// MAX_EXECUTION_TIME cap (see buildMTUnionAllMsgIDQuery) rather than
+	// genuinely completing with zero matches. Discourse 9938: an
+	// all-communities member-name search that hits the cap previously
+	// looked identical to "no such member" — the client has no way to
+	// tell a completed empty search from an aborted one.
+	timedOut := false
 
 	// Hide Pending messages not yet processed by the content-check batch job.
 	// The 30-minute fallback ensures mods always see messages if the batch job is down,
@@ -487,7 +506,9 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchID}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			if r := db.Raw(sql, args...).Pluck("msgid", &msgIDs); isQueryTimeoutErr(r.Error) {
+				timedOut = true
+			}
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
@@ -499,7 +520,9 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			if r := db.Raw(sql, args...).Pluck("msgid", &msgIDs); isQueryTimeoutErr(r.Error) {
+				timedOut = true
+			}
 		}
 	} else if subaction == "searchmemb" && search != "" {
 		// If search is a numeric user ID, do a fast direct lookup first.
@@ -516,7 +539,9 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchUID}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			if r := db.Raw(sql, args...).Pluck("msgid", &msgIDs); isQueryTimeoutErr(r.Error) {
+				timedOut = true
+			}
 		}
 		if len(msgIDs) == 0 {
 			// Fall back to name/email LIKE search.  The LEFT JOIN to
@@ -534,7 +559,9 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			if r := db.Raw(sql, args...).Pluck("msgid", &msgIDs); isQueryTimeoutErr(r.Error) {
+				timedOut = true
+			}
 		}
 	} else {
 		// When listing the Pending review queue, also include Spam-collection messages.
@@ -571,11 +598,20 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		branchSQL += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 
 		sql, args := buildMTUnionAllMsgIDQuery(branchSQL, branchArgs, groupIDs, limit)
-		db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+		if r := db.Raw(sql, args...).Pluck("msgid", &msgIDs); isQueryTimeoutErr(r.Error) {
+			timedOut = true
+		}
 	}
 
 	if len(msgIDs) == 0 {
-		return c.JSON(fiber.Map{"messages": []uint64{}})
+		resp := fiber.Map{"messages": []uint64{}}
+		if timedOut {
+			// Tell the client this wasn't a completed search that found nothing —
+			// it was aborted by the query cap. The ModTools UI can then show a
+			// distinct message instead of implying the member/message doesn't exist.
+			resp["timedOut"] = true
+		}
+		return c.JSON(resp)
 	}
 
 	// Build pagination context from last ID.

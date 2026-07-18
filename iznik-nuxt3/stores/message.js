@@ -32,6 +32,12 @@ export const useMessageStore = defineStore({
     // The context from the last fetch, used for fetchMore (ModTools)
     context: null,
 
+    // Whether the last fetchMessagesMT search was aborted by the server's
+    // query time cap rather than genuinely completing with no matches
+    // (Discourse 9938 - an all-communities member search that times out
+    // must not look identical to "no such member" in the UI).
+    messageSearchTimedOut: false,
+
     // Freegle Helper (AI concierge) state per bulk-offer msgid:
     // { batch, repliers, proposals, sent }. Loaded by the clearance management page.
     helper: {},
@@ -666,6 +672,7 @@ export const useMessageStore = defineStore({
       if (!params.context) params.context = null
 
       const data = await api(this.config).message.fetchMessages(params)
+      this.messageSearchTimedOut = !!data.timedOut
       if (!data.messages || data.messages.length === 0) return
       const messageIDs = data.messages // Now returns IDs only (uint64 array)
       const context = data.context // Can be undefined if search complete

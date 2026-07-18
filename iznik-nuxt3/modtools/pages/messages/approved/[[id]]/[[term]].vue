@@ -21,7 +21,19 @@
       <ModtoolsViewControl misckey="modtoolsMessagesApprovedSummary" />
     </div>
     <div>
-      <NoticeMessage v-if="loaded && !messages.length && !busy" class="mt-2">
+      <NoticeMessage
+        v-if="loaded && !messages.length && !busy && messageStore.messageSearchTimedOut"
+        variant="warning"
+        class="mt-2"
+      >
+        That search took too long across all your communities and was
+        stopped before it finished, so this isn't necessarily "nothing
+        found". Try picking a specific community, or search again.
+      </NoticeMessage>
+      <NoticeMessage
+        v-else-if="loaded && !messages.length && !busy"
+        class="mt-2"
+      >
         Nothing found. Almost always this is because the member or message
         doesn't exist (or has been very deleted).
       </NoticeMessage>
