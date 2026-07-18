@@ -1,6 +1,9 @@
 package message
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 	"strconv"
@@ -9,6 +12,56 @@ import (
 )
 
 const SEARCH_LIMIT = 100
+
+// reachUniverseTTL is how long a member's reach-arm universe (the msgids whose rippling
+// reach covers them) may be served from cache. The reach arm is the expensive half of
+// nearbyFeedMsgIDs (exact ST_Contains over the sandwich-prefiltered candidates with
+// ~178KB polygons), and members search repeatedly in quick succession ("headboard",
+// "wall tiles", "table"...), recomputing an answer that only changes on the rippling
+// engine's minutes-cadence ticks. 60s staleness on reach MEMBERSHIP is well inside that
+// cadence. The member's OWN posts are deliberately NOT cached - that arm is a cheap
+// indexed query and keeping it fresh means a just-posted item is searchable immediately.
+const reachUniverseTTL = 60 * time.Second
+
+// reachUniverseMaxEntries bounds the cache; each entry is a few KB, and the crude
+// clear-on-overflow keeps the worst case bounded without an LRU's bookkeeping.
+const reachUniverseMaxEntries = 10000
+
+type reachUniverseEntry struct {
+	ids     []uint64
+	expires time.Time
+}
+
+var (
+	reachUniverseMu    sync.Mutex
+	reachUniverseCache = map[string]reachUniverseEntry{}
+)
+
+// reachUniverseKey identifies a cached reach universe: the member plus their location
+// (4dp ~ 11m - a location change invalidates immediately).
+func reachUniverseKey(myid uint64, lat float64, lng float64) string {
+	return fmt.Sprintf("%d:%.4f:%.4f", myid, lat, lng)
+}
+
+// cachedReachUniverse returns the cached reach-arm ids for the key, or (nil, false).
+func cachedReachUniverse(key string, now time.Time) ([]uint64, bool) {
+	reachUniverseMu.Lock()
+	defer reachUniverseMu.Unlock()
+	e, ok := reachUniverseCache[key]
+	if !ok || now.After(e.expires) {
+		return nil, false
+	}
+	return e.ids, true
+}
+
+func storeReachUniverse(key string, ids []uint64, now time.Time) {
+	reachUniverseMu.Lock()
+	defer reachUniverseMu.Unlock()
+	if len(reachUniverseCache) >= reachUniverseMaxEntries {
+		reachUniverseCache = map[string]reachUniverseEntry{}
+	}
+	reachUniverseCache[key] = reachUniverseEntry{ids: ids, expires: now.Add(reachUniverseTTL)}
+}
 
 type Matchedon struct {
 	Type string `json:"type"`
@@ -132,9 +185,7 @@ func msgidFilter(msgids []uint64) string {
 // in sync with isochrone/message.go fetchReachCandidates (same reach semantics; the SQL shape
 // differs deliberately - see the query comment below).
 func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint64 {
-	var ids []uint64
-
-	// Two arms UNIONed rather than one `own OR reach` predicate. The OR form cost 32s in
+	// Two arms rather than one `own OR reach` predicate. The OR form cost 32s in
 	// production (Sentry NUXT3-DP1) because it forced a full messages_spatial scan: with
 	// rippling_reach only LEFT JOINed, neither spatial index can be the access path, and
 	// referencing the ~178KB polygon BLOB inside an OR branch defeats MySQL's lazy conjunct
@@ -151,25 +202,62 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	// deliberate degenerate-POINT sentinels, which are assigned to COMPLETED posts to prune
 	// them from the R-tree - and ms.successful = 0 already excludes those (verified: 0 open
 	// posts carry a POINT sentinel, all 22,139 are completed).
+	//
+	// (An inner_bound fast-accept was also measured and REJECTED: it decides only ~23% of
+	// candidates and made the query consistently slower.)
+	//
+	// The reach arm is served from a 60s per-member cache (see reachUniverseTTL): reach
+	// membership only changes on the rippling engine's minutes-cadence ticks, and members
+	// search repeatedly in quick succession, so consecutive searches skip the expensive
+	// containment entirely (measured: ~1.4s cold, ~0.15s warm end-to-end). The own arm
+	// stays fresh so a just-posted item is searchable immediately.
+	now := time.Now()
+	key := reachUniverseKey(myid, lat, lng)
+	reachIDs, hit := cachedReachUniverse(key, now)
+	if !hit {
+		db.Raw(
+			"SELECT ms.msgid FROM rippling_reach rr "+
+				"INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid "+
+				"INNER JOIN messages m ON m.id = ms.msgid "+
+				"INNER JOIN users au ON au.id = m.fromuser "+
+				"WHERE ms.successful = 0 AND rr.status != 'held' "+
+				"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
+				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+				utils.AuthorReachCapWhere,
+			lng, lat, utils.SRID,
+			lng, lat, utils.SRID,
+			float64(9007199254740991), lat, lng, lat,
+		).Scan(&reachIDs)
+		storeReachUniverse(key, reachIDs, now)
+	}
+
+	// Own arm: always fresh (cheap indexed query), never cached.
+	var ownIDs []uint64
 	db.Raw(
 		"SELECT ms.msgid FROM messages_spatial ms "+
 			"INNER JOIN messages m ON m.id = ms.msgid "+
-			"WHERE ms.successful = 0 AND m.fromuser = ? "+
-			"UNION "+
-			"SELECT ms.msgid FROM rippling_reach rr "+
-			"INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid "+
-			"INNER JOIN messages m ON m.id = ms.msgid "+
-			"INNER JOIN users au ON au.id = m.fromuser "+
-			"WHERE ms.successful = 0 AND rr.status != 'held' "+
-			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
-			utils.AuthorReachCapWhere,
+			"WHERE ms.successful = 0 AND m.fromuser = ?",
 		myid,
-		lng, lat, utils.SRID,
-		lng, lat, utils.SRID,
-		float64(9007199254740991), lat, lng, lat,
-	).Scan(&ids)
+	).Scan(&ownIDs)
 
+	if len(ownIDs) == 0 {
+		return reachIDs
+	}
+
+	seen := make(map[uint64]bool, len(reachIDs)+len(ownIDs))
+	ids := make([]uint64, 0, len(reachIDs)+len(ownIDs))
+	for _, id := range reachIDs {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range ownIDs {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
 	return ids
 }
 
