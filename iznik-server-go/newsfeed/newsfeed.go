@@ -102,6 +102,15 @@ type Newsfeed struct {
 	Previews       []NewsfeedPreview `json:"previews" gorm:"-"`
 }
 
+// maxNearbyKm bounds the "Nearby" radius whenever there's no local data to
+// size a tighter one from (spatial service error/empty result, or too few
+// raw KNN candidates to even try). The pre-#459 GetNearbyDistance doubled its
+// search box (1km, 2km, 4km, ...) and always used the last box it tried
+// before giving up, which never exceeded 128km — restoring that ceiling
+// keeps "Nearby" from ever falling through to a fully unfiltered feed like
+// "Anywhere" (Discourse #9937: a 169-mile-away post topped a "Nearby" feed).
+const maxNearbyKm = 128.0
+
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
 	const nearbyLimit = 10
 	// Over-fetch from the spatial index so that, after dropping alerts and posts
@@ -113,40 +122,51 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 		return 0, latlng, 0, 0, 0, 0
 	}
 
+	// Default to the bounded fallback; narrowed below whenever we have real
+	// local KNN data to size a tighter radius from.
+	distKm := maxNearbyKm
+
 	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
-	if err != nil || len(results) < nearbyLimit {
-		return 0, latlng, 0, 0, 0, 0
-	}
-
-	// The spatial "newsfeed" index has no type/timestamp columns, so it can't
-	// exclude alerts or stale posts — applying that here restores the
-	// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
-	// computed radius).
-	ids := make([]int64, len(results))
-	for i, r := range results {
-		ids[i] = r.ID
-	}
-	allowed := RecentNonAlertNewsfeedIDs(ids)
-
-	// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
-	// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
-	count := 0
-	distDeg := 0.0
-	for _, r := range results {
-		if _, ok := allowed[r.ID]; !ok {
-			continue
+	if err == nil && len(results) >= nearbyLimit {
+		// The spatial "newsfeed" index has no type/timestamp columns, so it can't
+		// exclude alerts or stale posts — applying that here restores the
+		// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
+		// computed radius).
+		ids := make([]int64, len(results))
+		for i, r := range results {
+			ids[i] = r.ID
 		}
-		count++
-		if count == nearbyLimit {
-			distDeg = r.Distance
-			break
+		allowed := RecentNonAlertNewsfeedIDs(ids)
+
+		// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
+		// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
+		count := 0
+		distDeg := 0.0
+		for _, r := range results {
+			if _, ok := allowed[r.ID]; !ok {
+				continue
+			}
+			count++
+			if count == nearbyLimit {
+				distDeg = r.Distance
+				break
+			}
+		}
+
+		if count >= nearbyLimit {
+			distKm = distDeg * 111.0
+		} else {
+			// Too few recent, non-alert posts nearby to size the radius from
+			// those alone (common in quieter areas) — fall back to the raw
+			// KNN distance ordering (results is already sorted nearest-first,
+			// and we already know len(results) >= nearbyLimit) so "Nearby"
+			// still reflects real local density instead of the flat ceiling.
+			distKm = results[nearbyLimit-1].Distance * 111.0
 		}
 	}
-	if count < nearbyLimit {
-		return 0, latlng, 0, 0, 0, 0
-	}
+	// else: spatial service errored or returned fewer than nearbyLimit raw
+	// candidates — keep the maxNearbyKm ceiling rather than giving up.
 
-	distKm := distDeg * 111.0
 	p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
 	ne := p.PointAtDistanceAndBearing(distKm, 45)
 	sw := p.PointAtDistanceAndBearing(distKm, 225)
