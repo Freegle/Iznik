@@ -812,30 +812,21 @@ class SpamCheckService
         }
 
         try {
-            if (! class_exists(\LanguageDetection\Language::class)) {
+            if (! class_exists(\Nitotm\Eld\LanguageDetector::class)) {
                 return null;
             }
 
-            $ld = new \LanguageDetection\Language;
-            $lang = $ld->detect($message)->close();
+            static $eld = null;
+            $eld ??= new \Nitotm\Eld\LanguageDetector();
+            $res = $eld->detect($message);
 
-            if (empty($lang)) {
-                return null;
+            // Flag only when confident the text is neither English nor Welsh; ELD's
+            // isReliable() leaves short/ambiguous text alone (Discourse #9919).
+            if ($res->language !== 'en' && $res->language !== 'cy' && $res->isReliable()) {
+                return self::REASON_LANGUAGE;
             }
 
-            reset($lang);
-            $firstLang = key($lang);
-            $firstProb = $lang[$firstLang] ?? 0;
-            $enProb = $lang['en'] ?? 0;
-            $cyProb = $lang['cy'] ?? 0;
-            $ourProb = max($enProb, $cyProb);
-
-            // Accept if English/Welsh is first, or our probability is >= 80% of the top language
-            if ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.8 * $firstProb) {
-                return null;
-            }
-
-            return self::REASON_LANGUAGE;
+            return null;
         } catch (\Exception $e) {
             Log::debug('Language detection failed', ['error' => $e->getMessage()]);
 
