@@ -426,7 +426,11 @@
         @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl])
 
         @if(isset($trackingPixelMjml))
-        {!! $trackingPixelMjml !!}
+        <mj-section padding="0">
+            <mj-column>
+                {!! $trackingPixelMjml !!}
+            </mj-column>
+        </mj-section>
         @endif
 
         @endif
