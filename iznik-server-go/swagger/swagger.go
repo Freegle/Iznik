@@ -4742,6 +4742,61 @@ type housekeeperTasksResponse struct {
 //
 //	200: successResponse
 
+// swagger:route GET /message/{id}/similar message getMessageSimilar
+// Get posts similar to a given post
+//
+// Returns open posts of the same type that are semantically similar to the
+// given post, for a "more like this nearby" recommendation strip.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: Max results (default 8, max 20)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/matches message getMessageMatches
+// Get offers matching a wanted being composed
+//
+// Returns existing OFFERs near a location that semantically match the given
+// free-text query, for the "people are offering these near you" panel shown
+// while someone composes a WANTED.
+//
+// Parameters:
+//   + name: query
+//     in: query
+//     description: Item text of the wanted being posted
+//     required: true
+//     type: string
+//   + name: lat
+//     in: query
+//     description: Poster's chosen latitude
+//     required: true
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Poster's chosen longitude
+//     required: true
+//     type: number
+//   + name: limit
+//     in: query
+//     description: Max results (default 6, max 12)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
 // swagger:route POST /messages/markseen message markMessagesSeen
 // Mark messages as seen
 //
@@ -4777,6 +4832,30 @@ type housekeeperTasksResponse struct {
 // Responses:
 //
 //	200: successResponse
+
+// swagger:route GET /modtools/recommendations/stats modtools getRecommendationsStats
+// Get recommendation funnel stats
+//
+// Returns the recommendation funnel (impressions -> clicks -> attributed
+// replies) per source, plus a holdout comparison, for the ModTools sysadmin
+// "Recommendations" tab. Reads a days query param (default 30, max 365).
+// Support/Admin only.
+//
+// Parameters:
+//   + name: days
+//     in: query
+//     description: Window size in days (default 30, max 365)
+//     required: false
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
 
 // swagger:route GET /modtools/scroll/depth modtools getScrollDepth
 // Get scroll depth stats
@@ -4872,6 +4951,70 @@ type housekeeperTasksResponse struct {
 //     description: End date
 //     required: false
 //     type: string
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /rippling/analytics/drivetime rippling getRipplingAnalyticsDriveTimes
+// Get the sampled drive-time analytics sample
+//
+// Returns a random sample of posts for the client to score serially against the
+// routing graph (step 1 of the 3-step drive-time analytics flow: sample, score,
+// aggregate - see /rippling/analytics/drivetime/score and
+// /rippling/analytics/drivetime/aggregate). Support/Admin only.
+//
+// Parameters:
+//   + name: stratum
+//     in: query
+//     description: Stratum filter (default "all")
+//     required: false
+//     type: string
+//   + name: start
+//     in: query
+//     description: Start date
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date
+//     required: false
+//     type: string
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route POST /rippling/analytics/drivetime/score rippling postRipplingAnalyticsDriveScore
+// Score a chunk of the drive-time sample
+//
+// Scores a chunk of the sample serially (one routing call per post) and returns
+// the observations. Called repeatedly by the client, one chunk after another, so
+// no single request runs long enough to hit the gateway timeout. Support/Admin
+// only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route POST /rippling/analytics/drivetime/aggregate rippling postRipplingAnalyticsDriveAggregate
+// Aggregate scored drive-time observations
+//
+// Turns the client's accumulated observations into the drive-time stats
+// (overall mean, rippled-only mean, per-day trend, reply->take bullseye). Pure
+// computation - no routing calls. Support/Admin only.
 //
 // security:
 // - BearerAuth: []
