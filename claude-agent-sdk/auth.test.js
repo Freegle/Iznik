@@ -2,7 +2,7 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { verifyModerator, extractJWT, SUPPORT_ROLES, driverMode } = require('./auth')
+const { verifyModerator, extractJWT, SUPPORT_ROLES, driverMode, preferSubscriptionToken } = require('./auth')
 
 // Build a fake fetch returning the given status + JSON body.
 function fakeFetch(status, body) {
@@ -96,14 +96,42 @@ test('driverMode: subscription when only CLAUDE_CODE_OAUTH_TOKEN is set', () => 
   })
 })
 
-test('driverMode: api wins when both credentials are set', () => {
+test('driverMode: subscription wins when both credentials are set', () => {
+  // The whole point of a `claude setup-token` is to run this headless job on the
+  // subscription rather than metered API spend, so the OAuth token beats the API key.
   withEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
-    assert.strictEqual(driverMode(), 'api')
+    assert.strictEqual(driverMode(), 'subscription')
   })
 })
 
 test('driverMode: session when neither credential is set', () => {
   withEnv({}, () => {
     assert.strictEqual(driverMode(), 'session')
+  })
+})
+
+// preferSubscriptionToken() is what actually makes the token win: it removes a stray
+// ANTHROPIC_API_KEY so the SDK/CLI can't silently bill the metered API (it does so whenever
+// the key is set - the reason monitor-fsm/run-loop.sh unsets it).
+test('preferSubscriptionToken: removes ANTHROPIC_API_KEY when the OAuth token is also set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(preferSubscriptionToken(), true)
+    assert.strictEqual(process.env.ANTHROPIC_API_KEY, undefined)
+    assert.strictEqual(driverMode(), 'subscription')
+  })
+})
+
+test('preferSubscriptionToken: no-op when only ANTHROPIC_API_KEY is set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, () => {
+    assert.strictEqual(preferSubscriptionToken(), false)
+    assert.strictEqual(process.env.ANTHROPIC_API_KEY, 'sk-test')
+    assert.strictEqual(driverMode(), 'api')
+  })
+})
+
+test('preferSubscriptionToken: no-op when only the OAuth token is set', () => {
+  withEnv({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(preferSubscriptionToken(), false)
+    assert.strictEqual(driverMode(), 'subscription')
   })
 })

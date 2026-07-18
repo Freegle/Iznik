@@ -78,22 +78,43 @@ async function verifyModerator(req, fetchImpl = fetch) {
 }
 
 /**
- * Which credential the Claude Agent SDK's query() will use, chosen purely by the
- * environment (matching the SDK's own precedence):
- *   - 'api'          - ANTHROPIC_API_KEY set (API billing; production/edge).
+ * Which credential the Claude Agent SDK's query() will use:
  *   - 'subscription' - CLAUDE_CODE_OAUTH_TOKEN set (a token from `claude setup-token`;
  *                      Max/Pro subscription billing, and HEADLESS - no interactive
  *                      login and no mounted ~/.claude, so the helper can be driven by
  *                      an automation/subagent).
+ *   - 'api'          - only ANTHROPIC_API_KEY set (metered API billing; production/edge).
  *   - 'session'      - neither; a mounted ~/.claude login session (interactive/testing).
- * ANTHROPIC_API_KEY wins if it and the OAuth token are both set.
+ *
+ * CLAUDE_CODE_OAUTH_TOKEN WINS when both are set - these are headless background jobs and
+ * the whole point of a `claude setup-token` is to run them on the subscription rather than
+ * metered API spend (kept consistent with Community News' CommunityNewsResearchService).
+ * Preferring the token in this reporting function is not enough on its own: the SDK/CLI
+ * bills the API whenever ANTHROPIC_API_KEY is present (the monitor-fsm's run-loop.sh unsets
+ * it for exactly this reason), so preferSubscriptionToken() removes the key from the
+ * environment at startup so query() actually authenticates with the subscription.
  *
  * @returns {'api'|'subscription'|'session'}
  */
 function driverMode() {
-  if (process.env.ANTHROPIC_API_KEY) return 'api'
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return 'subscription'
+  if (process.env.ANTHROPIC_API_KEY) return 'api'
   return 'session'
 }
 
-module.exports = { verifyModerator, extractJWT, driverMode, FREEGLE_API_URL, SUPPORT_ROLES }
+/**
+ * Make the subscription token win. When a `claude setup-token` OAuth token is present,
+ * remove ANTHROPIC_API_KEY from the environment so the Claude Agent SDK / CLI authenticates
+ * with the subscription instead of silently billing the metered API (which it does whenever
+ * the key is set - the same reason monitor-fsm/run-loop.sh unsets it). No-op when no OAuth
+ * token is set. Returns true if it removed a key. Call once at startup, before query() runs.
+ */
+function preferSubscriptionToken() {
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN && process.env.ANTHROPIC_API_KEY) {
+    delete process.env.ANTHROPIC_API_KEY
+    return true
+  }
+  return false
+}
+
+module.exports = { verifyModerator, extractJWT, driverMode, preferSubscriptionToken, FREEGLE_API_URL, SUPPORT_ROLES }

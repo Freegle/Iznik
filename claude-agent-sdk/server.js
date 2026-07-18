@@ -12,6 +12,7 @@ const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
 const { execSync } = require('child_process')
 const fs = require('fs')
+const { preferSubscriptionToken } = require('./auth')
 // agent.js kept for searchCodebase utility but runAgent/warmupSession no longer used
 
 const app = express()
@@ -91,6 +92,13 @@ function updateCodebase() {
 
   lastCodeUpdate = new Date().toISOString()
   console.log(`Codebase update completed at ${lastCodeUpdate}`)
+}
+
+// Make the subscription token win over a stray ANTHROPIC_API_KEY, so query() authenticates
+// with the Claude subscription (from `claude setup-token`) rather than metered API billing.
+// The SDK/CLI bills the API whenever the key is set, so we remove it here (see auth.js).
+if (preferSubscriptionToken()) {
+  console.log('Claude auth: CLAUDE_CODE_OAUTH_TOKEN present - ignoring ANTHROPIC_API_KEY so the subscription is used.')
 }
 
 // Check auth on startup

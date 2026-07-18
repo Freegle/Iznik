@@ -45,17 +45,22 @@ One `query()` code path serves both auth modes (see below); everything else is i
 
 ## Claude auth: three modes, one code path
 
-`support-agent.js` (`driverMode()`) picks the mode from the environment:
+`driverMode()` (in `auth.js`) picks the mode from the environment:
 
-- **api** — `ANTHROPIC_API_KEY` set. Production/edge. No `~/.claude` mount.
 - **subscription** — `CLAUDE_CODE_OAUTH_TOKEN` set (a token from `claude setup-token`). Uses a
   Max/Pro subscription and is **headless** - no interactive login and no `~/.claude` mount - so
-  the helper can be driven by an automation/subagent. `ANTHROPIC_API_KEY` wins if both are set.
+  the helper can be driven by an automation/subagent.
+- **api** — only `ANTHROPIC_API_KEY` set. Metered API billing. Production/edge. No `~/.claude` mount.
 - **session** — a read-only `~/.claude` credential mount (a logged-in Claude subscription).
   Testing only. `docker-compose.yml` mounts **just** `.credentials.json`, not the whole
   `~/.claude` (so a prompt-injected read cannot reach memory/transcripts).
 
-`entrypoint.sh` reports which mode is active on startup.
+**`CLAUDE_CODE_OAUTH_TOKEN` wins when both are set** - this is a headless background job, so it
+should run on the subscription rather than metered API spend (consistent with Community News'
+`CommunityNewsResearchService`). Because the SDK/CLI bills the API whenever `ANTHROPIC_API_KEY`
+is present (the reason `monitor-fsm/run-loop.sh` unsets it), `preferSubscriptionToken()` removes
+the key at startup so `query()` actually authenticates with the subscription; `entrypoint.sh`
+does the same at the shell level and reports which mode is active on startup.
 
 ## Tools
 
