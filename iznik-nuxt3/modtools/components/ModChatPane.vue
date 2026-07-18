@@ -264,7 +264,6 @@ function typing(val) {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  transition: height 1s;
 
   height: calc(100vh - 60px);
 
