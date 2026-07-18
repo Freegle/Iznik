@@ -104,6 +104,22 @@ jobs:
                 "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue
 
               echo "$WORKFLOWS" | jq -r '.items[] | select(.status == "running" or .status == "on_hold") | .id' | while read -r WF_ID; do
+                # Don't cancel a workflow that's already running one of the post-gate Android
+                # artifact builds (build-android-dev/-debug/-modtools-debug). Those jobs only
+                # start after freegle/build-and-test has already passed for that commit, run on
+                # ordinary CircleCI cloud capacity (not the capped Katapult/self-hosted pool), and
+                # are cheap/fast — killing them mid-build saves no meaningful CI resource. It only
+                # leaves a permanently red/error GitHub check on an otherwise-healthy commit (seen
+                # on c66acbe0e's build-android-modtools-debug, canceled 43s into a healthy Gradle
+                # build when 477980eac landed on master 4 minutes later).
+                RUNNING_POSTGATE=$(curl -sf \
+                  -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                  "https://circleci.com/api/v2/workflow/${WF_ID}/job" 2>/dev/null | \
+                  jq -r '[.items[] | select(.status == "running") | select(.name == "freegle/build-android-dev" or .name == "freegle/build-android-debug" or .name == "freegle/build-android-modtools-debug")] | length' 2>/dev/null || echo "0")
+                if [ "${RUNNING_POSTGATE:-0}" -gt 0 ]; then
+                  echo "Workflow ${WF_ID} is already running a post-gate Android build — leaving it to finish"
+                  continue
+                fi
                 echo "Cancelling workflow ${WF_ID} from older pipeline"
                 curl -sf -X POST \
                   -H "Circle-Token: ${CIRCLE_TOKEN}" \
@@ -335,6 +351,16 @@ jobs:
                 "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue
 
               echo "$WORKFLOWS" | jq -r '.items[] | select(.status == "running" or .status == "on_hold") | .id' | while read -r WF_ID; do
+                # See matching guard in the first cancel pass above: don't kill a workflow
+                # already running a post-gate Android artifact build.
+                RUNNING_POSTGATE=$(curl -sf \
+                  -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                  "https://circleci.com/api/v2/workflow/${WF_ID}/job" 2>/dev/null | \
+                  jq -r '[.items[] | select(.status == "running") | select(.name == "freegle/build-android-dev" or .name == "freegle/build-android-debug" or .name == "freegle/build-android-modtools-debug")] | length' 2>/dev/null || echo "0")
+                if [ "${RUNNING_POSTGATE:-0}" -gt 0 ]; then
+                  echo "Workflow ${WF_ID} is already running a post-gate Android build — leaving it to finish"
+                  continue
+                fi
                 echo "Cancelling workflow ${WF_ID} from older pipeline ${PIPELINE_ID}"
                 curl -sf -X POST \
                   -H "Circle-Token: ${CIRCLE_TOKEN}" \
