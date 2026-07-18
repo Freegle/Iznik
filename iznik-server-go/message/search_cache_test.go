@@ -82,6 +82,20 @@ func TestReachUniverseCache_CachesEmptyUniverse(t *testing.T) {
 	assert.Empty(t, ids)
 }
 
+func TestPrimeReachUniverse_FeedWarmsSearch(t *testing.T) {
+	// The browse feed primes the cache with the reach membership it computes, so a
+	// member's first search after loading Browse takes the warm path.
+	reachUniverseMu.Lock()
+	reachUniverseCache = map[string]reachUniverseEntry{}
+	reachUniverseMu.Unlock()
+
+	PrimeReachUniverse(7, 51.8129, -0.0204, []uint64{101, 102})
+
+	ids, hit := cachedReachUniverse(reachUniverseKey(7, 51.8129, -0.0204), time.Now())
+	assert.True(t, hit)
+	assert.Equal(t, []uint64{101, 102}, ids)
+}
+
 func TestReachUniverseCache_ReturnsCopyNotAlias(t *testing.T) {
 	// nearbyFeedMsgIDs returns the reach slice directly when the member has no own
 	// posts, so the cache must hand out (and retain) COPIES: a caller that sorts or

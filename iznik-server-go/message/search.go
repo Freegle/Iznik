@@ -62,6 +62,17 @@ func cachedReachUniverse(key string, now time.Time) ([]uint64, bool) {
 	return out, true
 }
 
+// PrimeReachUniverse lets the browse feed pre-warm the search cache: loading the Nearby
+// feed computes exactly this reach membership (isochrone fetchReachCandidates - same
+// successful=0 / not-held / polygon-containment / author-cap predicate), and members load
+// the feed moments before they search. Priming here makes a member's FIRST search hit the
+// warm path (~0.15s) instead of re-running the multi-second containment the feed just did.
+// The key is member+location from user.GetLatLng on both sides, so it can only ever hit
+// for the same view of the world; a mismatch is just a cache miss.
+func PrimeReachUniverse(myid uint64, lat float64, lng float64, ids []uint64) {
+	storeReachUniverse(reachUniverseKey(myid, lat, lng), ids, time.Now())
+}
+
 func storeReachUniverse(key string, ids []uint64, now time.Time) {
 	kept := make([]uint64, len(ids))
 	copy(kept, ids)

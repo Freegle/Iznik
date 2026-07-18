@@ -269,9 +269,20 @@ func Messages(c *fiber.Ctx) error {
 		// The feed wants every in-reach post (seen or not — the client buckets on
 		// `unseen`), so unseenOnly is false; nearbyCount uses the same helper with
 		// unseenOnly=true so the two can never disagree on what "in reach" means.
-		for _, cand := range fetchReachCandidates(db, myid, latlng, false) {
+		reachCands := fetchReachCandidates(db, myid, latlng, false)
+		for _, cand := range reachCands {
 			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
 		}
+
+		// Pre-warm the browse-search reach cache with the membership we just computed:
+		// the search's reach arm is this same predicate, and members search moments
+		// after loading the feed, so this makes their FIRST search fast instead of
+		// re-running the containment (see message.PrimeReachUniverse).
+		reachIDs := make([]uint64, 0, len(reachCands))
+		for _, cand := range reachCands {
+			reachIDs = append(reachIDs, cand.ID)
+		}
+		message.PrimeReachUniverse(myid, viewerLat, viewerLng, reachIDs)
 
 		// Include the viewer's own recent open posts regardless of reach, so a poster still
 		// sees their own post immediately — including while it is awaiting approval, so it is
