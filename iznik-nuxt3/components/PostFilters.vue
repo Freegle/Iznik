@@ -2,6 +2,18 @@
   <div :class="{ 'mb-2': !showFilters }">
     <h2 class="visually-hidden">Post Filters</h2>
     <b-collapse v-model="showFilters" class="p-2 bg-primary-subtle">
+      <!-- Generic "how the nearby feed works" help - kept above the filters (and the
+           "How far away" control) so the explanation reads before the controls. -->
+      <div v-if="browseView === 'nearby'" class="nearby-help">
+        <p class="help-text mt-0">
+          We show posts near you first, then gradually further away.
+          <a href="#" @click.prevent="whichPostsModal?.show()">
+            How does this work?
+          </a>
+          ·
+          <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
+        </p>
+      </div>
       <div variant="info" class="filters mb-2">
         <div class="group">
           <GroupSelect
@@ -68,16 +80,6 @@
       <!-- Rippling-out (#1): the catchment is worked out automatically and ripples
            out over time. The distance slider above only narrows which of those
            already-reaching posts are shown - it isn't a manual travel-time control. -->
-      <div v-if="browseView === 'nearby'" class="nearby-help">
-        <p class="help-text mt-0">
-          We show posts near you first, then gradually further away.
-          <a href="#" @click.prevent="whichPostsModal?.show()">
-            How does this work?
-          </a>
-          ·
-          <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
-        </p>
-      </div>
       <hr />
       <div class="d-flex justify-content-around mt-2">
         <b-input-group class="shrink">
