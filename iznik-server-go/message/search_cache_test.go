@@ -79,5 +79,34 @@ func TestReachUniverseCache_CachesEmptyUniverse(t *testing.T) {
 
 	ids, hit := cachedReachUniverse(key, now.Add(time.Second))
 	assert.True(t, hit)
-	assert.Nil(t, ids)
+	assert.Empty(t, ids)
+}
+
+func TestReachUniverseCache_ReturnsCopyNotAlias(t *testing.T) {
+	// nearbyFeedMsgIDs returns the reach slice directly when the member has no own
+	// posts, so the cache must hand out (and retain) COPIES: a caller that sorts or
+	// appends in place must not corrupt the cache for subsequent requests.
+	reachUniverseMu.Lock()
+	reachUniverseCache = map[string]reachUniverseEntry{}
+	reachUniverseMu.Unlock()
+
+	now := time.Now()
+	key := reachUniverseKey(4, 51.5, -0.1)
+	src := []uint64{30, 10, 20}
+	storeReachUniverse(key, src, now)
+
+	// Mutating the slice we stored must not affect the cache.
+	src[0] = 999
+
+	got1, hit := cachedReachUniverse(key, now)
+	assert.True(t, hit)
+	assert.Equal(t, []uint64{30, 10, 20}, got1)
+
+	// Mutating what the cache handed out must not affect later reads.
+	got1[0] = 777
+	got1 = append(got1, 888)
+
+	got2, hit := cachedReachUniverse(key, now)
+	assert.True(t, hit)
+	assert.Equal(t, []uint64{30, 10, 20}, got2)
 }

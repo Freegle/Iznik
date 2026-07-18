@@ -44,6 +44,12 @@ func reachUniverseKey(myid uint64, lat float64, lng float64) string {
 }
 
 // cachedReachUniverse returns the cached reach-arm ids for the key, or (nil, false).
+// Both it and storeReachUniverse COPY the slice at the cache boundary: nearbyFeedMsgIDs
+// returns the reach slice directly when the member has no own posts, so handing out (or
+// retaining) the internal backing array would let any future caller that sorts or appends
+// in place silently corrupt the cache for every subsequent request on this node. The copy
+// is a few KB against a multi-second query saved - seal it here, at one choke point,
+// rather than relying on every caller staying read-only.
 func cachedReachUniverse(key string, now time.Time) ([]uint64, bool) {
 	reachUniverseMu.Lock()
 	defer reachUniverseMu.Unlock()
@@ -51,16 +57,20 @@ func cachedReachUniverse(key string, now time.Time) ([]uint64, bool) {
 	if !ok || now.After(e.expires) {
 		return nil, false
 	}
-	return e.ids, true
+	out := make([]uint64, len(e.ids))
+	copy(out, e.ids)
+	return out, true
 }
 
 func storeReachUniverse(key string, ids []uint64, now time.Time) {
+	kept := make([]uint64, len(ids))
+	copy(kept, ids)
 	reachUniverseMu.Lock()
 	defer reachUniverseMu.Unlock()
 	if len(reachUniverseCache) >= reachUniverseMaxEntries {
 		reachUniverseCache = map[string]reachUniverseEntry{}
 	}
-	reachUniverseCache[key] = reachUniverseEntry{ids: ids, expires: now.Add(reachUniverseTTL)}
+	reachUniverseCache[key] = reachUniverseEntry{ids: kept, expires: now.Add(reachUniverseTTL)}
 }
 
 type Matchedon struct {
