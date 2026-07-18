@@ -31,6 +31,11 @@ if [ -z "$DATE8" ]; then
 fi
 [ -n "$DATE8" ] || ylvm_die "Could not determine a backup date"
 
+# On any failure, record it in restore-status.json — otherwise the API's job
+# for this date stays "starting" forever and blocks every later nightly load
+# (this wedged the system from 2026-07-16 after a transient GCS read error).
+trap 'rc=$?; if [ $rc -ne 0 ]; then ylvm_set_restore_status "failed" "Refresh to $DATE8 failed (exit $rc)" "$DATE8"; fi' EXIT
+
 # Skip if already current and snapshot exists.
 CURRENT="$(jq -r '.date // ""' "$STATE_FILE" 2>/dev/null || echo)"
 if [ "$DATE8" = "$CURRENT" ] && lvs "$YLVM_VG/${YLVM_SNAP_PREFIX}${DATE8}" >/dev/null 2>&1; then

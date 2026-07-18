@@ -118,8 +118,13 @@ if echo "$API_RESPONSE" | grep -q "Started loading"; then
     echo "Monitoring progress..."
     echo ""
 
-    # Poll for completion
-    while true; do
+    # Poll for completion. Bounded: a wedged or vanished job must not leave
+    # this process polling forever (they used to accumulate for weeks —
+    # cron adds a fresh one every day).
+    MAX_POLLS=480   # 4 hours at 30s; a full refresh takes ~2h15
+    NULL_POLLS=0
+    COMPLETED=0
+    for _ in $(seq 1 $MAX_POLLS); do
         PROGRESS=$(curl -s http://localhost:8082/api/backups/${LATEST_DATE}/progress)
         STATUS=$(echo "$PROGRESS" | jq -r '.status')
         PERCENT=$(echo "$PROGRESS" | jq -r '.progress')
@@ -131,6 +136,7 @@ if echo "$API_RESPONSE" | grep -q "Started loading"; then
             echo ""
             echo "✅ Auto-restore completed successfully"
             echo "Yesterday environment now running backup from $LATEST_DATE"
+            COMPLETED=1
             break
         elif [ "$STATUS" = "failed" ]; then
             echo ""
@@ -138,10 +144,25 @@ if echo "$API_RESPONSE" | grep -q "Started loading"; then
             ERROR=$(echo "$PROGRESS" | jq -r '.error')
             echo "Error: $ERROR"
             exit 1
+        elif [ -z "$STATUS" ] || [ "$STATUS" = "null" ]; then
+            # API restarted or job evaporated — no point polling a job
+            # nobody is tracking any more.
+            NULL_POLLS=$((NULL_POLLS + 1))
+            if [ $NULL_POLLS -ge 10 ]; then
+                echo "❌ No job status available after $NULL_POLLS polls - giving up"
+                exit 1
+            fi
+        else
+            NULL_POLLS=0
         fi
 
         sleep 30  # Check every 30 seconds
     done
+
+    if [ $COMPLETED -ne 1 ]; then
+        echo "❌ Restore did not complete within 4 hours - giving up"
+        exit 1
+    fi
 
     # Optional: Send notification (email, Slack, etc.)
     # curl -X POST https://slack.webhook.url -d "{\"text\": \"Yesterday restored backup $LATEST_DATE\"}"

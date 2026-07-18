@@ -31,6 +31,10 @@ lvs "$YLVM_VG/$SNAP" >/dev/null 2>&1 || {
 PROJECT="$(ylvm_project_name)"
 cd "$YLVM_COMPOSE_DIR"
 
+# On any failure, record it in restore-status.json — a status left at
+# "switching" blocks every later load request (see nightly-refresh-lvm.sh).
+trap 'rc=$?; if [ $rc -ne 0 ]; then ylvm_set_restore_status "failed" "Switch to $DATE8 failed (exit $rc)" "$DATE8"; fi' EXIT
+
 ylvm_log "Switching to backup $DATE8 ..."
 ylvm_set_restore_status "switching" "Switching to backup $DATE8 (instant)…" "$DATE8"
 ylvm_log "Stopping percona ..."

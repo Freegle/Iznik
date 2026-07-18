@@ -211,6 +211,17 @@ app.post('/api/backups/:backupDate/load', async (req, res) => {
   // Also check in-memory jobs (in case status file hasn't been written yet)
   for (const [jobDate, job] of Object.entries(restorationJobs)) {
     if (job.status !== 'completed' && job.status !== 'failed') {
+      // A restore legitimately takes ~2h; a job still non-terminal after 6h
+      // means the host-side restore died without reporting back. Expire it
+      // rather than letting it 409-block every future load forever.
+      const ageMs = Date.now() - new Date(job.started).getTime();
+      if (ageMs > 6 * 60 * 60 * 1000) {
+        job.status = 'failed';
+        job.error = 'Restore did not report completion within 6 hours';
+        job.completed = new Date().toISOString();
+        console.log(`Expired stale job ${jobDate} (started ${job.started}) as failed`);
+        continue;
+      }
       return res.status(409).json({
         error: `Backup ${jobDate} is already being loaded (status: ${job.status})`,
         currentBackup: jobDate,
