@@ -2034,7 +2034,7 @@ FORBIDDEN:
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
-  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+  git log origin/<branch> -1 --format=%H   (from your worktree)
 If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
 If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
@@ -2320,7 +2320,7 @@ STAGING RULES: never \`git add -A\`. Always stage explicit paths.
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
-  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+  git log origin/<branch> -1 --format=%H   (from your worktree)
 If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
 If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
