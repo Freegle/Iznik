@@ -1725,38 +1725,21 @@ func PatchSession(c *fiber.Ctx) error {
 
 		for _, mail := range emails {
 			if mail.UserID != 0 && mail.UserID != myid {
-				// Email belongs to another user — merge their account into ours.
-				// Move references from the other user to this user.
-				var wg2 sync.WaitGroup
-				wg2.Add(5)
-
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE messages SET fromuser = ? WHERE fromuser = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE chat_rooms SET user1 = ? WHERE user1 = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE chat_rooms SET user2 = ? WHERE user2 = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE chat_messages SET userid = ? WHERE userid = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE users_emails SET userid = ? WHERE userid = ?", myid, mail.UserID)
-				}()
-				wg2.Wait()
-
-				db.Exec("UPDATE IGNORE memberships SET userid = ? WHERE userid = ?", myid, mail.UserID)
-				db.Exec("DELETE FROM memberships WHERE userid = ?", mail.UserID)
-				db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", mail.UserID)
-
-				stdlog.Printf("Merged user %d into %d during email verify of %s", mail.UserID, myid, mail.Email)
+				// Email belongs to another user — merge their account into
+				// ours. Chat rooms need collision-safe consolidation (the
+				// unique key on user1/user2/chattype forbids a blind
+				// reassignment), so the whole merge runs transactionally in
+				// MergeUserAccounts.
+				if err := MergeUserAccounts(db, myid, mail.UserID); err != nil {
+					// Rolled back — nothing half-applied, and the email is
+					// still confirmed below so verification succeeds for the
+					// user. The duplicate account survives; a later
+					// verification or support action can merge it.
+					stdlog.Printf("ERROR: merge of user %d into %d failed during email verify of %s: %v",
+						mail.UserID, myid, mail.Email, err)
+				} else {
+					stdlog.Printf("Merged user %d into %d during email verify of %s", mail.UserID, myid, mail.Email)
+				}
 			}
 
 			// Clear all preferred flags for this user, then set the confirmed email as preferred.
