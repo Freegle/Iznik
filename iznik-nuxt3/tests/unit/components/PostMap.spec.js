@@ -782,6 +782,36 @@ describe('PostMap', () => {
       expect(mockNearbyFetchMessages).not.toHaveBeenCalled()
       expect(mockMessageStore.fetchInBounds).toHaveBeenCalled()
     })
+
+    // Discourse 9933/8: a member applies the "Show posts from: <group>" filter while still
+    // on the nearby/"New to You" view (selecting one group doesn't change browseView away
+    // from 'nearby' - see PostFilters.vue's watch(group)). The nearby-reach branch above
+    // must not swallow that case: it ignores props.groupid entirely and returns the raw,
+    // unfiltered reach feed, leaving the group scoping to a client-side
+    // `m.groupid === selectedGroup` filter over messages_spatial.groupid - a column that
+    // holds only ONE of a message's possibly-many approved groups (see message.Groups'
+    // "without relying on messages_spatial.groupid" comment), so posts genuinely approved
+    // in the selected group get silently dropped. Selecting a specific group must fall
+    // through to the membership-correct fetchMyGroups(groupid) call instead.
+    it('uses the group-membership fetch, not the raw reach feed, when a specific group filter is selected while browsing nearby', async () => {
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      mockMessageStore.fetchMyGroups.mockResolvedValue([
+        { id: 1, lat: 52.5, lng: -1, groupid: 21467, type: 'Offer' },
+      ])
+      await createWrapper({ showIsochrones: true, groupid: 21467 })
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+
+      expect(mockMessageStore.fetchMyGroups).toHaveBeenCalledWith(21467)
+    })
   })
 
   describe('zoom behavior', () => {

@@ -798,6 +798,12 @@ async function getMessages() {
   const nelat = bounds.getNorthEast().lat
   const nelng = bounds.getNorthEast().lng
   let ret = null
+  // Set when `ret` already comes from a group-membership-scoped fetch (fetchMyGroups or
+  // search's groupids, both of which test messages_groups via EXISTS server-side) so the
+  // client-side groupid re-filter below - which instead compares the single, often-wrong
+  // messages_spatial.groupid column - is skipped rather than re-dropping posts the server
+  // already correctly included (Discourse 9933/8).
+  let groupScopedByServer = false
 
   // Nearby (reach) view: the reachable set is worked out server-side from the member's
   // location and does NOT change as they pan or zoom the map. So always show exactly that
@@ -806,7 +812,23 @@ async function getMessages() {
   // "not many showing, zoom out and refetch" padding below, which was the source of far,
   // unreachable posts leaking into the nearby list. Search within nearby is handled in the
   // showIsochrones branch further down (it intersects the reach feed with a bounds search).
-  if (props.showIsochrones && !props.search && (me?.lat || me?.lng)) {
+  //
+  // Excluded when props.groupid is set: picking a single group from the "Show posts
+  // from:" filter does not change browseView away from 'nearby' (PostFilters.vue's
+  // watch(group) only flips browseView for the -1/"Nearby" and 0/"All my communities"
+  // sentinels), so showIsochrones stays true. Without this guard the raw, group-blind
+  // reach feed was returned and PostMapAndList's client-side filter narrowed it by
+  // matching a single `groupid` column (messages_spatial.groupid) that holds only ONE of
+  // a message's possibly-many approved groups - silently dropping posts genuinely
+  // approved in the selected group (Discourse 9933/8). Falling through here reaches the
+  // `props.groupid` branch below, which fetches via the membership-correct
+  // fetchMyGroups(groupid) instead.
+  if (
+    props.showIsochrones &&
+    !props.search &&
+    !props.groupid &&
+    (me?.lat || me?.lng)
+  ) {
     console.log('GetMessages - nearby reach feed')
     const nearby = await nearbyStore.fetchMessages()
     if (nearby && !destroyed.value) {
@@ -837,6 +859,7 @@ async function getMessages() {
     }
   } else if (props.groupid) {
     // We have been asked to show a specific group.
+    groupScopedByServer = true
     if (props.search) {
       // So search within that group.
       console.log('GetMessages - search on specific group')
@@ -1001,7 +1024,14 @@ async function getMessages() {
   }
 
   if (messages?.length) {
-    if (props.groupid) {
+    if (props.groupid && !groupScopedByServer) {
+      // Best-effort client-side narrowing for paths that didn't scope to the group
+      // server-side (e.g. a map-bounds fetch while a group filter is active). This still
+      // only matches the single messages_spatial.groupid column, so it can miss posts
+      // approved in the group via a different row - but there's no membership-correct
+      // fetch available here. When the fetch WAS already group-scoped server-side
+      // (groupScopedByServer), skip this: re-applying it would wrongly drop posts the
+      // EXISTS-based server query already correctly included (Discourse 9933/8).
       messages = messages.filter((m) => {
         return m.groupid === props.groupid
       })

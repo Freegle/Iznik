@@ -534,6 +534,37 @@ describe('PostMapAndList', () => {
       await nextTick()
       expect(wrapper.find('.message-list').exists()).toBe(true)
     })
+
+    // Discourse 9933/8: PostMap's getMessages already scopes to the selected group before
+    // emitting `messages` (server-side via messages_groups EXISTS, not the single,
+    // often-mismatched messages_spatial.groupid column). Re-filtering that already-scoped
+    // list here by comparing m.groupid === selectedGroup silently dropped posts genuinely
+    // approved in the group whenever their spatial groupid recorded a different group (a
+    // message can be approved in several groups). This must not re-drop them.
+    it('does not re-drop posts by their spatial groupid once PostMap has already scoped the feed to the selected group', async () => {
+      const wrapper = createWrapper({
+        startOnGroups: false,
+        selectedGroup: 21467,
+      })
+      await nextTick()
+
+      const postMap = wrapper.findComponent('.post-map')
+      await postMap.vm.$emit('messages', [
+        // Approved in group 21467 via messages_groups, but its messages_spatial row
+        // happens to record a different group - exactly what fetchMyGroups(21467)
+        // legitimately returns.
+        {
+          id: 200,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 999,
+        },
+      ])
+      await nextTick()
+
+      const list = wrapper.find('.message-list')
+      expect(list.attributes('data-ids')).toContain('200')
+    })
   })
 
   describe('search functionality', () => {

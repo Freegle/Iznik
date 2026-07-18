@@ -344,9 +344,13 @@ const messagesForList = computed(() => {
 
   msgs = sortedMessagesOnMap.value
 
-  if (props.selectedGroup) {
-    msgs = msgs.filter((m) => m.groupid === props.selectedGroup)
-  }
+  // No group re-filter here: PostMap's getMessages already scopes to props.selectedGroup
+  // (its groupid prop) before it ever emits `messages` - server-side via
+  // fetchMyGroups/search's messages_groups EXISTS check, or as a client-side fallback for
+  // the map-bounds-fetch path. Re-filtering here on the single, often-mismatched
+  // `groupid` column (messages_spatial.groupid - see message.Groups' comment on why it
+  // isn't used for group membership) silently dropped posts genuinely approved in the
+  // selected group, undoing that correct scoping (Discourse 9933/8).
 
   // Distance slider: the feed already returns the full reach set, so this is a local,
   // instant filter rather than a refetch. Posts with no distance (e.g. an older feed
