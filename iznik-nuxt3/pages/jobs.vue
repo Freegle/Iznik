@@ -79,11 +79,7 @@ useHead(
     route,
     runtimeConfig,
     'Jobs',
-    'Freegle gets a little bit to help keep us going if you click on them.',
-    null,
-    {
-      class: 'overflow-y-scroll',
-    }
+    'Freegle gets a little bit to help keep us going if you click on them.'
   )
 )
 
@@ -176,9 +172,40 @@ onMounted(async () => {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 
+/* The page's job list must be its own scrollable region, sized to the space
+   below the fixed navbar (same convention as ChatPane.vue / pages/chats), and
+   must NOT rely on document/body scroll. On iOS the app (WKWebView, see
+   capacitor.config.ts contentInset: 'automatic') can leave the document-level
+   scroll view unresponsive after returning from a backgrounded external
+   browser tab, while an element with its own `overflow-y: auto` keeps working
+   - which is exactly what the reporter saw (Discourse topic 9363 post #38):
+   the page's own list was stuck, but the ad panel's own scrollable div (which
+   always used `overflow-y: auto`, see JobsDaSlot.vue) kept scrolling fine. */
 .jobs-page {
-  min-height: 100vh;
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: $gray-100;
+
+  @supports (height: 100dvh) {
+    height: calc(100dvh - 60px);
+  }
+
+  @include media-breakpoint-up(md) {
+    height: calc(100vh - 66px);
+
+    @supports (height: 100dvh) {
+      height: calc(100dvh - 66px);
+    }
+  }
+
+  @include media-breakpoint-up(xl) {
+    height: calc(100vh - 76px);
+
+    @supports (height: 100dvh) {
+      height: calc(100dvh - 76px);
+    }
+  }
 }
 
 .jobs-page-content {

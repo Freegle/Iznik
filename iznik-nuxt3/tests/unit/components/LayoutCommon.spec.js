@@ -1,10 +1,13 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
+import LayoutCommon from '~/components/LayoutCommon.vue'
 
 const mockMiscStore = {
   stickyAdRendered: false,
+  replyOverlayOpen: false,
   visible: true,
   setTime: vi.fn(),
   startOnlineCheck: vi.fn(),
@@ -13,6 +16,9 @@ const mockMiscStore = {
 const mockAuthStore = {
   fetchUser: vi.fn(),
 }
+
+const mockLoggedIn = ref(true)
+const mockRecentDonor = ref(false)
 
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
@@ -41,11 +47,20 @@ vi.mock('~/stores/chat', () => ({
   }),
 }))
 
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => ({ isApp: false, deviceuserinfo: null }),
+}))
+
+vi.mock('@/stores/mobile', () => ({
+  useMobileStore: () => ({ isApp: false, deviceuserinfo: null }),
+}))
+
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref({ id: 1 }),
     myid: ref(1),
-    loggedIn: ref(true),
+    loggedIn: mockLoggedIn,
+    recentDonor: mockRecentDonor,
   }),
 }))
 
@@ -57,9 +72,49 @@ vi.mock('~/composables/useReplyToPost', () => ({
   }),
 }))
 
+// Mounts the real LayoutCommon component (not a source-string stand-in) with
+// the current route stubbed to `path`, so allowAd's routePath-based logic
+// actually runs and we can assert on what it renders. Heavy/unrelated
+// descendants (ads, video, chat, error banners) are stubbed out - we only
+// care whether the sticky ad wrapper (div.sticky) is present.
+function mountLayoutAtRoute(path) {
+  globalThis.__testUseRoute = () => ({
+    path,
+    fullPath: path,
+    params: {},
+    query: {},
+    name: path,
+  })
+
+  return mount(LayoutCommon, {
+    slots: {
+      default: '<div class="page-slot-content" />',
+    },
+    global: {
+      stubs: {
+        'client-only': { template: '<div><slot /></div>' },
+        VisibleWhen: { template: '<div><slot /></div>' },
+        ExternalDa: true,
+        DaDisableCTA: true,
+        DeletedRestore: true,
+        BouncingEmail: true,
+        BreakpointFettler: true,
+        OrientationFettler: true,
+        SomethingWentWrong: true,
+        SupportLink: true,
+        ChatButton: true,
+        InterestedInOthersModal: true,
+      },
+    },
+  })
+}
+
 describe('LayoutCommon', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockLoggedIn.value = true
+    mockRecentDonor.value = false
+    delete globalThis.__testUseRoute
   })
 
   describe('main content area', () => {
@@ -102,16 +157,22 @@ describe('LayoutCommon', () => {
       // same job ads already shown in the page's own list) - i.e. two scroll
       // regions instead of one. allowAd must exclude /jobs, the same way it
       // already excludes /partnerships and /together.
-      const src = readFileSync(
-        resolve(__dirname, '../../../components/LayoutCommon.vue'),
-        'utf-8'
-      )
-      const allowAdMatch = src.match(
-        /const allowAd = computed\(\(\) => \{[\s\S]*?\n\}\)/
-      )
-      expect(allowAdMatch).not.toBeNull()
-      const allowAdSrc = allowAdMatch[0]
-      expect(allowAdSrc).toMatch(/routePath\.value\s*===\s*['"]\/jobs['"]/)
+      //
+      // This mounts the real component with the route stubbed to /jobs and
+      // asserts on what is actually rendered, rather than pattern-matching the
+      // component's source text (which would prove the string existed, not
+      // that the logic behaves correctly).
+      const wrapper = mountLayoutAtRoute('/jobs')
+      expect(wrapper.find('.sticky').exists()).toBe(false)
+    })
+
+    it('shows the sticky ad footer on an ordinary route', () => {
+      // Contrast case for the /jobs exclusion above: on a route with no
+      // exclusion, logged in and not a recent donor, the sticky ad still
+      // renders. Without this, a test that just asserts ".sticky" is absent
+      // on /jobs could pass vacuously (e.g. if the ad never rendered at all).
+      const wrapper = mountLayoutAtRoute('/browse')
+      expect(wrapper.find('.sticky').exists()).toBe(true)
     })
 
     it('shows DaDisableCTA after ad rendered', () => {
