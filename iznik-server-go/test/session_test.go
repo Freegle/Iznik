@@ -1170,6 +1170,56 @@ func TestPatchSessionConfirmEmailKey(t *testing.T) {
 	db.Exec("DELETE FROM users_emails WHERE email = ?", testEmail)
 }
 
+// Confirming a validate key proves the address accepts mail, so it must lift the
+// bounce suspension. Without this a member who bounced and then immediately fixed
+// their address stayed silently cut off from digests: users.bouncing gates
+// UnifiedDigestService/UserManagementService/NotificationChaseUpService and nothing
+// else resets it. Seen live on 47 members, several of whom re-verified within
+// minutes of the bounce.
+func TestPatchSessionConfirmEmailClearsBounce(t *testing.T) {
+	prefix := uniquePrefix("confirm_unbounce")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// The member is suspended for bouncing, and the address carries a bounce stamp.
+	testEmail := prefix + "_verify@test.com"
+	canon := strings.ToLower(strings.ReplaceAll(testEmail, ".", ""))
+	validateKey := prefix[:24]
+	db.Exec("INSERT INTO users_emails (email, canon, backwards, validatekey, userid, bounced) VALUES (?, ?, ?, ?, ?, NOW())",
+		testEmail, canon, reverseString(canon), validateKey, userID)
+	db.Exec("UPDATE users SET bouncing = 1 WHERE id = ?", userID)
+
+	body, _ := json.Marshal(map[string]interface{}{"key": validateKey})
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Both halves of the canonical unbounce must be cleared: the per-user
+	// suspension flag and the per-address bounce stamp (the latter gates welcome
+	// mail via whereNull('bounced')).
+	var bouncing int
+	db.Raw("SELECT bouncing FROM users WHERE id = ?", userID).Row().Scan(&bouncing)
+	assert.Equal(t, 0, bouncing, "confirming an email must lift the bounce suspension")
+
+	var bounced *string
+	db.Raw("SELECT bounced FROM users_emails WHERE email = ?", testEmail).Row().Scan(&bounced)
+	assert.Nil(t, bounced, "confirming an email must clear its bounce stamp")
+
+	// And the confirmation itself still worked.
+	var validated *string
+	db.Raw("SELECT validated FROM users_emails WHERE email = ?", testEmail).Row().Scan(&validated)
+	assert.NotNil(t, validated)
+
+	db.Exec("DELETE FROM users_emails WHERE email = ?", testEmail)
+}
+
 func TestPatchSessionConfirmEmailKeyNotFound(t *testing.T) {
 	prefix := uniquePrefix("confirm_nf")
 	userID := CreateTestUser(t, prefix, "User")

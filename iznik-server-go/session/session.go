@@ -1745,6 +1745,21 @@ func PatchSession(c *fiber.Ctx) error {
 			// Clear all preferred flags for this user, then set the confirmed email as preferred.
 			db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", myid)
 			db.Exec("UPDATE users_emails SET userid = ?, preferred = 1, validated = NOW(), validatekey = NULL WHERE id = ?", myid, mail.ID)
+
+			// Confirming the key proves this address accepts mail: the member had to
+			// receive the verification email to click the link. Clear the bounce
+			// suspension, or a member who bounced and then promptly fixed their address
+			// stays silently cut off - users.bouncing gates UnifiedDigestService,
+			// UserManagementService and NotificationChaseUpService, and NOTHING else
+			// resets it (the only other path is the manual, per-domain
+			// UnbounceDomainCommand). Observed live: 47 members had validated
+			// after bouncing - several within MINUTES - and were still suppressed.
+			// Same two-part clear as UnbounceDomainCommand, which is the canonical
+			// unbounce: the per-address timestamp (gates welcome mail via
+			// whereNull('bounced')) and the per-user suspension flag.
+			// Safe if the address later fails again: BounceService re-suspends.
+			db.Exec("UPDATE users_emails SET bounced = NULL WHERE id = ?", mail.ID)
+			db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", myid)
 		}
 
 		return c.JSON(fiber.Map{
