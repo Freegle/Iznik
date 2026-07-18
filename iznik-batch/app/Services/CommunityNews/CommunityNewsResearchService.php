@@ -250,6 +250,12 @@ class CommunityNewsResearchService
                 ->env([
                     'CLAUDE_CODE_OAUTH_TOKEN' => $token,
                     'CLAUDE_CONFIG_DIR' => $configDir,
+                    // Make the subscription token win: the CLI bills the metered API whenever
+                    // ANTHROPIC_API_KEY is present (the reason monitor-fsm/run-loop.sh unsets it),
+                    // and the batch process inherits that key from its own environment. `false`
+                    // removes it from the child env (Symfony Process convention) so `claude`
+                    // authenticates with the setup-token subscription, not the API key.
+                    'ANTHROPIC_API_KEY' => false,
                 ])
                 ->run($command);
         } catch (\Throwable $e) {

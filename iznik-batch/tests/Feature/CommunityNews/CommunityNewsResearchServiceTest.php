@@ -164,13 +164,21 @@ class CommunityNewsResearchServiceTest extends TestCase
         Http::assertNothingSent();
         Process::assertRan(function ($process) {
             $cmd = is_array($process->command) ? implode(' ', $process->command) : (string) $process->command;
+            // Read the env the CLI was given (PendingProcess::$environment) via a bound closure.
+            $env = (array) (function () {
+                return $this->environment ?? [];
+            })->call($process);
 
             return str_contains($cmd, 'claude')
                 && str_contains($cmd, '--allowedTools')
                 && str_contains($cmd, 'WebSearch')
                 && str_contains($cmd, '--output-format')
                 // ...and the token travels in the environment, never on the argv.
-                && !str_contains($cmd, 'sk-ant-oat01-test');
+                && !str_contains($cmd, 'sk-ant-oat01-test')
+                // Subscription must win: the inherited metered key is stripped from the child
+                // env (false => Symfony Process removes it) so `claude` uses the setup-token.
+                && array_key_exists('ANTHROPIC_API_KEY', $env)
+                && $env['ANTHROPIC_API_KEY'] === false;
         });
     }
 
