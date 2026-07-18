@@ -1303,7 +1303,7 @@ class ContentCheckService
             $cyProb    = $lang['cy'] ?? 0;
             $ourProb   = max($enProb, $cyProb);
 
-            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.9 * $firstProb);
+            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.8 * $firstProb);
 
             if (!$isAcceptable) {
                 return [

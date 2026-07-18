@@ -579,6 +579,33 @@ class ContentCheckServiceTest extends TestCase
         $this->assertEquals(ContentCheckService::CHECK_LANGUAGE, $result['check']);
     }
 
+    public function test_check_language_real_world_structured_english_offer_not_flagged_as_french(): void
+    {
+        // Regression (Discourse #9919): production posts written as short,
+        // disjointed lines (typical of Freegle offer listings) lack the
+        // connecting words ("the", "is", "and") that signal English to the
+        // n-gram detector, so the real library ranks French marginally top
+        // (ratio ~0.86) even though the text is plainly English. Modelled on
+        // production msgid 121034104, which was live-flagged as French by
+        // this exact check. The V1-parity 0.8 ratio rescues it; the 0.9
+        // threshold introduced in 38ac48764 does not. Uses the REAL detector.
+        $text = "Ladies trousers\nWide leg\n4 pairs\nSize 14\n\nCollection Times:\nASAP\nPlease state a 15 minute time window";
+        $this->assertGreaterThan(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Structured English offer text must not be flagged as French');
+    }
+
+    public function test_check_language_genuine_french_still_flagged_at_v1_threshold(): void
+    {
+        // Genuinely French text must still be flagged after restoring the
+        // V1-parity 0.8 ratio — the #9919 fix must not be a blanket disable
+        // of the language check. Uses the REAL detector (not a mock).
+        $text = 'Bonjour, je vends plusieurs meubles de maison en tres bon etat, disponible immediatement pour recuperation, merci de me contacter rapidement.';
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNotNull($result, 'Genuine French text must still be flagged');
+        $this->assertEquals(ContentCheckService::CHECK_LANGUAGE, $result['check']);
+    }
+
     // =========================================================================
     // isGroupModerated — needs DB
     // =========================================================================
