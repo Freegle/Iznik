@@ -142,12 +142,15 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	// DRIVE from rippling_reach on the rippling_reach_polygon R-tree (MBRContains narrows to
 	// the candidates, ST_Contains then decides exactly) - same 472 rows, 32s -> ~3s.
 	//
-	// Deliberately NOT prefiltered on outer_bound: measured against production data, 422
-	// reach rows contain a point in `polygon` that their `outer_bound` does NOT contain, so
-	// as a hard filter it silently drops posts the member should be able to search. Its
-	// derivation (ST_Buffer(ST_Simplify(polygon, tol), tol)) can simplify away a thin spike
-	// that the buffer does not restore, so it is not a true superset. MBRContains(polygon)
-	// IS sound (verified: 0 rows exact-but-not-MBR) and is what the R-tree evaluates anyway.
+	// The sandwich prefilter is kept: outer_bound is a genuine superset of polygon for every
+	// reach row a browse-scoped search can return, so it rejects cheaply before the 178KB
+	// polygon is touched (measured ~2x faster than driving the polygon R-tree alone).
+	// Verified on production: for real derived bounds, 0 rows have a point inside `polygon`
+	// but outside `outer_bound` (486 true hits for the reporting member, 4,095 across other
+	// sampled viewer points). The only rows where outer_bound rejects a polygon hit are the
+	// deliberate degenerate-POINT sentinels, which are assigned to COMPLETED posts to prune
+	// them from the R-tree - and ms.successful = 0 already excludes those (verified: 0 open
+	// posts carry a POINT sentinel, all 22,139 are completed).
 	db.Raw(
 		"SELECT ms.msgid FROM messages_spatial ms "+
 			"INNER JOIN messages m ON m.id = ms.msgid "+
@@ -158,7 +161,7 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 			"INNER JOIN messages m ON m.id = ms.msgid "+
 			"INNER JOIN users au ON au.id = m.fromuser "+
 			"WHERE ms.successful = 0 AND rr.status != 'held' "+
-			"AND MBRContains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
 			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
 			utils.AuthorReachCapWhere,
 		myid,
