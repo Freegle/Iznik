@@ -27,6 +27,7 @@ import {
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
+import { groundingActions } from '../grounding.js'
 
 const exec = promisify(execFile)
 
@@ -64,7 +65,7 @@ const CLAUDE_BIN = resolveClaudeBin()
 function redactSecrets(s: string): string {
   if (!s) return s
   return s
-    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\S+/g, '$1=<redacted>')
+    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY|LIVE_DB_RO_PASSWORD|LIVE_DB_PASSWORD|MYSQL_PWD)=\S+/g, '$1=<redacted>')
     .replace(/(Authorization:\s*(?:bearer|token)\s+)\S+/gi, '$1<redacted>')
     .replace(/(-u\s+[^:\s]+:)\S+/g, '$1<redacted>')
     .replace(/\bCCIPAT_[A-Za-z0-9_-]+/g, 'CCIPAT_<redacted>')
@@ -218,8 +219,7 @@ export async function postDiscourseReply(
       const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
         method: 'POST',
         headers: {
-          'User-Api-Key': apiKey,
-          'Api-Username': 'Edward_Hibbert',
+          'Api-Key': apiKey,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -602,7 +602,7 @@ import json, urllib.request, re, sys, time
 
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
+headers = {'Api-Key': api_key}
 
 CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
@@ -1126,7 +1126,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 import json, urllib.request, re, html, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key}
+headers = {'Api-Key': api_key}
 
 tracked_cursors = json.loads('''${cursorsJson.replace(/'/g, "\\'")}''')
 
@@ -1336,7 +1336,7 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
 import json, urllib.request, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key}
+headers = {'Api-Key': api_key}
 
 def fetch(url, retries=4):
     """GET a Discourse URL with rate-limit backoff for 429."""
@@ -3330,4 +3330,7 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
       return { scheduled: true, delaySeconds, reason }
     },
   },
+
+  // Ground-truth read actions (prod DB over tunnel, prod Loki) — see grounding.ts.
+  ...groundingActions,
 ]
