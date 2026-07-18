@@ -74,7 +74,13 @@ for (const ix in allGroups) {
     group.onmap &&
     group.publish &&
     group.region &&
-    group.region.trim().toLowerCase() === region
+    group.region.trim().toLowerCase() === region &&
+    // Ignore a group with an unset centre. A new/mis-set group whose lat/lng is 0 (or
+    // missing) would otherwise pull the region's bounding box down to (0, 0) in the Atlantic,
+    // so "Wales" zoomed off North Africa (Discourse 9932).
+    Number.isFinite(group.lat) &&
+    Number.isFinite(group.lng) &&
+    (group.lat !== 0 || group.lng !== 0)
   ) {
     swlat = swlat === null ? group.lat : Math.min(swlat, group.lat)
     swlng = swlng === null ? group.lng : Math.min(swlng, group.lng)

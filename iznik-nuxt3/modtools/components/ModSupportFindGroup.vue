@@ -166,6 +166,9 @@
         class="mt-2"
         @handle="saveCentres"
       />
+      <p v-if="centreError" class="text-danger">
+        {{ centreError }}
+      </p>
       <h4 class="mt-2">CGA</h4>
       <b-form-textarea v-model="group.cga" rows="4" class="mb-2" />
       <p v-if="CGAerror" class="text-danger">
@@ -212,6 +215,7 @@
 import { ref, computed, watch } from 'vue'
 import { useMemberStore } from '~/stores/member'
 import { useModGroupStore } from '@/stores/modgroup'
+import { toNumberOrNull } from '~/composables/useNumericInput'
 
 const modGroupStore = useModGroupStore()
 const memberStore = useMemberStore()
@@ -221,6 +225,7 @@ const searchgroup = ref(null)
 const fetchingVolunteers = ref(false)
 const CGAerror = ref(null)
 const DPAerror = ref(null)
+const centreError = ref(null)
 
 const groups = computed(() => {
   return Object.values(modGroupStore.allGroups)
@@ -397,14 +402,22 @@ function saveNames(callback) {
   callback()
 }
 
-function saveCentres(callback) {
-  modGroupStore.updateMT({
-    id: groupid.value,
-    lat: group.value.lat,
-    lng: group.value.lng,
-    altlat: group.value.altlat,
-    altlng: group.value.altlng,
-  })
+async function saveCentres(callback) {
+  centreError.value = null
+  // Coerce the number-input strings to real numbers (or null when blank). The API's lat/lng
+  // fields are float; a string there fails the request body parse and the whole save is
+  // rejected, which is why the centre point never stuck (Discourse 9932).
+  try {
+    await modGroupStore.updateMT({
+      id: groupid.value,
+      lat: toNumberOrNull(group.value.lat),
+      lng: toNumberOrNull(group.value.lng),
+      altlat: toNumberOrNull(group.value.altlat),
+      altlng: toNumberOrNull(group.value.altlng),
+    })
+  } catch (e) {
+    centreError.value = e.message
+  }
   callback()
 }
 
