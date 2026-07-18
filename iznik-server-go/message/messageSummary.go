@@ -38,4 +38,9 @@ type MessageSummary struct {
 	// clearance): the browse feed floats it to the top whenever it already qualifies
 	// to appear. Only set on the browse feed; omitted (false) elsewhere.
 	Pinned bool `json:"pinned,omitempty" gorm:"-"`
+	// Mine is true when the post's author is the viewer. The browse feed sets it so the
+	// client can float the viewer's own recent posts to the top of every sort order —
+	// members otherwise lose track of their own posts among the reach-ordered feed and
+	// assume they are not showing (Discourse 9933). Only set on the browse feed.
+	Mine bool `json:"mine,omitempty" gorm:"-"`
 }

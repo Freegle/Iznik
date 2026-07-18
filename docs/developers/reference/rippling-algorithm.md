@@ -223,6 +223,14 @@ retracted, so re-approval restores the copy without re-rippling.
   distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
   the digest's `DistancePreferenceFilter::passesBothPreferences`).
 
+  **The viewer's own posts always come first.** A member's own open posts are included in the
+  feed regardless of reach (`isochrone/message.go` own-posts arm) and flagged with `mine`
+  (`MessageSummary.Mine`, set when `messages.fromuser` = the viewer). The client
+  (`composables/useMessageSort.js`) floats `mine` posts to the top of *every* sort order (New
+  to you / Newest / Closest), newest-first, just below any paid pinned clearance. Without this,
+  members lost their own posts among the reach-ordered feed and assumed they were not showing
+  (Discourse 9933).
+
   The containment test itself is served through **sandwich bounds**
   (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
   isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
