@@ -663,6 +663,7 @@ type ChatRoomPostRequest struct {
 	Allowback   bool   `json:"allowback"`
 	Reason      string `json:"reason"`
 	Comment     string `json:"comment"`
+	Modtools    bool   `json:"modtools"`
 }
 
 type RosterEntry struct {
@@ -686,7 +687,7 @@ func PostChatRoom(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "AllSeen":
-		return handleAllSeen(c, db, myid)
+		return handleAllSeen(c, db, myid, req.Modtools)
 	case "Nudge":
 		return handleNudge(c, db, myid, req.ID)
 	case "Typing":
@@ -1605,28 +1606,53 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
-	// Mark all chat messages as seen across all chats for this user.
-	// Sets lastmsgseen to the maximum message ID in each chat the user is rostered in.
-	db.Exec(`UPDATE chat_roster
-		SET lastmsgseen = (
-			SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid
-		)
-		WHERE userid = ?`, myid)
+func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error {
+	// Mark chat messages as seen, scoped to the chats the caller's client actually
+	// shows. The ModTools "Mark all read" button sits above a list of moderator
+	// chats (User2Mod/Mod2Mod), so it must not also clear the moderator's personal
+	// member chats - doing so silently suppresses the FD unread badge for messages
+	// they have never read.
+	if modtools {
+		// countUnseenMT uses LEFT JOIN chat_roster with COALESCE(lastmsgseen, 0), so
+		// moderator-visible chats without a roster row are treated as fully unread.
+		// Update existing roster rows and insert a seen pointer for chats that have
+		// none, so the MT badge is guaranteed to clear.
+		modChatIDs := getModeratorChatIDs(db, myid, []string{utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "", 0)
+		if len(modChatIDs) > 0 {
+			idlist := joinIDs(modChatIDs)
+			db.Exec(`UPDATE chat_roster
+				SET lastmsgseen = (
+					SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid
+				)
+				WHERE userid = ? AND chatid IN (`+idlist+`)`, myid)
 
-	// countUnseenMT uses LEFT JOIN chat_roster with COALESCE(lastmsgseen, 0), so
-	// moderator-visible chats without a roster row are treated as fully unread.
-	// When a moderator joins new groups, those groups' chats have no roster entry for
-	// the mod yet. Insert a seen pointer for any such chats so they are cleared.
-	modChatIDs := getModeratorChatIDs(db, myid, []string{utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "", 0)
-	if len(modChatIDs) > 0 {
-		idlist := joinIDs(modChatIDs)
+			db.Exec(`INSERT INTO chat_roster (chatid, userid, lastmsgseen, date)
+				SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW()
+				FROM chat_rooms cr
+				WHERE cr.id IN (`+idlist+`)
+				AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)`,
+				myid, myid)
+		}
+	} else {
+		// FD: chats the user participates in - User2User, plus User2Mod chats they
+		// opened. Mod-side roster rows (Mod2Mod, or User2Mod where the user is the
+		// moderator rather than user1) are left alone.
+		db.Exec(`UPDATE chat_roster
+			SET lastmsgseen = (
+				SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid
+			)
+			WHERE userid = ?
+			AND chatid IN (SELECT id FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN (?, ?))`,
+			myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD)
+
+		// V1 parity: chats with no roster row yet (e.g. a brand-new conversation the
+		// user has never opened) also count as unread, so give them a seen pointer.
 		db.Exec(`INSERT INTO chat_roster (chatid, userid, lastmsgseen, date)
 			SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW()
 			FROM chat_rooms cr
-			WHERE cr.id IN (`+idlist+`)
+			WHERE (cr.user1 = ? OR cr.user2 = ?) AND cr.chattype IN (?, ?)
 			AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)`,
-			myid, myid)
+			myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD, myid)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
