@@ -3338,6 +3338,20 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	itemsChanged := !stringPtrEqual(oldItemsJSON, newItemsJSON)
 	imagesChanged := !stringPtrEqual(oldImagesJSON, newImagesJSON)
 
+	// Subject, textbody, and item name are exactly the fields
+	// ContentCheckService::checkMessage() scans (concern keywords, per-group
+	// worry words, phone numbers, vague-item, not-an-item, URLs, ...).
+	// processUnprocessed() only re-scans messages_groups rows where
+	// contentcheck_checked_at IS NULL, so once a row has been checked, editing
+	// in new content otherwise leaves it unchecked forever - the automated
+	// moderation filters silently skip it and it can only be caught by a mod
+	// noticing manually. Clearing the stamp here re-queues the row for a fresh
+	// check, for both mods and owners: mods stripping an issue that triggered a
+	// flag also need the clean edit re-verified.
+	if subjectChanged || textChanged || itemsChanged {
+		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
+	}
+
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
 		// Store oldtype/newtype only when type actually changed.
 		var oldType, newType interface{}
