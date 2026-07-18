@@ -1232,6 +1232,161 @@ func TestPatchSessionConfirmEmailMergesUser(t *testing.T) {
 	db.Exec("DELETE FROM users_emails WHERE email = ?", testEmail)
 }
 
+// TestPatchSessionConfirmEmailMergeConsolidatesChatRooms covers the account
+// merge when both users already chat to the same counterparties. chat_rooms
+// has a unique key on (user1, user2, chattype), so blindly reassigning the
+// merged user's rooms collides when the surviving user already has a room
+// with the same counterparty — historically that aborted the UPDATE and
+// orphaned the rooms (and their chat history) on the deleted user. The merge
+// must instead migrate messages into the surviving room and delete the
+// duplicate, matching on counterparty in either user1/user2 ordering.
+func TestPatchSessionConfirmEmailMergeConsolidatesChatRooms(t *testing.T) {
+	prefix := uniquePrefix("merge_rooms")
+	survivor := CreateTestUser(t, prefix+"_srv", "User")
+	_, token := CreateTestSession(t, survivor)
+	loser := CreateTestUser(t, prefix+"_los", "User")
+	zed := CreateTestUser(t, prefix+"_zed", "User")   // both users chat to zed, same ordering
+	yana := CreateTestUser(t, prefix+"_yan", "User")  // both users chat to yana, opposite ordering
+	wendy := CreateTestUser(t, prefix+"_wen", "User") // only the loser chats to wendy
+
+	db := database.DBConn
+
+	insertRoom := func(user1, user2 uint64, latest string) uint64 {
+		db.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, 'User2User', ?)",
+			user1, user2, latest)
+		var id uint64
+		db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND user2 = ? AND chattype = 'User2User' ORDER BY id DESC LIMIT 1",
+			user1, user2).Scan(&id)
+		assert.NotZero(t, id)
+		t.Cleanup(func() { db.Exec("DELETE FROM chat_rooms WHERE id = ?", id) })
+		return id
+	}
+
+	insertMessage := func(chatID, fromUser uint64, text string) uint64 {
+		db.Exec("INSERT INTO chat_messages (chatid, userid, message) VALUES (?, ?, ?)", chatID, fromUser, text)
+		var id uint64
+		db.Raw("SELECT id FROM chat_messages WHERE message = ? ORDER BY id DESC LIMIT 1", text).Scan(&id)
+		assert.NotZero(t, id)
+		t.Cleanup(func() { db.Exec("DELETE FROM chat_messages WHERE id = ?", id) })
+		return id
+	}
+
+	// Colliding pair, same ordering: both rooms have zed as user2, so the raw
+	// user1 reassignment would hit the unique key.
+	roomSurvivorZed := insertRoom(survivor, zed, "2026-01-01 00:00:00")
+	roomLoserZed := insertRoom(loser, zed, "2026-01-02 03:04:05")
+	m1 := insertMessage(roomSurvivorZed, survivor, prefix+"_m1")
+	m2 := insertMessage(roomLoserZed, loser, prefix+"_m2")
+	m3 := insertMessage(roomLoserZed, zed, prefix+"_m3")
+
+	// Colliding pair, opposite ordering: the loser's room has yana as user1.
+	// A raw reassignment would not collide but would leave two rooms between
+	// the same pair — consolidation must match on counterparty, not column.
+	roomSurvivorYana := insertRoom(survivor, yana, "2026-01-01 00:00:00")
+	roomLoserYana := insertRoom(yana, loser, "2026-01-01 00:00:00")
+	m4 := insertMessage(roomLoserYana, loser, prefix+"_m4")
+
+	// Direct room between the two accounts: becomes a self-chat after merge,
+	// so it must be deleted along with its messages.
+	roomDirect := insertRoom(loser, survivor, "2026-01-01 00:00:00")
+	insertMessage(roomDirect, loser, prefix+"_m5")
+
+	// Non-colliding room: simply reassigned to the survivor.
+	roomLoserWendy := insertRoom(loser, wendy, "2026-01-01 00:00:00")
+	m6 := insertMessage(roomLoserWendy, wendy, prefix+"_m6")
+
+	// Roster rows: the survivor sits in their zed room, the loser and zed sit
+	// in the loser's zed room.
+	db.Exec("INSERT INTO chat_roster (chatid, userid) VALUES (?, ?), (?, ?), (?, ?), (?, ?)",
+		roomSurvivorZed, survivor, roomLoserZed, loser, roomLoserZed, zed, roomLoserWendy, loser)
+
+	// The loser owns an email with a validatekey; the survivor confirms it.
+	testEmail := prefix + "_rooms@test.com"
+	canon := strings.ToLower(strings.ReplaceAll(testEmail, ".", ""))
+	validateKey := prefix[:24]
+	db.Exec("INSERT INTO users_emails (email, canon, backwards, validatekey, userid) VALUES (?, ?, ?, ?, ?)",
+		testEmail, canon, reverseString(canon), validateKey, loser)
+	t.Cleanup(func() { db.Exec("DELETE FROM users_emails WHERE email = ?", testEmail) })
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"key": validateKey,
+	})
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// No chat rooms may be left referencing the merged user.
+	var loserRooms int64
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE user1 = ? OR user2 = ?", loser, loser).Scan(&loserRooms)
+	assert.Equal(t, int64(0), loserRooms, "merged user must not be left holding chat rooms")
+
+	// Same-ordering collision: the loser's room is gone and its history moved
+	// into the surviving room. Authorship follows the merge for the loser's
+	// own messages; the counterparty's messages keep their author.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE id = ?", roomLoserZed).Scan(&count)
+	assert.Equal(t, int64(0), count, "colliding room (same ordering) should be deleted")
+	var chatID, fromID uint64
+	db.Raw("SELECT chatid, userid FROM chat_messages WHERE id = ?", m2).Row().Scan(&chatID, &fromID)
+	assert.Equal(t, roomSurvivorZed, chatID, "loser's message should move to the surviving room")
+	assert.Equal(t, survivor, fromID, "loser's message should be re-authored to the survivor")
+	db.Raw("SELECT chatid, userid FROM chat_messages WHERE id = ?", m3).Row().Scan(&chatID, &fromID)
+	assert.Equal(t, roomSurvivorZed, chatID, "counterparty's message should move to the surviving room")
+	assert.Equal(t, zed, fromID, "counterparty's message should keep its author")
+	db.Raw("SELECT chatid FROM chat_messages WHERE id = ?", m1).Scan(&chatID)
+	assert.Equal(t, roomSurvivorZed, chatID, "surviving room's own message should be untouched")
+
+	// The surviving room should surface the merged history's recency.
+	var latest string
+	db.Raw("SELECT latestmessage FROM chat_rooms WHERE id = ?", roomSurvivorZed).Scan(&latest)
+	assert.Contains(t, latest, "2026-01-02", "surviving room should take the newer latestmessage")
+
+	// Opposite-ordering collision: consolidated too, leaving exactly one room
+	// between the survivor and yana.
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE id = ?", roomLoserYana).Scan(&count)
+	assert.Equal(t, int64(0), count, "colliding room (opposite ordering) should be deleted")
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		survivor, yana, yana, survivor).Scan(&count)
+	assert.Equal(t, int64(1), count, "exactly one room should remain between survivor and yana")
+	db.Raw("SELECT chatid FROM chat_messages WHERE id = ?", m4).Scan(&chatID)
+	assert.Equal(t, roomSurvivorYana, chatID, "message should move to the surviving yana room")
+
+	// The direct room between the two accounts is deleted with its history.
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE id = ?", roomDirect).Scan(&count)
+	assert.Equal(t, int64(0), count, "direct room between merged accounts should be deleted")
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ?", roomDirect).Scan(&count)
+	assert.Equal(t, int64(0), count, "direct room's messages should be deleted")
+
+	// The non-colliding room is reassigned intact.
+	var w1, w2 uint64
+	db.Raw("SELECT user1, user2 FROM chat_rooms WHERE id = ?", roomLoserWendy).Row().Scan(&w1, &w2)
+	assert.Equal(t, survivor, w1, "non-colliding room should be reassigned to the survivor")
+	assert.Equal(t, wendy, w2)
+	db.Raw("SELECT chatid, userid FROM chat_messages WHERE id = ?", m6).Row().Scan(&chatID, &fromID)
+	assert.Equal(t, roomLoserWendy, chatID, "reassigned room keeps its messages")
+	assert.Equal(t, wendy, fromID)
+
+	// Roster: no rows may be left for the merged user; the counterparty's
+	// roster presence migrates to the surviving room.
+	db.Raw("SELECT COUNT(*) FROM chat_roster WHERE userid = ?", loser).Scan(&count)
+	assert.Equal(t, int64(0), count, "merged user must not be left on any roster")
+	db.Raw("SELECT COUNT(*) FROM chat_roster WHERE chatid = ? AND userid = ?", roomSurvivorZed, zed).Scan(&count)
+	assert.Equal(t, int64(1), count, "counterparty's roster row should migrate to the surviving room")
+
+	// Standard merge outcomes still hold.
+	var dbUserID uint64
+	db.Raw("SELECT userid FROM users_emails WHERE email = ?", testEmail).Scan(&dbUserID)
+	assert.Equal(t, survivor, dbUserID)
+	var deletedAt *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", loser).Scan(&deletedAt)
+	assert.NotNil(t, deletedAt)
+}
+
 // reverseString reverses a string for the backwards column.
 func reverseString(s string) string {
 	runes := []rune(s)
