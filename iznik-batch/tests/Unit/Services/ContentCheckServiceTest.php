@@ -591,9 +591,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
     {
-        // A message where the top language is far above the English probability
-        // (ratio 0.3, well below both 0.8 and 0.9) must still be flagged.
-        $nonEnglishDetector = static fn(string $text) => ['fr' => 0.70, 'en' => 0.21];
+        // A message the detector confidently identifies as French must still be flagged.
+        $nonEnglishDetector = static fn(string $text) => ['lang' => 'fr', 'reliable' => true];
         $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
         $result = $this->service->checkLanguage('', $text, $nonEnglishDetector);
         $this->assertNotNull($result);
