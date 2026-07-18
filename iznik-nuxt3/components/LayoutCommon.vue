@@ -202,8 +202,14 @@ const allowAd = computed(() => {
     routePath.value === '/partnerships' ||
     routePath.value === '/partnerships/' ||
     routePath.value === '/together' ||
-    routePath.value === '/together/'
+    routePath.value === '/together/' ||
+    routePath.value === '/jobs' ||
+    routePath.value === '/jobs/'
   ) {
+    // The /jobs page already shows a full scrollable list of job ads, so the
+    // sticky footer ad (which duplicates the same jobs in its own small,
+    // independently-scrollable panel) would give the page two scroll regions
+    // instead of one - see Discourse topic 9363 post #38.
     return false
   }
   return routePath.value !== '/' || loggedIn.value

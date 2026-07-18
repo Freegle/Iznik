@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ref } from 'vue'
 
 const mockMiscStore = {
   stickyAdRendered: false,
@@ -93,6 +93,25 @@ describe('LayoutCommon', () => {
     it('hides ad on landing page when logged out', () => {
       // routePath.value !== '/' || loggedIn.value
       expect(true).toBe(true)
+    })
+
+    it('hides the sticky jobs ad footer on the dedicated /jobs page', () => {
+      // Discourse topic 9363 post #38 (Neville_Reid): on iOS the /jobs page showed
+      // a non-scrollable job list at the top plus a separate ~2-row independently
+      // scrollable panel below it (JobsDaSlot's sticky footer, which duplicates the
+      // same job ads already shown in the page's own list) - i.e. two scroll
+      // regions instead of one. allowAd must exclude /jobs, the same way it
+      // already excludes /partnerships and /together.
+      const src = readFileSync(
+        resolve(__dirname, '../../../components/LayoutCommon.vue'),
+        'utf-8'
+      )
+      const allowAdMatch = src.match(
+        /const allowAd = computed\(\(\) => \{[\s\S]*?\n\}\)/
+      )
+      expect(allowAdMatch).not.toBeNull()
+      const allowAdSrc = allowAdMatch[0]
+      expect(allowAdSrc).toMatch(/routePath\.value\s*===\s*['"]\/jobs['"]/)
     })
 
     it('shows DaDisableCTA after ad rendered', () => {
