@@ -1387,6 +1387,49 @@ func TestPatchSessionConfirmEmailMergeConsolidatesChatRooms(t *testing.T) {
 	assert.NotNil(t, deletedAt)
 }
 
+// TestMergeUserAccountsRollsBackOnFailure proves the merge is atomic: a
+// failure mid-way (here a foreign-key violation on the room reassignment,
+// because the survivor doesn't exist) must roll back every earlier step,
+// leaving the other account and its chat data untouched rather than
+// half-merged. The old goroutine-per-statement implementation could not
+// guarantee this.
+func TestMergeUserAccountsRollsBackOnFailure(t *testing.T) {
+	prefix := uniquePrefix("merge_rollback")
+	loser := CreateTestUser(t, prefix+"_los", "User")
+	zed := CreateTestUser(t, prefix+"_zed", "User")
+
+	db := database.DBConn
+
+	db.Exec("INSERT INTO chat_rooms (user1, user2, chattype) VALUES (?, ?, 'User2User')", loser, zed)
+	var roomID uint64
+	db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND user2 = ? AND chattype = 'User2User' ORDER BY id DESC LIMIT 1",
+		loser, zed).Scan(&roomID)
+	assert.NotZero(t, roomID)
+	t.Cleanup(func() { db.Exec("DELETE FROM chat_rooms WHERE id = ?", roomID) })
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message) VALUES (?, ?, ?)", roomID, loser, prefix+"_msg")
+
+	// A user id that doesn't exist: the chat_rooms.user1 foreign key rejects
+	// the reassignment after earlier merge steps have already executed.
+	var maxID uint64
+	db.Raw("SELECT MAX(id) FROM users").Scan(&maxID)
+	missing := maxID + 1000000
+
+	err := session.MergeUserAccounts(db, missing, loser)
+	assert.Error(t, err, "merging into a nonexistent user must fail")
+
+	// Everything rolled back: the loser still owns the room and its message,
+	// and is not marked deleted.
+	var u1 uint64
+	db.Raw("SELECT user1 FROM chat_rooms WHERE id = ?", roomID).Scan(&u1)
+	assert.Equal(t, loser, u1, "room reassignment must be rolled back")
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND userid = ?", roomID, loser).Scan(&count)
+	assert.Equal(t, int64(1), count, "chat message must be untouched")
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", loser).Scan(&deleted)
+	assert.Nil(t, deleted, "user must not be marked deleted after a failed merge")
+}
+
 // reverseString reverses a string for the backwards column.
 func reverseString(s string) string {
 	runes := []rune(s)
