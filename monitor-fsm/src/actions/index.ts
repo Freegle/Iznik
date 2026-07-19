@@ -267,10 +267,28 @@ export async function fetchReporterQuote(topicId: number, postNumber: number, ma
   try {
     const resp = await fetch(`${DISCOURSE_BASE}/t/${topicId}.json`, { headers: { 'Api-Key': apiKey } })
     if (!resp.ok) return ''
-    const j = (await resp.json()) as { post_stream?: { posts?: Array<{ post_number: number; cooked?: string }> } }
-    const post = j.post_stream?.posts?.find((p) => p.post_number === postNumber)
-    if (!post?.cooked) return ''
-    let text = post.cooked
+    const j = (await resp.json()) as {
+      posts_count?: number
+      highest_post_number?: number
+      post_stream?: { posts?: Array<{ post_number: number; cooked?: string }>; stream?: number[] }
+    }
+    let cooked = j.post_stream?.posts?.find((p) => p.post_number === postNumber)?.cooked
+    if (!cooked) {
+      // The reporting post isn't on the topic's first page (~20 posts). Resolve
+      // its id from the stream (anchored from the end so mid-thread deletions
+      // don't shift the index) and fetch that specific post, rather than silently
+      // falling back to our summary.
+      const stream = j.post_stream?.stream ?? []
+      const highest = j.highest_post_number ?? j.posts_count ?? stream.length
+      const idx = stream.length - 1 - (highest - postNumber)
+      const postId = idx >= 0 && idx < stream.length ? stream[idx] : undefined
+      if (postId) {
+        const r2 = await fetch(`${DISCOURSE_BASE}/posts/${postId}.json`, { headers: { 'Api-Key': apiKey } })
+        if (r2.ok) cooked = ((await r2.json()) as { cooked?: string }).cooked
+      }
+    }
+    if (!cooked) return ''
+    let text = cooked
       .replace(/<aside[\s\S]*?<\/aside>/gi, ' ') // drop nested quote blocks — never quote a quote
       .replace(/<[^>]+>/g, ' ')
       .replace(/&amp;/g, '&')
@@ -283,6 +301,22 @@ export async function fetchReporterQuote(topicId: number, postNumber: number, ma
   } catch {
     return ''
   }
+}
+
+/**
+ * A "retest" post can either CONFIRM a fix works ("showing now, thanks") or
+ * report it is STILL BROKEN. Only the latter, against an already-fixed bug, is a
+ * regression; a positive confirmation is success feedback. Misreading a
+ * confirmation as a regression creates a bogus bug that then draws a nonsensical
+ * "please retest" auto-reply on the very post that confirmed the fix (topic
+ * 9932/8). "still broken" wins if both are present ("thanks but still not
+ * working").
+ */
+export function retestConfirmsFix(text: string): boolean {
+  const t = (text || '').toLowerCase()
+  const stillBroken = /\b(still|not working|does ?n'?t work|no better|same (problem|issue|thing)|not fixed|worse|broken|spoke too soon|back again|happening again)\b/.test(t)
+  if (stillBroken) return false
+  return /\b(works? now|working now|now works?|fixed|resolved|sorted|all good|thank(s| you)|great|perfect|now (showing|shows|working)|takes me to|no longer|can now)\b/.test(t)
 }
 
 /**
@@ -2837,7 +2871,24 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             skipped++
             continue
           }
-          // No existing open bug → treat as potential regression, fall through to persist as 'open'
+          // No OPEN bug in the topic. If there is an already-FIXED bug here and
+          // this retest is a positive confirmation ("works now"), it is success
+          // feedback, NOT a regression. Record it against the fixed bug and skip —
+          // otherwise it becomes a bogus regression bug that draws a "please
+          // retest" auto-reply on the post that just confirmed the fix (9932/8).
+          const priorFixedBug = db.prepare(
+            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND state = 'fixed' ORDER BY fixed_at DESC LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number } | undefined
+          const retestText = `${c.summary ?? ''} ${c.originalPostText ?? ''}`
+          if (priorFixedBug && retestConfirmsFix(retestText)) {
+            db.prepare(`UPDATE discourse_bug SET last_seen_at = datetime('now') WHERE topic = ? AND post = ?`)
+              .run(priorFixedBug.topic, priorFixedBug.post)
+            out(`persist_classifications: ${c.topic}/${post} confirms fix of ${priorFixedBug.topic}/${priorFixedBug.post} — success feedback, skipping new entry`)
+            skipped++
+            continue
+          }
+          // No existing open bug and not a positive confirmation → treat as a
+          // potential regression, fall through to persist as 'open'.
         }
         // Parse tags from classification output (TRIAGE emits symptom_tags + code_area)
         const symptomTags: string[] = Array.isArray(c.symptom_tags)
