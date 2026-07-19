@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\FreegleApiClient;
+use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -57,6 +58,9 @@ class NotifyMatchedPostsCommandTest extends TestCase
         $this->mock(EmailSpoolerService::class, function ($m) {
             $m->shouldReceive('spool')->andReturn('spool-id');
         });
+        $this->mock(PushNotificationService::class, function ($m) {
+            $m->shouldReceive('notifyUser');
+        });
 
         $this->artisan('matches:notify')->assertExitCode(0);
 
@@ -76,6 +80,9 @@ class NotifyMatchedPostsCommandTest extends TestCase
         $this->mock(EmailSpoolerService::class, function ($m) {
             $m->shouldReceive('spool')->never();
         });
+        $this->mock(PushNotificationService::class, function ($m) {
+            $m->shouldReceive('notifyUser')->never();
+        });
 
         $this->artisan('matches:notify', ['--dry-run' => true])->assertExitCode(0);
 
@@ -83,6 +90,39 @@ class NotifyMatchedPostsCommandTest extends TestCase
             'msgid' => $offer->id,
             'userid' => $recipient->id,
         ]);
+        $this->assertDatabaseMissing('users_notifications', [
+            'touser' => $recipient->id,
+            'type' => 'MatchedPost',
+        ]);
         $this->assertNull($recipient->fresh()->lastrelevantcheck);
+    }
+
+    public function test_creates_inapp_notification_and_fires_push(): void
+    {
+        [$recipient, $wanted, $offerer, $offer] = $this->seedFixture();
+
+        $pushed = [];
+        $this->mock(EmailSpoolerService::class, function ($m) {
+            $m->shouldReceive('spool')->andReturn('spool-id');
+        });
+        $this->mock(PushNotificationService::class, function ($m) use (&$pushed) {
+            $m->shouldReceive('notifyUser')->andReturnUsing(function ($uid) use (&$pushed) {
+                $pushed[] = (int) $uid;
+
+                return 1;
+            });
+        });
+
+        $this->artisan('matches:notify')->assertExitCode(0);
+
+        // In-app bell notification created for the recipient, pointing at the match.
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $recipient->id,
+            'type' => 'MatchedPost',
+            'url' => '/message/' . $offer->id,
+            'seen' => 0,
+        ]);
+        // And a device push was fired for that recipient.
+        $this->assertContains((int) $recipient->id, $pushed);
     }
 }

@@ -47,10 +47,19 @@ This is a **separate** mail from the daily digest's relevance ranking
    free (the reason post is a fresh post already searched); direction (ii) costs
    one extra apiv2 call per surviving recipient post, so a match that hasn't
    rippled out to the recipient is dropped rather than mailed on bbox proximity.
-6. **`NotifyMatchedPostsCommand`** renders `App\Mail\Matched\MatchedPosts` (layout
-   adapts to the match count — hero card for one, compact list for several),
-   spools it, records each matched post in `messages_matched_notified`, and bumps
-   `lastrelevantcheck`.
+7. **`NotifyMatchedPostsCommand`** delivers to each eligible recipient:
+   - an **in-app (bell) notification** — a `users_notifications` row of the new
+     `type='MatchedPost'` (migration `2026_07_19_000002_...`; rendered by
+     `iznik-nuxt3/components/NotificationMatchedPost.vue`), plus a **device push**
+     via `PushNotificationService::notifyUser` (no-op when the user has no
+     registered app device). This is the primary channel — delivered regardless
+     of email;
+   - an **email** (`App\Mail\Matched\MatchedPosts`, adaptive hero/list layout)
+     when the member has an address.
+   Then it records each matched post in `messages_matched_notified` (dedup across
+   both channels) and bumps `lastrelevantcheck`. The subject/notification title
+   mirror each other: "Someone is offering: <item>" for one match, "Freegle
+   matches for you" for several.
 
 ## Dedup ledger
 
