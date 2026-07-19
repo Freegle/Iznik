@@ -27,8 +27,14 @@ const (
 	SourceAverage = "average"
 )
 
-// wordSplitRe mirrors PHP's preg_split('/\s+/', $sentence).
-var wordSplitRe = regexp.MustCompile(`\s+`)
+// maxImpactQty caps the caller-supplied qty so a single request can't
+// produce an unbounded totalWeightKg/co2eKg/benefitGbp in the response.
+const maxImpactQty = 100000
+
+// wordSplitRe mirrors PHP's preg_split('/\s+/', $sentence). PCRE's default
+// \s class includes vertical tab (0x0B), unlike Go RE2's \s, so the class is
+// spelled out explicitly to match PHP's tokenisation exactly.
+var wordSplitRe = regexp.MustCompile("[\t\n\f\r \v]+")
 
 // nonAlphanumericRe mirrors PHP's preg_replace('/[^\da-z]/i', ”, $word)
 // applied after strtolower() - i.e. strip everything but digits and letters.
@@ -149,13 +155,19 @@ type itemsExactMatch struct {
 	Weight float64 `gorm:"column:weight"`
 }
 
-// findExactItemWeight looks up an exact (case-insensitive) match in the
-// `items` catalog with a usable (non-null, non-zero) weight. This is a
-// plain SELECT - it never inserts, unlike ItemService::findOrCreate().
+// findExactItemWeight looks up an exact match in the `items` catalog with a
+// usable (non-null, non-zero) weight. The `items.name` column has a UNIQUE
+// index under the table's default utf8mb4_unicode_ci collation, which is
+// already case-insensitive, so a plain equality comparison both matches
+// case-insensitively and uses the index - matching the convention used
+// elsewhere in this codebase (e.g. message/message.go, test/testUtils.go).
+// Wrapping the column in LOWER() would prevent the unique index from being
+// used, forcing a full table scan on every call. This is a plain SELECT -
+// it never inserts, unlike ItemService::findOrCreate().
 func findExactItemWeight(db *gorm.DB, name string) (weight float64, matched string, ok bool) {
 	var row itemsExactMatch
 	result := db.Raw(
-		"SELECT name, weight FROM items WHERE LOWER(name) = LOWER(?) AND weight IS NOT NULL AND weight != 0 LIMIT 1",
+		"SELECT name, weight FROM items WHERE name = ? AND weight IS NOT NULL AND weight != 0 LIMIT 1",
 		name,
 	).Scan(&row)
 
@@ -226,6 +238,9 @@ func Impact(c *fiber.Ctx) error {
 	qty := c.QueryInt("qty", 1)
 	if qty < 1 {
 		qty = 1
+	}
+	if qty > maxImpactQty {
+		qty = maxImpactQty
 	}
 
 	db := database.DBConn

@@ -182,6 +182,17 @@ func TestItemImpactDefaultQtyIsOne(t *testing.T) {
 	assert.Equal(t, 1, result.Qty)
 }
 
+// TestItemImpactQtyIsCapped covers the qty upper bound: a caller-supplied
+// qty far beyond any sane real-world value is clamped down to the server's
+// maximum, rather than being multiplied through unbounded into the
+// response's weight/CO2e/benefit fields.
+func TestItemImpactQtyIsCapped(t *testing.T) {
+	prefix := uniquePrefix("ItemImpactQtyCap")
+	status, result := fetchImpact(t, prefix+" sofa", 999999999)
+	require.Equal(t, 200, status)
+	assert.Equal(t, 100000, result.Qty)
+}
+
 // roundForTest mirrors item.round2dp() (unexported, so duplicated here) -
 // using math.Round directly, not a hand-rolled tie-break, so it can't
 // diverge from the implementation's own rounding.

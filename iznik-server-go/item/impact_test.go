@@ -38,6 +38,15 @@ func TestCanonWordStripsNonAlphanumericButKeepsDigits(t *testing.T) {
 	assert.Equal(t, "abdefoss", canonWord("Sofa-Bed's!"))
 }
 
+func TestCanonSentenceSplitsOnVerticalTab(t *testing.T) {
+	// PHP's preg_split('/\s+/', ...) uses PCRE's default \s, which includes
+	// vertical tab (0x0B) - unlike Go RE2's \s. wordSplitRe must split on it
+	// too, so "foo\x0bbar" tokenises the same way as the PHP original does:
+	// as two words, not one.
+	words := canonSentence("foo\x0bbar")
+	assert.Equal(t, []string{"foo", "bar"}, words)
+}
+
 func TestWordsInCommonMatchingWord(t *testing.T) {
 	// "Big Comfy Sofa" canonicalises to {big, cfmoy, afos}; "sofa" to {afos}.
 	// 1 common word out of a longer list of 3 -> 100/3 = 33.33%.
