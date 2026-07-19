@@ -39,6 +39,35 @@ class FreegleApiClientTest extends TestCase
     }
 
     // =====================================================================
+    // matchesForPost()
+    // =====================================================================
+
+    public function test_matches_for_post_returns_the_match_list(): void
+    {
+        FreegleApiClient::fake([
+            ['body' => [
+                ['id' => 101, 'score' => 0.9, 'groupid' => 5, 'lat' => 51.5, 'lng' => -0.1],
+                ['id' => 102, 'score' => 0.7, 'groupid' => 5, 'lat' => 51.5, 'lng' => -0.1],
+            ]],
+        ]);
+
+        $matches = (new FreegleApiClient('http://example.test'))->matchesForPost(42, 10);
+
+        $this->assertCount(2, $matches);
+        $this->assertEquals(101, $matches[0]['id']);
+    }
+
+    public function test_matches_for_post_returns_empty_on_failure(): void
+    {
+        // No fake queued → request() returns null → empty list, never an error.
+        FreegleApiClient::fake([['body' => null]]);
+
+        $matches = (new FreegleApiClient('http://example.test'))->matchesForPost(42);
+
+        $this->assertSame([], $matches);
+    }
+
+    // =====================================================================
     // authenticate()
     // =====================================================================
 

@@ -42,6 +42,7 @@ class TestMailCommand extends Command
                             {--amp= : Override AMP email setting (on/off, default uses config)}
                             {--as= : For User2Mod chats: "member" or "mod" perspective (default: member)}
                             {--dry-run : Preview email content without sending}
+                            {--matched-count= : For "matched": number of matched posts to preview (1 = hero layout, default 4)}
                             {--list : List available email types}';
 
     /**
@@ -66,6 +67,7 @@ class TestMailCommand extends Command
         'deadline-reached' => 'Deadline reached notification',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
         'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
+        'matched' => 'Matched-posts email (opposite-type posts near you that match your open offers/wanteds)',
     ];
 
     /**
@@ -355,8 +357,61 @@ class TestMailCommand extends Command
             'deadline-reached' => $this->buildDeadlineReached(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
             'ripple-intro' => $this->buildRippleIntro(),
+            'matched' => $this->buildMatched(),
             default => null,
         };
+    }
+
+    /**
+     * Build the matched-posts email for preview. Uses real recent Offer/Wanted
+     * posts as stand-in "matches" (each with a synthetic reason post of the
+     * opposite type) so the layout can be reviewed in Mailpit without depending on
+     * live apiv2 vector matches. --matched-count controls how many (1 = hero).
+     * mail:test matched --user=ID --send-to=you@... [--matched-count=1]
+     */
+    protected function buildMatched(): ?\App\Mail\Matched\MatchedPosts
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            $this->error('User not found');
+
+            return null;
+        }
+
+        $count = max(1, (int) ($this->option('matched-count') ?: 4));
+
+        $posts = Message::query()
+            ->approved()
+            ->notDeleted()
+            ->whereIn('type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->where('fromuser', '!=', $user->id)
+            ->orderByDesc('arrival')
+            ->limit($count)
+            ->with(['attachments', 'fromUser', 'groups'])
+            ->get();
+
+        if ($posts->isEmpty()) {
+            $this->error('No recent Offer/Wanted posts found to preview as matches');
+
+            return null;
+        }
+
+        $this->info("Previewing matched-posts email for {$user->displayname} (ID: {$user->id}) with {$posts->count()} match(es)");
+
+        $items = $posts->map(function (Message $m) {
+            // Synthetic "your own post" of the opposite type so the reason line
+            // reads e.g. "Matches your wanted: <item>".
+            $reason = new Message([
+                'type' => $m->type === 'Offer' ? 'Wanted' : 'Offer',
+                'subject' => ($m->type === 'Offer' ? 'WANTED' : 'OFFER') . ': ' . \App\Services\MatchedPostsService::itemName($m),
+            ]);
+
+            return ['message' => $m, 'reason' => $reason, 'score' => 0.82];
+        })->all();
+
+        $email = $user->email_preferred ?? $user->email;
+
+        return new \App\Mail\Matched\MatchedPosts($user, $email, $items);
     }
 
     /**

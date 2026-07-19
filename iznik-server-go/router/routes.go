@@ -956,6 +956,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.SimilarResult
 		rg.Get("/message/matches", message.Matches)
 
+		// Opposite-type posts matching a given post — candidate set for the
+		// matched-posts email (batch job). Reach-filtered against the post owner.
+		// @Router /message/{id}/matches [get]
+		// @Summary Opposite-type posts matching a given post (matched-posts email)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 10, max 30)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/matches", message.PostMatches)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen

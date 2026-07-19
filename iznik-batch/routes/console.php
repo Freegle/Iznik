@@ -672,6 +672,17 @@ Schedule::command('mail:donations:thank-prep')
 //     ->withoutOverlapping()
 //     ->runInBackground();
 
+// Matched-posts email: for each recently-arrived Offer/Wanted, email the owner
+// (and the owners of posts it matches) the opposite-type posts near them via
+// apiv2's vector store. Resurrects V1 cron/relevant.php ("Any of these take your
+// fancy?") with vector matching. Every 10 min so matches surface promptly; the
+// per-(msgid,userid) ledger + per-user cooldown stop repeat mailing.
+Schedule::command('matches:notify')
+    ->everyTenMinutes()
+    ->withoutOverlapping(20)
+    ->sendOutputTo(cronLog('matches:notify'))
+    ->runInBackground();
+
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
 
