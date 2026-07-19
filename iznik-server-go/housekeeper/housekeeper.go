@@ -348,7 +348,7 @@ var cronJobs = []CronJob{
 	{Command: "users:remap-locations", Name: "Remap Locations", Description: "Updates cached location names in user settings when the canonical name has changed", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:process-exports", Name: "GDPR Exports", Description: "Processes pending GDPR data export requests; purges export data older than 7 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "User Management", Active: true},
 	{Command: "users:update-engagement", Name: "Engagement Classification", Description: "Updates user engagement classifications (New / Occasional / Frequent / Obsessed / Inactive / Dormant) based on recent activity", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "User Management", Active: true},
-	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Weekly (Sun 6am)", IntervalMinutes: 10080, Category: "User Management", Active: false},
+	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Daily (6am)", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:fix-tn-names", Name: "Fix TN Names", Description: "Extracts display names from TrashNothing email addresses (firstname-groupid@trashnothing.com) for users with no first/last name", Schedule: "Daily at 6:30am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 
 	// Cleanup additions

@@ -664,13 +664,19 @@ Schedule::command('mail:donations:thank-prep')
     ->sendOutputTo(cronLog('mail:donations:thank-prep'))
     ->runInBackground();
 
-// User management commands (users:cleanup still parked — no V1 cutover).
-// Schedule::command('users:cleanup')
-//     ->weekly()
-//     ->sundays()
-//     ->at('06:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
+// User management: Yahoo Groups removal, inactive-user forget, GDPR grace-period
+// forget, and hard delete of fully forgotten users with no messages left.
+// V1: cron/users_retention.php (User::userRetention + User::processForgets).
+//
+// No --limit: the phases run serially within a single invocation (guarded by
+// withoutOverlapping), so the whole backlog is worked through steadily rather
+// than in parallel. The service-level caps (50k forgets, 100k hard deletes)
+// remain as a backstop.
+Schedule::command('users:cleanup')
+    ->dailyAt('06:00')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('users:cleanup'))
+    ->runInBackground();
 
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
@@ -1099,13 +1105,6 @@ Schedule::command('groups:remind-closed')
 //     ->sendOutputTo(cronLog('groups:remind-customisation'))
 //     ->runInBackground();
 
-// V1: cron/donations_thank.php
-// Schedule::command('mail:donations:thank')
-//     ->dailyAt('09:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:donations:thank'))
-//     ->runInBackground();
-
 // V1: cron/donations_ads_target.php
 Schedule::command('donations:update-ads-target')
     ->everyMinute()
@@ -1158,37 +1157,6 @@ Schedule::command('messages:update-index')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('messages:update-index'))
     ->runInBackground();
-// Remove confirmed spammers from groups.
-// V1: cron/check_spammers.php
-// Schedule::command('users:remove-spammers')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:remove-spammers'))
-//     ->runInBackground();
-
-// Process chat spam messages.
-// V1: cron/chat_spam.php
-// Schedule::command('chats:process-spam')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('chats:process-spam'))
-//     ->runInBackground();
-
-// Send mod notifications.
-// V1: cron/mod_notifs.php
-// Schedule::command('mail:mod-notifs')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:mod-notifs'))
-//     ->runInBackground();
-
-// Update GiftAid donations.
-// V1: cron/donations_giftaid.php
-// Schedule::command('donations:update-giftaid')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('donations:update-giftaid'))
-//     ->runInBackground();
 
 // Volunteering opportunity maintenance — daily. Asks owners of dateless
 // opportunities approaching expiry whether they are still active (renewal

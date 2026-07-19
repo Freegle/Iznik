@@ -170,8 +170,11 @@ class UserManagementService
      *   4. Hard-delete fully forgotten users with no remaining messages
      *
      * @param  bool  $dryRun  If true, count what would be affected but don't modify data.
+     * @param  int|null  $limit  Max users to process per phase. Each forget is ~20 DB
+     *                           statements, so an unbounded run against a large backlog
+     *                           can hammer the database. NULL uses the per-phase defaults.
      */
-    public function cleanupUsers(bool $dryRun = FALSE): array
+    public function cleanupUsers(bool $dryRun = FALSE, ?int $limit = NULL): array
     {
         $stats = [
             'yahoo_users_deleted' => 0,
@@ -181,9 +184,9 @@ class UserManagementService
         ];
 
         $stats['yahoo_users_deleted'] = $this->deleteYahooGroupsUsers($dryRun);
-        $stats['inactive_users_forgotten'] = $this->forgetInactiveUsers($dryRun);
-        $stats['gdpr_forgets_processed'] = $this->processForgets($dryRun);
-        $stats['forgotten_users_deleted'] = $this->deleteFullyForgottenUsers($dryRun);
+        $stats['inactive_users_forgotten'] = $this->forgetInactiveUsers($dryRun, $limit);
+        $stats['gdpr_forgets_processed'] = $this->processForgets($dryRun, $limit);
+        $stats['forgotten_users_deleted'] = $this->deleteFullyForgottenUsers($dryRun, $limit);
 
         Log::info('User cleanup completed', $stats);
 
@@ -232,9 +235,10 @@ class UserManagementService
      * - Not already deleted
      *
      */
-    public function forgetInactiveUsers(bool $dryRun = FALSE): int
+    public function forgetInactiveUsers(bool $dryRun = FALSE, ?int $limit = NULL): int
     {
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
+        $limit = $limit ?? 50000;
 
         // Find candidates: no memberships, no spammer record, no mod notes,
         // last access > 6 months, systemrole = User, not deleted.
@@ -251,7 +255,7 @@ class UserManagementService
               AND users.systemrole = ?
               AND users.deleted IS NULL
               AND users.forgotten IS NULL
-            LIMIT 50000
+            LIMIT {$limit}
         ", [$sixMonthsAgo, 'User']);
 
         $count = 0;
@@ -285,15 +289,17 @@ class UserManagementService
      * who haven't been forgotten yet.
      *
      */
-    public function processForgets(bool $dryRun = FALSE): int
+    public function processForgets(bool $dryRun = FALSE, ?int $limit = NULL): int
     {
+        $limit = $limit ?? 50000;
+
         $users = DB::select("
             SELECT id
             FROM users
             WHERE deleted IS NOT NULL
               AND DATEDIFF(NOW(), deleted) > 14
               AND forgotten IS NULL
-            LIMIT 50000
+            LIMIT {$limit}
         ");
 
         $count = count($users);
@@ -428,9 +434,10 @@ class UserManagementService
      * left as a placeholder — they can be safely hard-deleted.
      *
      */
-    public function deleteFullyForgottenUsers(bool $dryRun = FALSE): int
+    public function deleteFullyForgottenUsers(bool $dryRun = FALSE, ?int $limit = NULL): int
     {
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
+        $limit = $limit ?? 100000;
 
         $users = DB::select("
             SELECT users.id
@@ -439,7 +446,7 @@ class UserManagementService
             WHERE users.forgotten IS NOT NULL
               AND users.lastaccess < ?
               AND messages.id IS NULL
-            LIMIT 100000
+            LIMIT {$limit}
         ", [$sixMonthsAgo]);
 
         $count = count($users);
