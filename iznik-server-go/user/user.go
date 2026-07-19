@@ -1868,18 +1868,24 @@ func PutUser(c *fiber.Ctx) error {
 
 		// If they provided a correct password, treat signup as login — avoids
 		// forcing users to switch to the login screen and re-enter credentials.
-		if req.Password != "" && auth.VerifyPassword(existingUID, req.Password) {
-			persistent, jwtString, err := auth.CreateSessionAndJWT(existingUID)
+		if req.Password != "" {
+			verified, err := auth.VerifyPassword(db, existingUID, req.Password)
 			if err != nil {
-				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to verify credentials")
 			}
-			return c.JSON(fiber.Map{
-				"ret":        0,
-				"status":     "Success",
-				"id":         existingUID,
-				"persistent": persistent,
-				"jwt":        jwtString,
-			})
+			if verified {
+				persistent, jwtString, err := auth.CreateSessionAndJWT(existingUID)
+				if err != nil {
+					return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
+				}
+				return c.JSON(fiber.Map{
+					"ret":        0,
+					"status":     "Success",
+					"id":         existingUID,
+					"persistent": persistent,
+					"jwt":        jwtString,
+				})
+			}
 		}
 
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
