@@ -247,6 +247,79 @@ export async function postDiscourseReply(
 }
 
 /**
+ * Fetch the reporter's ACTUAL words for a post so an auto-reply quotes what they
+ * wrote — not our paraphrased `excerpt`/summary. Quoting the stored summary
+ * produced replies that quoted a third-person paraphrase back at the reporter as
+ * if they'd said it (e.g. a `[quote="Derek"]` containing "Derek confirms two
+ * bugs are now fixed"). Returns a short verbatim excerpt (HTML + any nested
+ * quotes stripped), or '' when it can't be fetched so callers fall back to the
+ * stored excerpt/title.
+ */
+export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
+  let apiKey: string | null = null
+  try {
+    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+      auth_pairs?: Array<{ user_api_key?: string }>
+    }
+    apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
+  } catch { /* no profile / unreadable */ }
+  if (!apiKey) return ''
+  try {
+    const resp = await fetch(`${DISCOURSE_BASE}/t/${topicId}.json`, { headers: { 'Api-Key': apiKey } })
+    if (!resp.ok) return ''
+    const j = (await resp.json()) as {
+      posts_count?: number
+      highest_post_number?: number
+      post_stream?: { posts?: Array<{ post_number: number; cooked?: string }>; stream?: number[] }
+    }
+    let cooked = j.post_stream?.posts?.find((p) => p.post_number === postNumber)?.cooked
+    if (!cooked) {
+      // The reporting post isn't on the topic's first page (~20 posts). Resolve
+      // its id from the stream (anchored from the end so mid-thread deletions
+      // don't shift the index) and fetch that specific post, rather than silently
+      // falling back to our summary.
+      const stream = j.post_stream?.stream ?? []
+      const highest = j.highest_post_number ?? j.posts_count ?? stream.length
+      const idx = stream.length - 1 - (highest - postNumber)
+      const postId = idx >= 0 && idx < stream.length ? stream[idx] : undefined
+      if (postId) {
+        const r2 = await fetch(`${DISCOURSE_BASE}/posts/${postId}.json`, { headers: { 'Api-Key': apiKey } })
+        if (r2.ok) cooked = ((await r2.json()) as { cooked?: string }).cooked
+      }
+    }
+    if (!cooked) return ''
+    let text = cooked
+      .replace(/<aside[\s\S]*?<\/aside>/gi, ' ') // drop nested quote blocks — never quote a quote
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (text.length > maxLen) text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…'
+    return text
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * A "retest" post can either CONFIRM a fix works ("showing now, thanks") or
+ * report it is STILL BROKEN. Only the latter, against an already-fixed bug, is a
+ * regression; a positive confirmation is success feedback. Misreading a
+ * confirmation as a regression creates a bogus bug that then draws a nonsensical
+ * "please retest" auto-reply on the very post that confirmed the fix (topic
+ * 9932/8). "still broken" wins if both are present ("thanks but still not
+ * working").
+ */
+export function retestConfirmsFix(text: string): boolean {
+  const t = (text || '').toLowerCase()
+  const stillBroken = /\b(still|not working|does ?n'?t work|no better|same (problem|issue|thing)|not fixed|worse|broken|spoke too soon|back again|happening again)\b/.test(t)
+  if (stillBroken) return false
+  return /\b(works? now|working now|now works?|fixed|resolved|sorted|all good|thank(s| you)|great|perfect|now (showing|shows|working)|takes me to|no longer|can now)\b/.test(t)
+}
+
+/**
  * Compare a commit SHA against a reference SHA using the GitHub compare API.
  * Returns behind_by: how many commits in baseSha are NOT in headSha.
  * behind_by == 0 means headSha contains all of baseSha's history → headSha is "at or past" baseSha.
@@ -985,10 +1058,11 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const APP_CAVEAT = ' (but app releases may take up to one week)'
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (affectsApp ? APP_CAVEAT : '')
-        // Fallback chain so there is ALWAYS quoted text: the reporting post's excerpt,
-        // else the topic title (a topic always has one). If both were somehow empty the
-        // posting guard would refuse to post rather than post a context-less reply.
-        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        // Quote the reporter's ACTUAL words (fetched verbatim) so the reply quotes
+        // what they wrote, not our paraphrased summary. Fall back to the stored
+        // excerpt/title only if the live fetch yields nothing; the posting guard
+        // still refuses a context-less reply.
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         const username = bug.reporter ?? 'there'
 
         // Auto-post (explicitly approved): post the verbatim reply threaded under
@@ -1077,7 +1151,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const existing = db.prepare(`SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`).get(bug.topic, bug.post)
         if (existing) { skipped.push(`${tag} (reply already exists)`); continue }
 
-        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         if (!quote) { skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
@@ -2797,7 +2871,24 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             skipped++
             continue
           }
-          // No existing open bug → treat as potential regression, fall through to persist as 'open'
+          // No OPEN bug in the topic. If there is an already-FIXED bug here and
+          // this retest is a positive confirmation ("works now"), it is success
+          // feedback, NOT a regression. Record it against the fixed bug and skip —
+          // otherwise it becomes a bogus regression bug that draws a "please
+          // retest" auto-reply on the post that just confirmed the fix (9932/8).
+          const priorFixedBug = db.prepare(
+            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND state = 'fixed' ORDER BY fixed_at DESC LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number } | undefined
+          const retestText = `${c.summary ?? ''} ${c.originalPostText ?? ''}`
+          if (priorFixedBug && retestConfirmsFix(retestText)) {
+            db.prepare(`UPDATE discourse_bug SET last_seen_at = datetime('now') WHERE topic = ? AND post = ?`)
+              .run(priorFixedBug.topic, priorFixedBug.post)
+            out(`persist_classifications: ${c.topic}/${post} confirms fix of ${priorFixedBug.topic}/${priorFixedBug.post} — success feedback, skipping new entry`)
+            skipped++
+            continue
+          }
+          // No existing open bug and not a positive confirmation → treat as a
+          // potential regression, fall through to persist as 'open'.
         }
         // Parse tags from classification output (TRIAGE emits symptom_tags + code_area)
         const symptomTags: string[] = Array.isArray(c.symptom_tags)
