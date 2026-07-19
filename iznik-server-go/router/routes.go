@@ -48,6 +48,7 @@ import (
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
+	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/logs"
@@ -260,6 +261,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Authority ID"
 		// @Success 200 {array} authority.Message
 		rg.Get("/authority/:id/message", authority.Messages)
+
+		// Item impact estimate
+		// @Router /item/impact [get]
+		// @Summary Estimate reuse impact for an item name
+		// @Description Estimates weight, CO2e saved and financial benefit of reuse for qty units of a free-text item name. Public, read-only - never writes to the items catalog. Lookup order: (1) exact case-insensitive match against the items catalog with a known weight, (2) fuzzy word-overlap match (>10%) against the standard weights reference table, (3) popularity-weighted average item weight.
+		// @Tags item
+		// @Produce json
+		// @Param name query string true "Free-text item name"
+		// @Param qty query integer false "Quantity (default 1)"
+		// @Success 200 {object} item.ImpactResponse
+		// @Failure 400 {object} fiber.Error "Missing or empty name"
+		rg.Get("/item/impact", item.Impact)
 
 		// Chats
 		// @Router /chat [get]
