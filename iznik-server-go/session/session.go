@@ -536,11 +536,21 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 
 	// Find user by email. Deleted users can still log in so they see the
 	// "restore your account" banner.
+	//
+	// Use RetryQuery rather than a bare db.Raw().Scan(): that discarded the
+	// query's error, so a transient read failure (e.g. a replica connection
+	// dropped mid-query - see database/failover.go) left userID at its zero
+	// value and was reported identically to a genuinely unknown email (#9941).
+	// RetryQuery retries recoverable connection errors; anything left after
+	// that is a real backend failure, not a missing user, and must not be
+	// reported as "we don't know that email address".
 	var userID uint64
-	db.Raw("SELECT u.id FROM users u "+
+	if err := database.RetryQuery(db, &userID, "SELECT u.id FROM users u "+
 		"JOIN users_emails ue ON ue.userid = u.id "+
 		"WHERE ue.email = ? "+
-		"LIMIT 1", email).Scan(&userID)
+		"LIMIT 1", email); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to look up email address")
+	}
 
 	if userID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{

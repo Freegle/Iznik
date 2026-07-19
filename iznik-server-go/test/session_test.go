@@ -18,6 +18,8 @@ import (
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/stretchr/testify/assert"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 func postSession(body string) *http.Response {
@@ -798,6 +800,52 @@ func TestLoginUnknownEmail(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(2), result["ret"])
 	assert.Contains(t, result["status"], "email")
+}
+
+// TestLoginEmailLookupDBErrorNotReportedAsUnknownEmail is a regression test for
+// Discourse #9941 post 1. A moderator's ModTools session crashed; on reopening
+// they re-entered their correct credentials and got "We don't know that email
+// address", then the same credentials worked moments later. handleEmailPasswordLogin
+// looked up the user with a bare db.Raw(...).Scan(&userID) that discarded the
+// query's error - so a transient DB failure (e.g. a read-replica connection
+// dropped mid-query, see database/failover.go) left userID at its zero value
+// and was reported identically to a genuinely unknown email. A lookup ERROR must
+// be surfaced as a backend failure, not misreported as an unknown-email login.
+func TestLoginEmailLookupDBErrorNotReportedAsUnknownEmail(t *testing.T) {
+	// Point DBConn at the (always-present) information_schema database, which
+	// has no `users` table. The connection succeeds - only the query errors -
+	// so this deterministically reproduces "lookup ERRORED", as distinct from
+	// "lookup found no rows", without relying on flaky network-level failures.
+	dsn := fmt.Sprintf(
+		"%s:%s@%s(%s:%s)/information_schema?charset=utf8mb4&parseTime=True&loc=Local&interpolateParams=true",
+		os.Getenv("MYSQL_USER"), os.Getenv("MYSQL_PASSWORD"), os.Getenv("MYSQL_PROTOCOL"),
+		os.Getenv("MYSQL_HOST"), os.Getenv("MYSQL_PORT"),
+	)
+	badDB, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	assert.NoError(t, err, "connecting to information_schema should succeed - only the users query should fail")
+
+	original := database.DBConn
+	database.DBConn = badDB
+	defer func() { database.DBConn = original }()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"email":    "doesnt-matter-9941@example.com",
+		"password": "whatever",
+	})
+
+	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, reqErr := getApp().Test(req, 5000)
+	assert.NoError(t, reqErr)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	// A DB lookup ERROR must not be reported as ret=2 "We don't know that email
+	// address" (404) - that message means "genuinely unknown", not "we couldn't
+	// check". It must surface as a backend failure instead.
+	assert.NotEqual(t, 404, resp.StatusCode, "a DB error must not produce the same 404 as a genuinely unknown email")
+	assert.NotEqual(t, float64(2), result["ret"], "ret=2 means unknown email - must not be used for a lookup error")
 }
 
 // ---------------------------------------------------------------------------
