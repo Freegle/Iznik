@@ -254,4 +254,40 @@ class AdminMailTest extends TestCase
         $this->assertStringContainsString('3 days', $html,
             'Preheader must state how long the admin has been pending');
     }
+
+    public function test_admin_mail_tracking_pixel_is_wrapped_in_section_and_column(): void
+    {
+        // A bare <mj-image> as a direct child of <mj-body> violates the MJML
+        // schema (mj-image must live inside mj-column > mj-section). mrml
+        // renders that malformed nesting without the Outlook-conditional
+        // wrapper table every other section gets, which is what left the
+        // reported admin email blank on reopen in Outlook (topic 9925). Every
+        // other mailable (welcome, chase, digest siblings, etc.) wraps its
+        // tracking pixel in its own <mj-section padding="0"><mj-column> - this
+        // pins admin.blade.php to the same pattern.
+        $pixel = '<mj-image src="https://example.com/pixel.png" width="1px" height="1px" alt="" padding="0" />';
+
+        $html = view('emails.mjml.admin.admin', [
+            'user' => (object) ['email_preferred' => 'test@example.com', 'displayname' => 'Test User'],
+            'userSite' => config('freegle.sites.user'),
+            'adminSubject' => 'Test Subject',
+            'adminText' => 'Test body text',
+            'ctaLink' => null,
+            'ctaText' => null,
+            'groupName' => 'Test Group',
+            'modsEmail' => null,
+            'essential' => true,
+            'settingsUrl' => 'https://www.ilovefreegle.org/settings',
+            'marketingOptOutUrl' => null,
+            'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe',
+            'volunteers' => [],
+            'trackingPixelMjml' => $pixel,
+        ])->render();
+
+        $this->assertMatchesRegularExpression(
+            '#<mj-section[^>]*>\s*<mj-column>\s*'.preg_quote($pixel, '#').'\s*</mj-column>\s*</mj-section>#',
+            $html,
+            'Tracking pixel must be wrapped in its own mj-section/mj-column, not a bare mj-body child.'
+        );
+    }
 }
