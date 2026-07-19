@@ -247,6 +247,45 @@ export async function postDiscourseReply(
 }
 
 /**
+ * Fetch the reporter's ACTUAL words for a post so an auto-reply quotes what they
+ * wrote — not our paraphrased `excerpt`/summary. Quoting the stored summary
+ * produced replies that quoted a third-person paraphrase back at the reporter as
+ * if they'd said it (e.g. a `[quote="Derek"]` containing "Derek confirms two
+ * bugs are now fixed"). Returns a short verbatim excerpt (HTML + any nested
+ * quotes stripped), or '' when it can't be fetched so callers fall back to the
+ * stored excerpt/title.
+ */
+export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
+  let apiKey: string | null = null
+  try {
+    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+      auth_pairs?: Array<{ user_api_key?: string }>
+    }
+    apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
+  } catch { /* no profile / unreadable */ }
+  if (!apiKey) return ''
+  try {
+    const resp = await fetch(`${DISCOURSE_BASE}/t/${topicId}.json`, { headers: { 'Api-Key': apiKey } })
+    if (!resp.ok) return ''
+    const j = (await resp.json()) as { post_stream?: { posts?: Array<{ post_number: number; cooked?: string }> } }
+    const post = j.post_stream?.posts?.find((p) => p.post_number === postNumber)
+    if (!post?.cooked) return ''
+    let text = post.cooked
+      .replace(/<aside[\s\S]*?<\/aside>/gi, ' ') // drop nested quote blocks — never quote a quote
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (text.length > maxLen) text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…'
+    return text
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Compare a commit SHA against a reference SHA using the GitHub compare API.
  * Returns behind_by: how many commits in baseSha are NOT in headSha.
  * behind_by == 0 means headSha contains all of baseSha's history → headSha is "at or past" baseSha.
@@ -985,10 +1024,11 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const APP_CAVEAT = ' (but app releases may take up to one week)'
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (affectsApp ? APP_CAVEAT : '')
-        // Fallback chain so there is ALWAYS quoted text: the reporting post's excerpt,
-        // else the topic title (a topic always has one). If both were somehow empty the
-        // posting guard would refuse to post rather than post a context-less reply.
-        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        // Quote the reporter's ACTUAL words (fetched verbatim) so the reply quotes
+        // what they wrote, not our paraphrased summary. Fall back to the stored
+        // excerpt/title only if the live fetch yields nothing; the posting guard
+        // still refuses a context-less reply.
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         const username = bug.reporter ?? 'there'
 
         // Auto-post (explicitly approved): post the verbatim reply threaded under
@@ -1077,7 +1117,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const existing = db.prepare(`SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`).get(bug.topic, bug.post)
         if (existing) { skipped.push(`${tag} (reply already exists)`); continue }
 
-        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         if (!quote) { skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
