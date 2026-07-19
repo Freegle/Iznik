@@ -70,25 +70,14 @@ class MatchedPosts extends MjmlMailable
 
     protected function getSubject(): string
     {
-        $count = count($this->items);
-        $names = array_values(array_unique(array_map(
-            fn ($i) => MatchedPostsService::itemName($i['message']),
-            $this->items
-        )));
-
-        if ($count === 1) {
+        if (count($this->items) === 1) {
             $m = $this->items[0]['message'];
             $verb = $m->type === 'Offer' ? 'Someone is offering' : 'Someone wants';
 
-            return $verb . ': ' . $names[0];
+            return $verb . ': ' . MatchedPostsService::itemName($m);
         }
 
-        // Nod to the V1 "Any of these take your fancy?" subject, with a count and
-        // a couple of item names so it isn't generic.
-        $lead = implode(', ', array_slice($names, 0, 2));
-        $more = count($names) > 2 ? ', and more' : '';
-
-        return $count . ' posts you might fancy: ' . $lead . $more;
+        return 'Freegle matches for you';
     }
 
     public function envelope(): Envelope
