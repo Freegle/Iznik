@@ -668,9 +668,11 @@ Schedule::command('mail:donations:thank-prep')
 // forget, and hard delete of fully forgotten users with no messages left.
 // V1: cron/users_retention.php (User::userRetention + User::processForgets).
 //
-// --limit caps each phase because a forget is ~20 DB statements; without it a
-// run with a large candidate set hits the batch host hard in one go.
-Schedule::command('users:cleanup --limit=2000')
+// No --limit: the phases run serially within a single invocation (guarded by
+// withoutOverlapping), so the whole backlog is worked through steadily rather
+// than in parallel. The service-level caps (50k forgets, 100k hard deletes)
+// remain as a backstop.
+Schedule::command('users:cleanup')
     ->dailyAt('06:00')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('users:cleanup'))
