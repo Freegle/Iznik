@@ -6,90 +6,138 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 /**
- * One-shot backfill that re-links unmatched donations (users_donations.userid
- * IS NULL) to a Freegle account.
+ * Reconcile users_donations.userid against live Freegle accounts. It handles two
+ * populations of mis-linked donations:
  *
- * It restores V1 correctUserIdInDonations() parity (exact-email matching) and
- * adds the same two extra signals now used by the live Go IPN handlers
- * (donations.MatchUserByEmailOrPriorDonation):
+ *   A. donations never linked to any account (userid IS NULL) — the historical
+ *      backlog from before the IPN handlers matched at receipt time; and
+ *   B. donations stranded on a since-DELETED account — the donate/leave/rejoin
+ *      gap. Their userid is non-null (so population A's whereNull() never sees
+ *      them) but points at an account that was later deleted without its
+ *      donations being carried across. Where the payer's email now lives on a
+ *      live account, the donation is re-pointed there.
  *
- *   1. canonical-email matching (gmail dots/+tags, googlemail, TN variants) via
- *      the shared App\Models\User::canonMail(); and
+ * Both populations resolve a payer using the same signals as the live Go IPN
+ * handlers (donations.MatchUserByEmailOrPriorDonation):
+ *
+ *   1. exact/canonical email match against a live account (gmail dots/+tags,
+ *      googlemail, TN variants) via the shared App\Models\User::canonMail(); and
  *   2. a prior donation from the same Payer already linked to a non-deleted
  *      user — recovering recurring donors whose Freegle email later changed
  *      while the payment processor keeps billing the original address.
  *
- * Going forward the IPN handlers match at receipt time, so this command is NOT
- * scheduled; it exists to clean up the historical backlog.
+ * resolve() only ever returns a LIVE account, so donations already on a live
+ * account (the duplicate-account case) are deliberately never moved — that is
+ * resolved by a human account merge. Because new strandings keep appearing when
+ * accounts holding donations are deleted, the command is scheduled to run
+ * periodically as a safety net rather than being a one-shot backfill.
  */
 class DonationUserIdBackfillService
 {
     /**
-     * @return array{scanned:int, matched_email:int, matched_prior:int, updated:int}
+     * @return array{scanned:int, matched_email:int, matched_prior:int, updated:int, null_backfilled:int, deleted_repointed:int}
      */
     public function backfill(bool $dryRun = false, ?int $limit = null): array
     {
-        $scanned      = 0;
-        $matchedEmail = 0;
-        $matchedPrior = 0;
-        $updated      = 0;
+        // Shared state across both passes. Resolve once per distinct Payer —
+        // recurring donors have many rows that all resolve to the same account.
+        $state = [
+            'scanned'           => 0,
+            'matched_email'     => 0,
+            'matched_prior'     => 0,
+            'updated'           => 0,
+            'null_backfilled'   => 0, // rows that had NO account (userid IS NULL)
+            'deleted_repointed' => 0, // rows stranded on a since-deleted account
+            'resolved'          => [],
+            'remaining'         => $limit,
+        ];
 
-        // Resolve once per distinct Payer — recurring donors have many unmatched
-        // rows that all resolve to the same account.
-        $resolved = [];
-
-        $query = DB::table('users_donations')
+        // Pass 1 — donations that were never linked to any account. These landed
+        // before the IPN handlers matched at receipt time.
+        $nullQuery = DB::table('users_donations')
             ->whereNull('userid')
             ->whereNotNull('Payer')
             ->where('Payer', '<>', '')
             ->orderBy('id');
+        $this->processDonations($nullQuery, 'null_backfilled', $state, $dryRun, $limit);
 
-        $remaining = $limit;
+        // Pass 2 — the donate/leave/rejoin gap. Donations recorded against an
+        // account that was LATER deleted stay pinned to it: their userid is
+        // non-null, so pass 1's whereNull() never sees them, and the delete/merge
+        // that removed the account did not carry the donations across. When the
+        // same person's email now lives on a live account, re-point them there.
+        // resolve() only ever returns a LIVE account, so donations already on a
+        // live account (the duplicate-account/merge case) are deliberately left
+        // untouched — that is resolved by a human account merge, not here.
+        $deletedQuery = DB::table('users_donations')
+            ->whereNotNull('users_donations.userid')
+            ->whereNotNull('Payer')
+            ->where('Payer', '<>', '')
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users')
+                    ->whereColumn('users.id', 'users_donations.userid')
+                    ->whereNotNull('users.deleted');
+            })
+            ->orderBy('users_donations.id');
+        $this->processDonations($deletedQuery, 'deleted_repointed', $state, $dryRun, $limit);
 
-        $query->chunkById(500, function ($rows) use (
-            &$scanned, &$matchedEmail, &$matchedPrior, &$updated, &$resolved, &$remaining, $dryRun, $limit
-        ) {
+        return [
+            'scanned'           => $state['scanned'],
+            'matched_email'     => $state['matched_email'],
+            'matched_prior'     => $state['matched_prior'],
+            'updated'           => $state['updated'],
+            'null_backfilled'   => $state['null_backfilled'],
+            'deleted_repointed' => $state['deleted_repointed'],
+        ];
+    }
+
+    /**
+     * Scan a donation query in id-ordered chunks, resolve each Payer to a live
+     * account and (unless dry-running) re-point the donation. $bucket names the
+     * counter incremented for a successful update ('null_backfilled' or
+     * 'deleted_repointed'); $state carries the shared counters, per-Payer resolve
+     * cache and the combined remaining-limit budget across passes.
+     */
+    private function processDonations($query, string $bucket, array &$state, bool $dryRun, ?int $limit): void
+    {
+        $query->chunkById(500, function ($rows) use (&$state, $bucket, $dryRun, $limit) {
             foreach ($rows as $row) {
-                if ($limit !== null && $remaining !== null && $remaining <= 0) {
-                    return false; // stop chunking
+                if ($limit !== null && $state['remaining'] !== null && $state['remaining'] <= 0) {
+                    return false; // stop chunking — combined budget spent
                 }
 
-                $scanned++;
-                if ($remaining !== null) {
-                    $remaining--;
+                $state['scanned']++;
+                if ($state['remaining'] !== null) {
+                    $state['remaining']--;
                 }
 
                 $payer = (string) $row->Payer;
-                if (!array_key_exists($payer, $resolved)) {
-                    $resolved[$payer] = $this->resolve($payer);
+                if (!array_key_exists($payer, $state['resolved'])) {
+                    $state['resolved'][$payer] = $this->resolve($payer);
                 }
-                [$uid, $via] = $resolved[$payer];
+                [$uid, $via] = $state['resolved'][$payer];
 
-                if ($uid === null) {
+                if ($uid === null || (int) $uid === (int) $row->userid) {
+                    // No confident live account, or already there (defensive).
                     continue;
                 }
 
                 if ($via === 'email') {
-                    $matchedEmail++;
+                    $state['matched_email']++;
                 } else {
-                    $matchedPrior++;
+                    $state['matched_prior']++;
                 }
 
                 if (!$dryRun) {
                     DB::table('users_donations')->where('id', $row->id)->update(['userid' => $uid]);
                 }
-                $updated++;
+                $state['updated']++;
+                $state[$bucket]++;
             }
 
             return true;
-        });
-
-        return [
-            'scanned'       => $scanned,
-            'matched_email' => $matchedEmail,
-            'matched_prior' => $matchedPrior,
-            'updated'       => $updated,
-        ];
+        }, 'users_donations.id', 'id');
     }
 
     /**
