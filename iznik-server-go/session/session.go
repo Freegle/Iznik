@@ -357,6 +357,59 @@ func PostSession(c *fiber.Ctx) error {
 	}
 }
 
+// LookupUserIDByEmail resolves a login email to a user id, retrying transient
+// DB errors (see database.RetryQuery). A non-nil error means the lookup itself
+// failed - the backend couldn't be checked - and must never be treated the
+// same as "zero rows found" (a genuinely unknown email). Exported so it can be
+// unit tested in isolation, without exercising the whole HTTP request pipeline
+// (Discourse #9941: a swallowed lookup error was misreported as "we don't know
+// that email address").
+func LookupUserIDByEmail(db *gorm.DB, email string) (uint64, error) {
+	var userID uint64
+	err := database.RetryQuery(db, &userID, "SELECT u.id FROM users u "+
+		"JOIN users_emails ue ON ue.userid = u.id "+
+		"WHERE ue.email = ? "+
+		"LIMIT 1", email)
+	return userID, err
+}
+
+// LookupUserAndEmailByEmail is like LookupUserIDByEmail but also returns the
+// stored (canonical) form of the matched address, needed by LostPassword to
+// send the reset link to the exact address the user typed. Exported for the
+// same isolation-testing reason as LookupUserIDByEmail.
+func LookupUserAndEmailByEmail(db *gorm.DB, email string) (uint64, string, error) {
+	var match struct {
+		ID    uint64 `gorm:"column:id"`
+		Email string `gorm:"column:email"`
+	}
+	err := database.RetryQuery(db, &match, "SELECT users.id, users_emails.email FROM users "+
+		"INNER JOIN users_emails ON users_emails.userid = users.id "+
+		"WHERE users_emails.email = ? "+
+		"LIMIT 1", email)
+	return match.ID, match.Email, err
+}
+
+// LookupUserExists reports whether a user id exists, retrying transient DB
+// errors. A non-nil error means the check itself failed and must not be
+// reported as "unknown user". Exported for isolation testing.
+func LookupUserExists(db *gorm.DB, uid uint64) (bool, error) {
+	var exists uint64
+	err := database.RetryQuery(db, &exists, "SELECT id FROM users WHERE id = ? LIMIT 1", uid)
+	return exists != 0, err
+}
+
+// LookupLinkCredentials returns the stored auto-login key for a user (empty
+// string if none set), retrying transient DB errors. Shared by handleLinkLogin
+// (verifying a supplied key) and getOrCreateLoginKey (finding an existing key
+// before minting a new one) - a DB error here must not be treated as "no key
+// exists yet", which would mint a spurious duplicate credentials row. Exported
+// for isolation testing.
+func LookupLinkCredentials(db *gorm.DB, uid uint64) (string, error) {
+	var key string
+	err := database.RetryQuery(db, &key, "SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1", uid, utils.LOGIN_TYPE_LINK)
+	return key, err
+}
+
 // handleLostPassword finds the user by email and queues a forgot-password email.
 func handleLostPassword(c *fiber.Ctx, email string) error {
 	if email == "" {
@@ -370,15 +423,10 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 	// (canonical) form of the matched address so we send the login link to the
 	// exact email the user used - not their preferred address, which may differ
 	// and may be the one that is bouncing.
-	var match struct {
-		ID    uint64 `gorm:"column:id"`
-		Email string `gorm:"column:email"`
+	userID, matchEmail, err := LookupUserAndEmailByEmail(db, email)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to look up email address")
 	}
-	db.Raw("SELECT users.id, users_emails.email FROM users "+
-		"INNER JOIN users_emails ON users_emails.userid = users.id "+
-		"WHERE users_emails.email = ? "+
-		"LIMIT 1", email).Scan(&match)
-	userID := match.ID
 
 	if userID == 0 {
 		// Return ret=2 for unknown email.
@@ -423,7 +471,7 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 
 	// Send the login link to the address the user actually used. Prefer the
 	// canonical stored form of the matched address; fall back to the typed value.
-	destEmail := match.Email
+	destEmail := matchEmail
 	if destEmail == "" {
 		destEmail = email
 	}
@@ -452,11 +500,10 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 	db := database.DBConn
 
 	// Find user by email. Deleted users can still unsubscribe.
-	var userID uint64
-	db.Raw("SELECT users.id FROM users "+
-		"INNER JOIN users_emails ON users_emails.userid = users.id "+
-		"WHERE users_emails.email = ? "+
-		"LIMIT 1", email).Scan(&userID)
+	userID, err := LookupUserIDByEmail(db, email)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to look up email address")
+	}
 
 	if userID == 0 {
 		// Return unknown:true so the frontend can branch to a "Contact support" fallback
@@ -511,8 +558,10 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 	db := database.DBConn
 
 	// Check for existing key.
-	var existingKey string
-	db.Raw("SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1", userID, utils.LOGIN_TYPE_LINK).Scan(&existingKey)
+	existingKey, err := LookupLinkCredentials(db, userID)
+	if err != nil {
+		return "", err
+	}
 
 	if existingKey != "" {
 		return existingKey, nil
@@ -536,11 +585,10 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 
 	// Find user by email. Deleted users can still log in so they see the
 	// "restore your account" banner.
-	var userID uint64
-	db.Raw("SELECT u.id FROM users u "+
-		"JOIN users_emails ue ON ue.userid = u.id "+
-		"WHERE ue.email = ? "+
-		"LIMIT 1", email).Scan(&userID)
+	userID, err := LookupUserIDByEmail(db, email)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to look up email address")
+	}
 
 	if userID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -549,7 +597,11 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		})
 	}
 
-	if !auth.VerifyPassword(userID, password) {
+	verified, err := auth.VerifyPassword(db, userID, password)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to verify credentials")
+	}
+	if !verified {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"ret":    3,
 			"status": "The password is wrong.",
@@ -575,10 +627,12 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
-	var exists uint64
-	db.Raw("SELECT id FROM users WHERE id = ? LIMIT 1", uid).Scan(&exists)
+	exists, err := LookupUserExists(db, uid)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to look up user")
+	}
 
-	if exists == 0 {
+	if !exists {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"ret":    2,
 			"status": "Unknown user.",
@@ -586,8 +640,10 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	}
 
 	// Verify the link key.
-	var storedKey string
-	db.Raw("SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1", uid, utils.LOGIN_TYPE_LINK).Scan(&storedKey)
+	storedKey, err := LookupLinkCredentials(db, uid)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to look up login key")
+	}
 
 	if storedKey == "" || subtle.ConstantTimeCompare([]byte(storedKey), []byte(key)) != 1 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{

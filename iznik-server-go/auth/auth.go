@@ -20,6 +20,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"gorm.io/gorm"
 )
 
 // PersistentToken represents the old-style session token from the Authorization2 header.
@@ -241,14 +242,24 @@ func GetPasswordSalt() string {
 
 // VerifyPassword checks a plaintext password against a user's stored Native login.
 // We filter by userid only (not uid) because some legacy Native logins have NULL uid.
-func VerifyPassword(userID uint64, password string) bool {
-	db := database.DBConn
-
+//
+// Returns a non-nil error when the credentials lookup itself failed (a backend
+// problem) - retried via database.RetryQuery for transient connection errors.
+// Callers must not treat that the same as "password did not match": a DB error
+// here is a different failure mode from a wrong password and must be reported
+// as a backend failure, not a false claim about the supplied credentials
+// (Discourse #9941 - the same swallowed-error pattern that misreported the
+// email lookup as "unknown email" existed here too, one call further into the
+// same login path).
+func VerifyPassword(db *gorm.DB, userID uint64, password string) (bool, error) {
 	var logins []struct {
 		Credentials string
 		Salt        string
 	}
-	db.Raw("SELECT credentials, salt FROM users_logins WHERE userid = ? AND type = ? ORDER BY lastaccess DESC", userID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+	err := database.RetryQuery(db, &logins, "SELECT credentials, salt FROM users_logins WHERE userid = ? AND type = ? ORDER BY lastaccess DESC", userID, utils.LOGIN_TYPE_NATIVE)
+	if err != nil {
+		return false, err
+	}
 
 	for _, login := range logins {
 		if login.Credentials == "" {
@@ -260,10 +271,10 @@ func VerifyPassword(userID uint64, password string) bool {
 		}
 		hashed := HashPassword(password, salt)
 		if strings.EqualFold(hashed, login.Credentials) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // CreateSessionAndJWT creates a sessions row and returns the persistent token data and a JWT.
