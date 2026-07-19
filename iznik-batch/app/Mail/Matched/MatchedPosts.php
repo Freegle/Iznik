@@ -8,6 +8,7 @@ use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\LoginLinkService;
 use App\Services\MatchedPostsService;
 use App\Support\SubjectParser;
 use Illuminate\Mail\Mailables\Address;
@@ -38,9 +39,33 @@ class MatchedPosts extends MjmlMailable
         parent::__construct();
     }
 
+    private ?string $cachedOptOutUrl = null;
+
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id;
+    }
+
+    /**
+     * A one-click, key-authenticated opt-out that turns off ONLY these
+     * matched-posts emails (relevantallowed=0) — not a full account
+     * unsubscribe. Used for both the List-Unsubscribe header and the visible
+     * footer link. Computed once so the key is minted a single time.
+     */
+    protected function optOutUrl(): string
+    {
+        if ($this->cachedOptOutUrl === null) {
+            $key = app(LoginLinkService::class)->getOrCreateKey((int) $this->user->id);
+            $v2 = rtrim(config('freegle.api.v2_url', 'https://api.ilovefreegle.org/apiv2'), '/');
+            $this->cachedOptOutUrl = $v2 . '/user/relevantoff?u=' . $this->user->id . '&k=' . $key;
+        }
+
+        return $this->cachedOptOutUrl;
+    }
+
+    protected function listUnsubscribeUrl(int $userId): string
+    {
+        return $this->optOutUrl();
     }
 
     protected function getSubject(): string
@@ -80,6 +105,11 @@ class MatchedPosts extends MjmlMailable
 
     public function build(): static
     {
+        // Attach the X-Freegle-* tracking headers and the RFC 8058
+        // List-Unsubscribe headers (which use our targeted relevantoff opt-out
+        // via listUnsubscribeUrl()).
+        $this->configureMessage();
+
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         [$userLat, $userLng] = $this->recipientLatLng();
@@ -96,6 +126,7 @@ class MatchedPosts extends MjmlMailable
             'wantedColor' => DigestStyle::WANTED_BLUE,
             'browseUrl' => $userSite . '/browse?src=matched',
             'settingsUrl' => $this->settingsUrl ?: $userSite . '/settings?src=matched',
+            'optOutUrl' => $this->optOutUrl(),
             'userSite' => $userSite,
             'email' => $this->recipientEmail,
         ]);

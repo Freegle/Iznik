@@ -55,14 +55,12 @@ class MatchedPostsServiceTest extends TestCase
             'arrival' => now()->subDay(),
         ]);
 
+        // Sequential fakes, in call order:
+        //  1. matchesForPost(wanted) → [offer]   (drives both directions)
+        //  2. matchesForPost(offer)  → [wanted]  (verifyReach: offer owner can reach the wanted)
         FreegleApiClient::fake([
-            ['body' => [[
-                'id' => $offer->id,
-                'score' => 0.82,
-                'groupid' => $group->id,
-                'lat' => 51.5,
-                'lng' => -0.1,
-            ]]],
+            ['body' => [['id' => $offer->id, 'score' => 0.82, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => [['id' => $wanted->id, 'score' => 0.82, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
         ]);
 
         return [$recipient, $wanted, $offerer, $offer];
@@ -117,6 +115,24 @@ class MatchedPostsServiceTest extends TestCase
         $toOfferer = $this->notificationFor($notifications, $offerer->id);
         $this->assertNotNull($toOfferer, 'offer owner should be notified of the new wanted');
         $this->assertEquals($wanted->id, $toOfferer['items'][0]['message']->id);
+    }
+
+    public function test_drops_a_direction_ii_match_outside_the_recipients_reach(): void
+    {
+        [$recipient, $wanted, $offerer, $offer] = $this->seedMatch();
+
+        // matchesForPost(wanted) → [offer] (direction i fine); matchesForPost(offer)
+        // → [] means the fresh wanted has NOT rippled out to the offer owner, so the
+        // direction-(ii) notification must be dropped by the reach check.
+        FreegleApiClient::fake([
+            ['body' => [['id' => $offer->id, 'score' => 0.82, 'groupid' => 0, 'lat' => 51.5, 'lng' => -0.1]]],
+            ['body' => []],
+        ]);
+
+        $notifications = app(MatchedPostsService::class)->buildNotifications();
+
+        $this->assertNotNull($this->notificationFor($notifications, $recipient->id), 'direction (i) still delivered');
+        $this->assertNull($this->notificationFor($notifications, $offerer->id), 'direction (ii) dropped — out of reach');
     }
 
     public function test_never_re_mails_a_post_already_in_the_ledger(): void

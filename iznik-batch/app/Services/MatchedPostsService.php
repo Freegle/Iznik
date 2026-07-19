@@ -46,10 +46,15 @@ class MatchedPostsService
 
         // Ask apiv2 for each fresh post's opposite-type matches. Collect the raw
         // (freshPost, matchedPost) links plus every message id involved.
+        // $matchCache[postId] = [matched msgids] — apiv2 reach-filters each result
+        // for THAT post's owner, so it doubles as the per-recipient reach oracle
+        // in verifyReach() below.
         $links = [];   // list of ['F'=>int, 'Fowner'=>int, 'R'=>int, 'score'=>float]
         $ids = [];     // set of message ids to resolve
+        $matchCache = [];
         foreach ($fresh as $f) {
             $matches = $this->api->matchesForPost((int) $f->msgid, $perPost);
+            $matchCache[(int) $f->msgid] = array_values(array_filter(array_map(fn ($m) => (int) ($m['id'] ?? 0), $matches)));
             foreach ($matches as $m) {
                 $rid = (int) ($m['id'] ?? 0);
                 if ($rid <= 0) {
@@ -88,7 +93,48 @@ class MatchedPostsService
             return [];
         }
 
-        return $this->applyEligibility($byRecipient, $now);
+        $notifications = $this->applyEligibility($byRecipient, $now);
+
+        return $this->verifyReach($notifications, $matchCache, $perPost);
+    }
+
+    /**
+     * Make every shown match reach-exact for its recipient. A recipient U is only
+     * shown a match M if M is in apiv2's matches for U's OWN post that it matched
+     * (`matchesForPost` reach-filters against that post's owner). Direction (i)
+     * items pass for free — their reason post is a fresh post already in
+     * $matchCache. Direction (ii) items (the recipient's existing post ← a new
+     * arrival) previously relied on bbox proximity; here they are checked against
+     * a fresh `matchesForPost` of the recipient's own post, so a match that hasn't
+     * rippled out to the recipient is dropped.
+     *
+     * @param  array<int, array{user: User, items: array}>  $notifications
+     * @param  array<int, array<int, int>>  $matchCache  postId => matched msgids
+     * @return array<int, array{user: User, items: array}>
+     */
+    private function verifyReach(array $notifications, array $matchCache, int $perPost): array
+    {
+        $out = [];
+        foreach ($notifications as $n) {
+            $kept = [];
+            foreach ($n['items'] as $item) {
+                $reasonId = (int) $item['reason']->id;
+                if (! array_key_exists($reasonId, $matchCache)) {
+                    // Resolve (and cache) the recipient's own post's matches — this
+                    // is the extra apiv2 call, made only for surviving items.
+                    $res = $this->api->matchesForPost($reasonId, $perPost);
+                    $matchCache[$reasonId] = array_values(array_filter(array_map(fn ($m) => (int) ($m['id'] ?? 0), $res)));
+                }
+                if (in_array((int) $item['message']->id, $matchCache[$reasonId], true)) {
+                    $kept[] = $item;
+                }
+            }
+            if ($kept) {
+                $out[] = ['user' => $n['user'], 'items' => $kept];
+            }
+        }
+
+        return $out;
     }
 
     /**

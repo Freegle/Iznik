@@ -32,6 +32,14 @@
       </mj-column>
     </mj-section>
 
+    <mj-section background-color="#f4f4f4" padding="4px 20px 0">
+      <mj-column>
+        <mj-text font-size="12px" color="#999999" align="center" padding="0">
+          Don't want these suggestions? <a href="{{ $optOutUrl }}" style="color: #999999; text-decoration: underline;">Turn off matched-posts emails</a>.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
     @include('emails.mjml.partials.footer', ['email' => $email, 'settingsUrl' => $settingsUrl])
 
   </mj-body>

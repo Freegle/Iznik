@@ -3,7 +3,9 @@ last_reviewed: 2026-07-19
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
+  - iznik-server-go/user/relevantoff.go
   - iznik-batch/app/Services/MatchedPostsService.php
+  - iznik-batch/app/Services/LoginLinkService.php
   - iznik-batch/app/Console/Commands/Message/NotifyMatchedPostsCommand.php
   - iznik-batch/app/Mail/Matched/MatchedPosts.php
 ---
@@ -39,6 +41,12 @@ This is a **separate** mail from the daily digest's relevance ranking
    doesn't count); never a post already in the `messages_matched_notified` ledger;
    only opted-in (`users.relevantallowed=1`), recently-active recipients outside
    the `cooldown_hours` (default 4) window, tracked via `users.lastrelevantcheck`.
+6. **Reach-exact** (`MatchedPostsService::verifyReach`): every shown match `M` is
+   confirmed to be in apiv2's `matchesForPost` for the recipient's OWN post that
+   it matched — which reach-filters against that post's owner. Direction (i) is
+   free (the reason post is a fresh post already searched); direction (ii) costs
+   one extra apiv2 call per surviving recipient post, so a match that hasn't
+   rippled out to the recipient is dropped rather than mailed on bbox proximity.
 6. **`NotifyMatchedPostsCommand`** renders `App\Mail\Matched\MatchedPosts` (layout
    adapts to the match count — hero card for one, compact list for several),
    spools it, records each matched post in `messages_matched_notified`, and bumps
@@ -54,9 +62,12 @@ This is a **separate** mail from the daily digest's relevance ranking
 
 - apiv2 vector endpoint: `FEATURE_MATCHED_POSTS=off` (returns empty, no deploy).
 - Laravel send: `FREEGLE_MATCHED_ENABLED=false` (config `freegle.matched.enabled`).
-- Per-member opt-out: the existing `users.relevantallowed` toggle (surfaced in
-  settings / ModTools) — honoured in eligibility. A dedicated one-click
-  List-Unsubscribe that flips `relevantallowed` is a follow-up.
+- Per-member opt-out: apiv2 `GET|POST /user/relevantoff?u=&k=` sets
+  `relevantallowed=0`, key-authenticated by the user's `users_logins` Link key
+  (minted by `LoginLinkService`). The matched email points both its
+  RFC 8058 `List-Unsubscribe` header (one-click) and a visible footer link at it,
+  so a member can stop just these emails without unsubscribing the whole account.
+  The existing `users.relevantallowed` settings/ModTools toggle still works too.
 
 ## Preview
 

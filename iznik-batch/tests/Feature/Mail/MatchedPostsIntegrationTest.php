@@ -95,6 +95,13 @@ class MatchedPostsIntegrationTest extends TestCase
         $this->assertTrue($this->mailpit->bodyContains($message, 'OFFER'), 'type pill present');
         $this->assertTrue($this->mailpit->bodyContains($message, 'Reply'), 'reply CTA present');
 
+        // Targeted opt-out (Future 1): a visible footer link + a List-Unsubscribe
+        // header, both pointing at the relevantoff endpoint (not a full unsubscribe).
+        $this->assertTrue($this->mailpit->bodyContains($message, 'relevantoff'), 'targeted opt-out link present in body');
+        $this->assertTrue($this->mailpit->bodyContains($message, 'Turn off matched-posts emails'), 'visible opt-out link text present');
+        $listUnsub = (string) $this->mailpit->getHeader($message, 'List-Unsubscribe');
+        $this->assertStringContainsString('relevantoff', $listUnsub, 'List-Unsubscribe targets the relevant opt-out');
+
         $this->mailpit->assertNotSpam($message);
     }
 }

@@ -1049,6 +1049,12 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "User not found"
 		rg.Get("/user/search", user.SearchUsers)
 		rg.Get("/user/byemail/:email", user.GetUserByEmail)
+		// Targeted opt-out from matched-posts suggestion emails (relevantallowed=0),
+		// key-authenticated so it works as a one-click List-Unsubscribe. Registered
+		// before /user/:id? so "relevantoff" is not treated as a user id.
+		// @Router /user/relevantoff [get]
+		rg.Get("/user/relevantoff", user.RelevantOff)
+		rg.Post("/user/relevantoff", user.RelevantOff)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
