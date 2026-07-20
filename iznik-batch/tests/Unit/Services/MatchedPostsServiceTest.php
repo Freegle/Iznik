@@ -196,4 +196,51 @@ class MatchedPostsServiceTest extends TestCase
             'a recipient mailed within the cooldown must be skipped'
         );
     }
+
+    public function test_drops_matches_below_the_relevance_floor(): void
+    {
+        [$recipient, $wanted, $offerer, $offer] = $this->seedMatch();
+
+        // The only match scores 0.60 — below the 0.66 floor (config default), so it
+        // is dropped before any fan-out: neither owner is notified. Because it never
+        // enters the link set there is no direction-(ii) reach call, so one fake.
+        FreegleApiClient::fake([
+            ['body' => [['id' => $offer->id, 'score' => 0.60, 'groupid' => 0, 'lat' => 51.5, 'lng' => -0.1]]],
+        ]);
+
+        $notifications = app(MatchedPostsService::class)->buildNotifications();
+
+        $this->assertNull($this->notificationFor($notifications, $recipient->id),
+            'a below-floor match must not be shown to the wanted owner');
+        $this->assertNull($this->notificationFor($notifications, $offerer->id),
+            'and must not fan out to the offer owner');
+    }
+
+    public function test_collapses_crossposts_to_a_single_card(): void
+    {
+        $group = $this->createTestGroup();
+        $recipient = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
+        $offerer = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 1, 'lastrelevantcheck' => null]);
+
+        $wanted = $this->makeFreshDriver($recipient, $group, 'Wanted', 'WANTED: Lamp (London)');
+
+        // The same item crossposted to two groups: two messages, one owner, one
+        // subject, distinct ids — exactly how a crosspost is stored.
+        $offerA = $this->createTestMessage($offerer, $group, ['type' => 'Offer', 'subject' => 'OFFER: Lamp (London)', 'arrival' => now()->subDay()]);
+        $offerB = $this->createTestMessage($offerer, $group, ['type' => 'Offer', 'subject' => 'OFFER: Lamp (London)', 'arrival' => now()->subDay()]);
+
+        FreegleApiClient::fake([
+            ['body' => [
+                ['id' => $offerA->id, 'score' => 0.80, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1],
+                ['id' => $offerB->id, 'score' => 0.78, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1],
+            ]],
+            ['body' => [['id' => $wanted->id, 'score' => 0.80, 'groupid' => $group->id, 'lat' => 51.5, 'lng' => -0.1]]],
+        ]);
+
+        $toRecipient = $this->notificationFor(app(MatchedPostsService::class)->buildNotifications(), $recipient->id);
+
+        $this->assertNotNull($toRecipient, 'wanted owner is notified');
+        $this->assertCount(1, $toRecipient['items'], 'crossposts of one item collapse to a single card');
+        $this->assertEquals($offerA->id, $toRecipient['items'][0]['message']->id, 'keeps the higher-scoring copy');
+    }
 }
