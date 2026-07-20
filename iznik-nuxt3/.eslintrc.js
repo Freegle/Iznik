@@ -32,6 +32,19 @@ module.exports = {
       },
     ],
 
+    // Regex lookbehind ((?<=...) / (?<!...)) is unsupported by Safari before
+    // 16.4. An unsupported regex *literal* fails to parse, which kills the
+    // whole chunk and white-screens the page - not just the check using it.
+    // Rewrite as (?:^|\D)-style alternation instead.
+    'no-restricted-syntax': [
+      'error',
+      {
+        selector: 'Literal[regex.pattern=/\\(\\?<[=!]/]',
+        message:
+          'Regex lookbehind is unsupported by Safari < 16.4 and breaks the whole chunk at parse time. Rewrite without it (e.g. (?<!\\d) becomes (?:^|\\D)).',
+      },
+    ],
+
     // We have a lot of legacy code which doesn't define emits.
     'vue/require-explicit-emits': 'off',
     // no-v-model-argument rule is broken for Vue3, which requires that syntax for .sync.
