@@ -49,6 +49,12 @@ class MatchedPostsService
         // $matchCache[postId] = [matched msgids] — apiv2 reach-filters each result
         // for THAT post's owner, so it doubles as the per-recipient reach oracle
         // in verifyReach() below.
+        // Relevance floor: apiv2 returns the nearest vector neighbours regardless
+        // of how weak the similarity is, so without a threshold poor matches (e.g.
+        // "bicycle pump" ~ "pot pourri") surface. Only links at/above min_score are
+        // shown; matchCache still carries the full set so reach verification below
+        // is unaffected (reach is geography, not similarity).
+        $minScore = (float) config('freegle.matched.match_min_score', 0.0);
         $links = [];   // list of ['F'=>int, 'Fowner'=>int, 'R'=>int, 'score'=>float]
         $ids = [];     // set of message ids to resolve
         $matchCache = [];
@@ -59,6 +65,9 @@ class MatchedPostsService
                 $rid = (int) ($m['id'] ?? 0);
                 if ($rid <= 0) {
                     continue;
+                }
+                if ((float) ($m['score'] ?? 0) < $minScore) {
+                    continue; // below the relevance floor — don't show it
                 }
                 $links[] = ['F' => (int) $f->msgid, 'Fowner' => (int) $f->fromuser, 'R' => $rid, 'score' => (float) ($m['score'] ?? 0)];
                 $ids[(int) $f->msgid] = true;
@@ -251,6 +260,11 @@ class MatchedPostsService
             if (! $kept) {
                 continue;
             }
+            // Collapse crossposts: the same item posted to several groups is stored
+            // as distinct messages (same poster + subject, different msgids/groups),
+            // so without this the email shows one item as several near-identical
+            // cards. Keep the single best-scoring copy per (poster, subject).
+            $kept = $this->dedupeCrossposts($kept);
             usort($kept, fn ($a, $b) => $b['score'] <=> $a['score']);
             $out[] = [
                 'user' => $eligible->get($uid),
@@ -259,6 +273,28 @@ class MatchedPostsService
         }
 
         return $out;
+    }
+
+    /**
+     * Collapse crossposts of one item to a single card. A crosspost is the same
+     * poster's identical subject appearing under more than one group as separate
+     * messages (distinct msgids); keep the highest-scoring copy.
+     *
+     * @param  array<int, array{message: Message, reason: Message, score: float}>  $items
+     * @return array<int, array{message: Message, reason: Message, score: float}>
+     */
+    private function dedupeCrossposts(array $items): array
+    {
+        $best = [];
+        foreach ($items as $item) {
+            $msg = $item['message'];
+            $key = (int) $msg->fromuser . '|' . trim((string) $msg->subject);
+            if (! isset($best[$key]) || $item['score'] > $best[$key]['score']) {
+                $best[$key] = $item;
+            }
+        }
+
+        return array_values($best);
     }
 
     private function eligibleRecipients(array $ids, Carbon $now): Collection

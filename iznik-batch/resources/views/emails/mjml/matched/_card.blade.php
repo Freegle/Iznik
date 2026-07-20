@@ -11,9 +11,10 @@
     $isOffer = $post['type'] === 'Offer';
     $hero = $hero ?? false;
     $accent = $isOffer ? $offerColor : $wantedColor;
-    // "Matches your wanted: bike" — reasonType is the recipient's own post type
-    // (always the opposite of this card's type).
-    $reasonLabel = 'Matches your ' . strtolower($post['reasonType']) . ': ' . $post['reasonItem'];
+    // "Matches your WANTED: bike" — reasonType is the recipient's own post type
+    // (always the opposite of this card's type). Uppercased to match the OFFER/
+    // WANTED badge styling.
+    $reasonLabel = 'Matches your ' . strtoupper($post['reasonType']) . ': ' . $post['reasonItem'];
     $metaHtml = ($post['distanceText'] ? '&#x1F4CD; ' . e($post['distanceText']) . ' &middot; ' : '')
         . ($post['groupName'] ? 'on ' . e($post['groupName']) : '');
 @endphp

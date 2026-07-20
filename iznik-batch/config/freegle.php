@@ -48,6 +48,13 @@ return [
         'match_limit_per_post' => env('FREEGLE_MATCHED_LIMIT_PER_POST', 10),
         // Max matched posts shown in one email (rest wait for a later run / the site).
         'max_items_per_email' => env('FREEGLE_MATCHED_MAX_ITEMS', 10),
+        // Minimum apiv2 vector-similarity score for a match to be shown. apiv2
+        // returns the nearest neighbours regardless of similarity, and the scores
+        // are only weakly discriminative (a relevant "bicycle inner tube" ~0.668
+        // barely beats an irrelevant "pot pourri" ~0.656 for "bicycle pump"), so
+        // this is a coarse tail-trim, not a quality guarantee — tune per corpus,
+        // and treat the underlying embedding quality as the real lever.
+        'match_min_score' => (float) env('FREEGLE_MATCHED_MIN_SCORE', 0.66),
         // Don't email the same member more often than this (hours). Uses
         // users.lastrelevantcheck, on top of the never-mail-the-same-post ledger.
         'cooldown_hours' => env('FREEGLE_MATCHED_COOLDOWN_HOURS', 4),
