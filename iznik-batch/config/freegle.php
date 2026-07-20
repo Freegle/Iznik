@@ -33,6 +33,28 @@ return [
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
     ],
 
+    // Matched-posts email (matches:notify): emails a member the opposite-type
+    // posts near them that match their own open Offer/Wanted, resurrected with
+    // vector matching. Killswitch FREEGLE_MATCHED_ENABLED=false stops all sends
+    // without a deploy (apiv2 has its own FEATURE_MATCHED_POSTS killswitch for
+    // the vector endpoint).
+    'matched' => [
+        'enabled' => env('FREEGLE_MATCHED_ENABLED', true),
+        // How far back to treat a post as "fresh" each run. Wider than the 10-min
+        // schedule so a post embedded a few minutes after arrival is still caught;
+        // the per-(msgid,userid) ledger stops the overlap re-mailing anything.
+        'fresh_window_minutes' => env('FREEGLE_MATCHED_FRESH_WINDOW_MINUTES', 20),
+        // Matches requested from apiv2 per fresh post.
+        'match_limit_per_post' => env('FREEGLE_MATCHED_LIMIT_PER_POST', 10),
+        // Max matched posts shown in one email (rest wait for a later run / the site).
+        'max_items_per_email' => env('FREEGLE_MATCHED_MAX_ITEMS', 10),
+        // Don't email the same member more often than this (hours). Uses
+        // users.lastrelevantcheck, on top of the never-mail-the-same-post ledger.
+        'cooldown_hours' => env('FREEGLE_MATCHED_COOLDOWN_HOURS', 4),
+        // Don't email members who haven't visited in this many days.
+        'min_lastaccess_days' => env('FREEGLE_MATCHED_MIN_LASTACCESS_DAYS', 90),
+    ],
+
     'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
 
     'donations' => [

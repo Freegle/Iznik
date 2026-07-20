@@ -969,6 +969,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.SimilarResult
 		rg.Get("/message/matches", message.Matches)
 
+		// Opposite-type posts matching a given post — candidate set for the
+		// matched-posts email (batch job). Reach-filtered against the post owner.
+		// @Router /message/{id}/matches [get]
+		// @Summary Opposite-type posts matching a given post (matched-posts email)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 10, max 30)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/matches", message.PostMatches)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen
@@ -1051,6 +1062,12 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "User not found"
 		rg.Get("/user/search", user.SearchUsers)
 		rg.Get("/user/byemail/:email", user.GetUserByEmail)
+		// Targeted opt-out from matched-posts suggestion emails (relevantallowed=0),
+		// key-authenticated so it works as a one-click List-Unsubscribe. Registered
+		// before /user/:id? so "relevantoff" is not treated as a user id.
+		// @Router /user/relevantoff [get]
+		rg.Get("/user/relevantoff", user.RelevantOff)
+		rg.Post("/user/relevantoff", user.RelevantOff)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
