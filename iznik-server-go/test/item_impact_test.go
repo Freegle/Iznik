@@ -93,12 +93,17 @@ func TestItemImpactExactItemsMatch(t *testing.T) {
 }
 
 // TestItemImpactFuzzyWeightsMatch covers lookup step (b): no items-table
-// match, but the query name shares the word "sofa" with the fixture weights
-// row ('2 seater sofa' / simplename 'sofa' / 37.00, scripts/test-fixtures.sql).
+// match, but the query name shares the word "sofa" with a weights reference
+// row ('2 seater sofa' / simplename 'sofa' / 37.00 — the same row
+// scripts/test-fixtures.sql ships for the dev DB). iznik_go_test is a
+// SCHEMA-ONLY clone (setup-test-database.sh: "Go tests create their own
+// fixture data at runtime"), so the test seeds the row itself.
 func TestItemImpactFuzzyWeightsMatch(t *testing.T) {
+	database.DBConn.Exec("INSERT IGNORE INTO weights (name, simplename, weight, source) VALUES ('2 seater sofa', 'sofa', 37.00, 'FRN 2009')")
+
 	prefix := uniquePrefix("ItemImpactFuzzy")
-	// A name that shares exactly the word "sofa" with the weights fixture,
-	// and is otherwise guaranteed not to exist in the items table.
+	// A name that shares exactly the word "sofa" with the seeded weights
+	// row, and is otherwise guaranteed not to exist in the items table.
 	name := prefix + " sofa"
 
 	status, result := fetchImpact(t, name, 1)
