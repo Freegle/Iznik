@@ -664,6 +664,19 @@ Schedule::command('mail:donations:thank-prep')
     ->sendOutputTo(cronLog('mail:donations:thank-prep'))
     ->runInBackground();
 
+// Reconcile donation userids: backfill donations never linked to an account and
+// re-point donations stranded on a since-deleted account (the donate/leave/rejoin
+// gap) onto the live account that now owns the payer email. The IPN handlers match
+// new donations at receipt, but new strandings appear whenever an account holding
+// donations is deleted without its donations being reassigned, so this runs as a
+// weekly safety net. Donations already on a live account (duplicate-account case)
+// are left for a human merge. Weekly, off-peak.
+Schedule::command('donations:correct-userids')
+    ->weeklyOn(2, '02:20')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('donations:correct-userids'))
+    ->runInBackground();
+
 // User management: Yahoo Groups removal, inactive-user forget, GDPR grace-period
 // forget, and hard delete of fully forgotten users with no messages left.
 // V1: cron/users_retention.php (User::userRetention + User::processForgets).
