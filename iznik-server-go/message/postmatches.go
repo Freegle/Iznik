@@ -18,12 +18,12 @@ func matchedPostsEnabled() bool {
 }
 
 // MinMatchedPostScore is the minimum subject cosine for an opposite-type post to
-// be worth emailing about. Deliberately NOT MinSimilarScore (0.60): that floor
-// was tuned for the on-site similar-posts strip, where the viewer is already
-// browsing and a weak suggestion costs nothing. Two things make this surface
-// different: the match is pushed into someone's inbox unasked, and both sides
-// are stored "search_document:" embeddings, so cosines sit far higher than the
-// query-vs-document scores 0.60 was picked against.
+// be worth emailing about. Deliberately higher than MinSimilarScore (0.80):
+// that floor governs the on-site similar-posts strip, where the viewer is
+// already browsing and a weak suggestion costs nothing. Two things make this
+// surface different: the match is pushed into someone's inbox unasked, and
+// both sides are stored "search_document:" embeddings, so cosines sit far
+// higher than the query-vs-document scores these floors were picked against.
 //
 // Measured on 150 randomly sampled live Offers scored against the live Wanted
 // pool, hand-judging the top match ("would someone who posted this Wanted be
@@ -64,7 +64,7 @@ func oppositeType(t string) string {
 // (3) reach-filtered against the POST's own location, not the caller's — the
 // batch calls this unauthenticated, and the recipient is the post's owner, so a
 // candidate that hasn't rippled out to the post's area is dropped. Excludes the
-// owner's own posts and applies MinSimilarScore. Uses the stored subject
+// owner's own posts and applies MinMatchedPostScore. Uses the stored subject
 // embedding (in-memory store, else one indexed read). Empty (never 500) when the
 // post has no embedding, no location, or isn't an Offer/Wanted.
 //

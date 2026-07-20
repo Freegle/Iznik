@@ -6,25 +6,53 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
 // MinSimilarScore is the minimum subject-field cosine for a post to count as
-// "similar". Lower than search's MinVectorScore (0.65) because this is an
-// exploratory surface (a recommendation strip, not a search query), but high
-// enough to keep out junk. Tune from the recommendations telemetry.
+// "similar". This is an exploratory surface (a recommendation strip, not a
+// search query), so the bar is lower than for the matched-posts email, which
+// pushes into an inbox unasked and uses MinMatchedPostScore (0.85).
 //
-// Worth knowing before tuning: this compares two STORED embeddings, both built
-// with the "search_document:" prefix, so the cosines sit much higher than the
-// query-vs-document scores 0.60 was originally picked against. The same floor
-// turned out to be far too loose on the matched-posts email, where measurement
-// put the useful cut at 0.85 (see MinMatchedPostScore in postmatches.go). This
-// surface has not been measured the same way. It is lower stakes, since a weak
-// suggestion in a browse strip costs nothing like a weak match pushed to an
-// inbox, but do not assume 0.60 is filtering much here either.
-const MinSimilarScore = 0.60
+// It is NOT lower than search's MinVectorScore (0.65), which is what the
+// original 0.60 assumed. Search compares a typed "search_query:" embedding
+// against stored "search_document:" ones; this compares two stored document
+// embeddings, and those cosines run much higher, so 0.60 here is a far weaker
+// filter than 0.65 there. The two numbers are not on the same scale.
+//
+// Measured by scoring 150 randomly sampled live Offers against the live Offer
+// pool (same type, self and verbatim reprints excluded) and hand-judging the
+// top suggestion, asking "would someone looking at this plausibly want that?":
+//
+//	0.90-1.00  44 shown, precision 0.98
+//	0.85-0.90  34 shown, precision 1.00
+//	0.80-0.85  33 shown, precision 0.67
+//	0.75-0.80  21 shown, precision 0.43
+//	below 0.75 18 shown, precision 0.17
+//
+// At 0.60 about a quarter of strips led with something unrelated that merely
+// shared a word: Crocosmia -> "Crockery", Motherboard -> "Headboard", Laptop
+// arm -> "Arm chair", Green House -> "Hedgehog House". 0.80 lifts precision
+// from 0.74 to 0.89 while still showing a strip on 74% of posts.
+//
+// 0.85 would give 0.99 precision but halves coverage to 52%, which is the wrong
+// trade here: unlike the email, a slightly-off suggestion beside something you
+// are already looking at costs little, whereas an empty strip loses the
+// exploration entirely.
+//
+// Live telemetry agrees the old floor was not working. Over 14 days to
+// 2026-07-20, source='similar_posts' saw 714 impressions and 3 clicks, a 0.4%
+// click-through, against 16% for 'wanted_match' (163/26). Placement differs so
+// they are not strictly comparable, but a 40x gap is not placement alone.
+//
+// Both numbers above are hand-judged, because until now nothing recorded the
+// score behind an impression. logSimilarImpressions (below) now does, so the
+// next revision of this constant can be made on click-through per score band
+// instead.
+const MinSimilarScore = 0.80
 
 // similarPostsEnabled reports whether the similar-posts feature is on.
 // FEATURE_SIMILAR_POSTS=off is a no-deploy killswitch (default on); when off the
@@ -159,5 +187,46 @@ func Similar(c *fiber.Ctx) error {
 		}
 	}
 
+	logSimilarImpressions(id, myid, out)
+
 	return c.JSON(out)
+}
+
+// logSimilarImpressions records what this strip actually served, one line per
+// candidate, so the floor above can be tuned on evidence rather than judgement.
+//
+// The gap this closes: messages_likes tags a recommendation impression with
+// `source` and whether it was opened (`pageview`), but not the similarity score
+// that caused it to be shown. So the funnel in recommendations/stats.go can say
+// the strip converts at 0.4%, but not whether the clicks come from the 0.95
+// suggestions and the 0.82 ones are dead weight, which is the number needed to
+// set MinSimilarScore. Joining these lines to the click rows on (msgid, userid)
+// within the view window gives click-through per score band.
+//
+// Deliberately NOT a score column on messages_likes: that table is 65M rows and
+// 11GB on prod, so widening it is an online-DDL job on a hot write path, for a
+// surface serving ~50 impressions a day. Logging is free and enough at this
+// volume. Revisit if the strip ever gets heavily used.
+//
+// To read it back:
+//
+//	{app="freegle", source="similar_posts", event="impression"} | json
+//
+// giving msgid, score, src_msgid and userid per served candidate. Bucket by
+// score and join to the clicks (messages_likes, type='View', source='similar_posts',
+// pageview=1) on (msgid, userid) to get click-through per band.
+func logSimilarImpressions(srcMsgid, myid uint64, served []SimilarResult) {
+	loki := misc.GetLoki()
+	if loki == nil || !loki.IsEnabled() || len(served) == 0 {
+		return
+	}
+
+	for _, r := range served {
+		loki.LogCustom("similar_posts", map[string]string{"event": "impression"}, map[string]interface{}{
+			"src_msgid": srcMsgid,
+			"msgid":     r.Msgid,
+			"score":     r.Score,
+			"userid":    myid, // 0 when logged out
+		})
+	}
 }
