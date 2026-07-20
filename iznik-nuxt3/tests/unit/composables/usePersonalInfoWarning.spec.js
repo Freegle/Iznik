@@ -42,6 +42,22 @@ describe('detectPersonalInfo', () => {
     expect(detectPersonalInfo('It weighs about 123 grams').hasPhone).toBe(false)
   })
 
+  // The pattern must not match part-way into a longer run of digits. This was
+  // originally expressed as a lookbehind, which Safari < 16.4 cannot parse at
+  // all - so it is now (?:^|\D). These cases pin that equivalence.
+  it.each([
+    ['long digit run', '1234567890123'],
+    ['phone-like run preceded by a digit', '50791112345678'],
+    ['digits either side', 'ref 9900791112345600'],
+    ['leading zeroes mid-run', 'order 000123456789012'],
+  ])('does not detect a phone number mid-digit-run: %s', (_label, text) => {
+    expect(detectPersonalInfo(text).hasPhone).toBe(false)
+  })
+
+  it('still detects a phone number preceded by non-digit characters', () => {
+    expect(detectPersonalInfo('abc0791 112 3456').hasPhone).toBe(true)
+  })
+
   it('detects an external email address as hasEmail true', () => {
     const result = detectPersonalInfo('Reach me at bob@example.com thanks')
     expect(result.hasEmail).toBe(true)
