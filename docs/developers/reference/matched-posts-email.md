@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-19
+last_reviewed: 2026-07-20
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -32,7 +32,8 @@ This is a **separate** mail from the daily digest's relevance ranking
    (`iznik-server-go/message/postmatches.go`), which returns the opposite-type
    open posts near it from the in-memory vector store — bbox-scoped, reach-filtered
    against the *post owner* (the caller is unauthenticated batch), above
-   `MinSimilarScore`. The vector maths lives only in Go; there is no SQL KNN.
+   `MinMatchedPostScore` (see [Similarity floor](#similarity-floor)). The vector
+   maths lives only in Go; there is no SQL KNN.
 4. **Both directions** fall out of that one search: the fresh post's owner is shown
    the matches, and each matched post's owner is shown the fresh post.
 5. **Guards** (`MatchedPostsService::applyEligibility`): never the recipient's own
@@ -87,3 +88,44 @@ renders it into Mailpit with real recent posts as stand-in matches.
 
 `fresh_window_minutes`, `match_limit_per_post`, `max_items_per_email`,
 `cooldown_hours`, `min_lastaccess_days` — all env-overridable.
+
+## Similarity floor
+
+The only quality gate is `MinMatchedPostScore` in `iznik-server-go/message/postmatches.go`.
+Laravel does not apply a floor of its own (it sorts on the scores the API returns),
+so this constant alone decides what lands in someone's inbox.
+
+It is **0.85, deliberately not** the similar-posts `MinSimilarScore` (0.60). Two
+reasons the surfaces differ: matched posts are pushed to an inbox unasked rather
+than offered to someone already browsing, and both sides of the comparison are
+stored `search_document:` embeddings, so the cosines run far higher than the
+query-vs-document scores 0.60 was chosen against.
+
+Measured by scoring 150 randomly sampled live Offers against the live Wanted pool
+and hand-judging the top match. Precision is a cliff, not a slope:
+
+| top-1 score | matches | precision |
+|---|---|---|
+| >= 0.90 | 20 | 1.00 |
+| 0.85-0.90 | 25 | 0.92 |
+| 0.80-0.85 | 21 | 0.43 |
+| 0.75-0.80 | 47 | 0.36 |
+| 0.60-0.75 | 37 | 0.11 |
+
+At 0.60 just under half the emails carry an irrelevant item (Bed lever -> "Bed",
+Screen protectors -> "Curtains", Keyrings -> "Rugs"). At 0.85 precision is 0.96
+and 30% of sampled posts still match, which is ample for a 10-minute job. The
+trade is recall, about 59% of true matches are kept, and that is the right way
+round for unsolicited mail.
+
+Two things that sound like improvements and measurably are not, both tested on
+400 gold Offer/Wanted pairs:
+
+- **Embedding the body as well as the subject makes it much worse** (recall@1
+  0.905 -> 0.535). Bodies are dominated by shared boilerplate ("collection times",
+  "no resellers"), which swamps the item itself.
+- **Storing 768 dims instead of the Matryoshka-truncated 256** buys almost
+  nothing (recall@1 0.905 -> 0.912) for 3x the storage and resident memory.
+
+Retrieval itself is not the weak link: at the production setting, when a true
+match exists it is ranked first 90% of the time and in the top 5 98% of the time.

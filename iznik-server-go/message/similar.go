@@ -15,6 +15,15 @@ import (
 // "similar". Lower than search's MinVectorScore (0.65) because this is an
 // exploratory surface (a recommendation strip, not a search query), but high
 // enough to keep out junk. Tune from the recommendations telemetry.
+//
+// Worth knowing before tuning: this compares two STORED embeddings, both built
+// with the "search_document:" prefix, so the cosines sit much higher than the
+// query-vs-document scores 0.60 was originally picked against. The same floor
+// turned out to be far too loose on the matched-posts email, where measurement
+// put the useful cut at 0.85 (see MinMatchedPostScore in postmatches.go). This
+// surface has not been measured the same way. It is lower stakes, since a weak
+// suggestion in a browse strip costs nothing like a weak match pushed to an
+// inbox, but do not assume 0.60 is filtering much here either.
 const MinSimilarScore = 0.60
 
 // similarPostsEnabled reports whether the similar-posts feature is on.

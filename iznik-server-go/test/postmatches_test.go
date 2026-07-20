@@ -2,6 +2,7 @@ package test
 
 import (
 	"encoding/json"
+	"math"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -13,8 +14,74 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// makeVecWithCosine returns a unit vector whose cosine with base is approximately
+// target, by mixing base with a vector orthogonal to it. The orthogonal component
+// is built by rotating adjacent pairs of base's components (a, b) -> (b, -a),
+// which is orthogonal to base because each pair contributes ab - ba = 0.
+// Lets a test pin behaviour at a specific similarity rather than just "parallel"
+// or "antiparallel".
+func makeVecWithCosine(base [embedding.EmbeddingDim]float32, target float64) [embedding.EmbeddingDim]float32 {
+	var orth [embedding.EmbeddingDim]float32
+	for i := 0; i+1 < embedding.EmbeddingDim; i += 2 {
+		orth[i] = base[i+1]
+		orth[i+1] = -base[i]
+	}
+	a := float32(target)
+	b := float32(math.Sqrt(1 - target*target))
+
+	var v [embedding.EmbeddingDim]float32
+	var norm float32
+	for i := 0; i < embedding.EmbeddingDim; i++ {
+		v[i] = a*base[i] + b*orth[i]
+		norm += v[i] * v[i]
+	}
+	norm = float32(math.Sqrt(float64(norm)))
+	for i := 0; i < embedding.EmbeddingDim; i++ {
+		v[i] /= norm
+	}
+	return v
+}
+
+// TestPostMatchesThresholdExcludesMidBand pins the matched-posts floor at
+// MinMatchedPostScore rather than the similar-posts MinSimilarScore (0.60).
+//
+// The band between them is exactly where this feature used to hurt: on 150
+// hand-judged live samples, candidates scoring 0.75-0.85 were relevant only ~36%
+// of the time, so a 0.60 floor put an irrelevant item in roughly half the emails.
+// A 0.78-similarity candidate clears the old floor comfortably and must still be
+// dropped here; without this test, reverting to MinSimilarScore stays green.
+func TestPostMatchesThresholdExcludesMidBand(t *testing.T) {
+	base := makeTestVec(0.5)
+	const srcID, midID, strongID = 852001, 852002, 852003
+	const u1, u2 = uint64(94001), uint64(94002)
+
+	mid := makeVecWithCosine(base, 0.78)    // above old 0.60, below new 0.85
+	strong := makeVecWithCosine(base, 0.95) // clears the new floor
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Bed lever", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: midID, Fromuser: u2, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Bed", Arrival: time.Now(), SubjectVec: mid},
+		{Msgid: strongID, Fromuser: u2, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Bed lever wanted", Arrival: time.Now(), SubjectVec: strong},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/852001/matches", nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	got := map[uint64]bool{}
+	for _, r := range results {
+		got[r.Msgid] = true
+		assert.GreaterOrEqual(t, r.Score, float32(message.MinMatchedPostScore))
+	}
+	assert.True(t, got[uint64(strongID)], "0.95 similarity is emailed")
+	assert.False(t, got[uint64(midID)], "0.78 similarity clears the old 0.60 floor but must not be emailed")
+}
+
 // TestPostMatchesReturnsOppositeType: given a source Offer, /message/:id/matches
-// returns only open OPPOSITE-type (Wanted) posts, above MinSimilarScore, by a
+// returns only open OPPOSITE-type (Wanted) posts, above MinMatchedPostScore, by a
 // DIFFERENT author. Same-type, weak, and same-author candidates are all dropped.
 func TestPostMatchesReturnsOppositeType(t *testing.T) {
 	base := makeTestVec(0.5)
@@ -39,7 +106,7 @@ func TestPostMatchesReturnsOppositeType(t *testing.T) {
 
 	require.Len(t, results, 1, "only the opposite-type, above-threshold, different-author match qualifies")
 	assert.Equal(t, uint64(wantedID), results[0].Msgid)
-	assert.GreaterOrEqual(t, results[0].Score, float32(message.MinSimilarScore))
+	assert.GreaterOrEqual(t, results[0].Score, float32(message.MinMatchedPostScore))
 	assert.NotZero(t, results[0].Lat, "lat populated (blurred)")
 	assert.NotZero(t, results[0].Lng, "lng populated (blurred)")
 	assert.Equal(t, uint64(100), results[0].Groupid)

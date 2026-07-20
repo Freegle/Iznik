@@ -17,6 +17,32 @@ func matchedPostsEnabled() bool {
 	return os.Getenv("FEATURE_MATCHED_POSTS") != "off"
 }
 
+// MinMatchedPostScore is the minimum subject cosine for an opposite-type post to
+// be worth emailing about. Deliberately NOT MinSimilarScore (0.60): that floor
+// was tuned for the on-site similar-posts strip, where the viewer is already
+// browsing and a weak suggestion costs nothing. Two things make this surface
+// different: the match is pushed into someone's inbox unasked, and both sides
+// are stored "search_document:" embeddings, so cosines sit far higher than the
+// query-vs-document scores 0.60 was picked against.
+//
+// Measured on 150 randomly sampled live Offers scored against the live Wanted
+// pool, hand-judging the top match ("would someone who posted this Wanted be
+// glad to see this Offer?"). Precision by band is a cliff, not a slope:
+//
+//	>= 0.90   20 matches, precision 1.00
+//	0.85-0.90 25 matches, precision 0.92
+//	0.80-0.85 21 matches, precision 0.43   <-- falls off here
+//	0.75-0.80 47 matches, precision 0.36
+//	0.60-0.75 37 matches, precision 0.11
+//
+// At 0.60 just under half the emails would carry an irrelevant item (Bed lever →
+// "Bed", Screen protectors → "Curtains", Keyrings → "Rugs"). At 0.85 precision
+// is 0.96 and 30% of sampled posts still produce a match, which is ample volume
+// for an every-10-minutes job. Recall is the thing being traded away (59% of
+// true matches kept) and that is the right trade for unsolicited mail: a missed
+// match costs one email, a junk match teaches people to ignore the next one.
+const MinMatchedPostScore = 0.85
+
 // oppositeType maps Offer↔Wanted; any other type yields "" (no matching).
 func oppositeType(t string) string {
 	switch t {
@@ -138,7 +164,7 @@ func PostMatches(c *fiber.Ctx) error {
 		if cnd.Fromuser == srcFromuser {
 			continue // the owner's own posts
 		}
-		if cnd.SubjectCos < MinSimilarScore {
+		if cnd.SubjectCos < MinMatchedPostScore {
 			continue
 		}
 		if blocked[cnd.Msgid] {
