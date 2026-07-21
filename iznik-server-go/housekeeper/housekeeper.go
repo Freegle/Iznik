@@ -374,7 +374,12 @@ var cronJobs = []CronJob{
 	{Command: "stories:ask", Name: "Ask for Stories", Description: "Asks eligible users with outcomes/offers to share their Freegle story", Schedule: "Weekly (Sat 11am)", IntervalMinutes: 10080, Category: "Stories", Active: true},
 
 	// Data & Integrations additions
-	{Command: "integrations:sync-whatjobs", Name: "WhatJobs Sync", Description: "Imports WhatJobs XML job feeds, geocodes locations, filters spam, scores clickability", Schedule: "Hourly 8am–10pm", IntervalMinutes: 60, Category: "Data", Active: true},
+	// Runs `0 */3 * * *` in [08:00,22:00] UTC plus a daily 05:00 UK run ahead of the
+	// digest — NOT hourly. The 05:00 run bridges the overnight gap, so the largest
+	// legitimate gap between runs is ~7h (21:00 → 04:00 UTC); IntervalMinutes=480
+	// (8h) tolerates that + a slow cold sync without false "overdue". Real failures
+	// are caught by the batch-side 24h outcome monitor (ScheduledOutcomeRegistry).
+	{Command: "integrations:sync-whatjobs", Name: "WhatJobs Sync", Description: "Imports WhatJobs XML job feeds, geocodes locations, filters spam, scores clickability", Schedule: "Every 3h, 8am–10pm", IntervalMinutes: 480, Category: "Data", Active: true},
 	{Command: "integrations:sync-restartproject", Name: "Restart Project Sync", Description: "Imports upcoming Restart Project repair café events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "integrations:sync-repaircafewales", Name: "Repair Cafe Wales Sync", Description: "Imports upcoming Repair Cafe Wales iCal events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 
