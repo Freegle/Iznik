@@ -29,54 +29,53 @@ func (Group) TableName() string { return "groups" }
 
 // Full group details.
 type Group struct {
-	ID                   uint64           `json:"id" gorm:"primary_key"`
-	Nameshort            string           `json:"nameshort"`
-	Namefull             string           `json:"namefull"`
-	Namedisplay          string           `json:"namedisplay" gorm:"-"`
-	Settings             json.RawMessage  `json:"settings"` // This is JSON stored in the DB as a string.
-	Rules                json.RawMessage  `json:"rules"`    // Group rules, nullable JSON.
-	Region               string           `json:"region"`
-	Logo                 string           `json:"logo"`
-	Publish              int              `json:"publish"`
-	Ontn                 int              `json:"ontn"`
-	Membercount          int              `json:"membercount"`
-	Modcount             int              `json:"modcount"`
-	Lat                  float32          `json:"lat"`
-	Lng                  float32          `json:"lng"`
-	Altlat               float32          `json:"altlat"`
-	Altlng               float32          `json:"altlng"`
-	GroupProfile         GroupProfile     `gorm:"-" json:"-"`
-	Profile              uint64           `gorm:"column:profile" json:"-"`
-	GroupProfileStr      string           `json:"profile" gorm:"-"`
-	Onmap                int              `json:"onmap"`
-	Tagline              string           `json:"tagline"`
-	Description          string           `json:"description"`
-	Contactmail          string           `json:"-"`
-	Modsemail            string           `json:"modsemail"`
-	Fundingtarget        int              `json:"fundingtarget"`
-	Affiliationconfirmed *time.Time       `json:"affiliationconfirmed,omitempty"`
-	Founded              *time.Time       `json:"founded,omitempty"`
-	GroupSponsors        []GroupSponsor   `gorm:"ForeignKey:groupid" json:"sponsors"`
-	GroupVolunteers      []GroupVolunteer `gorm:"-" json:"showmods"`
-	Showjoin               int              `json:"showjoin"`
-	Bbox                   string           `json:"bbox,omitempty" gorm:"column:bbox"`
-	Type                   string           `json:"type"`
-	Overridemoderation     string           `json:"overridemoderation"`
-	Autofunctionoverride   int              `json:"autofunctionoverride"`
-	Microvolunteering      int              `json:"microvolunteering"`
-	Microvolunteeringoptions json.RawMessage `json:"microvolunteeringoptions"`
-	Mentored               int              `json:"mentored" gorm:"column:mentored"`
-	Onhere                 int              `json:"onhere" gorm:"column:onhere"`
-	Onlovejunk             int              `json:"onlovejunk" gorm:"column:onlovejunk"`
-	Welcomemail            string           `json:"welcomemail,omitempty"`
-	Myrole                 string           `json:"myrole,omitempty" gorm:"-"`
+	ID                       uint64           `json:"id" gorm:"primary_key"`
+	Nameshort                string           `json:"nameshort"`
+	Namefull                 string           `json:"namefull"`
+	Namedisplay              string           `json:"namedisplay" gorm:"-"`
+	Settings                 json.RawMessage  `json:"settings"` // This is JSON stored in the DB as a string.
+	Rules                    json.RawMessage  `json:"rules"`    // Group rules, nullable JSON.
+	Region                   string           `json:"region"`
+	Logo                     string           `json:"logo"`
+	Publish                  int              `json:"publish"`
+	Ontn                     int              `json:"ontn"`
+	Membercount              int              `json:"membercount"`
+	Modcount                 int              `json:"modcount"`
+	Lat                      float32          `json:"lat"`
+	Lng                      float32          `json:"lng"`
+	Altlat                   float32          `json:"altlat"`
+	Altlng                   float32          `json:"altlng"`
+	GroupProfile             GroupProfile     `gorm:"-" json:"-"`
+	Profile                  uint64           `gorm:"column:profile" json:"-"`
+	GroupProfileStr          string           `json:"profile" gorm:"-"`
+	Onmap                    int              `json:"onmap"`
+	Tagline                  string           `json:"tagline"`
+	Description              string           `json:"description"`
+	Contactmail              string           `json:"-"`
+	Modsemail                string           `json:"modsemail"`
+	Fundingtarget            int              `json:"fundingtarget"`
+	Affiliationconfirmed     *time.Time       `json:"affiliationconfirmed,omitempty"`
+	Founded                  *time.Time       `json:"founded,omitempty"`
+	GroupSponsors            []GroupSponsor   `gorm:"ForeignKey:groupid" json:"sponsors"`
+	GroupVolunteers          []GroupVolunteer `gorm:"-" json:"showmods"`
+	Showjoin                 int              `json:"showjoin"`
+	Bbox                     string           `json:"bbox,omitempty" gorm:"column:bbox"`
+	Type                     string           `json:"type"`
+	Overridemoderation       string           `json:"overridemoderation"`
+	Autofunctionoverride     int              `json:"autofunctionoverride"`
+	Microvolunteering        int              `json:"microvolunteering"`
+	Microvolunteeringoptions json.RawMessage  `json:"microvolunteeringoptions"`
+	Mentored                 int              `json:"mentored" gorm:"column:mentored"`
+	Onhere                   int              `json:"onhere" gorm:"column:onhere"`
+	Onlovejunk               int              `json:"onlovejunk" gorm:"column:onlovejunk"`
+	Welcomemail              string           `json:"welcomemail,omitempty"`
+	Myrole                   string           `json:"myrole,omitempty" gorm:"-"`
 
 	// Polygon fields (only populated when polygon=true query param)
-	Poly           *string `json:"poly,omitempty" gorm:"-"`
-	Polyofficial   *string `json:"polyofficial,omitempty" gorm:"-"`
-	Postvisibility *string `json:"postvisibility,omitempty" gorm:"-"`
-	Cga            *string `json:"cga,omitempty" gorm:"-"`
-	Dpa            *string `json:"dpa,omitempty" gorm:"-"`
+	Poly         *string `json:"poly,omitempty" gorm:"-"`
+	Polyofficial *string `json:"polyofficial,omitempty" gorm:"-"`
+	Cga          *string `json:"cga,omitempty" gorm:"-"`
+	Dpa          *string `json:"dpa,omitempty" gorm:"-"`
 
 	// TN key fields (only populated when tnkey=true and user is moderator)
 	Tnkey *TnKeyInfo `json:"tnkey,omitempty" gorm:"-"`
@@ -248,9 +247,8 @@ func GetGroup(c *fiber.Ctx) error {
 		wantTnkey := c.Query("tnkey") == "true" && myid > 0 && auth.IsModOfGroup(myid, id)
 
 		type PolyResult struct {
-			Poly           *string `gorm:"column:poly"`
-			Polyofficial   *string `gorm:"column:polyofficial"`
-			Postvisibility *string `gorm:"column:postvisibility"`
+			Poly         *string `gorm:"column:poly"`
+			Polyofficial *string `gorm:"column:polyofficial"`
 		}
 		var polyResult PolyResult
 		var myrole string
@@ -262,7 +260,7 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT poly, polyofficial, ST_AsText(postvisibility) as postvisibility FROM `groups` WHERE id = ?", id).Scan(&polyResult)
+				db.Raw("SELECT poly, polyofficial FROM `groups` WHERE id = ?", id).Scan(&polyResult)
 			}()
 		}
 
@@ -288,7 +286,6 @@ func GetGroup(c *fiber.Ctx) error {
 		if wantPolygon {
 			group.Poly = polyResult.Poly
 			group.Polyofficial = polyResult.Polyofficial
-			group.Postvisibility = polyResult.Postvisibility
 			group.Cga = polyResult.Polyofficial
 			group.Dpa = polyResult.Poly
 		}
@@ -687,33 +684,33 @@ func logGroupEdit(groupid uint64, byuser uint64, text string) {
 }
 
 type PatchGroupRequest struct {
-	ID                    uint64   `json:"id"`
-	Tagline               *string  `json:"tagline"`
-	Namefull              *string  `json:"namefull"`
-	Welcomemail           *string  `json:"welcomemail"`
-	Description           *string  `json:"description"`
-	Region                *string  `json:"region"`
-	AffiliationConfirmed  *string  `json:"affiliationconfirmed"`
-	Onhere                *int     `json:"onhere"`
-	Publish               *int     `json:"publish"`
+	ID                       uint64           `json:"id"`
+	Tagline                  *string          `json:"tagline"`
+	Namefull                 *string          `json:"namefull"`
+	Welcomemail              *string          `json:"welcomemail"`
+	Description              *string          `json:"description"`
+	Region                   *string          `json:"region"`
+	AffiliationConfirmed     *string          `json:"affiliationconfirmed"`
+	Onhere                   *int             `json:"onhere"`
+	Publish                  *int             `json:"publish"`
 	Microvolunteering        *int             `json:"microvolunteering"`
 	Microvolunteeringoptions *json.RawMessage `json:"microvolunteeringoptions"`
 	Mentored                 *int             `json:"mentored"`
-	Ontn                  *int     `json:"ontn"`
-	Onlovejunk            *int              `json:"onlovejunk"`
-	Profile               *uint64           `json:"profile"`
-	Settings              *json.RawMessage  `json:"settings"`
-	Rules                 *json.RawMessage  `json:"rules"`
+	Ontn                     *int             `json:"ontn"`
+	Onlovejunk               *int             `json:"onlovejunk"`
+	Profile                  *uint64          `json:"profile"`
+	Settings                 *json.RawMessage `json:"settings"`
+	Rules                    *json.RawMessage `json:"rules"`
 	// Admin/Support only fields
-	Lat                   *float64 `json:"lat"`
-	Lng                   *float64 `json:"lng"`
-	Altlat                *float64 `json:"altlat"`
-	Altlng                *float64 `json:"altlng"`
-	Nameshort             *string  `json:"nameshort"`
-	Licenserequired       *int     `json:"licenserequired"`
-	Poly                  *string  `json:"poly"`
-	Polyofficial          *string  `json:"polyofficial"`
-	Showonyahoo           *int     `json:"showonyahoo"`
+	Lat             *float64 `json:"lat"`
+	Lng             *float64 `json:"lng"`
+	Altlat          *float64 `json:"altlat"`
+	Altlng          *float64 `json:"altlng"`
+	Nameshort       *string  `json:"nameshort"`
+	Licenserequired *int     `json:"licenserequired"`
+	Poly            *string  `json:"poly"`
+	Polyofficial    *string  `json:"polyofficial"`
+	Showonyahoo     *int     `json:"showonyahoo"`
 }
 
 func PatchGroup(c *fiber.Ctx) error {
@@ -947,4 +944,3 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
-

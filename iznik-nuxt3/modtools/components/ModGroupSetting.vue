@@ -1,5 +1,5 @@
 <template>
-  <b-form-group :label="label">
+  <b-form-group :label="label" :data-setting-id="name">
     <b-form-text v-if="description" class="mb-2">
       {{ description }}
     </b-form-text>
