@@ -26,6 +26,9 @@
         </b-row>
       </b-card-header>
       <b-card-body>
+        <NoticeMessage v-if="heldError" variant="warning" class="mb-2">
+          {{ heldError }}
+        </NoticeMessage>
         <NoticeMessage
           v-if="groups.length && groups[0].ourPostingStatus === 'PROHIBITED'"
           variant="danger"
@@ -83,6 +86,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useVolunteeringStore } from '@/stores/volunteering'
+import { useHeldNotice } from '~/composables/useHeldNotice'
 import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 
@@ -94,6 +98,7 @@ const props = defineProps({
 })
 
 const volunteeringStore = useVolunteeringStore()
+const { heldError, guardHold } = useHeldNotice()
 const groupStore = useGroupStore()
 const userStore = useUserStore()
 
@@ -146,10 +151,17 @@ async function deleteme() {
 }
 
 async function approve() {
-  await volunteeringStore.save({
-    id: volunteering.value.id,
-    pending: false,
-  })
-  volunteeringStore.remove(volunteering.value.id)
+  await guardHold(() =>
+    volunteeringStore.save({
+      id: volunteering.value.id,
+      pending: false,
+    })
+  )
+
+  // Only drop it from the list if the save actually happened. A refused approve
+  // must leave it on screen with the reason showing.
+  if (!heldError.value) {
+    volunteeringStore.remove(volunteering.value.id)
+  }
 }
 </script>

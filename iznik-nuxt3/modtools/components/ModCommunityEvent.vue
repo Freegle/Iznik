@@ -25,6 +25,9 @@
         </b-row>
       </b-card-header>
       <b-card-body>
+        <NoticeMessage v-if="heldError" variant="warning" class="mb-2">
+          {{ heldError }}
+        </NoticeMessage>
         <NoticeMessage
           v-if="
             groups.length > 0 && groups[0].ourPostingStatus === 'PROHIBITED'
@@ -77,6 +80,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useCommunityEventStore } from '~/stores/communityevent'
+import { useHeldNotice } from '~/composables/useHeldNotice'
 import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 
@@ -88,6 +92,7 @@ const props = defineProps({
 })
 
 const communityEventStore = useCommunityEventStore()
+const { heldError, guardHold } = useHeldNotice()
 const groupStore = useGroupStore()
 const userStore = useUserStore()
 
@@ -139,9 +144,11 @@ function deleteme() {
 }
 
 function approve() {
-  communityEventStore.save({
-    id: event.value.id,
-    pending: false,
-  })
+  guardHold(() =>
+    communityEventStore.save({
+      id: event.value.id,
+      pending: false,
+    })
+  )
 }
 </script>

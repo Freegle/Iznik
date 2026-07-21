@@ -79,6 +79,10 @@ describe('ModMemberButton', () => {
       props: mergedProps,
       global: {
         stubs: {
+          NoticeMessage: {
+            template: '<div><slot /></div>',
+            props: ['variant'],
+          },
           SpinButton: {
             template:
               '<button :class="variant" :disabled="disabled" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',
