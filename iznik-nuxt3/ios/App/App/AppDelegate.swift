@@ -67,6 +67,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
       }
 
+    // Long-press app-icon quick actions (UIApplicationShortcutItems in Info.plist).
+    // Map each shortcut to a https://www.ilovefreegle.org/<path> URL and route it
+    // through the same Capacitor pipeline as a deep link, so the appUrlOpen handler
+    // (stores/mobile.js) navigates to the target page.
+    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        let path: String?
+        switch shortcutItem.type {
+        case "org.ilovefreegle.shortcut.give": path = "/give"
+        case "org.ilovefreegle.shortcut.find": path = "/find"
+        case "org.ilovefreegle.shortcut.chats": path = "/chats"
+        default: path = nil
+        }
+        if let path = path, let url = URL(string: "https://www.ilovefreegle.org" + path) {
+            _ = ApplicationDelegateProxy.shared.application(application, open: url, options: [:])
+            completionHandler(true)
+        } else {
+            completionHandler(false)
+        }
+    }
+
     func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
         // Called when the app was launched with an activity, including Universal Links.
         // Feel free to add additional processing here, but if you want the App API to support

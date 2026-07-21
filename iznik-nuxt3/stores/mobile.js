@@ -49,6 +49,9 @@ export const useMobileStore = defineStore({
     route: false,
     apprequiredversion: false,
     appupdaterequired: false,
+    // URLs (Capacitor.convertFileSrc) of images shared into the app from another
+    // app, waiting to be attached to a new OFFER by the give-flow photos page.
+    pendingSharedImages: [],
   }),
   actions: {
     init(config) {
@@ -115,6 +118,7 @@ export const useMobileStore = defineStore({
       await this.getDeviceInfo(Device)
       this.fixWindowOpen(AppLauncher)
       this.initDeepLinks(App)
+      this.initShareIntent(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
@@ -240,6 +244,13 @@ export const useMobileStore = defineStore({
       if (process.client) {
         App.addListener('appUrlOpen', async (event) => {
           console.log('appUrlOpen', event.url)
+          // "Share an image into Freegle" on iOS: the Share Extension opens
+          // freegleshare://shared?p=<path>... — queue the image(s) and route
+          // into the give flow (mirrors the Android FreegleShare bridge).
+          if (event.url && event.url.indexOf('freegleshare://') === 0) {
+            this.handleSharedUrl(event.url)
+            return
+          }
           const lookfor = 'ilovefreegle.org'
           const ilfpos = event.url.indexOf(lookfor)
           if (ilfpos !== -1) {
@@ -285,6 +296,67 @@ export const useMobileStore = defineStore({
             }, 500)
           }
         })
+      }
+    },
+
+    // "Share an image into Freegle" (Android ACTION_SEND). The native layer
+    // (MainActivity) copies the shared image(s) to its cache and exposes them via
+    // the window.FreegleShare JS bridge. We pull them at startup (cold share) and
+    // on every resume (warm share), then route into the give flow with the photos
+    // pre-attached. No-op unless the native bridge is present.
+    initShareIntent(App) {
+      if (process.client) {
+        this.checkSharedIntent()
+        App.addListener('resume', () => {
+          this.checkSharedIntent()
+        })
+      }
+    },
+
+    checkSharedIntent() {
+      if (!process.client || !this.isApp) return
+      try {
+        const bridge = window.FreegleShare
+        if (!bridge || typeof bridge.consume !== 'function') return
+        const raw = bridge.consume()
+        if (!raw) return
+        let paths
+        try {
+          paths = JSON.parse(raw)
+        } catch (e) {
+          return
+        }
+        if (!Array.isArray(paths) || paths.length === 0) return
+        // Convert native cache-file paths into URLs the WebView can fetch().
+        this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
+        console.log('Shared images received', this.pendingSharedImages.length)
+        const router = useRouter()
+        router.push('/give/mobile/photos')
+      } catch (e) {
+        console.log('checkSharedIntent failed', e?.message)
+      }
+    },
+
+    // iOS share-extension handoff: parse freegleshare://shared?p=<path>&p=<path>,
+    // convert each shared-container path to a URL the WebView can fetch(), queue
+    // it, and route into the give flow. Same destination as checkSharedIntent.
+    handleSharedUrl(url) {
+      try {
+        const qpos = url.indexOf('?')
+        if (qpos === -1) return
+        const paths = url
+          .substring(qpos + 1)
+          .split('&')
+          .filter((kv) => kv.startsWith('p='))
+          .map((kv) => decodeURIComponent(kv.substring(2)))
+          .filter(Boolean)
+        if (!paths.length) return
+        this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
+        console.log('Shared images received (iOS)', this.pendingSharedImages.length)
+        const router = useRouter()
+        router.push('/give/mobile/photos')
+      } catch (e) {
+        console.log('handleSharedUrl failed', e?.message)
       }
     },
 
@@ -671,6 +743,15 @@ export const useMobileStore = defineStore({
           message: replyText,
         })
         console.log('handleReplyAction: message sent successfully')
+        // Confirm the reply with a success haptic (best-effort; in-app only).
+        try {
+          const { Haptics, NotificationType } = await import(
+            '@capacitor/haptics'
+          )
+          await Haptics.notification({ type: NotificationType.Success })
+        } catch (he) {
+          dbg()?.debug('haptic not available', he?.message)
+        }
       } catch (e) {
         console.error('handleReplyAction error:', e.message)
       }
