@@ -30,7 +30,9 @@ return new class extends Migration
             $table->unsignedBigInteger('userid')->unique('userid');
             $table->timestamp('created')->useCurrent();
             $table->text('schedule')->nullable();
-            $table->foreign(['userid'])->references(['id'])->on('users')
+            // Named to match production exactly, so a hand-written
+            // DROP FOREIGN KEY works the same in both places.
+            $table->foreign(['userid'], 'users_schedules_ibfk_1')->references(['id'])->on('users')
                 ->onUpdate('restrict')->onDelete('cascade');
         });
     }
