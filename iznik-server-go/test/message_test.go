@@ -1482,8 +1482,10 @@ func TestPostMessageApproveMarksHam(t *testing.T) {
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
-	// Set spamtype on message to simulate it being flagged.
-	db.Exec("UPDATE messages SET spamtype = 'Spam' WHERE id = ?", msgID)
+	// Set spamtype on message to simulate it being flagged. Must be a value from
+	// the production ENUM - 'Spam' is not one of them, and only worked while the
+	// migrations declared this column as a varchar.
+	db.Exec("UPDATE messages SET spamtype = 'SpamAssassin' WHERE id = ?", msgID)
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -8061,7 +8063,10 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
+	// tnuserid is UNIQUE in production. Use a value distinct from the other
+	// partner tests, and release it from any user left by an earlier run.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77703)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77703, ownerID)
 
 	// Create message at original lat/lng.
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8076,7 +8081,7 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 		"lng": newLng,
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77701&email=%s@test.com", key, prefix)
+	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77703&email=%s@test.com", key, prefix)
 	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
@@ -9361,6 +9366,9 @@ func TestPostMessagePartnerAuthPromise(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77701)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -9387,6 +9395,9 @@ func TestPostMessagePartnerAuthByTnPostid(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77702)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77702, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)

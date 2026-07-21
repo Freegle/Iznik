@@ -3685,7 +3685,9 @@ func TestPutMembershipsPartnerSubscribe(t *testing.T) {
 	email := prefix + "@test.com"
 	userID := CreateTestUser(t, prefix+"_user", "User")
 
-	// Set tnuserid on the user.
+	// Set tnuserid on the user. It is UNIQUE in production, so release it from
+	// any user left by an earlier run first.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12345)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 12345, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
