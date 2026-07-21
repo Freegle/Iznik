@@ -25,7 +25,7 @@ STATE_FILE="$YLVM_COMPOSE_DIR/yesterday/data/current-backup.json"
 # Determine target date (arg, else newest in bucket).
 DATE8="${1:-}"
 if [ -z "$DATE8" ]; then
-    DATE8="$(gsutil ls "$YLVM_BUCKET/iznik-*.xbstream" 2>/dev/null \
+    DATE8="$(gcloud storage ls "$YLVM_BUCKET/iznik-*.xbstream" 2>/dev/null \
         | sed -E 's#.*/iznik-([0-9]{4})-([0-9]{2})-([0-9]{2})-.*#\1\2\3#' \
         | grep -E '^[0-9]{8}$' | sort -u | tail -1)"
 fi

@@ -433,8 +433,8 @@ Production Loki stores data in Google Cloud Storage:
 
 ### Backup Strategy
 
-1. **Cross-Region Replication**: `gsutil replication set gs://freegle-loki gs://freegle-loki-backup-us`
-2. **Daily Snapshots**: `gsutil -m rsync -r gs://freegle-loki/ gs://freegle-backups/loki/$DATE/`
+1. **Cross-Region Replication**: `gcloud storage replication set gs://freegle-loki gs://freegle-loki-backup-us`
+2. **Daily Snapshots**: `gcloud storage rsync -r gs://freegle-loki/ gs://freegle-backups/loki/$DATE/`
 
 Retention: 7 days daily, 4 weeks weekly, 12 months monthly.
 
@@ -447,7 +447,7 @@ Configure yesterday's Loki to read from production bucket with read-only setting
 **Option B: Sync to local filesystem**
 
 ```bash
-gsutil -m rsync -r gs://freegle-loki/ /data/loki-restore/
+gcloud storage rsync -r gs://freegle-loki/ /data/loki-restore/
 ```
 
 </details>
