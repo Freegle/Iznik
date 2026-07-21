@@ -680,7 +680,7 @@ tail -f /var/log/yesterday-restore-YYYYMMDD.log
 4. **Partial upload** - Auto-restore skips backups less than 2 hours old:
    ```bash
    # Check backup timestamp
-   gsutil ls -l gs://freegle_backup_uk/iznik-*.xbstream | tail -5
+   gcloud storage ls -l gs://freegle_backup_uk/iznik-*.xbstream | tail -5
    ```
 
 ### API won't start

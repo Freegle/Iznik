@@ -37,7 +37,7 @@ ylvm_project_name() {
 ylvm_find_backup() {
     local date8="$1"
     local fmt="${date8:0:4}-${date8:4:2}-${date8:6:2}"
-    gsutil ls "$YLVM_BUCKET/iznik-${fmt}-*.xbstream" 2>/dev/null | head -1
+    gcloud storage ls "$YLVM_BUCKET/iznik-${fmt}-*.xbstream" 2>/dev/null | head -1
 }
 
 # Prepare a full backup for a date into the staging mount, leaving a clean,
@@ -58,7 +58,7 @@ ylvm_prepare_to_stage() {
     fstrim "$YLVM_STAGE_MNT" 2>/dev/null || true
 
     ylvm_log "Streaming + extracting to staging ..."
-    gsutil cat "$backup_file" | xbstream -x -C "$YLVM_STAGE_MNT"
+    gcloud storage cat "$backup_file" | xbstream -x -C "$YLVM_STAGE_MNT"
 
     ylvm_log "Decompressing .zst files (parallel) ..."
     find "$YLVM_STAGE_MNT" -type f -name "*.zst" -print0 | xargs -0 -P "$(nproc)" -I {} zstd -d --rm {}
