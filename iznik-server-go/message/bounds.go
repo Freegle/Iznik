@@ -24,17 +24,9 @@ func Bounds(c *fiber.Ctx) error {
 
 	msgs := []MessageSummary{}
 
-	// The optional postvisibility property of a group indicates the area within which members must lie for a post
-	// on that group to be visibile.
-	var latlng utils.LatLng
-
-	if myid > 0 {
-		latlng = user.GetLatLng(myid)
-	} else {
-		// Not logged in.  Best guess is centre of wherever they're looking.
-		latlng.Lat = float32((swlat + nelat)) / 2
-		latlng.Lng = float32((swlng + nelng)) / 2
-	}
+	// Groups used to be able to restrict visibility to viewers inside a moderator-drawn
+	// postvisibility polygon. That's gone: how far a freegler sees is now their own choice,
+	// via the distance slider and the rippling reach model, and a group can't override it.
 
 	// The posts in the bounds that everyone can see: the spatial index, which the daily batch
 	// prunes of expired posts.
@@ -49,19 +41,17 @@ func Bounds(c *fiber.Ctx) error {
 		"messages_spatial.arrival, "+
 		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
 		"FROM messages_spatial "+
+		// The groups join no longer filters on visibility, but is kept so that a post whose
+		// group has been deleted doesn't show up.
 		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point) "+
-		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1",
+		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
 		myid, utils.MESSAGE_LIKES_VIEW,
 		swlng, swlat,
 		swlng, nelat,
 		nelng, nelat,
 		nelng, swlat,
 		swlng, swlat,
-		utils.SRID,
-		latlng.Lng,
-		latlng.Lat,
 		utils.SRID,
 	).Scan(&msgs)
 
@@ -89,7 +79,6 @@ func Bounds(c *fiber.Ctx) error {
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
 		"WHERE fromuser = ? AND messages_groups.arrival >= ? AND "+
 		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
-		"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
 		"AND messages_outcomes.id IS NULL "+
 		"GROUP BY messages.id",
 		utils.OUTCOME_TAKEN,
@@ -103,9 +92,6 @@ func Bounds(c *fiber.Ctx) error {
 		nelng, swlat,
 		swlng, swlat,
 		utils.SRID,
-		utils.SRID,
-		latlng.Lng,
-		latlng.Lat,
 		utils.SRID,
 	).Scan(&ownMsgs)
 

@@ -68,7 +68,6 @@ class Group extends Model implements Auditable
         'businesscards' => 1,
         'autoadmins' => 1,
         'mentored' => 0,
-        'nearbygroups' => 5,
         'showjoin' => 0,
         'engagement' => 1,
     ];
@@ -654,7 +653,6 @@ class Group extends Model implements Auditable
         'defaultlocation',
         'moderationstatus',
         'maxagetoshow',
-        'nearbygroups',
         'microvolunteering',
         'microvolunteeringoptions',
         'autofunctionoverride',
