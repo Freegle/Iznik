@@ -719,3 +719,94 @@ func TestWiderReviewWorkCounts(t *testing.T) {
 	}
 	assert.True(t, foundGroup2, "group2 should appear in work counts from wider review")
 }
+
+// Reject had no hold check at all, unlike Approve and Redact: a mod could reject
+// a chat message another mod was holding for review, from a stale screen. Same
+// class as Discourse #9946 on posts.
+func TestRejectHeldByOtherMod(t *testing.T) {
+	_, _, groupID, _, msgID, _ := setupModerationData(t)
+	db := database.DBConn
+
+	prefix2 := uniquePrefix(t.Name()) + "_mod2"
+	mod2ID := CreateTestUser(t, prefix2, "User")
+	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	_, mod2Token := CreateTestSession(t, mod2ID)
+
+	postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Hold",
+	}, mod2Token)
+
+	prefix3 := uniquePrefix(t.Name()) + "_mod3"
+	mod3ID := CreateTestUser(t, prefix3, "User")
+	CreateTestMembership(t, mod3ID, groupID, "Moderator")
+	_, mod3Token := CreateTestSession(t, mod3ID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Reject",
+	}, mod3Token)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+
+	var reviewRequired, reviewRejected int
+	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	db.Raw("SELECT reviewrejected FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRejected)
+	assert.Equal(t, 1, reviewRequired, "message should still require review")
+	assert.Equal(t, 0, reviewRejected, "message must not have been rejected")
+}
+
+// Hold used REPLACE INTO, which silently stole the hold from whoever had it. A
+// hold is an exclusive claim - taking someone else's must be refused, with
+// Release the deliberate way to break it.
+func TestHoldDoesNotStealAnotherModsHold(t *testing.T) {
+	_, _, groupID, _, msgID, _ := setupModerationData(t)
+	db := database.DBConn
+
+	prefix2 := uniquePrefix(t.Name()) + "_mod2"
+	mod2ID := CreateTestUser(t, prefix2, "User")
+	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	_, mod2Token := CreateTestSession(t, mod2ID)
+
+	postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Hold",
+	}, mod2Token)
+
+	prefix3 := uniquePrefix(t.Name()) + "_mod3"
+	mod3ID := CreateTestUser(t, prefix3, "User")
+	CreateTestMembership(t, mod3ID, groupID, "Moderator")
+	_, mod3Token := CreateTestSession(t, mod3ID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Hold",
+	}, mod3Token)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+
+	var holder uint64
+	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&holder)
+	assert.Equal(t, mod2ID, holder, "the original holder must keep the hold")
+}
+
+// Re-holding your own hold is a harmless no-op and must keep working.
+func TestHoldAgainBySameModIsAllowed(t *testing.T) {
+	_, _, groupID, _, msgID, _ := setupModerationData(t)
+	db := database.DBConn
+
+	prefix2 := uniquePrefix(t.Name()) + "_mod2"
+	mod2ID := CreateTestUser(t, prefix2, "User")
+	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	_, mod2Token := CreateTestSession(t, mod2ID)
+
+	for i := 0; i < 2; i++ {
+		resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+			"id":     msgID,
+			"action": "Hold",
+		}, mod2Token)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	var holder uint64
+	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&holder)
+	assert.Equal(t, mod2ID, holder)
+}

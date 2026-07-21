@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-17
+last_reviewed: 2026-07-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -31,7 +31,10 @@ For each post you can:
   or move it to another community. For a well-formed OFFER or WANTED, editing the item and
   location rebuilds the subject automatically.
 - **Hold** it, which locks it to you so another moderator does not act on it at the same
-  time. Release it when you are done.
+  time. Release it when you are done. The lock is enforced: while you hold a post, another
+  moderator who tries to approve, reject, delete or spam it is told you are holding it and
+  the action does not happen. If they need to act anyway - say you are away - they can
+  **Release** it first, which is always allowed.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 If a post only breaks a small rule, prefer **editing it with a note** over rejecting it.

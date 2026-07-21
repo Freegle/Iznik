@@ -130,6 +130,47 @@ describe('useModMessages — pending list auto-refresh', () => {
     expect(mockFetchMessagesMT).toHaveBeenCalled()
   })
 
+  // Another moderator holding a message moves it from `pending` to
+  // `pendingother` (see groupWork.go), so the TOTAL is unchanged and only the
+  // composition differs. That lands in the no-new-work branch, which must still
+  // defer-and-apply rather than drop the refresh: dropping it lost the hold
+  // permanently, because the watcher's oldVal advances and every later tick
+  // compares equal. The second moderator never saw the "Held" banner and
+  // moderated the post anyway (Discourse #9946).
+  it('defers a same-total hold change while a modal is open and applies it on close', async () => {
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { workType, collection } = setupModMessages(true)
+    collection.value = 'Pending'
+    workType.value = ['pending', 'pendingother']
+
+    mockWork.value = { pending: 2, pendingother: 0, total: 2 }
+    await nextTick()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    // A modal opens.
+    document.body.style.overflow = 'hidden'
+
+    // Another mod holds one of the pending messages: pending 2→1,
+    // pendingother 0→1. Total stays at 2.
+    mockWork.value = { pending: 1, pendingother: 1, total: 2 }
+    await nextTick()
+    await flushPromises()
+
+    // Not yet — the open modal's draft must survive.
+    expect(mockFetchMessagesMT).not.toHaveBeenCalled()
+
+    // The modal closes.
+    document.body.style.overflow = ''
+    await nextTick()
+    await flushPromises()
+
+    // The hold must now become visible without a manual reload.
+    expect(mockFetchMessagesMT).toHaveBeenCalled()
+  })
+
   it('does not call getMessages when pending count is unchanged', async () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'

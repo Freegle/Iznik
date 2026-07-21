@@ -11,7 +11,7 @@
         icon-class="pe-1"
         :disabled="disabled"
         :confirm="confirmButton"
-        @handle="click"
+        @handle="(callback) => guardHold(() => click(callback))"
       />
       <v-icon
         v-if="autosend"
@@ -20,18 +20,21 @@
         class="autosend"
       />
     </div>
+    <NoticeMessage v-if="heldError" variant="warning" class="mt-1 mb-1">
+      {{ heldError }}
+    </NoticeMessage>
     <ConfirmModal
       v-if="showDeleteModal"
       ref="deleteConfirm"
       :title="'Delete: ' + message?.subject"
-      @confirm="deleteConfirmed"
+      @confirm="() => guardHold(deleteConfirmed)"
       @hidden="showDeleteModal = false"
     />
     <ConfirmModal
       v-if="showSpamModal"
       ref="spamConfirm"
       :title="'Mark as Spam: ' + message?.subject"
-      @confirm="spamConfirmed"
+      @confirm="() => guardHold(spamConfirmed)"
       @hidden="showSpamModal = false"
     />
     <ModStdMessageModal
@@ -48,7 +51,7 @@
       v-if="showRejectNoMsgModal"
       ref="rejectNoMsgConfirm"
       title="Stop this post appearing on your community"
-      @confirm="rejectFromGroupConfirmed"
+      @confirm="() => guardHold(rejectFromGroupConfirmed)"
       @hidden="showRejectNoMsgModal = false"
     >
       <template #default>
@@ -207,6 +210,7 @@ const showDeleteModal = ref(false)
 const showStdMsgModal = ref(false)
 const showSpamModal = ref(false)
 const showRejectNoMsgModal = ref(false)
+const heldError = ref(null)
 const stdmsgId = ref(null)
 const stdmsgAction = ref(null)
 
@@ -307,6 +311,21 @@ async function revertEdits() {
     id: message.value.id,
   })
   checkWorkDeferGetMessages()
+}
+
+// The server refuses moderation actions on a post another moderator holds
+// (Discourse #9946). The store has already re-fetched the message by the time we
+// get here, so the "Held by X" banner is on screen - but the moderator still
+// clicked a button and must be told plainly that it did not happen.
+async function guardHold(fn) {
+  heldError.value = null
+
+  try {
+    return await fn()
+  } catch (e) {
+    if (!e?.heldByOtherMod) throw e
+    heldError.value = e.message
+  }
 }
 
 async function click(callback) {

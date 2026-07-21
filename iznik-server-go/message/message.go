@@ -4293,8 +4293,88 @@ func PostMessage(c *fiber.Ctx) error {
 	return dispatchPostMessageAction(c, myid, req)
 }
 
+// moderationActionsBlockedByHold are the moderator actions that change moderation
+// state and so must not run while a DIFFERENT moderator holds the message.
+//
+// A hold used to be advisory: ModTools hides Approve/Reject when someone else
+// holds a post (ModMessage.vue), but nothing on the server enforced it, so a mod
+// whose screen was stale acted anyway. In Discourse #9946 a mod rejected a post
+// 27 minutes after a colleague held it and opened a modmail conversation, off a
+// pending list his browser had fetched 90 minutes earlier. No amount of client
+// refreshing closes that race - the check has to be here.
+//
+// Release is deliberately absent: it is the designed escape hatch for taking a
+// post off someone else's hold, so it must stay available or a post is stranded
+// when the holding mod goes away. Member-facing actions (Promise, Outcome, View,
+// Reply, ...) are absent too - a mod hold must not stop the owner using their own
+// post.
+var moderationActionsBlockedByHold = map[string]bool{
+	"Approve":       true,
+	"Reject":        true,
+	"Delete":        true,
+	"Spam":          true,
+	"Hold":          true,
+	"ApproveEdits":  true,
+	"RevertEdits":   true,
+	"Move":          true,
+	"BackToPending": true,
+	"RejectToDraft": true,
+	"BackToDraft":   true,
+}
+
+// heldByAnotherMod returns the id and name of a DIFFERENT moderator holding this
+// message on any of the groups the action would touch, or 0 if it is free to act
+// on.
+func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
+	db := database.DBConn
+
+	ctx := getMessageModContext(db, myid, req.ID)
+	if ctx == nil {
+		// Not a moderator for this message - let the handler produce its own
+		// (403) error rather than masking it with a confusing 409.
+		return 0, ""
+	}
+
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return 0, ""
+	}
+
+	// Read the per-group hold, not the message-level messages.heldby mirror: a
+	// message held on one group must not block moderation on another group it is
+	// also pending on.
+	var holder uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? "+
+		"AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",
+		req.ID, authorizedGroups, myid).Scan(&holder)
+	if holder == 0 {
+		return 0, ""
+	}
+
+	var holderName string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&holderName)
+	return holder, holderName
+}
+
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	// Enforced centrally rather than per-handler so a new moderation action
+	// cannot silently skip the check by forgetting to call it.
+	if moderationActionsBlockedByHold[req.Action] {
+		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"ret":        1,
+				"status":     "Held by another moderator",
+				"heldby":     holder,
+				"heldbyname": holderName,
+			})
+		}
+	}
+
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)

@@ -10652,3 +10652,114 @@ func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode, "Partner Promise should fail if fromaddr not in partner domain")
 }
+
+// A moderator holding a message is only advisory in the UI, which hides the
+// Approve/Reject buttons - but the UI can be arbitrarily stale (Discourse #9946:
+// a mod rejected a post 27 minutes after another mod held it, off a list his
+// browser had fetched 90 minutes earlier). Enforce the hold server-side so it
+// means something regardless of what any client believes.
+func heldByOtherSetup(t *testing.T, prefix string) (uint64, uint64, uint64, string, string) {
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix+"_g")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modA := CreateTestUser(t, prefix+"_moda", "User")
+	modB := CreateTestUser(t, prefix+"_modb", "User")
+	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, modA, group, "Moderator")
+	CreateTestMembership(t, modB, group, "Moderator")
+	_, tokenA := CreateTestSession(t, modA)
+	_, tokenB := CreateTestSession(t, modB)
+
+	msgID := createPendingMessage(t, posterID, group, prefix)
+
+	// Mod A holds it.
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modA, msgID, group)
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modA, msgID)
+
+	return group, msgID, modA, tokenA, tokenB
+}
+
+func postMessageAction(t *testing.T, token string, body map[string]interface{}) int {
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestModerationBlockedWhenHeldByAnotherMod(t *testing.T) {
+	db := database.DBConn
+
+	// Every moderation action that changes moderation state must be refused.
+	for _, action := range []string{
+		"Approve", "Reject", "Delete", "Spam", "Hold",
+		"ApproveEdits", "RevertEdits", "BackToPending",
+	} {
+		t.Run(action, func(t *testing.T) {
+			group, msgID, _, _, tokenB := heldByOtherSetup(t, uniquePrefix("heldother"))
+
+			status := postMessageAction(t, tokenB, map[string]interface{}{
+				"id":      msgID,
+				"action":  action,
+				"groupid": group,
+			})
+			assert.Equal(t, 409, status, action+" by another mod must be refused while held")
+
+			// The hold and the collection must both be untouched.
+			var heldby *uint64
+			db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&heldby)
+			assert.NotNil(t, heldby, action+" must not clear another mod's hold")
+
+			var collection string
+			db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
+			assert.Equal(t, utils.COLLECTION_PENDING, collection, action+" must leave the message pending")
+
+			// Reject and Delete without a subject take a soft-delete branch that
+			// leaves the collection alone, so check deleted too or those two would
+			// pass whether or not the block worked.
+			var deleted int
+			db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&deleted)
+			assert.Equal(t, 0, deleted, action+" must not soft-delete the message")
+		})
+	}
+}
+
+func TestReleaseAllowedWhenHeldByAnotherMod(t *testing.T) {
+	db := database.DBConn
+	group, msgID, _, _, tokenB := heldByOtherSetup(t, uniquePrefix("heldrel"))
+
+	// Release is the designed escape hatch - it must stay available, otherwise a
+	// post is stranded when the holding mod goes away.
+	status := postMessageAction(t, tokenB, map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": group,
+	})
+	assert.Equal(t, 200, status, "Release must remain allowed against another mod's hold")
+
+	var heldby *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&heldby)
+	assert.Nil(t, heldby, "Release must clear the hold")
+}
+
+func TestModerationAllowedWhenHeldBySelf(t *testing.T) {
+	db := database.DBConn
+	group, msgID, _, tokenA, _ := heldByOtherSetup(t, uniquePrefix("heldself"))
+
+	// Holding then acting yourself is the normal flow and must not be blocked. Send
+	// a subject so this takes the reject-with-explanation branch (the no-subject
+	// branch is a soft delete, which leaves the collection alone).
+	status := postMessageAction(t, tokenA, map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": group,
+		"subject": "MODERATOR MESSAGE -: test",
+		"body":    "Please repost with more detail.",
+	})
+	assert.Equal(t, 200, status, "the holding mod must still be able to act")
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
+	assert.Equal(t, utils.COLLECTION_REJECTED, collection)
+}

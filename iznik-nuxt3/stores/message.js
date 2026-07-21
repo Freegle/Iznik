@@ -593,9 +593,7 @@ export const useMessageStore = defineStore({
 
       const nearbyStore = useNearbyStore()
       const unseen = new Set(
-        (nearbyStore.messageList || [])
-          .filter((m) => m.unseen)
-          .map((m) => m.id)
+        (nearbyStore.messageList || []).filter((m) => m.unseen).map((m) => m.id)
       )
       const toMark = ids.filter((id) => unseen.has(id))
 
@@ -709,12 +707,14 @@ export const useMessageStore = defineStore({
       return await api(this.config).message.update(params)
     },
     async delete(params) {
-      await api(this.config).message.delete(
-        params.id,
-        params.groupid,
-        params.subject,
-        params.stdmsgid,
-        params.body
+      await this.runHoldAware(params.id, () =>
+        api(this.config).message.delete(
+          params.id,
+          params.groupid,
+          params.subject,
+          params.stdmsgid,
+          params.body
+        )
       )
 
       delete this.list[params.id]
@@ -758,16 +758,38 @@ export const useMessageStore = defineStore({
         this.remove({ id })
       }
     },
+    // The server refuses a moderation action with 409 when a DIFFERENT moderator
+    // holds the post (see dispatchPostMessageAction). That normally means our copy
+    // of the message is stale - the hold happened after we last fetched it - so
+    // re-fetch, which makes the "Held by X" banner appear and hides the action
+    // buttons, and hand the caller a message naming the holder (Discourse #9946).
+    async runHoldAware(id, fn) {
+      try {
+        return await fn()
+      } catch (e) {
+        if (e?.response?.status !== 409 || !e?.response?.data?.heldby) throw e
+
+        try {
+          const message = await api(this.config).message.fetchMT({ id }, false)
+          if (message) this.list[message.id] = message
+        } catch (fetchError) {
+          // Leave the stale copy in place; the thrown error still explains why.
+        }
+
+        const who = e.response.data.heldbyname || 'Another moderator'
+        const held = new Error(
+          `${who} is holding this post. Check with them, or release it first.`
+        )
+        held.heldByOtherMod = true
+        throw held
+      }
+    },
     async approve(id, groupid, subject, stdmsgid, body) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
-      await api(this.config).message.approve(
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body
+      await this.runHoldAware(id, () =>
+        api(this.config).message.approve(id, groupid, subject, stdmsgid, body)
       )
       await this.refreshOrRemoveFromMTList(id)
 
@@ -783,12 +805,8 @@ export const useMessageStore = defineStore({
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
-      await api(this.config).message.reject(
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body
+      await this.runHoldAware(id, () =>
+        api(this.config).message.reject(id, groupid, subject, stdmsgid, body)
       )
       await this.refreshOrRemoveFromMTList(id)
 
@@ -810,7 +828,9 @@ export const useMessageStore = defineStore({
       // Do not remove from list
     },
     async hold(params) {
-      await api(this.config).message.hold(params.id, params.groupid)
+      await this.runHoldAware(params.id, () =>
+        api(this.config).message.hold(params.id, params.groupid)
+      )
       const message = await api(this.config).message.fetchMT({
         id: params.id,
       })
@@ -824,7 +844,9 @@ export const useMessageStore = defineStore({
       this.list[message.id] = message
     },
     async spam(params) {
-      await api(this.config).message.spam(params.id, params.groupid)
+      await this.runHoldAware(params.id, () =>
+        api(this.config).message.spam(params.id, params.groupid)
+      )
 
       this.remove({ id: params.id })
     },

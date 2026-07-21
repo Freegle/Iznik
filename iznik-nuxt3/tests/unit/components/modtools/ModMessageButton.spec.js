@@ -57,6 +57,7 @@ describe('ModMessageButton', () => {
 
   // Common stubs for child components
   const commonStubs = {
+    NoticeMessage: { template: '<div><slot /></div>', props: ['variant'] },
     SpinButton: {
       template:
         '<button class="spin-button" :disabled="disabled" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',
