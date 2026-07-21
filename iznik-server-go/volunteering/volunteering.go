@@ -393,6 +393,30 @@ type PatchRequest struct {
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /volunteering [patch]
+// volunteeringHeldByAnother returns the id and name of a DIFFERENT moderator holding
+// this opportunity, or 0 if it is free to act on.
+func volunteeringHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
+	var holder uint64
+	db.Raw("SELECT COALESCE(heldby, 0) FROM volunteering WHERE id = ?", id).Scan(&holder)
+	if holder == 0 || holder == myid {
+		return 0, ""
+	}
+	var name string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&name)
+	return holder, name
+}
+
+// heldByAnotherResponse is the 409 a moderation action gets when someone else holds
+// the item, carrying who so the UI can name them rather than just failing.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, name string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": name,
+	})
+}
+
 func Update(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -420,6 +444,15 @@ func Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to modify this volunteering")
 	}
 
+	// A moderator holding this has an exclusive claim on it. Only block other
+	// MODERATORS: canModify also passes the owner, and a mod hold must not stop an
+	// owner editing their own opportunity. Release remains available below.
+	if req.Action != "Release" && isModerator(myid, req.ID) {
+		if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
+			return heldByAnotherResponse(c, holder, name)
+		}
+	}
+
 	// Update settable attributes
 	if req.Title != nil {
 		db.Exec("UPDATE volunteering SET title = ? WHERE id = ?", *req.Title, req.ID)
@@ -431,7 +464,13 @@ func Update(c *fiber.Ctx) error {
 		db.Exec("UPDATE volunteering SET online = ? WHERE id = ?", *req.Online, req.ID)
 	}
 	if req.Pending != nil {
-		db.Exec("UPDATE volunteering SET pending = ? WHERE id = ?", *req.Pending, req.ID)
+		// Approving out of moderation is terminal, so clear the hold with it rather
+		// than leaving the opportunity pinned as "Held" forever.
+		if *req.Pending {
+			db.Exec("UPDATE volunteering SET pending = ? WHERE id = ?", *req.Pending, req.ID)
+		} else {
+			db.Exec("UPDATE volunteering SET pending = ?, heldby = NULL WHERE id = ?", *req.Pending, req.ID)
+		}
 	}
 	if req.Contactname != nil {
 		db.Exec("UPDATE volunteering SET contactname = ? WHERE id = ?", *req.Contactname, req.ID)
@@ -500,6 +539,10 @@ func Update(c *fiber.Ctx) error {
 		db.Exec("UPDATE volunteering SET expired = 1 WHERE id = ?", req.ID)
 	case "Hold":
 		if isModerator(myid, req.ID) {
+			// Don't take a hold off another mod - Release is how you do that.
+			if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
+				return heldByAnotherResponse(c, holder, name)
+			}
 			db.Exec("UPDATE volunteering SET heldby = ? WHERE id = ?", myid, req.ID)
 		}
 	case "Release":

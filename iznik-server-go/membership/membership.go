@@ -124,6 +124,28 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// A hold on a membership is an exclusive claim, and was advisory only: ModTools
+	// shows "Held by X" but nothing stopped another mod acting from a stale screen.
+	// Refuse the actions that decide the membership, and refuse taking the hold off
+	// someone. Release/ReviewRelease are deliberately absent - they are the escape
+	// hatch when the holder is away.
+	switch req.Action {
+	case "Approve", "Reject", "Delete Approved Member", "Ban", "Hold", "ReviewHold", "ReviewIgnore":
+		var holder uint64
+		db.Raw("SELECT COALESCE(heldby, 0) FROM memberships WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid).Scan(&holder)
+		if holder != 0 && holder != myid {
+			var holderName string
+			db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&holderName)
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"ret":        1,
+				"status":     "Held by another moderator",
+				"heldby":     holder,
+				"heldbyname": holderName,
+			})
+		}
+	}
+
 	switch req.Action {
 	case "Hold":
 		if result := db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
@@ -241,7 +263,11 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	case "ReviewIgnore":
 		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
-		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
+		// Closing the review is terminal for THIS group, so drop our own hold with it -
+		// otherwise the row keeps a heldby that nothing clears, and the member shows as
+		// held again the next time they are flagged. Only this group's row is touched,
+		// so a hold on an adjacent community is left alone.
+		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
 			"WHERE userid = ? AND groupid = ?",
 			req.Userid, req.Groupid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -732,16 +758,16 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 
 // HappinessMember is the response struct for happiness/feedback items.
 type HappinessMember struct {
-	ID        uint64          `json:"id"`
-	Timestamp string          `json:"timestamp"`
-	Outcome   *string         `json:"outcome"`
-	Happiness *string         `json:"happiness"`
-	Comments  *string         `json:"comments"`
-	Reviewed  int             `json:"reviewed"`
-	Fromuser  uint64          `json:"fromuser"`
-	Groupid   uint64          `json:"groupid"`
-	User      HappinessUser   `json:"user"`
-	Message   HappinessMsg    `json:"message"`
+	ID        uint64        `json:"id"`
+	Timestamp string        `json:"timestamp"`
+	Outcome   *string       `json:"outcome"`
+	Happiness *string       `json:"happiness"`
+	Comments  *string       `json:"comments"`
+	Reviewed  int           `json:"reviewed"`
+	Fromuser  uint64        `json:"fromuser"`
+	Groupid   uint64        `json:"groupid"`
+	User      HappinessUser `json:"user"`
+	Message   HappinessMsg  `json:"message"`
 }
 
 // HappinessUser is the user info embedded in happiness results.

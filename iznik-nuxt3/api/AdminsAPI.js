@@ -1,4 +1,5 @@
 import BaseAPI from '@/api/BaseAPI'
+import { notAHeldConflict } from '~/api/heldConflict'
 
 export default class AdminsAPI extends BaseAPI {
   fetch(params) {
@@ -11,7 +12,7 @@ export default class AdminsAPI extends BaseAPI {
   }
 
   async patch(data) {
-    await this.$patchv2('/modtools/admin', data)
+    await this.$patchv2('/modtools/admin', data, notAHeldConflict)
   }
 
   async del(data) {
@@ -19,10 +20,14 @@ export default class AdminsAPI extends BaseAPI {
   }
 
   async hold(id) {
-    await this.$postv2('/modtools/admin', {
-      id,
-      action: 'Hold',
-    })
+    await this.$postv2(
+      '/modtools/admin',
+      {
+        id,
+        action: 'Hold',
+      },
+      notAHeldConflict
+    )
   }
 
   async release(id) {

@@ -6,11 +6,10 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
-
 
 // GetSpammers handles GET /spammers with search and pagination.
 //
@@ -254,11 +253,32 @@ func PatchSpammer(c *fiber.Ctx) error {
 		Collection string
 		Reason     string
 		Byuserid   *uint64
+		Heldby     *uint64
 	}
-	db.Raw("SELECT collection, reason, byuserid FROM spam_users WHERE id = ?", req.ID).Scan(&current)
+	db.Raw("SELECT collection, reason, byuserid, heldby FROM spam_users WHERE id = ?", req.ID).Scan(&current)
 
 	if current.Collection == "" {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
+	}
+
+	// Another mod's hold is an exclusive claim on this report. Refuse to resolve it
+	// (any collection change) or to take the hold off them, but keep the plain
+	// release working - it is the escape hatch when the holder is away. The client
+	// sends the unchanged collection for both hold and release, and a different one
+	// only for a real decision, so the collection is what distinguishes them.
+	if current.Heldby != nil && *current.Heldby != myid {
+		changingCollection := req.Collection != "" && req.Collection != current.Collection
+		takingHold := req.Heldby != nil
+		if changingCollection || takingHold {
+			var holderName string
+			db.Raw("SELECT fullname FROM users WHERE id = ?", *current.Heldby).Scan(&holderName)
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"ret":        1,
+				"status":     "Held by another moderator",
+				"heldby":     *current.Heldby,
+				"heldbyname": holderName,
+			})
+		}
 	}
 
 	// Permission: admins and SpamAdmin users can do anything.
@@ -291,10 +311,18 @@ func PatchSpammer(c *fiber.Ctx) error {
 		} else {
 			byuserid = current.Byuserid
 		}
+		// You can only hold something as yourself. The holder identity used to be
+		// taken verbatim from the request body, so a client could set the hold to an
+		// arbitrary user id. Presence of heldby means "hold", absence means release.
+		var heldby *uint64
+		if req.Heldby != nil {
+			heldby = &myid
+		}
+
 		db.Exec("UPDATE spam_users SET collection = ?, reason = ?, byuserid = ?, "+
 			"heldby = ?, heldat = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END "+
 			"WHERE id = ?",
-			req.Collection, reason, byuserid, req.Heldby, req.Heldby, req.ID)
+			req.Collection, reason, byuserid, heldby, heldby, req.ID)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

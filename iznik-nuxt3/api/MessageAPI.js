@@ -1,10 +1,7 @@
 import BaseAPI from '@/api/BaseAPI'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
-// A moderation action refused because another moderator holds the post comes back
-// as a 409 carrying `heldby`. That is an expected, handled outcome - not a fault -
-// so keep it out of Sentry.
-const notAHeldConflict = (data) => !data?.heldby
+import { notAHeldConflict } from '~/api/heldConflict'
 
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
