@@ -8063,10 +8063,11 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
-	// tnuserid is UNIQUE in production. Use a value distinct from the other
-	// partner tests, and release it from any user left by an earlier run.
-	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77703)
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77703, ownerID)
+	// tnuserid is UNIQUE in production. 77710 is not used by any other test -
+	// 77701-77704, 77801-77804 and 77901-77903 all are. Release it from any user
+	// left by an earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77710)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77710, ownerID)
 
 	// Create message at original lat/lng.
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8081,7 +8082,7 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 		"lng": newLng,
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77703&email=%s@test.com", key, prefix)
+	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77710&email=%s@test.com", key, prefix)
 	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)

@@ -690,8 +690,9 @@ class AutoApproveServiceTest extends TestCase
 
         $message = $this->createTestMessage($user, $group);
 
-        // Mark as spam type.
-        DB::table('messages')->where('id', $message->id)->update(['spamtype' => 'Spam']);
+        // Mark as spam type. 'Spam' is not a value in production's spamtype ENUM -
+        // it only worked while the migrations declared this column as a varchar.
+        DB::table('messages')->where('id', $message->id)->update(['spamtype' => 'SpamAssassin']);
 
         DB::table('messages_groups')
             ->where('msgid', $message->id)
@@ -866,8 +867,10 @@ class AutoApproveServiceTest extends TestCase
             'subject' => 'OFFER: Sofa',
         ]);
 
+        // Any production spamtype ENUM value other than SubjectUsedForDifferentGroups.
+        // 'Spam' is not one of them and only worked while this was a varchar column.
         DB::table('messages')->where('id', $message->id)->update([
-            'spamtype' => 'Spam',
+            'spamtype' => 'SpamAssassin',
         ]);
 
         DB::table('messages_groups')
