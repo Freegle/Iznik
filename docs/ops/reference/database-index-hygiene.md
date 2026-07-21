@@ -88,6 +88,13 @@ SELECT TABLE_NAME, cols, GROUP_CONCAT(INDEX_NAME), COUNT(*)
  GROUP BY TABLE_NAME, cols HAVING COUNT(*) > 1;
 ```
 
+`information_schema.statistics` is served from a cache governed by
+`information_schema_stats_expiry` (86400 seconds by default), so immediately after
+a DDL change it can still report the previous state. When a migration checks for
+an index and then alters it in the same run, read the current names with
+`SHOW INDEX FROM <table>` instead - otherwise the check passes against stale
+metadata and the `ALTER` fails with "Key ... doesn't exist".
+
 Do **not** use `mysql.innodb_index_stats` for index sizes. It only covers tables
 that have been `ANALYZE`d, it misses the largest tables entirely, and it retains
 rows for tables that were dropped long ago. Take `index_length` per table from
@@ -143,9 +150,13 @@ caught only by the Laravel suite, not by a type-and-nullability diff.
 
 Two things matter when comparing:
 
-- **Key indexes on their column list, not their name.** Laravel generates names
-  like `foo_bar_index` where live has `bar`. Those are cosmetic; only a
-  difference in columns or uniqueness is real drift.
+- **Key indexes on their column list, not their name**, so that a naming
+  difference does not mask or invent structural drift. Names should still match -
+  a runbook that says `DROP INDEX bar` only works where the index is called `bar` -
+  but they are a separate question from whether the index exists at all.
+  Rename with `ALTER TABLE ... RENAME INDEX old TO new`; a `PRIMARY` key has no
+  renameable name, and where the same columns carry two indexes there is no
+  unambiguous mapping, so those want deduplicating rather than renaming.
 - **Drift has a direction.** Where production has something the migrations lack,
   the migrations need to catch up. Where the migrations have something
   production lacks, that is usually an unshipped feature and must *not* be
