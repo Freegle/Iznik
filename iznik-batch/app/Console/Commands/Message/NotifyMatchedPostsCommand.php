@@ -6,6 +6,7 @@ use App\Mail\Matched\MatchedPosts;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\MatchedPostsService;
+use App\Services\MessageSpatialService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
@@ -27,7 +28,8 @@ class NotifyMatchedPostsCommand extends Command
     use GracefulShutdown, LogsBatchJob;
 
     protected $signature = 'matches:notify
-                            {--dry-run : Build and report notifications without sending or recording anything}';
+                            {--dry-run : Build and report notifications without sending or recording anything}
+                            {--backfill : One-off: drive on ALL currently-open posts, not just recent arrivals}';
 
     protected $description = 'Notify members (in-app + push, and email) of opposite-type posts that match their open offers/wanteds (vector matched-posts)';
 
@@ -38,6 +40,20 @@ class NotifyMatchedPostsCommand extends Command
         $dryRun = (bool) $this->option('dry-run');
         if ($dryRun) {
             $this->warn('DRY RUN MODE — nothing sent, no ledger written.');
+        }
+
+        if ($this->option('backfill')) {
+            // The scheduled run only drives on posts that arrived in the last
+            // fresh_window_minutes; the already-open backlog would never get a
+            // recommendation. Widen the driver lookback to the messages_spatial
+            // open-age (RECENT_DAYS) for this one run. freshPosts() only ever
+            // returns messages_spatial rows, so this inherits exactly that
+            // open-age cap — no post older than the spatial window can drive.
+            config(['freegle.matched.fresh_window_minutes' => MessageSpatialService::RECENT_DAYS * 24 * 60]);
+            $this->warn(sprintf(
+                'BACKFILL: driving on all currently-open posts within the %d-day open-age window.',
+                MessageSpatialService::RECENT_DAYS
+            ));
         }
 
         return $this->runWithLogging(function () use ($service, $spooler, $push, $dryRun) {
