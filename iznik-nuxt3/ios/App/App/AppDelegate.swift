@@ -4,12 +4,11 @@ import Capacitor
 import FBSDKCoreKit // capacitor-community/facebook-login
 import Firebase // @capacitor/push-notifications https://devdactic.com/push-notifications-ionic-capacitor
 
-import GoogleSignIn
-
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
-    var window: UIWindow?
+    // The window and the per-scene life cycle live in SceneDelegate now - see the
+    // UIApplicationSceneManifest entry in Info.plist.
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
@@ -21,78 +20,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return true
     }
 
-    func applicationWillResignActive(_ application: UIApplication) {
-        // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
-        // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
-    }
-
-    func applicationDidEnterBackground(_ application: UIApplication) {
-        // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
-        // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
-    }
-
-    func applicationWillEnterForeground(_ application: UIApplication) {
-        // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
-    }
-
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
-    }
-
-    func applicationWillTerminate(_ application: UIApplication) {
-        // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
-    }
-
-    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        // Called when the app was launched with a url. Feel free to add additional processing here,
-        // but if you want the App API to support tracking app url opens, make sure to keep this call
-        // WAS return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
-        
-        var handled: Bool
-
-        handled = GIDSignIn.sharedInstance.handle(url)
-        if handled {
-          return true
-        }        
-        
-        if (FBSDKCoreKit.ApplicationDelegate.shared.application(  // capacitor-community/facebook-login
-            app,
-            open: url,
-            sourceApplication: options[UIApplication.OpenURLOptionsKey.sourceApplication] as? String,
-            annotation: options[UIApplication.OpenURLOptionsKey.annotation]
-        )) {
-            return true;
-        } else {
-            return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
-        }
-      }
-
-    // Long-press app-icon quick actions (UIApplicationShortcutItems in Info.plist).
-    // Map each shortcut to a https://www.ilovefreegle.org/<path> URL and route it
-    // through the same Capacitor pipeline as a deep link, so the appUrlOpen handler
-    // (stores/mobile.js) navigates to the target page.
-    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
-        let path: String?
-        switch shortcutItem.type {
-        case "org.ilovefreegle.shortcut.give": path = "/give"
-        case "org.ilovefreegle.shortcut.find": path = "/find"
-        case "org.ilovefreegle.shortcut.chats": path = "/chats"
-        default: path = nil
-        }
-        if let path = path, let url = URL(string: "https://www.ilovefreegle.org" + path) {
-            _ = ApplicationDelegateProxy.shared.application(application, open: url, options: [:])
-            completionHandler(true)
-        } else {
-            completionHandler(false)
-        }
-    }
-
-    func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
-        // Called when the app was launched with an activity, including Universal Links.
-        // Feel free to add additional processing here, but if you want the App API to support
-        // tracking app url opens, make sure to keep this call
-        return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
-    }
+    // The empty applicationWillResignActive / DidEnterBackground / WillEnterForeground /
+    // DidBecomeActive / WillTerminate stubs are gone: UIKit does not call them in a
+    // scene-based app. Their scene equivalents belong in SceneDelegate.
+    //
+    // application(_:open:options:), application(_:continue:restorationHandler:) and
+    // application(_:performActionFor:completionHandler:) have moved to SceneDelegate too,
+    // for the same reason. Push registration below is still app-level and stays here.
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
