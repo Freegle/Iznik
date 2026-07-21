@@ -1509,6 +1509,12 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
 	}
 
+	// Reject is as destructive as Approve, so it gets the same hold check - it was
+	// missing here, letting a mod reject a message another mod was reviewing.
+	if checkHoldConflict(msg, myid) {
+		return fiber.NewError(fiber.StatusConflict, "Message is held by another moderator")
+	}
+
 	// Reject the message
 	if result := db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?", myid, msgID); result.Error != nil {
 		stdlog.Printf("Failed to reject chat message %d: %v", msgID, result.Error)
@@ -1559,7 +1565,17 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
 	}
 
-	// REPLACE INTO handles the case where it's already held
+	// A hold is an exclusive claim, so don't let one mod take another's. REPLACE
+	// INTO used to overwrite the holder silently, which meant a stale screen could
+	// steal a hold rather than being told about it. Release is the deliberate way
+	// to break someone else's hold.
+	var currentHolder uint64
+	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&currentHolder)
+	if currentHolder != 0 && currentHolder != myid {
+		return fiber.NewError(fiber.StatusConflict, "Message is held by another moderator")
+	}
+
+	// REPLACE INTO handles re-holding your own hold, which is a harmless no-op.
 	db.Exec("REPLACE INTO chat_messages_held (msgid, userid) VALUES (?, ?)", msgID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
