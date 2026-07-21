@@ -361,7 +361,7 @@ var cronJobs = []CronJob{
 	{Command: "groups:check-boundaries", Name: "Boundary Geometry Check", Description: "Validates each Freegle group's CGA/DPA polygon intersection against authority 74579; emails geeks on error", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
 	{Command: "groups:check-mod-welfare", Name: "Mod Welfare Check", Description: "Detects inactive moderators (no activity for 6 months); emails group owners or mentors", Schedule: "Weekly (Mon 3pm)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
 	{Command: "groups:welcome-review", Name: "Welcome Mail Review", Description: "Sends each group's welcome email to its mods once a year for review (dedupes via groups.welcomereview)", Schedule: "Daily at 3pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
-	{Command: "groups:remind-customisation", Name: "Customisation Reminder", Description: "Reminds mods about missing group profile/tagline/welcome customisation", Schedule: "Monthly (1st 8am)", IntervalMinutes: 43200, Category: "Groups & Chats", Active: true},
+	{Command: "groups:remind-customisation", Name: "Customisation Reminder", Description: "Reminds mods about missing group profile/tagline/welcome customisation", Schedule: "Retired 2026-06-02", IntervalMinutes: 43200, Category: "Groups & Chats", Active: false}, // RETIRED: schedule commented out in console.php; Active:false so it can't false-alarm.
 	{Command: "groups:alert-no-messages", Name: "Stale Group Alert", Description: "Alerts mentors about active groups that haven't received messages in 7+ days (excludes test groups)", Schedule: "Daily at 7am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
 	{Command: "chats:chaseup-mods", Name: "Chase Up Mods on Chats", Description: "Notifies group mods about User2Mod chats where the member has had no reply for 6.55+ days", Schedule: "Daily at 3:30pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
 
@@ -386,7 +386,7 @@ var cronJobs = []CronJob{
 	// Email — Engagement additions
 	{Command: "birthday:send-emails", Name: "Birthday Emails", Description: "Sends birthday celebration emails to members of groups founded on today's date", Schedule: "Daily at noon", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
 	{Command: "mail:engage", Name: "Engage Emails", Description: "Sends engagement emails to at-risk (about to be inactive) and inactive users", Schedule: "Daily at 4pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
-	{Command: "mail:donations:summary", Name: "Donation Summary", Description: "Sends a running summary of today's donations to the fundraising address", Schedule: "Hourly 6am–10pm", IntervalMinutes: 60, Category: "Email — Engagement", Active: true},
+	{Command: "mail:donations:summary", Name: "Donation Summary", Description: "Sends a running summary of today's donations to the fundraising address", Schedule: "Hourly 6am–10pm", IntervalMinutes: 480, Category: "Email — Engagement", Active: true}, // interval covers the ~8h overnight gap (hourly 06:00-22:00 -> nothing until 06:00) so it doesn't false-alarm each night.
 	{Command: "lovejunk:send-tn-invoice", Name: "LoveJunk → TN Invoice", Description: "Calculates the previous month's LoveJunk/TrashNothing split and emails the invoice to TN", Schedule: "Monthly (1st 3pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
 
 	// AI & Analytics additions
@@ -407,6 +407,53 @@ var cronJobs = []CronJob{
 	{Command: "locations:update-postcodes", Name: "Postcode Refresh", Description: "Downloads the Doogal UK postcode dataset and adds new postcodes / refreshes moved lat/lng in the locations table", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Locations", Active: true},
 	{Command: "donations:paypal-download", Name: "PayPal Download (fallback)", Description: "Fallback: scans the last 30 days of PayPal NVP TransactionSearch results and upserts donations the IPN missed", Schedule: "Every 4 hours (:30)", IntervalMinutes: 240, Category: "Data", Active: true},
 	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and mods with TrashNothing preferred emails", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
+
+	// Reconciliation 2026-07-21: tracked scheduler commands that had no registry
+	// entry (so they never appeared on the dashboard). IntervalMinutes >= each
+	// job's real max gap between runs (incl. ->between windows) so none false-alarm.
+	// Core member-facing flow
+	{Command: "matches:notify", Name: "Matched-Posts Email", Description: "\"Any of these take your fancy?\" — emails members open Offers/Wanteds near them that vector-match their own posts", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Email — Engagement", Active: true},
+	{Command: "mail:digest:unified", Name: "Unified Digest", Description: "The digest engine (daily/immediate/reach modes, sharded); immediate+reach shards run every minute", Schedule: "Continuous, sharded", IntervalMinutes: 15, Category: "Email — Digests", Active: true},
+	{Command: "mail:digest:mark-seen", Name: "Digest Mark-Seen", Description: "Marks digested messages as seen for recipients", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Digests", Active: true},
+	{Command: "mail:volunteering-digest", Name: "Volunteering Digest", Description: "Weekly digest of nearby volunteering opportunities", Schedule: "Weekly (Mon 11pm)", IntervalMinutes: 10080, Category: "Email — Digests", Active: true},
+	{Command: "mail:events-digest", Name: "Community Events Digest", Description: "Weekly digest of nearby community events", Schedule: "Weekly (Thu 11pm)", IntervalMinutes: 10080, Category: "Email — Digests", Active: true},
+	{Command: "push:daily-posts", Name: "Daily Posts Push", Description: "Daily app push of new nearby posts; every 30 min in a 7:30am-12pm window with a once-per-day guard", Schedule: "Daily push (7:30am–12pm)", IntervalMinutes: 1440, Category: "Push", Active: true},
+	{Command: "messages:contentcheck", Name: "Content Check", Description: "Runs content checks on pending messages, auto-approving clean ones and flagging the rest to mods", Schedule: "Every minute", IntervalMinutes: 2, Category: "Messages — Lifecycle", Active: true},
+	{Command: "tn:sync", Name: "TrashNothing Sync", Description: "Syncs posts, members and chats with TrashNothing", Schedule: "Every minute", IntervalMinutes: 2, Category: "Data", Active: true},
+	{Command: "chats:send-tryst-reminders", Name: "Handover Reminders", Description: "Sends calendar invites and reminders for arranged handovers (trysts)", Schedule: "Every minute", IntervalMinutes: 2, Category: "Groups & Chats", Active: true},
+	{Command: "chats:review-pending", Name: "Chat Review Chase", Description: "Auto-rejects stuck user-to-mod chat reviews and notifies mods of the backlog", Schedule: "Daily at 9am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+
+	// Email — donations & engagement
+	{Command: "mail:donations:thank", Name: "Donation Thanks", Description: "Thanks recent donors", Schedule: "Daily at 9am", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:donations:ask", Name: "Donation Ask", Description: "Emails eligible members asking for a donation", Schedule: "Daily at 5pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:donations:thank-prep", Name: "Donation Thank-Prep", Description: "Prepares the coordinated daily donor-thanking digest", Schedule: "Daily at 8:30pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:alerts:send", Name: "Alert Sender", Description: "Sends queued admin/system alert emails to members", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Email — Engagement", Active: true},
+	{Command: "charity:notify-signups", Name: "Charity Signup Notify", Description: "Notifies about new charity signups", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Engagement", Active: true},
+	{Command: "noticeboards:thank-users", Name: "Noticeboard Thanks", Description: "Thanks members who host Freegle noticeboards", Schedule: "Daily at 3:30pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "stories:newsletter", Name: "Stories Newsletter", Description: "Monthly member-stories newsletter", Schedule: "Monthly (12th 11pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
+
+	// Donations / data / groups
+	{Command: "donations:correct-userids", Name: "Donation Userid Reconcile", Description: "Re-links unmatched/stranded donations to live accounts (safety net)", Schedule: "Weekly (Tue 2:20am)", IntervalMinutes: 10080, Category: "Data", Active: true},
+	{Command: "stats:generate-daily", Name: "Daily Stats", Description: "Generates per-group daily stats", Schedule: "Daily at 2:30am", IntervalMinutes: 1440, Category: "Data", Active: true},
+	{Command: "volunteering:maintain", Name: "Volunteering Maintenance", Description: "Maintains volunteering opportunities (expiry/renewal upkeep)", Schedule: "Daily at 10pm", IntervalMinutes: 1440, Category: "Data", Active: true},
+	{Command: "integrations:sync-reachvolunteering", Name: "Reach Volunteering Sync", Description: "Imports Reach volunteering opportunities", Schedule: "Daily at 9pm", IntervalMinutes: 1440, Category: "Data", Active: true},
+	{Command: "eee:sync-mv-labels", Name: "EEE MV Label Sync", Description: "Syncs microvolunteering item-type labels for the EEE classifier", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "AI & Analytics", Active: true},
+	{Command: "groups:remind-closed", Name: "Closed-Group Reminder", Description: "Reminds owners of groups closed to new members", Schedule: "Weekly (Mon 9am)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
+	{Command: "locations:remap-postcodes", Name: "Postcode Remap", Description: "Remaps messages/users to their nearest current postcode", Schedule: "Daily at 1am", IntervalMinutes: 1440, Category: "Locations", Active: true},
+
+	// System / monitoring / infra
+	{Command: "deploy:record-commit", Name: "Record Deployed Commit", Description: "Records the live Laravel commit so /api/version reports the running build", Schedule: "Every 15 minutes", IntervalMinutes: 15, Category: "System", Active: true},
+	{Command: "logs:rotate", Name: "Log Rotation", Description: "Rotates application log files", Schedule: "Daily at 12:30am", IntervalMinutes: 1440, Category: "System", Active: true},
+	{Command: "monitor:scheduled-outcomes", Name: "Scheduled-Outcome Monitor", Description: "Outcome-based monitor: asserts each scheduled job's side effects happened within its freshness window", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Monitoring", Active: true},
+	{Command: "monitor:deprecated-endpoints", Name: "Deprecated Endpoint Monitor", Description: "Reports usage of deprecated API endpoints", Schedule: "Daily at 6:20am", IntervalMinutes: 1440, Category: "Monitoring", Active: true},
+	{Command: "spatial:update-data", Name: "Spatial Data Update", Description: "Downloads UK OSM PBF + rebuilds deprivation quintiles and signals the spatial server to reload", Schedule: "Monthly (1st 3am)", IntervalMinutes: 43200, Category: "Data", Active: true},
+	{Command: "spam:refresh-mobile-cidrs", Name: "Mobile CIDR Refresh", Description: "Refreshes UK mobile-carrier IP ranges into the spam IP whitelist", Schedule: "Monthly", IntervalMinutes: 43200, Category: "Spam / Abuse", Active: true},
+
+	// Rippling — only scheduled while the feature is switched on; Active:false so
+	// they can't false-alarm while the engine is dark. Flip to true at launch.
+	{Command: "ripple:expand", Name: "Rippling Expand", Description: "Maintains rippling-out reach for active posts (gated by ripple.enabled / within_groups)", Schedule: "Every minute (when rippling on)", IntervalMinutes: 1, Category: "Rippling", Active: false},
+	{Command: "ripple:release-replies", Name: "Rippling Release Replies", Description: "Releases/expires held external replies as posts ripple out", Schedule: "Every minute (when rippling on)", IntervalMinutes: 1, Category: "Rippling", Active: false},
+	{Command: "ripple:proximity-notes", Name: "Rippling Proximity Notes", Description: "Computes \"quicker to get to\" mod notes for rippled-in posts (gated by ripple.proximity_notes)", Schedule: "Every 5 minutes (when on)", IntervalMinutes: 5, Category: "Rippling", Active: false},
 }
 
 // ActiveCronJobCount returns the number of active cron jobs in the static registry.
