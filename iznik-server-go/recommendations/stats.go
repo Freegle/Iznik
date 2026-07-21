@@ -14,6 +14,18 @@ import (
 // panel tags "wanted_match".
 var trackedSources = []string{"similar_posts", "wanted_match"}
 
+// holdoutCohortSource is the view tag the message page writes
+// (iznik-nuxt3/pages/message/[id].vue passes view-source="message_page"). It marks
+// "this member loaded a message page", which is where the similar-posts strip
+// renders, so it identifies the population the holdout is meant to split in two.
+//
+// Crucially it is written for holdout members too: they load the page and get the
+// tag, they just never see the strip. That is what makes it a valid cohort for the
+// comparison, where the similar_posts tag itself would not be - holdout members have
+// no similar_posts rows by construction, so selecting on that would drop the entire
+// control group.
+const holdoutCohortSource = "message_page"
+
 // DailyPoint is one day's funnel for a source.
 type DailyPoint struct {
 	Date        string `json:"date"`
@@ -35,6 +47,13 @@ type SourceStats struct {
 // HoldoutStats compares reply behaviour of the 10% holdout (userid % 10 == 0,
 // who never see recommendations) against everyone else, over message-page-active
 // users, so we can read whether showing recommendations changes reply rate.
+//
+// Known caveat: the holdout is only enforced for the similar-posts strip
+// (SimilarPosts.vue). WantedMatches.vue has no holdout check, so holdout members
+// still see the wanted-to-offer panel and any replies it produces land in the
+// holdout's totals. wanted_match is 176 impressions all-time so the effect is
+// currently negligible, but the control group is not strictly clean until that
+// component gates on the holdout too.
 type HoldoutStats struct {
 	HoldoutUsers        int64   `json:"holdoutUsers"`
 	HoldoutReplies      int64   `json:"holdoutReplies"`
@@ -158,20 +177,38 @@ func Stats(c *fiber.Ctx) error {
 		out = append(out, *ss)
 	}
 
-	// Holdout comparison.
+	// Holdout comparison, over users who actually reached the surface: the cohort is
+	// people with a message-page view, which is where the similar-posts strip
+	// renders. The strip is the thing the holdout gates, so this compares like with
+	// like.
+	//
+	// This used to bucket every user with any View row, which is essentially every
+	// active member: 51,314 users over 30 days against 1,032 recommendation
+	// impressions all-time. Under 2% of the "shown" cohort had ever been shown
+	// anything, so both sides were near-identical populations and the comparison
+	// could not detect the effect it exists to measure. It reported a 1.7% gap in
+	// the holdout's favour, which was noise. Scoping to message_page is what the
+	// HoldoutStats doc comment always said this measured.
+	//
+	// The two sides are also aggregated independently rather than joined directly.
+	// messages_likes LEFT JOIN chat_messages on userid alone, with no message
+	// correlation, fans every view row out across every Interested message that user
+	// sent and undoes it with COUNT(DISTINCT). At the old cohort size that was ~640M
+	// join rows and never completed (killed at 7 min on live).
 	var cohortRows []struct {
 		Holdout int   `gorm:"column:holdout"`
 		Users   int64 `gorm:"column:users"`
 		Replies int64 `gorm:"column:replies"`
 	}
-	db.Raw(`SELECT (ml.userid % 10 = 0) holdout,
-	               COUNT(DISTINCT ml.userid) users,
-	               COUNT(DISTINCT cm.id) replies
-	        FROM messages_likes ml
-	        LEFT JOIN chat_messages cm ON cm.userid = ml.userid AND cm.type = 'Interested'
-	             AND cm.date >= ?
-	        WHERE ml.type = 'View' AND ml.userid IS NOT NULL AND ml.timestamp >= ?
-	        GROUP BY holdout`, since, since).Scan(&cohortRows)
+	db.Raw(`SELECT (u.userid % 10 = 0) holdout,
+	               COUNT(*) users,
+	               COALESCE(SUM(r.replies), 0) replies
+	        FROM (SELECT DISTINCT userid FROM messages_likes
+	              WHERE source = ? AND timestamp >= ?) u
+	        LEFT JOIN (SELECT userid, COUNT(*) replies FROM chat_messages
+	                   WHERE type = 'Interested' AND date >= ?
+	                   GROUP BY userid) r ON r.userid = u.userid
+	        GROUP BY holdout`, holdoutCohortSource, since, since).Scan(&cohortRows)
 
 	var holdout HoldoutStats
 	for _, r := range cohortRows {
