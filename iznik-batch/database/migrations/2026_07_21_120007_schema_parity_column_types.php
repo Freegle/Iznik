@@ -89,15 +89,21 @@ return new class extends Migration
         );
 
         // --- enum value present on live but missing from the migrations ---
+        // NOTE: MySQL drops the DEFAULT when a column is MODIFYed without one, so
+        // every MODIFY below has to restate the production default explicitly.
+        // Losing DEFAULT 0 on background_tasks.attempts silently broke task
+        // processing (attempts became NULL, so `attempts + 1` was NULL too).
         $this->modify(
             'users_push_notifications',
             'type',
-            "ENUM('Google','Firefox','Test','Android','IOS','FCMAndroid','FCMIOS','BrowserPush') NOT NULL"
+            "ENUM('Google','Firefox','Test','Android','IOS','FCMAndroid','FCMIOS','BrowserPush') "
+            . "NOT NULL DEFAULT 'Google'"
         );
 
         // --- integer/float signedness and width ---
         $this->modify('users', 'tnuserid', 'BIGINT NULL');
-        $this->modify('users', 'publishconsent', 'TINYINT NOT NULL');
+        $this->modify('users', 'publishconsent', 'TINYINT NOT NULL DEFAULT 0');
+        $this->modify('abtest', 'suggest', 'TINYINT(1) NOT NULL DEFAULT 0');
         $this->modify('search_history', 'groups', 'INT NULL');
         foreach ([
             ['rippling_algorithm_metrics', 'lifetime_days', 'FLOAT NOT NULL'],
@@ -112,7 +118,7 @@ return new class extends Migration
         }
 
         // --- nullability where live is looser ---
-        $this->modify('background_tasks', 'attempts', 'INT UNSIGNED NULL');
+        $this->modify('background_tasks', 'attempts', 'INT UNSIGNED NULL DEFAULT 0');
         $this->modify('background_tasks', 'created_at', 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP');
         $this->modify('charities', 'created_at', 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP');
         $this->modify(

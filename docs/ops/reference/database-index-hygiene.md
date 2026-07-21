@@ -129,9 +129,17 @@ from the migrations makes a mandatory index look droppable.
 Dump the same three views of `information_schema` from production and from a
 freshly migrated database, then compare:
 
-- `columns` - name, `COLUMN_TYPE`, `IS_NULLABLE`, `EXTRA`
+- `columns` - name, `COLUMN_TYPE`, `IS_NULLABLE`, **`COLUMN_DEFAULT`**, `EXTRA`
 - `statistics` - grouped to one row per index, with its ordered column list
 - `KEY_COLUMN_USAGE` joined to `REFERENTIAL_CONSTRAINTS` for foreign keys
+
+**Do not omit `COLUMN_DEFAULT` from the comparison.** `ALTER TABLE ... MODIFY`
+replaces the whole column definition, so a `MODIFY` written without a `DEFAULT`
+clause silently drops the existing default. That is easy to miss because the
+type and nullability then look correct. Dropping `DEFAULT 0` from
+`background_tasks.attempts` this way broke background task processing outright -
+`attempts` became `NULL`, so `attempts + 1` evaluated to `NULL` - and it was
+caught only by the Laravel suite, not by a type-and-nullability diff.
 
 Two things matter when comparing:
 
