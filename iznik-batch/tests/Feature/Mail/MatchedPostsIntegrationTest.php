@@ -86,6 +86,16 @@ class MatchedPostsIntegrationTest extends TestCase
         $this->artisan('matches:notify')->assertExitCode(0);
         app(EmailSpoolerService::class)->processSpool();
 
+        // Regression: MatchedPosts once skipped $this->initTracking(), so no
+        // email_tracking row was created and trackedResourceUrl() silently
+        // degraded every card link to a plain, untracked /message/{id} URL —
+        // opens and clicks were unrecordable. Assert the row now exists.
+        $tracking = DB::table('email_tracking')
+            ->where('email_type', 'MatchedPosts')
+            ->where('recipient_email', $recipientEmail)
+            ->first();
+        $this->assertNotNull($tracking, 'MatchedPosts must register an email_tracking row via initTracking()');
+
         $message = $this->mailpit->assertMessageSentTo($recipientEmail);
 
         $subject = $this->mailpit->getSubject($message);

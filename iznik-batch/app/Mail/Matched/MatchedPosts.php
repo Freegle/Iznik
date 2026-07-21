@@ -99,6 +99,19 @@ class MatchedPosts extends MjmlMailable
         // via listUnsubscribeUrl()).
         $this->configureMessage();
 
+        // Register the email_tracking row BEFORE prepareCard() builds the cards:
+        // without it $this->tracking is null, trackedResourceUrl() silently
+        // returns plain untracked /message/{id} links, and no open/click is ever
+        // recorded (every other tracked mailable calls initTracking the same way).
+        $this->initTracking(
+            'MatchedPosts',
+            $this->recipientEmail,
+            (int) $this->user->id,
+            null,
+            $this->getSubject(),
+            ['items' => count($this->items)]
+        );
+
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         [$userLat, $userLng] = $this->recipientLatLng();
