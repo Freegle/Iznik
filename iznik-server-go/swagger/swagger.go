@@ -5217,3 +5217,86 @@ type voicepostFinishResponse struct {
 	// in: body
 	Body voicepost.FinishResult `json:"body"`
 }
+
+// swagger:route GET /item/impact item getItemImpact
+// Estimate reuse impact for an item name
+//
+// Estimates weight, CO2e saved and financial benefit of reuse for qty units of
+// a free-text item name. Public, read-only - never writes to the items catalog.
+// Lookup order: (1) exact case-insensitive match against the items catalog with
+// a known weight, (2) fuzzy word-overlap match (>10%) against the standard
+// weights reference table, (3) popularity-weighted average item weight.
+//
+// Parameters:
+//   + name: name
+//     in: query
+//     description: Free-text item name
+//     required: true
+//     type: string
+//   + name: qty
+//     in: query
+//     description: Quantity (default 1)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route GET /message/{id}/matches message getMessagePostMatches
+// Opposite-type posts matching a given post (matched-posts email)
+//
+// Candidate set for the matched-posts email (batch job). Reach-filtered against
+// the post owner.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: Max results (default 10, max 30)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/relevantoff user getUserRelevantOff
+// Opt out of matched-posts suggestion emails
+//
+// Targeted opt-out from matched-posts suggestion emails (sets
+// relevantallowed=0), key-authenticated so it works as a one-click
+// List-Unsubscribe.
+//
+// Parameters:
+//   + name: key
+//     in: query
+//     description: Per-user unsubscribe key
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /user/relevantoff user postUserRelevantOff
+// Opt out of matched-posts suggestion emails
+//
+// POST form of the one-click List-Unsubscribe opt-out; RFC 8058 clients POST
+// rather than GET.
+//
+// Parameters:
+//   + name: key
+//     in: query
+//     description: Per-user unsubscribe key
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
