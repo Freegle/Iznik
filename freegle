@@ -289,6 +289,21 @@ cmd_worktree_create() {
         echo "LOKI_VOLUME=${project_name}-loki-data" >> "$worktree_dir/.env"
     fi
 
+    # Point the dev-LIVE clients at THIS worktree's own apiv2-live via its traefik port.
+    # The .env's LIVE_*_API_V2 default to the PORTLESS http://apiv2-live.localhost/api, which
+    # resolves to whichever worktree owns host port 80 (the main checkout) - so a worktree's
+    # dev-live would silently use the MAIN checkout's live API and not be self-contained. .env
+    # values aren't recursively interpolated, so we rewrite them here with the assigned port.
+    # A real prod override (https://api.ilovefreegle.org/...) is left untouched.
+    local wt_traefik_port
+    wt_traefik_port=$(grep -E '^PORT_TRAEFIK_HTTP=' "$worktree_dir/.env" | cut -d= -f2)
+    if [[ -n "$wt_traefik_port" ]]; then
+        local live_key
+        for live_key in LIVE_FREEGLE_API_V2 LIVE_MT_API_V2; do
+            sed -i -E "s|^(${live_key}=http://apiv2-live\.localhost)(:[0-9]+)?(/.*)?\$|\\1:${wt_traefik_port}\\3|" "$worktree_dir/.env"
+        done
+    fi
+
     # Start the containers immediately so the worktree is ready to use
     echo ""
     echo "🔄 Starting containers in $worktree_dir ..."
