@@ -51,12 +51,15 @@ test.describe('Freegle Edit Deadline', () => {
     const editModal = page.locator('.modal.show')
     await expect(editModal).toBeVisible({ timeout: timeouts.ui.appearance })
 
-    // Verify the deadline from initial posting is shown
+    // Verify the deadline from initial posting is shown. Assert on the VALUE, not
+    // visibility-then-read: the modal renders the empty date input before the
+    // message fetch populates it, so reading inputValue() straight after
+    // toBeVisible() races the load and intermittently sees "".
     const deadlineInput = editModal.locator('input[type="date"]').first()
-    await expect(deadlineInput).toBeVisible({ timeout: timeouts.ui.appearance })
-    const savedDeadline = await deadlineInput.inputValue()
-    expect(savedDeadline).toBe(deadlineDate)
-    console.log(`Deadline from initial post visible on edit: ${savedDeadline}`)
+    await expect(deadlineInput).toHaveValue(deadlineDate, {
+      timeout: timeouts.ui.appearance,
+    })
+    console.log(`Deadline from initial post visible on edit: ${deadlineDate}`)
   })
 
   test('editing a deadline saves and persists after reload', async ({
@@ -124,12 +127,10 @@ test.describe('Freegle Edit Deadline', () => {
     await expect(editModal2).toBeVisible({ timeout: timeouts.ui.appearance })
 
     const deadlineInput2 = editModal2.locator('input[type="date"]').first()
-    await expect(deadlineInput2).toBeVisible({
+    await expect(deadlineInput2).toHaveValue(deadlineDate, {
       timeout: timeouts.ui.appearance,
     })
-    const savedDeadline = await deadlineInput2.inputValue()
-    expect(savedDeadline).toBe(deadlineDate)
-    console.log(`Re-opened modal shows deadline: ${savedDeadline}`)
+    console.log(`Re-opened modal shows deadline: ${deadlineDate}`)
 
     // Close modal
     await editModal2.locator('button:has-text("Cancel")').first().click()
@@ -155,11 +156,9 @@ test.describe('Freegle Edit Deadline', () => {
     await expect(editModal3).toBeVisible({ timeout: timeouts.ui.appearance })
 
     const deadlineInput3 = editModal3.locator('input[type="date"]').first()
-    await expect(deadlineInput3).toBeVisible({
+    await expect(deadlineInput3).toHaveValue(deadlineDate, {
       timeout: timeouts.ui.appearance,
     })
-    const reloadedDeadline = await deadlineInput3.inputValue()
-    expect(reloadedDeadline).toBe(deadlineDate)
-    console.log(`After reload, deadline persists: ${reloadedDeadline}`)
+    console.log(`After reload, deadline persists: ${deadlineDate}`)
   })
 })

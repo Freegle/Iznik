@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type Admin struct {
@@ -183,6 +184,11 @@ func PostAdmin(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
 		}
 
+		// Don't take a hold off another mod - Release is the way to do that.
+		if holder, name := adminHeldByAnother(db, req.ID, myid); holder != 0 {
+			return heldByAnotherResponse(c, holder, name)
+		}
+
 		db.Exec("UPDATE admins SET heldby = ? WHERE id = ?", myid, req.ID)
 		return c.JSON(fiber.Map{"success": true})
 
@@ -286,6 +292,30 @@ type PatchAdminRequest struct {
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /modtools/admin [patch]
+// adminHeldByAnother returns the id and name of a DIFFERENT moderator holding this
+// admin message, or 0 if it is free to act on.
+func adminHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
+	var holder uint64
+	db.Raw("SELECT COALESCE(heldby, 0) FROM admins WHERE id = ?", id).Scan(&holder)
+	if holder == 0 || holder == myid {
+		return 0, ""
+	}
+	var name string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&name)
+	return holder, name
+}
+
+// heldByAnotherResponse is the 409 a moderation action gets when someone else holds
+// the item, carrying who so the UI can name them rather than just failing.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, name string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": name,
+	})
+}
+
 func PatchAdmin(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -310,6 +340,12 @@ func PatchAdmin(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
 	}
 
+	// Editing or completing an admin message another mod is holding is exactly the
+	// case the hold exists to prevent.
+	if holder, name := adminHeldByAnother(db, req.ID, myid); holder != 0 {
+		return heldByAnotherResponse(c, holder, name)
+	}
+
 	if req.Subject != nil {
 		db.Exec("UPDATE admins SET subject = ? WHERE id = ?", *req.Subject, req.ID)
 	}
@@ -317,7 +353,10 @@ func PatchAdmin(c *fiber.Ctx) error {
 		db.Exec("UPDATE admins SET text = ? WHERE id = ?", *req.Text, req.ID)
 	}
 	if req.Complete != nil {
-		db.Exec("UPDATE admins SET complete = NOW() WHERE id = ?", req.ID)
+		// Completing is terminal, so drop the hold with it. Leaving it set pinned the
+		// message as "Held" indefinitely, so it stayed locked to a mod who had already
+		// finished with it and only a manual Release cleared it.
+		db.Exec("UPDATE admins SET complete = NOW(), heldby = NULL WHERE id = ?", req.ID)
 	}
 	if req.Pending != nil {
 		var val int

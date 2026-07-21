@@ -1,4 +1,5 @@
 import BaseAPI from '@/api/BaseAPI'
+import { notAHeldConflict } from '~/api/heldConflict'
 
 export default class VolunteeringAPI extends BaseAPI {
   fetch(id, logError = true) {
@@ -14,7 +15,7 @@ export default class VolunteeringAPI extends BaseAPI {
   }
 
   save(data) {
-    return this.$patchv2('/volunteering', data)
+    return this.$patchv2('/volunteering', data, notAHeldConflict)
   }
 
   async add(data) {

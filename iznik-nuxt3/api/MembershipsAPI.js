@@ -1,4 +1,5 @@
 import BaseAPI from '@/api/BaseAPI'
+import { notAHeldConflict } from '~/api/heldConflict'
 
 export default class MembershipsAPI extends BaseAPI {
   update(data) {
@@ -47,25 +48,33 @@ export default class MembershipsAPI extends BaseAPI {
   }
 
   approveMember(userid, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/memberships', {
-      action: 'Approve',
-      userid,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/memberships',
+      {
+        action: 'Approve',
+        userid,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   rejectMember(userid, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/memberships', {
-      action: 'Reject',
-      userid,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/memberships',
+      {
+        action: 'Reject',
+        userid,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   reply(userid, groupid, subject = null, stdmsgid = null, body = null) {
@@ -80,14 +89,18 @@ export default class MembershipsAPI extends BaseAPI {
   }
 
   delete(userid, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/memberships', {
-      action: 'Delete Approved Member',
-      userid,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/memberships',
+      {
+        action: 'Delete Approved Member',
+        userid,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   remove(userid, groupid) {
