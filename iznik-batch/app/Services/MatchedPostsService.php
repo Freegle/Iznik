@@ -28,7 +28,7 @@ class MatchedPostsService
      * @return array<int, array{user: User, items: array<int, array{message: Message, reason: Message, score: float}>}>
      *         One entry per eligible recipient, each with the matched posts to show them.
      */
-    public function buildNotifications(?Carbon $now = null): array
+    public function buildNotifications(?Carbon $now = null, ?Carbon $since = null, ?Carbon $until = null): array
     {
         $now = $now ?? Carbon::now();
 
@@ -39,7 +39,11 @@ class MatchedPostsService
         $window = (int) config('freegle.matched.fresh_window_minutes', 20);
         $perPost = (int) config('freegle.matched.match_limit_per_post', 10);
 
-        $fresh = $this->freshPosts($now->copy()->subMinutes($window));
+        // Normal run: drivers are posts that arrived in the last $window minutes.
+        // The backfill passes an explicit ($since, $until) slice so it can walk the
+        // whole open backlog in bounded chunks without one giant driver set.
+        $from = $since ?? $now->copy()->subMinutes($window);
+        $fresh = $this->freshPosts($from, $until);
         if ($fresh->isEmpty()) {
             return [];
         }
@@ -151,8 +155,15 @@ class MatchedPostsService
      * this run. Bounded by the arrival index; joining messages_embeddings skips
      * posts that can't be vector-searched yet (no wasted apiv2 call).
      */
-    private function freshPosts(Carbon $since): Collection
+    private function freshPosts(Carbon $since, ?Carbon $until = null): Collection
     {
+        $bindings = ['Approved', 'Offer', 'Wanted', $since->toDateTimeString()];
+        $upper = '';
+        if ($until !== null) {
+            $upper = ' AND mg.arrival <= ?';
+            $bindings[] = $until->toDateTimeString();
+        }
+
         return collect(DB::select(
             'SELECT m.id AS msgid, m.fromuser, m.type
                FROM messages_groups mg
@@ -161,11 +172,11 @@ class MatchedPostsService
                INNER JOIN messages_embeddings me ON me.msgid = m.id
               WHERE mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0
                 AND m.type IN (?, ?)
-                AND mg.arrival > ?
+                AND mg.arrival > ?' . $upper . '
                 AND m.deleted IS NULL
                 AND ms.successful = 0 AND ms.promised = 0
               GROUP BY m.id, m.fromuser, m.type',
-            ['Approved', 'Offer', 'Wanted', $since->toDateTimeString()]
+            $bindings
         ));
     }
 

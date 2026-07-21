@@ -42,67 +42,50 @@ class NotifyMatchedPostsCommand extends Command
             $this->warn('DRY RUN MODE — nothing sent, no ledger written.');
         }
 
-        if ($this->option('backfill')) {
-            // The scheduled run only drives on posts that arrived in the last
-            // fresh_window_minutes; the already-open backlog would never get a
-            // recommendation. Widen the driver lookback to the messages_spatial
-            // open-age (RECENT_DAYS) for this one run. freshPosts() only ever
-            // returns messages_spatial rows, so this inherits exactly that
-            // open-age cap — no post older than the spatial window can drive.
-            config(['freegle.matched.fresh_window_minutes' => MessageSpatialService::RECENT_DAYS * 24 * 60]);
-            $this->warn(sprintf(
-                'BACKFILL: driving on all currently-open posts within the %d-day open-age window.',
-                MessageSpatialService::RECENT_DAYS
-            ));
-        }
+        $backfill = (bool) $this->option('backfill');
 
-        return $this->runWithLogging(function () use ($service, $spooler, $push, $dryRun) {
+        return $this->runWithLogging(function () use ($service, $spooler, $push, $dryRun, $backfill) {
             $now = Carbon::now();
-            $notifications = $service->buildNotifications($now);
+            $totals = ['notified' => 0, 'emails' => 0, 'matches' => 0];
 
-            $notified = 0;
-            $emails = 0;
-            $matches = 0;
+            if ($backfill) {
+                // Catch up the already-open backlog (the scheduled run only drives
+                // on the last fresh_window_minutes of arrivals). Walk the whole
+                // messages_spatial open-age window (RECENT_DAYS) in bounded time
+                // slices: a single buildNotifications over tens of thousands of
+                // drivers overflows the IN(...) queries and idles the DB
+                // connection out during its long apiv2 phase ("server has gone
+                // away"). Each slice inherits the spatial open-age via freshPosts.
+                $slice = (int) config('freegle.matched.backfill_slice_minutes', 360);
+                $start = $now->copy()->subDays(MessageSpatialService::RECENT_DAYS);
+                $this->warn(sprintf(
+                    'BACKFILL: %d-day open-age window in %d-minute slices.',
+                    MessageSpatialService::RECENT_DAYS,
+                    $slice
+                ));
 
-            foreach ($notifications as $n) {
-                if ($this->shouldStop()) {
-                    break;
+                for ($since = $start; $since->lt($now); $since = $since->copy()->addMinutes($slice)) {
+                    if ($this->shouldStop()) {
+                        break;
+                    }
+                    $until = $since->copy()->addMinutes($slice);
+                    if ($until->gt($now)) {
+                        $until = $now->copy();
+                    }
+                    $batch = $service->buildNotifications($now, $since, $until);
+                    $c = $this->dispatchNotifications($batch, $now, $dryRun, $spooler, $push);
+                    $totals['notified'] += $c['notified'];
+                    $totals['emails'] += $c['emails'];
+                    $totals['matches'] += $c['matches'];
                 }
-
-                $user = $n['user'];
-                $items = $n['items'];
-                $email = $user->email_preferred ?? $user->email ?? null;
-
-                if ($dryRun) {
-                    $notified++;
-                    $emails += $email ? 1 : 0;
-                    $matches += count($items);
-
-                    continue;
-                }
-
-                // In-app (bell) notification + device push — the primary channel,
-                // delivered to every eligible recipient regardless of email.
-                $this->notifyUserOfMatches($user, $items, $now, $push);
-                $notified++;
-
-                // Email too, when we have an address.
-                if ($email) {
-                    $spooler->spool(new MatchedPosts($user, $email, $items));
-                    $emails++;
-                }
-
-                // Record every matched post as notified to this user (never
-                // re-send, across both channels) and bump the per-user cooldown.
-                $rows = array_map(fn ($i) => [
-                    'msgid' => (int) $i['message']->id,
-                    'userid' => (int) $user->id,
-                    'mailed_at' => $now->toDateTimeString(),
-                ], $items);
-                DB::table('messages_matched_notified')->insertOrIgnore($rows);
-                DB::table('users')->where('id', $user->id)->update(['lastrelevantcheck' => $now->toDateTimeString()]);
-
-                $matches += count($items);
+            } else {
+                $totals = $this->dispatchNotifications(
+                    $service->buildNotifications($now),
+                    $now,
+                    $dryRun,
+                    $spooler,
+                    $push
+                );
             }
 
             $prefix = $dryRun ? 'Would ' : '';
@@ -110,21 +93,80 @@ class NotifyMatchedPostsCommand extends Command
             $this->table(
                 ['Operation', 'Count'],
                 [
-                    [$prefix . 'Members notified (in-app + push)', number_format($notified)],
-                    [$prefix . 'Members also emailed', number_format($emails)],
-                    [$prefix . 'Matched posts included', number_format($matches)],
+                    [$prefix . 'Members notified (in-app + push)', number_format($totals['notified'])],
+                    [$prefix . 'Members also emailed', number_format($totals['emails'])],
+                    [$prefix . 'Matched posts included', number_format($totals['matches'])],
                 ]
             );
 
             Log::info('Matched-posts notify completed', [
-                'notified' => $notified,
-                'emails' => $emails,
-                'matches' => $matches,
+                'notified' => $totals['notified'],
+                'emails' => $totals['emails'],
+                'matches' => $totals['matches'],
                 'dry_run' => $dryRun,
+                'backfill' => $backfill,
             ]);
 
             return Command::SUCCESS;
         });
+    }
+
+    /**
+     * Deliver one batch of notifications (in-app + push + email) and record the
+     * ledger/cooldown. Returns per-batch counts so the backfill can accumulate
+     * across slices. In dry-run it only counts.
+     *
+     * @param  array<int, array{user: User, items: array}>  $notifications
+     * @return array{notified:int, emails:int, matches:int}
+     */
+    private function dispatchNotifications(array $notifications, Carbon $now, bool $dryRun, EmailSpoolerService $spooler, PushNotificationService $push): array
+    {
+        $notified = 0;
+        $emails = 0;
+        $matches = 0;
+
+        foreach ($notifications as $n) {
+            if ($this->shouldStop()) {
+                break;
+            }
+
+            $user = $n['user'];
+            $items = $n['items'];
+            $email = $user->email_preferred ?? $user->email ?? null;
+
+            if ($dryRun) {
+                $notified++;
+                $emails += $email ? 1 : 0;
+                $matches += count($items);
+
+                continue;
+            }
+
+            // In-app (bell) notification + device push — the primary channel,
+            // delivered to every eligible recipient regardless of email.
+            $this->notifyUserOfMatches($user, $items, $now, $push);
+            $notified++;
+
+            // Email too, when we have an address.
+            if ($email) {
+                $spooler->spool(new MatchedPosts($user, $email, $items));
+                $emails++;
+            }
+
+            // Record every matched post as notified to this user (never re-send,
+            // across both channels) and bump the per-user cooldown.
+            $rows = array_map(fn ($i) => [
+                'msgid' => (int) $i['message']->id,
+                'userid' => (int) $user->id,
+                'mailed_at' => $now->toDateTimeString(),
+            ], $items);
+            DB::table('messages_matched_notified')->insertOrIgnore($rows);
+            DB::table('users')->where('id', $user->id)->update(['lastrelevantcheck' => $now->toDateTimeString()]);
+
+            $matches += count($items);
+        }
+
+        return ['notified' => $notified, 'emails' => $emails, 'matches' => $matches];
     }
 
     /**
