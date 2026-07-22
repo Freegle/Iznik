@@ -13,10 +13,8 @@ use OpenAPI\Client\Configuration;
 
 class PostSyncer
 {
-    private const PAGE_SIZE = 100;
-
-    // TODO: temporarily just requesting posts for the FreeglePlayground group.
-    private const GROUP_IDS = '8444';
+    // /posts/all enforces per_page <= 50.
+    private const PAGE_SIZE = 50;
 
     private GroupPostIngestionService $ingestionService;
 
@@ -39,26 +37,37 @@ class PostSyncer
      */
     public function sync(string $from, string $to): array
     {
-        $page    = 1;
         $count   = 0;
         $maxDate = null;
         $api     = $this->buildApiClient();
 
-        do {
-            [$posts, $numPages] = $this->fetchPage($api, $page, $from, $to);
-            if ($posts === null) {
-                break;
-            }
+        // /posts/all requires date_max within 1 day of date_min, so walk day-by-day.
+        $cursor = new \DateTime($from, new \DateTimeZone('UTC'));
+        $end    = new \DateTime($to,   new \DateTimeZone('UTC'));
 
-            Log::info('TN-SYNC-TRACE [POSTS-PAGE] page=' . $page . ' count=' . count($posts));
+        while ($cursor < $end) {
+            $next      = (clone $cursor)->modify('+1 day');
+            $windowEnd = $next < $end ? $next : $end;
 
-            foreach ($posts as $post) {
-                $count++;
-                $maxDate = $this->processPost($post, $maxDate);
-            }
+            $page = 1;
+            do {
+                [$posts, $hasMore] = $this->fetchPage($api, $page, $cursor, $windowEnd);
+                if ($posts === null) {
+                    break 2; // API error — abort entire sync
+                }
 
-            $page++;
-        } while ($posts && $page <= $numPages);
+                Log::info('TN-SYNC-TRACE [POSTS-PAGE] page=' . $page . ' count=' . count($posts));
+
+                foreach ($posts as $post) {
+                    $count++;
+                    $maxDate = $this->processPost($post, $maxDate);
+                }
+
+                $page++;
+            } while ($hasMore);
+
+            $cursor = $windowEnd;
+        }
 
         Log::info('TN-SYNC-TRACE [POSTS-DONE] total=' . $count . ' max_date=' . ($maxDate ?? 'null'));
 
@@ -66,39 +75,37 @@ class PostSyncer
     }
 
     /**
-     * @return array{array|null, int} [posts, numPages] — posts is null on API error
+     * @return array{array|null, bool} [posts, hasMore] — posts is null on API error
      */
-    private function fetchPage(PostsApi $api, int $page, string $from, string $to): array
+    private function fetchPage(PostsApi $api, int $page, \DateTime $from, \DateTime $to): array
     {
         if ($this->localTesting) {
             return $this->fetchPageFromFixture($page);
         }
 
         try {
-            $response = $api->getPosts(
+            $response = $api->getAllPosts(
                 types: 'offer,wanted',
-                sources: 'groups',
-                sort_by: 'date',
-                group_ids: self::GROUP_IDS,
+                date_min: $from,
+                date_max: $to,
                 per_page: self::PAGE_SIZE,
                 page: $page,
-                date_min: new \DateTime($from),
-                date_max: new \DateTime($to),
-                outcomes: 'all',
             );
         } catch (ApiException $e) {
             Log::error('TN sync: posts API failed on page ' . $page, [
                 'status' => $e->getCode(),
                 'error'  => $e->getMessage(),
             ]);
-            return [null, 0];
+            return [null, false];
         }
 
-        return [$response->getPosts() ?? [], $response->getNumPages() ?? 1];
+        $posts = $response->getPosts() ?? [];
+
+        return [$posts, count($posts) >= self::PAGE_SIZE];
     }
 
     /**
-     * @return array{array, int} [posts, numPages]
+     * @return array{array, bool} [posts, hasMore]
      */
     private function fetchPageFromFixture(int $page): array
     {
@@ -106,15 +113,13 @@ class PostSyncer
 
         if (!file_exists($fixtureFile)) {
             Log::info('TN-SYNC-TRACE [POSTS-PAGE] missing fixture file=' . $fixtureFile);
-            return [[], 0];
+            return [[], false];
         }
 
         $payload = json_decode(file_get_contents($fixtureFile), true);
+        $posts   = is_array($payload) ? ($payload['posts'] ?? []) : [];
 
-        return [
-            is_array($payload) ? ($payload['posts'] ?? []) : [],
-            is_array($payload) ? (int) ($payload['num_pages'] ?? 1) : 1,
-        ];
+        return [$posts, count($posts) >= self::PAGE_SIZE];
     }
 
     private function processPost(mixed $post, ?string $maxDate): ?string
