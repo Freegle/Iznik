@@ -16,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 )
 
 const chatActiveLimitMT = 365
@@ -708,6 +709,25 @@ func PostChatRoom(c *fiber.Ctx) error {
 // Internal helpers
 // =============================================================================
 
+// dbForChatList returns the db handle listChats should read through. A
+// onlyChat/keepChat lookup is the read-your-writes path used right after
+// PutChatRoom/CreateChatMessage create a chat (or GetChatRoom fetching one
+// specific chat) - the caller is asking "does this just-created/just-modified
+// chat exist yet". Under the DB read/write split a plain SELECT here can be
+// routed to a replica that hasn't applied that write yet (Galera apply-lag),
+// so the chat silently fails to appear for however long the replica lags
+// (Discourse 9955). Pin that path to the writer, matching the same hazard
+// already fixed for updateMessageCounts in this package (PR #905). The
+// unscoped list refresh (no onlyChat/keepChat) is deliberately left on the
+// replica - it's a high-frequency poll, and pinning it to the writer would
+// defeat the point of the read/write split.
+func dbForChatList(db *gorm.DB, onlyChat uint64, keepChat uint64) *gorm.DB {
+	if onlyChat > 0 || keepChat > 0 {
+		return db.Clauses(dbresolver.Write)
+	}
+	return db
+}
+
 func listChats(myid uint64, chattypes []string, start string, search string, onlyChat uint64, keepChat uint64, includeClosed bool, memberOnly bool) []ChatRoomListEntry {
 	var r []ChatRoomListEntry
 
@@ -1007,7 +1027,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 	sql := "SELECT MAX(t.search) AS search, t.otheruid, t.nameshort, t.namefull, t.firstname, t.lastname, t.fullname, t.otherdeleted, t.id, t.chattype, t.groupid, t.user1, t.user2, t.latestmessage, t.status, t.lasttype FROM (" + strings.Join(unions, " UNION ") + ") t GROUP BY t.id ORDER BY t.latestmessage DESC"
 
 	db := database.DBConn
-	db.Raw(sql, params...).Scan(&chats)
+	dbq := dbForChatList(db, onlyChat, keepChat)
+	dbq.Raw(sql, params...).Scan(&chats)
 
 	// We hide the "-gxxx" part of names, which will almost always be for TN members.
 	tnre := regexp.MustCompile(utils.TN_REGEXP)
@@ -1153,7 +1174,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			// The extra trailing myid feeds the hasvisiblemsg "own messages always count"
 			// check; it sits between the lastmsgseen and lastmsg-join placeholders, all of
 			// which are myid, so appending one more keeps every placeholder correctly bound.
-			res := db.Raw(sql, myid, myid, unseenSince, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
+			res := dbq.Raw(sql, myid, myid, unseenSince, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
 			res.Scan(&chats2)
 		}()
 

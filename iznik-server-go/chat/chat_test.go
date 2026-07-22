@@ -224,6 +224,36 @@ func TestUpdateMessageCountsEmpty(t *testing.T) {
 	assert.True(t, true)
 }
 
+// TestChatListPinsSpecificChatReadsToWriter guards against Discourse 9955: a chat
+// created by an FD reply (PutChatRoom/CreateChatMessage, both writes) not appearing
+// for minutes because the immediately-following listChats() read - onlyChat/keepChat
+// set when the client asks "does this specific just-created chat exist yet" - is a
+// plain SELECT that the DB read/write split can route to a replica which hasn't
+// applied the write yet (Galera apply-lag; see PR #887/#905). That path must be
+// pinned to the writer via dbresolver.Write. Replica lag can't be simulated on the
+// single test DB (see test/insert_id_test.go), so this asserts the routing decision
+// directly: dbForChatList must pin when a specific chat is requested, and must NOT
+// pin the unscoped list refresh (no onlyChat/keepChat) - that's a high-frequency
+// poll, and pinning it to the writer would defeat the point of the read/write split.
+func TestChatListPinsSpecificChatReadsToWriter(t *testing.T) {
+	const writeMarker = "gorm:db_resolver:write"
+
+	db := database.DBConn
+	require.NotNil(t, db)
+
+	pinned := dbForChatList(db, 12345, 0)
+	_, ok := pinned.Statement.Settings.Load(writeMarker)
+	assert.True(t, ok, "a onlyChat lookup (single just-created chat) must be pinned to the writer")
+
+	pinned = dbForChatList(db, 0, 6789)
+	_, ok = pinned.Statement.Settings.Load(writeMarker)
+	assert.True(t, ok, "a keepChat lookup (ensure a specific chat appears) must be pinned to the writer")
+
+	unpinned := dbForChatList(db, 0, 0)
+	_, ok = unpinned.Statement.Settings.Load(writeMarker)
+	assert.False(t, ok, "the unscoped list refresh must not be pinned to the writer")
+}
+
 func TestFetchReviewMessageNotFound(t *testing.T) {
 	db := database.DBConn
 	require.NotNil(t, db)
