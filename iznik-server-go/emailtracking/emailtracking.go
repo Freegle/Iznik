@@ -1596,6 +1596,21 @@ type ReengageSegmentStat struct {
 	Reengaged int64  `json:"reengaged"`
 }
 
+// ReengageSourceStat breaks sends down by how the sign-off volunteer's community
+// was resolved: 'home' (the member's catchment contains where they live - what we
+// want), 'nearest' (no catchment matched, so nearest centre was used), 'unknown'
+// (no location to test) or 'none' (no eligible volunteer; plain Freegle voice).
+// It answers "are we actually signing off from the member's own community?" and
+// whether a genuine local sign-off engages better. Opens/clicks are joined, so
+// this needs email_tracking.
+type ReengageSourceStat struct {
+	Source    string `json:"source"`
+	Sent      int64  `json:"sent"`
+	Opened    int64  `json:"opened"`
+	Clicked   int64  `json:"clicked"`
+	Reengaged int64  `json:"reengaged"`
+}
+
 // ReengageEffectiveness returns funnel/effectiveness statistics for the
 // localised re-engagement email sequence (requires authentication).
 //
@@ -1712,11 +1727,32 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 		ORDER BY r.segment ASC
 	`, startDate, endDateTime).Scan(&bySegment)
 
+	// Sends broken down by how the sign-off community was resolved. Rows
+	// predating this instrumentation have volunteer_source = NULL and are
+	// excluded here (still counted in the overall funnel). Opens/clicks are
+	// joined so a genuine home-group sign-off can be compared against nearest
+	// or no sign-off.
+	bySource := make([]ReengageSourceStat, 0)
+	db.Raw(`
+		SELECT
+			r.volunteer_source AS source,
+			COUNT(*) AS sent,
+			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
+		FROM reengage r
+		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
+		WHERE r.sentat BETWEEN ? AND ? AND r.volunteer_source IS NOT NULL
+		GROUP BY r.volunteer_source
+		ORDER BY r.volunteer_source ASC
+	`, startDate, endDateTime).Scan(&bySource)
+
 	return c.JSON(fiber.Map{
 		"funnel":    funnel,
 		"byStage":   byStage,
 		"byArm":     byArm,
 		"bySegment": bySegment,
+		"bySource":  bySource,
 		"period": fiber.Map{
 			"start": startDate,
 			"end":   endDate,

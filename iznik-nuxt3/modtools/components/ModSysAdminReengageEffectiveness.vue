@@ -176,6 +176,44 @@
           </b-tr>
         </b-tbody>
       </b-table-simple>
+
+      <!-- Per sign-off community resolution -->
+      <h3 class="ms-2 mt-2">By sign-off community</h3>
+      <p class="text-muted small ms-2">
+        Each tip is signed by a local volunteer from the member's
+        <strong>home community</strong> - the one whose catchment contains
+        where they live. <strong>Home</strong> means we found that community;
+        <strong>nearest</strong> means no catchment matched so we fell back to
+        the closest group centre; <strong>unknown</strong> means we had no
+        location to test; <strong>none</strong> means no eligible volunteer, so
+        the plain Freegle voice was used. A high <em>home</em> share is the
+        goal - and lets us see whether a genuine local sign-off engages better.
+      </p>
+      <b-table-simple hover responsive small class="mb-2">
+        <b-thead>
+          <b-tr>
+            <b-th>Sign-off</b-th>
+            <b-th>Sent</b-th>
+            <b-th>Opened</b-th>
+            <b-th>Clicked</b-th>
+            <b-th>Reengaged</b-th>
+            <b-th>Reengage rate</b-th>
+          </b-tr>
+        </b-thead>
+        <b-tbody>
+          <b-tr v-for="s in bySource" :key="s.source">
+            <b-td>{{ sourceLabel(s.source) }}</b-td>
+            <b-td>{{ (s.sent || 0).toLocaleString() }}</b-td>
+            <b-td>{{ (s.opened || 0).toLocaleString() }}</b-td>
+            <b-td>{{ (s.clicked || 0).toLocaleString() }}</b-td>
+            <b-td>{{ (s.reengaged || 0).toLocaleString() }}</b-td>
+            <b-td>{{ pct(s.reengageRate) }}</b-td>
+          </b-tr>
+          <b-tr v-if="!bySource.length">
+            <b-td colspan="6" class="text-muted">No sign-off data.</b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
     </template>
 
     <!-- Empty -->
@@ -224,6 +262,16 @@ const SEGMENT_LABELS = {
 }
 function segmentLabel(segment) {
   return SEGMENT_LABELS[segment] || segment
+}
+
+const SOURCE_LABELS = {
+  home: 'Home community',
+  nearest: 'Nearest (fallback)',
+  unknown: 'Unknown location',
+  none: 'No volunteer',
+}
+function sourceLabel(source) {
+  return SOURCE_LABELS[source] || source
 }
 
 function formatLift(lift) {
@@ -289,6 +337,13 @@ const bySegment = computed(() =>
   }))
 )
 
+const bySource = computed(() =>
+  (emailTrackingStore.reengageStats?.bySource || []).map((s) => ({
+    ...s,
+    reengageRate: rate(s.reengaged, s.sent),
+  }))
+)
+
 function fetchData() {
   emailTrackingStore.fetchReengageEffectiveness({
     start: startDate.value,
@@ -308,9 +363,11 @@ defineExpose({
   byStage,
   byArm,
   bySegment,
+  bySource,
   pct,
   armLabel,
   segmentLabel,
+  sourceLabel,
   formatLift,
   liftClass,
   armRateClass,

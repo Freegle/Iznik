@@ -275,6 +275,12 @@ class ReengageService
                 'bucket' => $bucket,
                 'segment' => $segment,
                 'email_tracking_id' => $trackingId,
+                // Which community the sign-off came from, and how it was chosen
+                // (home catchment / nearest centre / unknown / none). Only the
+                // sent arm resolves a volunteer; control holdouts stay NULL, so
+                // the sysadmin breakdown measures the mailed population.
+                'volunteer_groupid' => $content['volunteerGroupId'] ?? null,
+                'volunteer_source' => $content['volunteerSource'] ?? 'none',
                 'sentat' => now(),
             ]);
         }

@@ -24,6 +24,13 @@ class ReengageContentService
     public const TIPS = 5;
 
     /**
+     * SRID that `groups.polyindex` is stored under (GroupStatsService::SRID).
+     * MySQL treats 3857 as Cartesian, which is what the containment test and
+     * ST_Area comparison below rely on.
+     */
+    private const SRID = 3857;
+
+    /**
      * Build the full template data for a given new member and day (1..TIPS).
      *
      * @return array<string, mixed> Plain strings/ints/arrays, safe to serialise
@@ -49,6 +56,12 @@ class ReengageContentService
             'unsubscribeUrl'  => $user->listUnsubscribeUrl(),
             'volunteerName'   => $volunteer['name'] ?? null,
             'volunteerGroup'  => $volunteer['group'] ?? null,
+            // Not rendered - carried through so ReengageService can record HOW the
+            // sign-off community was chosen (see the sysadmin Sign-off tab). Scalars
+            // only: objects in Mailable view data segfault PHP 8.4.
+            'volunteerGroupId' => $volunteer['groupid'] ?? null,
+            // 'home' | 'nearest' | 'unknown' when we found someone, else 'none'.
+            'volunteerSource'  => $volunteer['source'] ?? 'none',
         ];
 
         return array_merge($base, $this->tip($day, $base));
@@ -189,19 +202,33 @@ class ReengageContentService
     }
 
     /**
-     * Find a real local volunteer to sign the tip off. Mirrors BirthdayService's
-     * "local volunteer" rule so the two stay consistent:
+     * Find a real local volunteer to sign the tip off:
      *   - only communities the member GENUINELY joined (collection Approved,
      *     rippled = 0 - never a Rippling-Out auto-join);
-     *   - nearest to the member first (haversine on the group centroid), so the
-     *     sign-off feels local rather than from the far side of the country;
+     *   - the member's HOME group first: the community whose catchment actually
+     *     contains where they live (see below);
      *   - the volunteer must be an active (accessed within a year), publicly
      *     shown (users.settings.showmod, default true) Moderator/Owner.
+     *
+     * Home group is decided by catchment CONTAINMENT, not centre distance.
+     * `groups.polyindex` is the group's real area (DPA `poly`, else CGA
+     * `polyofficial`), so "which community is this member in?" is a point-in-
+     * polygon test. Ordering by haversine to `groups.lat/lng` instead gets big or
+     * awkwardly-shaped catchments wrong, because a group's centre can sit far
+     * from much of its own area - Bristol being the case that prompted this. A
+     * member well inside Bristol's catchment can be nearer the CENTRE of a
+     * smaller neighbouring group, and would be signed off by the wrong community.
+     *
+     * The Go side already learned this (location.go ClosestGroups, bug #9518:
+     * "polygon containment is authoritative and beats any centre-distance
+     * heuristic"), and this matches it, including the POINT(lng, lat)/SRID
+     * convention. Centre distance stays only as the tiebreak for members whose
+     * point falls in no catchment at all.
      *
      * Returns null when there's no such volunteer, so the caller falls back to
      * the plain Freegle voice.
      *
-     * @return array{name: string, group: string}|null
+     * @return array{name: string, group: string, groupid: int, source: string}|null
      */
     public function resolveVolunteer(User $user): ?array
     {
@@ -216,11 +243,30 @@ class ReengageContentService
             ->select('groups.id', 'groups.nameshort', 'groups.namefull');
 
         if ($lat !== null && $lng !== null) {
-            // Nearest genuine community first; groups with no centroid sort last.
-            $groupsQuery->orderByRaw(
-                'groups.lat IS NULL, haversine(?, ?, groups.lat, groups.lng) ASC',
-                [$lat, $lng]
-            );
+            // A degenerate polyindex is stored as POINT(0 0) for groups with no
+            // real area, so exclude those rather than let them match nothing
+            // noisily. Same guard the rippling code uses.
+            $containsSql = "(groups.polyindex IS NOT NULL"
+                . " AND ST_GeometryType(groups.polyindex) <> 'POINT'"
+                . " AND ST_Contains(groups.polyindex, ST_SRID(POINT(?, ?), " . self::SRID . ')))';
+
+            // Recorded so the sysadmin dashboard can show how often the home
+            // group was genuinely known rather than guessed at by distance.
+            $groupsQuery->selectRaw($containsSql . ' AS is_home', [$lng, $lat]);
+
+            $groupsQuery
+                // 1. Catchment containment wins outright.
+                ->orderByRaw($containsSql . ' DESC', [$lng, $lat])
+                // 2. Overlapping catchments: the smallest (most local) one.
+                ->orderByRaw(
+                    'CASE WHEN ' . $containsSql . ' THEN ST_Area(groups.polyindex) ELSE 0 END ASC',
+                    [$lng, $lat]
+                )
+                // 3. No containing catchment: fall back to nearest centre.
+                ->orderByRaw(
+                    'groups.lat IS NULL, haversine(?, ?, groups.lat, groups.lng) ASC',
+                    [$lat, $lng]
+                );
         }
 
         $groups = $groupsQuery->limit(8)->get();
@@ -244,13 +290,33 @@ class ReengageContentService
                 $first = $display !== '' ? explode(' ', $display)[0] : 'Volunteer';
 
                 return [
-                    'name'  => $first,
-                    'group' => (string) ($group->namefull ?: $group->nameshort),
+                    'name'    => $first,
+                    'group'   => (string) ($group->namefull ?: $group->nameshort),
+                    'groupid' => (int) $group->id,
+                    // 'home'    = their catchment contains where they live.
+                    // 'nearest' = no catchment matched; nearest centre used.
+                    // 'unknown' = we had no location to test at all.
+                    'source'  => $this->volunteerSource($group, $lat, $lng),
                 ];
             }
         }
 
         return null;
+    }
+
+    /**
+     * How a chosen sign-off group was arrived at, for the sysadmin breakdown.
+     * `is_home` is only selected when we had a location to test.
+     */
+    private function volunteerSource(object $group, ?float $lat, ?float $lng): string
+    {
+        if ($lat === null || $lng === null) {
+            return 'unknown';
+        }
+
+        // MySQL returns the boolean expression as 1/0 (possibly the string "0"),
+        // so compare explicitly rather than lean on empty()'s "0" quirk.
+        return ((int) ($group->is_home ?? 0)) === 1 ? 'home' : 'nearest';
     }
 
     /**
