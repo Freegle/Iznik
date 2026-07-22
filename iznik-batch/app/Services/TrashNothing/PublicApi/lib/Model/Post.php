@@ -358,6 +358,10 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         $this->setIfExists('reselling', $data ?? [], null);
         $this->setIfExists('url', $data ?? [], null);
         $this->setIfExists('repost_count', $data ?? [], null);
+
+        // Not part of the published OpenAPI spec, but present in live API responses when using a FD API key —
+        // array of Freegle group ids (int) that the user has allowed moderator messages from.
+        $this->setIfExists('freegle_group_ids', $data ?? [], null);
     }
 
     /**

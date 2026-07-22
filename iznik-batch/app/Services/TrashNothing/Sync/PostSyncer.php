@@ -161,6 +161,21 @@ class PostSyncer
             return $maxDate;
         }
 
+        // TN also returns an out-of-spec `freegle_group_ids` field (see the comment on
+        // Post::__construct()) — the Freegle groups the poster has allowed moderator
+        // messages from. Both array (fixture) and Post object post shapes support
+        // ArrayAccess, so this works for either without a getter on the model.
+        //
+        // Not acted on yet — traced so it's visible ahead of a future feature that will
+        // gate TN moderator messaging on whether the resolved group is in this list.
+        $freegleGroupIds          = $post['freegle_group_ids'] ?? [];
+        $moderatorMessagingAllowed = in_array($group->id, $freegleGroupIds, true);
+
+        // Own trace tag (not [POST-RESULT]/[POST-SKIP]/[WRITE]) — EmailApiParityTest diffs
+        // those tags line-for-line against the email path, which has no equivalent of this
+        // API-only field.
+        Log::info('TN-SYNC-TRACE [POST-META] post_id=' . $postId . ' moderator_messaging_allowed=' . ($moderatorMessagingAllowed ? 'true' : 'false'));
+
         try {
             $result = $this->ingestionService->ingest($post, $group);
             Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=' . $result);
