@@ -93,6 +93,14 @@ func Stats(c *fiber.Ctx) error {
 	}
 	since := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
 
+	// These queries aggregate messages_likes (~75M rows). They are fast ONLY with
+	// the messages_likes_source_ts_user (source, timestamp, userid) index; without
+	// it the DISTINCT-userid cohort picks a plan that walks the whole userid index
+	// and hangs the request. Cap each with MAX_EXECUTION_TIME so a missing index
+	// degrades the panel (an aborted query leaves its slice empty and sets
+	// `degraded`) rather than timing the whole request out.
+	degraded := false
+
 	// Per-day impressions + clicks per source.
 	var funnelRows []struct {
 		D           string `gorm:"column:d"`
@@ -100,12 +108,14 @@ func Stats(c *fiber.Ctx) error {
 		Impressions int64  `gorm:"column:impressions"`
 		Clicks      int64  `gorm:"column:clicks"`
 	}
-	db.Raw(`SELECT DATE(timestamp) d, source,
+	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source,
 	               COUNT(*) impressions,
 	               SUM(pageview = 1) clicks
 	        FROM messages_likes
 	        WHERE type = 'View' AND source IN ? AND timestamp >= ?
-	        GROUP BY d, source`, trackedSources, since).Scan(&funnelRows)
+	        GROUP BY d, source`, trackedSources, since).Scan(&funnelRows).Error; err != nil {
+		degraded = true
+	}
 
 	// Per-day attributed replies per source: an opened (pageview=1) tagged view
 	// followed within 7 days by an Interested reply to that post by the same user.
@@ -114,13 +124,15 @@ func Stats(c *fiber.Ctx) error {
 		Source  string `gorm:"column:source"`
 		Replies int64  `gorm:"column:replies"`
 	}
-	db.Raw(`SELECT DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies
+	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies
 	        FROM messages_likes ml
 	        JOIN chat_messages cm ON cm.refmsgid = ml.msgid AND cm.userid = ml.userid
 	             AND cm.type = 'Interested'
 	             AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY
 	        WHERE ml.source IN ? AND ml.pageview = 1 AND ml.timestamp >= ?
-	        GROUP BY d, ml.source`, trackedSources, since).Scan(&replyRows)
+	        GROUP BY d, ml.source`, trackedSources, since).Scan(&replyRows).Error; err != nil {
+		degraded = true
+	}
 
 	// Assemble per-source aggregates keyed by (source -> date -> point).
 	bySource := make(map[string]*SourceStats)
@@ -200,7 +212,7 @@ func Stats(c *fiber.Ctx) error {
 		Users   int64 `gorm:"column:users"`
 		Replies int64 `gorm:"column:replies"`
 	}
-	db.Raw(`SELECT (u.userid % 10 = 0) holdout,
+	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ (u.userid % 10 = 0) holdout,
 	               COUNT(*) users,
 	               COALESCE(SUM(r.replies), 0) replies
 	        FROM (SELECT DISTINCT userid FROM messages_likes
@@ -208,7 +220,9 @@ func Stats(c *fiber.Ctx) error {
 	        LEFT JOIN (SELECT userid, COUNT(*) replies FROM chat_messages
 	                   WHERE type = 'Interested' AND date >= ?
 	                   GROUP BY userid) r ON r.userid = u.userid
-	        GROUP BY holdout`, holdoutCohortSource, since, since).Scan(&cohortRows)
+	        GROUP BY holdout`, holdoutCohortSource, since, since).Scan(&cohortRows).Error; err != nil {
+		degraded = true
+	}
 
 	var holdout HoldoutStats
 	for _, r := range cohortRows {
@@ -233,6 +247,10 @@ func Stats(c *fiber.Ctx) error {
 		"days":    days,
 		"sources": out,
 		"holdout": holdout,
+		// True when a query hit MAX_EXECUTION_TIME (the messages_likes stats index
+		// is not deployed yet); the figures above are then partial/empty. The panel
+		// can surface this rather than showing the aborted counts as real zeros.
+		"degraded": degraded,
 	})
 }
 
