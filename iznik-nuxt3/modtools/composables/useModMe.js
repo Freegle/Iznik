@@ -102,7 +102,11 @@ export function useModMe() {
       if (authStore.work) currentTotal += authStore.work.total
       if (chatStore) currentTotal += Math.min(99, chatStore.unreadCount)
       const { fetchMe } = useMe()
-      await fetchMe(true)
+      // forceRefetch: checkWork() is always called right after a mutation
+      // (approve/reject/hold/release/...) wanting counts as of THAT action -
+      // reusing a stale fetch that was already in flight before it committed
+      // silently hands back pre-mutation counts (Discourse #9951).
+      await fetchMe(true, true)
       await modGroupStore.getModGroups()
 
       const chatcount = chatStore ? Math.min(99, chatStore.unreadCount) : 0

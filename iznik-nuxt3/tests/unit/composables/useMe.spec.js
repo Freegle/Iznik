@@ -660,6 +660,47 @@ describe('fetchMe', () => {
     await vi.runAllTimersAsync()
     expect(mockFetchUser).toHaveBeenCalledTimes(1)
   })
+
+  // Discourse #9951: ModTools hold-then-release badge counts stayed stale
+  // until a manual page reload. hold() and release() each trigger checkWork()
+  // -> fetchMe(true), wanting a response that reflects THEIR OWN mutation. If
+  // release's checkWork() runs while hold's own fetchMe(true) request is still
+  // in flight, the plain hitServer=true path just awaits that pre-existing
+  // promise instead of issuing its own request - so release's caller ends up
+  // with hold's (pre-release) counts, and nothing else re-fetches until the
+  // next 30s timer tick. The forceRefetch flag is opt-in (default false, so
+  // every other fetchMe(true) call site - and the dedup test above - keeps
+  // today's coalescing behaviour) and lets a caller that just performed its
+  // own mutation demand a request that starts after it, not a recycled one
+  // from before it.
+  it('forceRefetch=true still issues its own fetch after an in-flight hitServer=true call (Discourse #9951)', async () => {
+    let resolveFirst
+    const firstFetch = new Promise((resolve) => {
+      resolveFirst = resolve
+    })
+    let resolveSecond
+    const secondFetch = new Promise((resolve) => {
+      resolveSecond = resolve
+    })
+
+    // First caller (e.g. a hold action's checkWork) starts an ordinary fetch.
+    mockFetchUser.mockReturnValueOnce(firstFetch)
+    const p1 = fetchMe(true)
+
+    // Second caller (e.g. the release that follows) must see state as of ITS
+    // OWN call - not whichever request the first caller happened to have in
+    // flight already.
+    mockFetchUser.mockReturnValueOnce(secondFetch)
+    const p2 = fetchMe(true, true)
+
+    resolveFirst({ id: 1 })
+    await p1
+
+    resolveSecond({ id: 1 })
+    await p2
+
+    expect(mockFetchUser).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('useMe — myGroupsBoundingBox', () => {

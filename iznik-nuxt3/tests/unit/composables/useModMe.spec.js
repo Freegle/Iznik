@@ -145,6 +145,24 @@ describe('useModMe checkWork beep behavior', () => {
     expect(mockSetBadgeCount).toHaveBeenCalledWith(4)
   })
 
+  // Discourse #9951: a hold-then-release fired two checkWork() calls close
+  // together; the second silently reused whichever fetchMe(true) request the
+  // first had in flight, so the badge kept showing pre-release counts. Passing
+  // forceRefetch=true tells fetchMe to always issue its own request for THIS
+  // call rather than piggyback on an older one — see useMe.spec.js for the
+  // fetchMe-level race reproduction.
+  it('asks fetchMe to force a fresh fetch rather than reuse a stale in-flight one (Discourse #9951)', async () => {
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = { total: 4 }
+    })
+
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+
+    expect(mockFetchMe).toHaveBeenCalledWith(true, true)
+  })
+
   it('calls setBadgeCount with 0 when no pending work', async () => {
     mockFetchMe.mockImplementation(async () => {
       globalThis.__mockAuthStore.work = { total: 0 }

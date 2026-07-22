@@ -6,7 +6,7 @@ import { useTeamStore } from '~/stores/team'
 
 let fetchingPromise = null
 
-export async function fetchMe(hitServer) {
+export async function fetchMe(hitServer, forceRefetch = false) {
   const authStore = useAuthStore()
 
   // We can be called in several ways.
@@ -26,6 +26,14 @@ export async function fetchMe(hitServer) {
   // Because multiple pages/components may call fetchMe to ensure that they have data they need, we
   // want to minimise the number of calls.  We have some fairly complex logic below to keep the number of parallel
   // calls down and return earlier if we happen to already be fetching what we need.
+  //
+  // - forceRefetch = true (only valid with hitServer = true).  The caller just performed a mutation
+  //   (e.g. ModTools hold/release) and needs a response that reflects it. An in-flight fetch that was
+  //   already running when we were called may have been sent to the server BEFORE that mutation
+  //   committed, so piggybacking on it (the default behaviour above) would silently hand back
+  //   pre-mutation data - Discourse #9951. We still wait for that fetch first, to avoid firing two
+  //   requests at once, but then always follow up with our own. Default false, so every other call
+  //   site keeps today's single-flight coalescing unchanged.
 
   let needToFetch = false
 
@@ -44,6 +52,10 @@ export async function fetchMe(hitServer) {
     if (fetchingPromise) {
       // We are in the process of fetching the user, so we need to wait until that completes.
       await fetchingPromise
+
+      if (forceRefetch) {
+        needToFetch = true
+      }
     } else {
       needToFetch = true
     }
