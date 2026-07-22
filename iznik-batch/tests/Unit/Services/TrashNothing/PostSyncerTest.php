@@ -71,8 +71,15 @@ class PostSyncerTest extends TestCase
 
     public function test_resolves_group_by_location_instead_of_api_group_id(): void
     {
-        $near = $this->createTestGroup(['lat' => 51.5074, 'lng' => -0.1278]); // London
-        $far  = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]); // Edinburgh
+        // Deliberately placed in the middle of the ocean, far from the UK (and from the
+        // default London coordinates other tests' createTestGroup() calls use), so this
+        // test's own groups are the only candidates within range — no real seeded group
+        // or another test's group can tie with or beat them on distance.
+        $nearLat = 10.0;
+        $nearLng = 10.0;
+
+        $near = $this->createTestGroup(['lat' => $nearLat, 'lng' => $nearLng]);
+        $far  = $this->createTestGroup(['lat' => -10.0, 'lng' => 100.0]);
 
         $syncer = $this->makeSyncer();
         $spy    = $this->injectIngestionSpy($syncer);
@@ -86,8 +93,8 @@ class PostSyncerTest extends TestCase
         // right on the near group's centroid.
         $this->callProcessPost($syncer, $this->makePost([
             'group_id'  => (string) $far->id,
-            'latitude'  => 51.5074,
-            'longitude' => -0.1278,
+            'latitude'  => $nearLat,
+            'longitude' => $nearLng,
         ]));
     }
 
