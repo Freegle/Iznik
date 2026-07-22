@@ -277,6 +277,33 @@ class ReengageEmailsCommandTest extends TestCase
         $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 2]);
     }
 
+    public function test_records_each_tip_at_most_once_per_member(): void
+    {
+        // The unique (userid, stage) guard backs the claim-before-send: an
+        // overlapping run (a manual invocation racing the cron) that has already
+        // recorded a tip inserts zero rows and never re-sends it. A second
+        // insertOrIgnore for the same slot is silently dropped.
+        $user = $this->createNewMember(3);
+        $this->insertTip($user->id, 1, now());
+
+        $second = DB::table('reengage')->insertOrIgnore([
+            'userid' => $user->id,
+            'stage' => 1,
+            'template' => 'tip1',
+            'experiment' => '',
+            'arm' => 'a',
+            'bucket' => 0,
+            'segment' => 'other',
+            'sentat' => now(),
+        ]);
+
+        $this->assertSame(0, $second, 'a duplicate (userid, stage) must be ignored');
+        $this->assertSame(
+            1,
+            DB::table('reengage')->where('userid', $user->id)->where('stage', 1)->count()
+        );
+    }
+
     public function test_completes_after_five_tips(): void
     {
         $user = $this->createNewMember(7);
