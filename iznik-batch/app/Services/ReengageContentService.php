@@ -121,7 +121,7 @@ class ReengageContentService
                     'items' => [
                         'A clear title - just say what it is ("Single duvet", "Pine bookshelf").',
                         'A photo - even a quick phone snap makes all the difference.',
-                        "The condition - honest is perfect. Well-loved and working is very welcome.",
+                        "The condition - well-loved is fine, and even broken things can find a home, but people need to know what they're getting.",
                     ],
                 ],
                 'ctaLabel' => 'Offer something',

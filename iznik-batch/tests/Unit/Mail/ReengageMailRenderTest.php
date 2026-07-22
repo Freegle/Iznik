@@ -140,4 +140,87 @@ class ReengageMailRenderTest extends TestCase
         $this->assertStringContainsString('Your local Freegle volunteer', $text);
         $this->assertStringNotContainsString('<mj-', $text);
     }
+
+    // ── Link tracking (effectiveness measurement) ────────────────────────────
+
+    /**
+     * A real send (userId > 0) must route EVERY clickable link the template
+     * renders through a tracked redirect (/e/d/r/...), so the onboarding funnel's
+     * click-through is measurable: the per-day primary button plus the footer
+     * settings and unsubscribe links. (Opens are covered separately by the pixel.)
+     */
+    public function test_real_send_tracks_every_rendered_link(): void
+    {
+        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'tip', 987654321, $this->data(1));
+
+        $html = $mail->render();
+
+        // Tracked-redirect wrapper present at all.
+        $this->assertStringContainsString('/e/d/r/', $html);
+        // Primary CTA button, with the give/find/browse distinction preserved in
+        // the click action (day 1's CTA is /give).
+        $this->assertStringContainsString('p=primary_cta', $html);
+        $this->assertStringContainsString('a=give', $html);
+        // Footer links.
+        $this->assertStringContainsString('p=footer_settings', $html);
+        $this->assertStringContainsString('p=footer_unsubscribe', $html);
+    }
+
+    /**
+     * The tracked CTA follows the day's destination: day 3 points at /find.
+     */
+    public function test_cta_action_matches_the_day_destination(): void
+    {
+        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'tip', 987654321, $this->data(3));
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('p=primary_cta', $html);
+        $this->assertStringContainsString('a=find', $html);
+    }
+
+    /**
+     * Previews (userId 0) stay deliberately untracked so sample renders never
+     * pollute the effectiveness stats: links remain raw.
+     */
+    public function test_preview_leaves_links_untracked(): void
+    {
+        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'tip', 0, $this->data(1));
+
+        $html = $mail->render();
+
+        $this->assertStringNotContainsString('/e/d/r/', $html);
+        $this->assertStringContainsString('/give', $html);   // raw CTA destination
+    }
+
+    /**
+     * Tracking the VISIBLE unsubscribe link must not disturb the keyed one-click
+     * URL that addListUnsubscribeHeaders() reads from $this->content for the RFC
+     * 8058 List-Unsubscribe header: build() must wrap only its local copy. A
+     * tracked redirect in that header would break no-session one-click
+     * unsubscribe from Gmail/Yahoo.
+     */
+    public function test_real_send_keeps_keyed_unsubscribe_url_for_header(): void
+    {
+        $data = $this->data(1);
+        $mail = new ReengageMail('Alex', 'alex@example.com', 'Subject', 'tip', 987654321, $data);
+
+        $mail->render();
+
+        // The property the List-Unsubscribe header is built from is untouched.
+        $this->assertSame($data['unsubscribeUrl'], $mail->content['unsubscribeUrl']);
+        $this->assertStringNotContainsString('/e/d/r/', $mail->content['unsubscribeUrl']);
+    }
+
+    /**
+     * The reworked day-1 condition tip drops the awkward "honest is perfect"
+     * phrasing for the clearer "even broken things can find a home" wording.
+     */
+    public function test_day1_condition_tip_uses_reworded_copy(): void
+    {
+        $html = view('emails.mjml.reengage.tip', $this->data(1))->render();
+
+        $this->assertStringContainsString('even broken things can find a home', $html);
+        $this->assertStringNotContainsString('honest is perfect', $html);
+    }
 }
