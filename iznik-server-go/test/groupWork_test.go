@@ -790,3 +790,45 @@ func TestGetGroupWork_HappinessExcludesEmptyComments(t *testing.T) {
 	assert.NotNil(t, found2)
 	assert.Equal(t, int64(1), found2.Happiness, "Real comments should count in happiness badge")
 }
+
+// The Feedback (Happiness) badge count must match the Feedback list: a post that
+// rippled INTO a group counts only for its ORIGIN group, not the rippled-into
+// one. Regression guard for the badge/list mismatch that got PR #1144 rejected
+// (only the list was scoped). Discourse 9808/633.
+func TestGetGroupWork_HappinessExcludesRippledIn(t *testing.T) {
+	prefix := uniquePrefix("gwhapripple")
+	db := database.DBConn
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+
+	// One moderator of BOTH groups, so /api/group/work returns both counts.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, originGroup, "Moderator")
+	CreateTestMembership(t, modID, rippledGroup, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" offer item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed) VALUES (?, 'Taken', 'Happy', 'Great!', 0)", msgID)
+	// Ripple the same post into rippledGroup (Approved copy, rippled_in = 1).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)", msgID, rippledGroup)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var origin, rippled *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == originGroup {
+			origin = &result[i]
+		} else if result[i].Groupid == rippledGroup {
+			rippled = &result[i]
+		}
+	}
+	assert.NotNil(t, origin)
+	assert.Equal(t, int64(1), origin.Happiness, "origin group's badge counts the item")
+	if rippled != nil {
+		assert.Equal(t, int64(0), rippled.Happiness, "rippled-into group's badge must not count the rippled-in copy")
+	}
+}

@@ -2211,6 +2211,65 @@ func TestGetHappinessBasic(t *testing.T) {
 	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
 }
 
+// A post that rippled INTO a group must NOT appear in that group's Feedback
+// (Happiness) list — only the group where it ORIGINATED should show it. The
+// rippled-in copy has an Approved messages_groups row with rippled_in = 1, and
+// getHappinessMembers filters those out. Discourse 9808/633 (Neville).
+func TestGetHappinessExcludesRippledInCopies(t *testing.T) {
+	prefix := uniquePrefix("happy_ripple")
+	db := database.DBConn
+
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, originGroup, "Member")
+
+	// Native post on originGroup (origin messages_groups row, rippled_in = 0).
+	msgID := CreateTestMessage(t, posterID, originGroup, prefix+" offer item", 55.95, -3.19)
+	outcomeID := createHappinessOutcome(t, msgID, "Happy", "Great experience!")
+
+	// The SAME post ripples INTO rippledGroup: an Approved copy, rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", msgID, rippledGroup)
+
+	// A moderator of the RIPPLED-INTO group must NOT see the item in Feedback.
+	rippledModID := CreateTestUser(t, prefix+"_rmod", "User")
+	CreateTestMembership(t, rippledModID, rippledGroup, "Moderator")
+	_, rippledToken := CreateTestSession(t, rippledModID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", rippledGroup, rippledToken), nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	rippledResults, _ := parseHappinessResponse(t, resp)
+	for _, r := range rippledResults {
+		assert.NotEqual(t, float64(outcomeID), r["id"], "rippled-in item must not show in the rippled-into group's Feedback")
+	}
+
+	// The ORIGIN group's moderator still sees it.
+	originModID := CreateTestUser(t, prefix+"_omod", "User")
+	CreateTestMembership(t, originModID, originGroup, "Moderator")
+	_, originToken := CreateTestSession(t, originModID)
+
+	resp2, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", originGroup, originToken), nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+	originResults, _ := parseHappinessResponse(t, resp2)
+	foundInOrigin := false
+	for _, r := range originResults {
+		if uint64(r["id"].(float64)) == outcomeID {
+			foundInOrigin = true
+			break
+		}
+	}
+	assert.True(t, foundInOrigin, "origin group's Feedback should still include the item")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
+}
+
 func TestGetHappinessFilterHappy(t *testing.T) {
 	prefix := uniquePrefix("happy_filt")
 	db := database.DBConn

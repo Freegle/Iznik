@@ -917,7 +917,11 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 		"SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
 			"m.fromuser, mg.groupid, m.subject "+
 			"FROM messages_outcomes mo "+
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) "+
+			// rippled_in = 0: only Feedback for posts that ORIGINATED on the
+			// group, not copies that rippled in from elsewhere (the badge count
+			// queries in groupWork.go / session.go apply the same filter, and it
+			// mirrors the Edit badge). Discourse 9808/633.
+			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) AND mg.rippled_in = 0 "+
 			"INNER JOIN messages m ON m.id = mo.msgid "+
 			"WHERE mo.timestamp > ?"+
 			"%s%s"+
