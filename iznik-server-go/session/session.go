@@ -1354,6 +1354,10 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
 					"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
 					"AND mg.groupid IN ? "+
+					// rippled_in = 0: the aggregate Feedback work count must match
+					// the per-group badge (groupWork.go) and the list — only posts
+					// that originated on the group, not rippled-in copies. 9808/633.
+					"AND mg.rippled_in = 0 "+
 					"AND mo.comments IS NOT NULL "+
 					"AND mo.comments != 'Sorry, this is no longer available.' "+
 					"AND mo.comments != 'Thanks, this has now been taken.' "+
