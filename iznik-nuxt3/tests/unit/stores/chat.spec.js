@@ -85,6 +85,11 @@ vi.mock('~/stores/user', () => ({
 describe('chat store', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // clearAllMocks() only resets call history, not implementations set via
+    // mockResolvedValue() - reset this one explicitly since `send()` now calls
+    // fetchChat() internally, so a value set by one test would otherwise leak
+    // into unrelated later tests that don't care about it.
+    mockFetchChat.mockResolvedValue(null)
     setActivePinia(createPinia())
   })
 
@@ -221,6 +226,7 @@ describe('chat store', () => {
       const store = useChatStore()
       store.config = {}
       store.listByChatId[10] = { id: 10, snippet: 'old message' }
+      mockFetchChat.mockResolvedValue({ id: 10, snippet: 'new message' })
       mockFetchMessages.mockResolvedValue([])
 
       await store.send(10, 'new message')
@@ -230,6 +236,35 @@ describe('chat store', () => {
         message: 'new message',
       })
       expect(store.listByChatId[10].snippet).toBe('new message')
+    })
+
+    // Reply-to-post flow (ChatButton.openChat -> chatStore.send): the chat room is
+    // opened and pushed into the store BEFORE any message exists, so its list entry
+    // starts with lastmsg = 0. The chat list panel only renders a row when
+    // `lastmsg > 0` (or it's the currently open chat) - see pages/chats/[[id]].vue.
+    // Sending the first reply must refresh that entry's lastmsg (and the `list`
+    // array specifically, not just listByChatId) or the new chat never appears in
+    // the sidebar, however long the member waits (Discourse 9955 - Derek replied to
+    // a Wanted via the reply overlay and the chat never showed up in his list).
+    it('refreshes the list entry lastmsg after sending so a brand-new chat becomes visible (#9955)', async () => {
+      const store = useChatStore()
+      store.config = {}
+      const entry = { id: 10, snippet: null, lastmsg: 0 }
+      store.list = [entry]
+      store.listByChatId[10] = entry
+      mockFetchChat.mockResolvedValue({
+        id: 10,
+        snippet: 'Can you help with this?',
+        lastmsg: 555,
+      })
+      mockFetchMessages.mockResolvedValue([])
+
+      await store.send(10, 'Can you help with this?', null, null, 321)
+
+      // The chat list panel reads `list`, not `listByChatId` - both must reflect
+      // the freshly-sent message so the row's visibility gate (lastmsg > 0) opens.
+      expect(store.list[0].lastmsg).toBe(555)
+      expect(store.list[0].snippet).toBe('Can you help with this?')
     })
 
     it('includes optional params when provided', async () => {

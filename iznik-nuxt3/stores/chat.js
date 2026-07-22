@@ -294,15 +294,29 @@ export const useChatStore = defineStore({
         try {
           const chat = await api(this.config).chat.fetchChat(id, false)
           if (chat) {
-            // Merge to preserve any existing data (e.g. from listing).
-            this.listByChatId[id] = {
+            // Merge to preserve any existing data (e.g. from listing), and keep
+            // listByChatId and the list array pointing at the SAME merged object.
+            // Previously these were two separate copies (a spread into
+            // listByChatId, the raw fetch result into list), so an in-place
+            // mutation of one (e.g. send() patching the snippet) was invisible
+            // in the other. The chat list panel renders from `list`, so a chat
+            // whose only update went through listByChatId never appeared to
+            // have moved/changed - including its lastmsg, which gates whether
+            // the row renders at all (Discourse 9955).
+            const merged = {
               ...this.listByChatId[id],
               ...chat,
             }
-            // If this chat isn't in the list (e.g. too old to appear in fetchChats
-            // results), add it so it can be rendered in the chat list panel.
-            if (!this.list.find((c) => c.id === id)) {
-              this.list.push(chat)
+            this.listByChatId[id] = merged
+
+            const idx = this.list.findIndex((c) => c.id === id)
+            if (idx === -1) {
+              // Not in the list (e.g. too old to appear in fetchChats results,
+              // or brand new) - add it so it can be rendered in the chat list panel.
+              this.list.push(merged)
+            } else {
+              // Already in the list - refresh it in place with the fresh data.
+              this.list[idx] = merged
             }
           }
         } catch (e) {
@@ -441,10 +455,13 @@ export const useChatStore = defineStore({
 
       await api(this.config).chat.send(data)
 
-      // Update the snippet in the chat list entry so it shows immediately.
-      if (message && this.listByChatId[chatid]) {
-        this.listByChatId[chatid].snippet = message
-      }
+      // Refresh this chat's list entry (snippet/lastmsg/lastdate) so it shows up
+      // immediately in the chat list panel. This matters most for the very first
+      // message in a chat opened via the reply-to-post flow (ChatButton.openChat):
+      // that entry starts with no messages at all, and the chat list only renders
+      // a row once it has one (lastmsg > 0) - without this, a brand-new chat never
+      // appeared in the list, however long the member waited (Discourse 9955).
+      await this.fetchChat(chatid)
 
       // Get the latest messages back.
       this.fetchMessages(chatid)
