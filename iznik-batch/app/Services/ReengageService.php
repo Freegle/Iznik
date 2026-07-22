@@ -230,7 +230,9 @@ class ReengageService
         // Control arm: record the send position but mail nothing (holdout).
         if ($arm === 'control') {
             if (! $dryRun) {
-                DB::table('reengage')->insert([
+                // insertOrIgnore against the unique (userid, stage) guard so an
+                // overlapping run can never record the same holdout position twice.
+                DB::table('reengage')->insertOrIgnore([
                     'userid' => $userId,
                     'stage' => $stage,
                     'template' => null,
@@ -264,9 +266,13 @@ class ReengageService
 
             $trackingId = $mail->getTrackingId();
 
-            app(EmailSpoolerService::class)->spool($mail, $email, 'reengage');
-
-            DB::table('reengage')->insert([
+            // Claim this (userid, stage) slot BEFORE spooling. The unique index
+            // means a concurrent run (e.g. a manual invocation racing the cron)
+            // that already claimed it inserts zero rows here, so we skip without
+            // sending and the member never gets the same tip twice. Recording
+            // before the spool also means a crash between the two leaves a
+            // recorded-but-undelivered tip rather than re-sending on the next run.
+            $claimed = DB::table('reengage')->insertOrIgnore([
                 'userid' => $userId,
                 'stage' => $stage,
                 'template' => $template,
@@ -283,6 +289,12 @@ class ReengageService
                 'volunteer_source' => $content['volunteerSource'] ?? 'none',
                 'sentat' => now(),
             ]);
+
+            if ($claimed === 0) {
+                return 'skipped';
+            }
+
+            app(EmailSpoolerService::class)->spool($mail, $email, 'reengage');
         }
 
         return 'sent';
