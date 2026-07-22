@@ -1628,6 +1628,108 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Whitelist ('allowed' concern_keywords) suppresses a shorter/unrelated
+    // keyword matched INSIDE the whitelisted phrase. Discourse #9944/6: Edward
+    // whitelisted the Stroud place name 'Cashes Green' because the global
+    // concern keyword 'cash' fuzzy-matches the 'cashes' inflection contained in
+    // it. Production data confirms this exact shape: concern_keywords has a
+    // global fuzzy 'cash' row (id 521) AND a global allowed 'Cashes Green' row
+    // (id 3791); StroudFreegle's legacy per-group worrywords list (checked
+    // separately by checkPerGroupWorryWords()) ALSO contains 'cash'.
+    // -------------------------------------------------------------------------
+
+    public function test_allowed_phrase_suppresses_shorter_keyword_matched_within_it_in_chat(): void
+    {
+        // checkChatMessage() (global scope, groupid=0) is the method
+        // ChatProcessService::processMessage() calls to decide whether a chat
+        // message is held for review - this is the exact path that flagged
+        // Jos's chat message even after the whitelist was added.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcashwl_cc',
+            'category'   => 'review',
+            'match_mode' => 'fuzzy',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        // Sanity: without a whitelist, the plural inflection does fuzzy-match.
+        $before = $this->service->checkChatMessage('see you near testcashwl_cces green please');
+        $this->assertNotNull($before, 'sanity: keyword fuzzy-matches its plural before any whitelist exists');
+
+        // Whitelisted with different case/spacing than the chat message below,
+        // to prove the comparison is case-insensitive.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'Testcashwl_cces Green',
+            'category'   => 'allowed',
+            'match_mode' => 'literal',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $result = $this->service->checkChatMessage('see you near testcashwl_cces green please');
+        $this->assertNull($result, "whitelisting 'Testcashwl_cces Green' must suppress the lowercase-variant match of 'testcashwl_cc' inside it");
+    }
+
+    public function test_allowed_phrase_does_not_suppress_keyword_match_elsewhere_in_chat_message(): void
+    {
+        // Bound the fix: whitelisting a phrase must not blanket-suppress every
+        // concern keyword in a message that merely also contains that phrase.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcashwl2_cc',
+            'category'   => 'review',
+            'match_mode' => 'fuzzy',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcashwl2_cces green',
+            'category'   => 'allowed',
+            'match_mode' => 'literal',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $result = $this->service->checkChatMessage('near testcashwl2_cces green, only testcashwl2_cc accepted');
+        $this->assertNotNull($result, 'a keyword occurrence outside the whitelisted phrase must still be flagged');
+    }
+
+    public function test_allowed_phrase_suppresses_match_in_per_group_worry_words_too(): void
+    {
+        // PR #1147 (a previous attempt at this bug) fixed checkConcernKeywords()
+        // alone and was rejected: checkMessage() also runs
+        // checkPerGroupWorryWords() on posts, which reads groups.settings ->
+        // spammers.worrywords - a completely separate list with no whitelist
+        // concept at all. Live production data confirms StroudFreegle (the
+        // group that requested this exact whitelist) has 'cash' in BOTH
+        // concern_keywords (global, fuzzy) and its legacy per-group worrywords
+        // list, so a Stroud post containing 'cashes green' would still be
+        // wrongly flagged here even after checkConcernKeywords() was fixed.
+        $group = $this->createTestGroup([
+            'settings' => ['spammers' => ['worrywords' => 'testcashwl3_cc']],
+        ]);
+
+        // Sanity: without a whitelist, the plural inflection does fuzzy-match.
+        $before = $this->service->checkPerGroupWorryWords('see you near testcashwl3_cces green please', '', $group->id);
+        $this->assertNotNull($before, 'sanity: per-group worry word fuzzy-matches its plural before any whitelist exists');
+
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcashwl3_cces green',
+            'category'   => 'allowed',
+            'match_mode' => 'literal',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('see you near testcashwl3_cces green please', '', $group->id);
+        $this->assertNull($result, "whitelisting 'testcashwl3_cces green' must also suppress the match in the legacy per-group worrywords list");
+    }
+
+    // -------------------------------------------------------------------------
     // checkSubjectRepeat — flag mass-submission spam (V1 parity)
     // -------------------------------------------------------------------------
 

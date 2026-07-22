@@ -702,18 +702,20 @@ class ContentCheckService
 
     public function checkConcernKeywords(string $subject, string $textbody, int $groupid): ?array
     {
-        $keywords = DB::table('concern_keywords')
-            ->where(function ($q) use ($groupid) {
-                $q->where('scope', 'global')
-                  ->orWhere(function ($q2) use ($groupid) {
-                      $q2->where('scope', 'group')->where('group_id', $groupid);
-                  });
-            })
+        $keywords = $this->scopedConcernKeywords($groupid)
             ->where('category', '!=', 'allowed')
             ->get();
 
-        $haystack = strtolower($subject . ' ' . $textbody);
-        $original = $subject . ' ' . $textbody;
+        // 'allowed' rows are the whitelist (ModSupportConcernKeywords.vue labels the
+        // category "Allowed (whitelist)"), but they're excluded from $keywords above so
+        // they never trigger a match themselves. That's not enough on its own: a SHORTER
+        // keyword can still match inside an allowed phrase (e.g. 'cash' fuzzy-matches the
+        // 'cashes' in the whitelisted place name 'Cashes Green'), so the moderator's
+        // whitelist had no effect (Discourse #9944/6). Blank out whitelisted phrases
+        // before matching so they can't feed a match to any other keyword, while text
+        // outside those phrases is still checked normally.
+        $original = $this->stripAllowedPhrases($subject . ' ' . $textbody, $groupid);
+        $haystack = strtolower($original);
 
         foreach ($keywords as $kw) {
             $word = trim($kw->keyword);
@@ -752,6 +754,54 @@ class ContentCheckService
         }
 
         return null;
+    }
+
+    /**
+     * concern_keywords rows in scope for $groupid (global + this group's own
+     * group-scoped rows), unfiltered by category. Shared by checkConcernKeywords()
+     * and stripAllowedPhrases() so the scope rule lives in one place.
+     */
+    private function scopedConcernKeywords(int $groupid)
+    {
+        return DB::table('concern_keywords')
+            ->where(function ($q) use ($groupid) {
+                $q->where('scope', 'global')
+                  ->orWhere(function ($q2) use ($groupid) {
+                      $q2->where('scope', 'group')->where('group_id', $groupid);
+                  });
+            });
+    }
+
+    /**
+     * Blank out any whitelisted ('allowed' category) phrases in scope for this group,
+     * word-boundary and case-insensitively, so they can't feed a match to a different
+     * keyword contained within them. Text outside a whitelisted phrase is untouched, so
+     * a keyword occurring elsewhere in the same message is still flagged. Shared by
+     * checkConcernKeywords() and checkPerGroupWorryWords() (Discourse #9944/6: a
+     * previous fix attempt covered only checkConcernKeywords(), leaving the legacy
+     * per-group worrywords list - a completely separate keyword source with no
+     * whitelist concept of its own - still flagging the whitelisted phrase).
+     */
+    private function stripAllowedPhrases(string $text, int $groupid): string
+    {
+        $phrases = $this->scopedConcernKeywords($groupid)
+            ->where('category', 'allowed')
+            ->pluck('keyword');
+
+        foreach ($phrases as $phrase) {
+            $phrase = trim($phrase);
+            if ($phrase === '') {
+                continue;
+            }
+
+            $text = (string) preg_replace(
+                '/\b' . preg_quote($phrase, '/') . '\b/i',
+                str_repeat(' ', strlen($phrase)),
+                $text
+            );
+        }
+
+        return $text;
     }
 
     // -------------------------------------------------------------------------
@@ -1171,8 +1221,14 @@ class ContentCheckService
             return null;
         }
 
-        $words    = array_filter(array_map('trim', explode(',', $raw)));
-        $haystack = strtolower($subject . ' ' . $textbody);
+        $words = array_filter(array_map('trim', explode(',', $raw)));
+
+        // This legacy list has no whitelist concept of its own (V1 parity), so without
+        // stripping the same 'allowed' concern_keywords phrases used by
+        // checkConcernKeywords(), a moderator whitelisting a phrase (e.g. 'Cashes
+        // Green') would see it keep flagging here even though checkConcernKeywords()
+        // now suppresses it (Discourse #9944/6).
+        $haystack = strtolower($this->stripAllowedPhrases($subject . ' ' . $textbody, $groupid));
 
         foreach ($words as $word) {
             if ($word === '') {
