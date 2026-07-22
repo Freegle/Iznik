@@ -15,8 +15,11 @@ class PostSyncer
 {
     // /posts/all enforces per_page <= 50.
     private const PAGE_SIZE = 50;
+    // TN API rate limit is 2 requests/second; enforce a minimum 750ms gap.
+    private const MIN_REQUEST_INTERVAL_US = 750_000;
 
     private GroupPostIngestionService $ingestionService;
+    private float $lastRequestTime = 0.0;
 
     public function __construct(
         private bool $dryRun,
@@ -83,11 +86,13 @@ class PostSyncer
             return $this->fetchPageFromFixture($page);
         }
 
+        $this->throttle();
+
         try {
             $response = $api->getAllPosts(
                 types: 'offer,wanted',
-                date_min: $from,
-                date_max: $to,
+                date_min: $from->format('Y-m-d\TH:i:s'),
+                date_max: $to->format('Y-m-d\TH:i:s'),
                 per_page: self::PAGE_SIZE,
                 page: $page,
             );
@@ -170,11 +175,20 @@ class PostSyncer
         return Group::where('nameshort', $nameshort)->first();
     }
 
+    private function throttle(): void
+    {
+        $elapsed = microtime(true) - $this->lastRequestTime;
+        $waitUs  = self::MIN_REQUEST_INTERVAL_US - (int) ($elapsed * 1_000_000);
+        if ($waitUs > 0) {
+            usleep($waitUs);
+        }
+        $this->lastRequestTime = microtime(true);
+    }
+
     private function buildApiClient(): PostsApi
     {
         $config = Configuration::getDefaultConfiguration()
-            ->setApiKey('api_key', $this->apiKey)
-            ->setHost($this->apiBaseUrl);
+            ->setApiKey('api_key', $this->apiKey);
 
         return new PostsApi(config: $config);
     }
