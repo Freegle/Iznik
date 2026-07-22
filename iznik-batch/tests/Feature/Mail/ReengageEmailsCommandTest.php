@@ -140,6 +140,52 @@ class ReengageEmailsCommandTest extends TestCase
         $this->assertSame(1, $stats['sent']);
     }
 
+    public function test_send_persists_the_home_sign_off_resolution(): void
+    {
+        // A new member located inside their group's catchment, with an eligible
+        // volunteer, should get a sent row that records how the sign-off was
+        // resolved - proving the ReengageService write path, not just the
+        // resolveVolunteer query (covered separately).
+        $group = $this->createFreegleGroup();
+        DB::statement(
+            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['POLYGON((-0.25 51.40, 0.00 51.40, 0.00 51.60, -0.25 51.60, -0.25 51.40))', $group->id]
+        );
+
+        // Eligible sign-off volunteer for the group.
+        $mod = $this->createTestUser(['firstname' => 'Mod', 'fullname' => 'Mod', 'lastaccess' => now()]);
+        DB::table('memberships')->insert([
+            'userid' => $mod->id, 'groupid' => $group->id,
+            'role' => Membership::ROLE_MODERATOR, 'collection' => Membership::COLLECTION_APPROVED,
+            'added' => now(),
+        ]);
+
+        // New member inside the catchment.
+        $user = $this->createTestUser();
+        DB::table('memberships')->insert([
+            'userid' => $user->id, 'groupid' => $group->id,
+            'role' => Membership::ROLE_MEMBER, 'collection' => Membership::COLLECTION_APPROVED,
+            'rippled' => 0, 'added' => now()->subDays(2),
+        ]);
+        DB::table('users')->where('id', $user->id)->update([
+            'added' => now()->subDays(2),
+            'lastaccess' => now(),
+            'relevantallowed' => 1,
+            'settings' => json_encode(['mylocation' => ['lat' => 51.51, 'lng' => -0.13]]),
+        ]);
+
+        $this->enable('*');
+
+        (new ReengageService())->processReengageEmails(false);
+
+        $this->assertDatabaseHas('reengage', [
+            'userid' => $user->id,
+            'stage' => 1,
+            'volunteer_source' => 'home',
+            'volunteer_groupid' => $group->id,
+        ]);
+    }
+
     public function test_does_not_send_to_account_too_young(): void
     {
         $this->createNewMember(0);      // joined today — welcome mail's day

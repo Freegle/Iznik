@@ -125,6 +125,40 @@ class ReengageVolunteerResolutionTest extends TestCase
         $this->assertSame('Home', $volunteer['name']);
     }
 
+    public function test_smallest_catchment_wins_when_several_contain_the_member(): void
+    {
+        // Member sits inside BOTH catchments; the smaller (more local) one should
+        // sign off. This is the overlap tie-break, distinct from the containment-
+        // vs-centre case above.
+        $lat = 51.45;
+        $lng = -2.60;
+
+        // Large catchment containing the member (~0.6 x 0.5 degrees).
+        $big = $this->createGroupAt(51.45, -2.60);
+        $this->setCatchment(
+            $big->id,
+            'POLYGON((-2.90 51.20, -2.30 51.20, -2.30 51.70, -2.90 51.70, -2.90 51.20))'
+        );
+        $this->addModerator($big->id, 'Big');
+
+        // Small catchment also containing the member (~0.1 x 0.1 degrees).
+        $small = $this->createGroupAt(51.45, -2.60);
+        $this->setCatchment(
+            $small->id,
+            'POLYGON((-2.65 51.40, -2.55 51.40, -2.55 51.50, -2.65 51.50, -2.65 51.40))'
+        );
+        $this->addModerator($small->id, 'Small');
+
+        $member = $this->createMemberAt($big->id, $lat, $lng);
+        $this->joinGroup($member->id, $small->id);
+
+        $volunteer = (new ReengageContentService())->resolveVolunteer($member);
+
+        $this->assertNotNull($volunteer);
+        $this->assertSame($small->id, $volunteer['groupid'], 'the smaller containing catchment is the more local home group');
+        $this->assertSame('home', $volunteer['source']);
+    }
+
     public function test_falls_back_to_nearest_centre_when_no_catchment_contains(): void
     {
         $lat = 51.45;

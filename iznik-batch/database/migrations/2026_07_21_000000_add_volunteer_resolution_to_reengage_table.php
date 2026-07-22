@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -41,13 +42,20 @@ return new class extends Migration
             }
         });
 
-        // The dashboard groups by source over a date range.
-        Schema::table('reengage', function (Blueprint $table) {
-            $indexes = Schema::getConnection()
-                ->getDoctrineSchemaManager()
-                ->listTableIndexes('reengage');
+        // The dashboard groups by source over a date range. Guard the index via
+        // information_schema: MySQL has no IF NOT EXISTS for ADD INDEX pre-8.0.29,
+        // and Laravel 11 dropped the Doctrine schema manager the sibling migration
+        // used to rely on (see 2026_07_12_000000).
+        $hasIndex = static function (string $index): bool {
+            return DB::table('information_schema.statistics')
+                ->whereRaw('table_schema = DATABASE()')
+                ->where('table_name', 'reengage')
+                ->where('index_name', $index)
+                ->exists();
+        };
 
-            if (! array_key_exists('volunteer_source_sentat', $indexes)) {
+        Schema::table('reengage', function (Blueprint $table) use ($hasIndex) {
+            if (! $hasIndex('volunteer_source_sentat')) {
                 $table->index(['volunteer_source', 'sentat'], 'volunteer_source_sentat');
             }
         });
