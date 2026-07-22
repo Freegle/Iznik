@@ -290,10 +290,25 @@ class PushNotificationService
      * channel).
      */
     /**
+     * How far back the in-app notification bell/list (iznik-server-go
+     * notification.List()/Count(), utils.NOTIFICATION_AGE) will show an unseen
+     * users_notifications row. Anything older is invisible in the app, so the
+     * member has no UI path to ever mark it seen. Must match that Go constant.
+     */
+    private const CONSUMER_NOTIFICATION_AGE_DAYS = 90;
+
+    /**
      * The unread counts that make up a consumer's app-icon badge: unseen
      * on-site notifications + unread User2User/User2Mod chats. This is the
      * "actionable items" count the badge should reflect - NOT informational
      * pushes such as the daily "new posts near you" digest.
+     *
+     * notifcount is bounded to the same age window as the in-app bell/list
+     * (see CONSUMER_NOTIFICATION_AGE_DAYS). Without this bound, a notification
+     * older than that window can never be marked seen (it's invisible in the
+     * app), so it would inflate every future push's badge forever - a
+     * permanent app-icon blob with nothing for the member to read (Discourse
+     * 9953).
      *
      * @return array{0:int,1:int} [chatcount, notifcount]
      */
@@ -302,6 +317,7 @@ class PushNotificationService
         $notifcount = (int) DB::table('users_notifications')
             ->where('touser', $userId)
             ->where('seen', 0)
+            ->where('timestamp', '>=', now()->subDays(self::CONSUMER_NOTIFICATION_AGE_DAYS))
             ->count();
 
         // Unseen chats: User2User/User2Mod rooms where a message from someone

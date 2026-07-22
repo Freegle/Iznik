@@ -422,6 +422,66 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * consumerUnreadCounts() feeds the FD app-icon push badge (buildUserNotificationPayload's
+     * 'badge' field, read by mobileStore.setBadgeCount() on the device). The in-app
+     * notification bell is populated by notification.List()/Count() (iznik-server-go),
+     * both of which only return users_notifications rows within utils.NOTIFICATION_AGE
+     * (90 days) — so a member can never see, and therefore never mark seen, a
+     * notification older than that window. If consumerUnreadCounts() counts it anyway,
+     * every future push (e.g. a routine Exhort nudge) re-sets the OS badge to a
+     * permanently non-zero count the member has no way to clear (Discourse 9953:
+     * "I have a permanent notification blob... and I don't [have any replies]").
+     *
+     * Confirmed against production: 3.78M of 3.93M unseen users_notifications rows
+     * (96%) are already older than 90 days, so this is a live, systemic source of
+     * phantom badges, not a theoretical edge case.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_older_than_notification_age_window(): void
+    {
+        $member = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        // Unseen, but far outside the 90-day window the in-app bell/list use — the
+        // member has no UI path to ever see or dismiss this one.
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $member->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now()->subDays(200),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($member->id);
+
+        $this->assertSame(0, $notifcount,
+            'A notification the member can never see in the bell/list must not permanently inflate the app badge');
+    }
+
+    /**
+     * Companion to the age-window test above: a genuinely recent unseen notification
+     * (one the member CAN see and clear via the bell) must still count, so the fix
+     * doesn't silently zero out real badges.
+     */
+    public function test_consumerUnreadCounts_still_counts_recent_unseen_notification(): void
+    {
+        $member = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $member->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now()->subDays(1),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($member->id);
+
+        $this->assertSame(1, $notifcount,
+            'A recent unseen notification the member can still see and clear must count towards the badge');
+    }
+
+    /**
      * Chitchat notifications (CommentOnYourPost in users_notifications) must never
      * inflate the modtools badge count.
      *
