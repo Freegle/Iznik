@@ -115,19 +115,35 @@ class ReengageMail extends MjmlMailable
         // Do the click/open tracking here and pass it into the view as plain
         // strings. NEVER put $this (the Mailable) into the view data: a Mailable
         // is a large, self-referential object and extracting it into the Blade
-        // scope segfaults the renderer under PHP 8.4. So pre-wrap the CTA links
-        // with tracked redirects and hand the open pixel over as ready MJML.
+        // scope segfaults the renderer under PHP 8.4. So pre-wrap the links with
+        // tracked redirects and hand the open pixel over as ready MJML.
         $content = $this->content;
 
-        $ctas = [
-            'findUrl'     => 'find',
-            'giveUrl'     => 'give',
-            'browseUrl'   => 'browse',
-            'settingsUrl' => 'settings',
+        // Wrap every clickable link the template actually renders so the
+        // onboarding funnel's click-through is measurable (opens come from the
+        // pixel). The shared tip template renders exactly three: the per-day
+        // primary button ($ctaUrl -> give/find/browse) and the footer
+        // settings/unsubscribe links. Matches the digest/chat tracking
+        // convention (position + action).
+        //
+        // IMPORTANT: wrap only this LOCAL $content copy — never $this->content.
+        // addListUnsubscribeHeaders() reads $this->content['unsubscribeUrl'] to
+        // build the RFC 8058 keyed one-click List-Unsubscribe HEADER, which must
+        // stay the direct keyed URL; a tracked redirect there would break the
+        // no-session one-click POST from Gmail/Yahoo.
+        if (! empty($content['ctaUrl']) && is_string($content['ctaUrl'])) {
+            // Keep the give/find/browse distinction in the click's action code.
+            $slug = basename((string) parse_url($content['ctaUrl'], PHP_URL_PATH));
+            $content['ctaUrl'] = $this->trackedUrl($content['ctaUrl'], 'primary_cta', $slug !== '' ? $slug : 'cta');
+        }
+
+        $footerLinks = [
+            'settingsUrl'    => 'settings',
+            'unsubscribeUrl' => 'unsubscribe',
         ];
-        foreach ($ctas as $key => $action) {
+        foreach ($footerLinks as $key => $action) {
             if (! empty($content[$key]) && is_string($content[$key])) {
-                $content[$key] = $this->trackedUrl($content[$key], 'cta', $action);
+                $content[$key] = $this->trackedUrl($content[$key], "footer_{$action}", $action);
             }
         }
 
