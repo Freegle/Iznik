@@ -328,6 +328,65 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_allowed_phrase_suppresses_shorter_keyword_matched_within_it(): void
+    {
+        // Discourse #9944/6: a moderator whitelists a place-name phrase ('Cashes
+        // Green') that happens to contain the plural inflection of an unrelated,
+        // shorter concern keyword ('cash' -> 'cashes'). ModSupportConcernKeywords.vue
+        // labels the 'allowed' category as "Allowed (whitelist)", so a chat message
+        // containing the whitelisted phrase must not still be flagged by the
+        // shorter keyword matching inside it.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcash_cc',
+            'category'   => 'scam',
+            'match_mode' => 'fuzzy',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        // Sanity: without a whitelist, the plural inflection does fuzzy-match.
+        $beforeWhitelist = $this->service->checkChatMessage('meet me at testcash_cces green please');
+        $this->assertNotNull($beforeWhitelist, 'sanity: keyword fuzzy-matches its plural before any whitelist exists');
+
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcash_cces green',
+            'category'   => 'allowed',
+            'match_mode' => 'literal',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $result = $this->service->checkChatMessage('meet me at testcash_cces green please');
+        $this->assertNull($result, "whitelisting 'testcash_cces green' must suppress the 'testcash_cc' match contained within it");
+    }
+
+    public function test_allowed_phrase_does_not_suppress_keyword_match_elsewhere_in_message(): void
+    {
+        // Bound the fix: whitelisting a phrase must not blanket-suppress every
+        // concern keyword in a message that merely also contains that phrase.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcash2_cc',
+            'category'   => 'scam',
+            'match_mode' => 'fuzzy',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testcash2_cces green',
+            'category'   => 'allowed',
+            'match_mode' => 'literal',
+            'action'     => 'flag',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $result = $this->service->checkChatMessage('near testcash2_cces green, only testcash2_cc accepted');
+        $this->assertNotNull($result, 'a keyword occurrence outside the whitelisted phrase must still be flagged');
+    }
+
     // -------------------------------------------------------------------------
     // checkConcernKeywords — fuzzy match_mode (levenshtein, V1 parity)
     // -------------------------------------------------------------------------
