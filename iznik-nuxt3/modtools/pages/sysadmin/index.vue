@@ -109,6 +109,17 @@
             :key="'recommendations-' + recommendationsBump"
           />
         </b-tab>
+
+        <!-- Reengagement Tab -->
+        <b-tab @click="onReengageTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Reengagement</h2>
+          </template>
+          <ModSysAdminReengageEffectiveness
+            v-if="showReengage"
+            :key="'reengage-' + reengageBump"
+          />
+        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -142,6 +153,8 @@ const showRippling = ref(false)
 const ripplingBump = ref(0)
 const showRecommendations = ref(false)
 const recommendationsBump = ref(0)
+const showReengage = ref(false)
+const reengageBump = ref(0)
 
 const topTabMap = {
   housekeeping: 0,
@@ -151,6 +164,7 @@ const topTabMap = {
   incoming: 4,
   rippling: 5,
   recommendations: 6,
+  reengagement: 7,
 }
 
 function onHousekeepingTab() {
@@ -188,6 +202,11 @@ function onRecommendationsTab() {
   recommendationsBump.value = Date.now()
 }
 
+function onReengageTab() {
+  showReengage.value = true
+  reengageBump.value = Date.now()
+}
+
 onMounted(() => {
   const tab = route.query.tab
   if (tab && topTabMap[tab] !== undefined) {
@@ -200,6 +219,7 @@ onMounted(() => {
     else if (tab === 'incoming') onIncomingEmailTab()
     else if (tab === 'rippling') onRipplingTab()
     else if (tab === 'recommendations') onRecommendationsTab()
+    else if (tab === 'reengagement') onReengageTab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()
