@@ -2364,6 +2364,74 @@ func TestGetHappinessAllGroups(t *testing.T) {
 	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
 }
 
+// TestGetHappinessExcludesRippledInScopeAndLabel verifies two things reported together
+// (Discourse topic 9808 post 633): a post that only rippled INTO a group must not appear
+// in that group's Feedback tab (scope), and when it IS shown (queried via its true origin
+// group) it must be labelled with its origin group, not whichever group happened to be
+// selected. Rippling-out adds an Approved messages_groups row (rippled_in=1) per group a
+// post reaches; without a rippled_in=0 filter the join in getHappinessMembers matches on
+// the rippled-in copy and reports the QUERIED group as if it were the post's origin.
+func TestGetHappinessExcludesRippledInScopeAndLabel(t *testing.T) {
+	prefix := uniquePrefix("happy_rin")
+	db := database.DBConn
+
+	origin := CreateTestGroup(t, prefix+"Origin")
+	rippledTo := CreateTestGroup(t, prefix+"RippledTo")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, origin, "Moderator")
+	CreateTestMembership(t, modID, rippledTo, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, origin, "Member")
+
+	// Native post on the origin group (origin row, rippled_in defaults to 0).
+	msgID := CreateTestMessage(t, posterID, origin, prefix+" rippled item", 55.95, -3.19)
+
+	// Ripple the SAME post into rippledTo — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, rippledTo)
+
+	outcomeID := createHappinessOutcome(t, msgID, "Happy", "Loved it!")
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledTo)
+	})
+
+	// Querying the RIPPLED-INTO group must NOT show the item: it was not posted there.
+	urlRippledTo := fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", rippledTo, token)
+	req := httptest.NewRequest("GET", urlRippledTo, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	results, _ := parseHappinessResponse(t, resp)
+	for _, r := range results {
+		assert.NotEqual(t, float64(outcomeID), r["id"],
+			"a post that only rippled into this group must not appear in its Feedback tab")
+	}
+
+	// Querying the ORIGIN group must show the item, labelled with the origin group.
+	urlOrigin := fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", origin, token)
+	req = httptest.NewRequest("GET", urlOrigin, nil)
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	results, _ = parseHappinessResponse(t, resp)
+	found := false
+	for _, r := range results {
+		if uint64(r["id"].(float64)) == outcomeID {
+			found = true
+			assert.Equal(t, float64(origin), r["groupid"],
+				"the item must be labelled with its origin group, not the rippled-into group")
+			break
+		}
+	}
+	assert.True(t, found, "the item should be visible on its origin group")
+}
+
 func TestGetHappinessNotMod(t *testing.T) {
 	prefix := uniquePrefix("happy_nmod")
 	groupID := CreateTestGroup(t, prefix)

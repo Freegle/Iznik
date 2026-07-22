@@ -2153,6 +2153,47 @@ func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 	assert.Equal(t, float64(0), happiness, "Should exclude all auto-generated comments")
 }
 
+// Regression (Discourse 9808): a happiness rating on a post that only rippled INTO a
+// mod's group must NOT inflate their aggregate session Feedback badge. The rippled-in
+// copy is Approved with rippled_in=1; the Feedback list (getHappinessMembers) filters
+// rippled_in=0, so a count that ignored that showed a "ghost" badge for a mod whose
+// Feedback list for that group is empty.
+func TestWorkCountHappinessExcludesRippledIn(t *testing.T) {
+	prefix := uniquePrefix("wc_happy_rip")
+	db := database.DBConn
+
+	originGroup := CreateTestGroup(t, prefix+"_orig")
+	rippledGroup := CreateTestGroup(t, prefix+"_rip")
+	// The mod is only a member of the rippled-into group, not the origin group.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, rippledGroup, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	msgID := CreateTestMessage(t, memberID, originGroup, prefix+" rippled feedback item", 55.95, -3.19)
+
+	// Ripple the same post into the mod's group — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, rippledGroup)
+
+	var outcomeID uint64
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed, timestamp) "+
+		"VALUES (?, 'Taken', 'Happy', 'Lovely, thanks!', 0, NOW())", msgID)
+	db.Raw("SELECT id FROM messages_outcomes WHERE msgid = ? ORDER BY id DESC LIMIT 1", msgID).Scan(&outcomeID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, originGroup)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	work := getSessionWork(t, token)
+	happiness := work["happiness"].(float64)
+	assert.Equal(t, float64(0), happiness,
+		"a rating on a post that only rippled into the mod's group must not inflate their Feedback badge (Discourse 9808)")
+}
+
 // ---------------------------------------------------------------------------
 // Work Counts: Gift Aid
 // ---------------------------------------------------------------------------

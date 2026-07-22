@@ -790,3 +790,59 @@ func TestGetGroupWork_HappinessExcludesEmptyComments(t *testing.T) {
 	assert.NotNil(t, found2)
 	assert.Equal(t, int64(1), found2.Happiness, "Real comments should count in happiness badge")
 }
+
+// Regression (Discourse 9808): a happiness rating on a post that only rippled INTO a
+// group must NOT inflate that group's Feedback badge count. The rippled-in copy is
+// Approved with rippled_in=1; the Feedback list (getHappinessMembers) filters
+// rippled_in=0, so a count that ignored that showed a "ghost" badge against a group
+// whose Feedback list is empty — the same bug class as TestGetGroupWork_EditReviewExcludesRippledIn.
+func TestGetGroupWork_HappinessExcludesRippledIn(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gwhaprip")
+
+	originGroup := CreateTestGroup(t, prefix+"_orig")
+	rippledGroup := CreateTestGroup(t, prefix+"_rip")
+	originMod := CreateTestUser(t, prefix+"_omod", "User")
+	rippledMod := CreateTestUser(t, prefix+"_rmod", "User")
+	CreateTestMembership(t, originMod, originGroup, "Moderator")
+	CreateTestMembership(t, rippledMod, rippledGroup, "Moderator")
+	_, originToken := CreateTestSession(t, originMod)
+	_, rippledToken := CreateTestSession(t, rippledMod)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	msgID := CreateTestMessage(t, memberID, originGroup, prefix+" rippled feedback item", 55.95, -3.19)
+
+	// Ripple the same post into rippledGroup — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, rippledGroup)
+
+	var outcomeID uint64
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed, timestamp) "+
+		"VALUES (?, 'Taken', 'Happy', 'Lovely, thanks!', 0, NOW())", msgID)
+	db.Raw("SELECT id FROM messages_outcomes WHERE msgid = ? ORDER BY id DESC LIMIT 1", msgID).Scan(&outcomeID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, originGroup)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	happinessCountFor := func(token string, gid uint64) int64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result []group.GroupWork
+		json2.Unmarshal(rsp(resp), &result)
+		for i := range result {
+			if result[i].Groupid == gid {
+				return result[i].Happiness
+			}
+		}
+		return 0
+	}
+
+	assert.GreaterOrEqual(t, happinessCountFor(originToken, originGroup), int64(1),
+		"origin group's Feedback badge should include the rating")
+	assert.Equal(t, int64(0), happinessCountFor(rippledToken, rippledGroup),
+		"rippled-into group's Feedback badge must NOT include the rippled-in copy's rating (Discourse 9808)")
+}

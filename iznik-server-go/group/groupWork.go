@@ -330,8 +330,14 @@ func GetGroupWork(c *fiber.Ctx) error {
 		}
 		hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 		var rows []countRow
+		// rippled_in = 0: a happiness rating belongs to the post's ORIGIN group only.
+		// A post rippled INTO a group has an Approved messages_groups row (rippled_in=1)
+		// there, so without this filter its rating is counted in every receiving group's
+		// Feedback badge while the Feedback list (which filters rippled_in=0 in
+		// getHappinessMembers) shows nothing — a "ghost" count, same class as the Edit
+		// badge fix (Discourse 9839) applied here to the Happiness badge (Discourse 9808).
 		db.Raw("SELECT mg.groupid, COUNT(DISTINCT mo.id) as count FROM messages_outcomes mo "+
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
+			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 "+
 			"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
 			"AND mg.groupid IN ? "+
 			"AND mo.comments IS NOT NULL AND mo.comments != '' "+

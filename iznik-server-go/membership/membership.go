@@ -913,11 +913,17 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	args = append(args, start)
 	args = append(args, limit)
 
+	// rippled_in = 0 restricts the join to each post's ORIGIN messages_groups row.
+	// Rippling-out adds an Approved messages_groups row (rippled_in = 1) per group a
+	// post reaches, so without this filter a post that only rippled into one of the
+	// caller's groups would be shown as if it had been posted there, and mg.groupid
+	// (used as the display label) would report the queried group instead of the true
+	// origin. Matches the rippled_in=0 filter already used for Edit review counts.
 	sql := fmt.Sprintf(
 		"SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
 			"m.fromuser, mg.groupid, m.subject "+
 			"FROM messages_outcomes mo "+
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) "+
+			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) AND mg.rippled_in = 0 "+
 			"INNER JOIN messages m ON m.id = mo.msgid "+
 			"WHERE mo.timestamp > ?"+
 			"%s%s"+

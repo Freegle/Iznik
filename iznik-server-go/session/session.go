@@ -1350,8 +1350,12 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
+				// rippled_in = 0: matches the groupWork.go per-group Happiness count and
+				// the getHappinessMembers list filter — without it a post rippled INTO one
+				// of the caller's active groups inflates this aggregate badge for a group
+				// whose own Feedback list never shows it (Discourse 9808).
 				db.Raw("SELECT COUNT(DISTINCT mo.id) FROM messages_outcomes mo "+
-					"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
+					"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 "+
 					"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
 					"AND mg.groupid IN ? "+
 					"AND mo.comments IS NOT NULL "+
