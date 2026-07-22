@@ -316,7 +316,11 @@ function getEnvironmentInfo() {
     user_agent: nav.userAgent,
     platform: nav.platform,
     language: nav.language,
-    languages: nav.languages?.join(','),
+    // Some environments expose navigator.languages as a non-array (e.g. a
+    // spoofed string), where optional chaining still reaches a .join that is not
+    // a function and throws — which crashed page renders into a 500 ("e.languages
+    // ?.join is not a function"). Only join a real array.
+    languages: Array.isArray(nav.languages) ? nav.languages.join(',') : undefined,
     cookie_enabled: nav.cookieEnabled,
     do_not_track: nav.doNotTrack,
 
