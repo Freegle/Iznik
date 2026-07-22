@@ -56,6 +56,7 @@ import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
 import { sanitizeLLMDecision } from './llm-json.js'
+import { ensureUsableInstanceStore } from './instance-store.js'
 import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
@@ -280,6 +281,13 @@ async function main() {
   const releaseLock = await acquireDriverLock()
 
   const definition = JSON.parse(await readFile(WORKFLOW_PATH, 'utf8')) as WorkflowDefinition
+
+  // An interrupted write leaves this file empty, which ai-flower cannot load.
+  // Reset rather than abort: monitor.db holds the durable history.
+  const repair = ensureUsableInstanceStore(INSTANCE_STORE)
+  if (repair.repaired) {
+    out(`⚠ instance store unusable (${repair.reason}) — reset it; previous file kept at ${repair.backupPath}`)
+  }
 
   const storage = new JSONFileStorage(INSTANCE_STORE)
   await storage.saveWorkflow(definition)
