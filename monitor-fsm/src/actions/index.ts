@@ -538,7 +538,14 @@ export function matchDirectMasterFixCommits(
       const key = `${m[1]}/${m[2]}`
       if (!tpRefs.has(key)) tpRefs.set(key, { sha: c.sha, subj: c.subj })
     }
-    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b/gi)) {
+    // Topic-only ref, used by the single-unfixed-bug fallback below. A topic
+    // number that is immediately followed by a post reference ("(9808 #585)")
+    // is SCOPED to that post, not the whole topic — registering it as a
+    // topic-only ref let a reach-slider commit that mentioned "(9808 #585/#600)"
+    // get matched to an unrelated open bug (9808/633) via the fallback, marking
+    // it fixed and posting a bogus retest (Neville, 2026-07-22). The negative
+    // lookahead keeps scoped references out of topicRefs.
+    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b(?!\s*[/#]\s*\d)/gi)) {
       const t = Number(m[1])
       if (!topicRefs.has(t)) topicRefs.set(t, { sha: c.sha, subj: c.subj })
     }
