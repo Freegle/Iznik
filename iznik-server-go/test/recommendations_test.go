@@ -90,6 +90,26 @@ func TestRecommendationsStatsFunnel(t *testing.T) {
 	assert.Equal(t, int64(1), rep-baseRep, "only the within-7-day reply is attributed")
 }
 
+// The stats response carries a `degraded` flag, set true only when a query hits
+// its MAX_EXECUTION_TIME cap (the messages_likes stats index is not deployed and a
+// query would otherwise hang the request). Against the test DB the queries
+// complete, so it must be false — proving the flag is wired and the guarded
+// queries still run normally.
+func TestRecommendationsStatsNotDegraded(t *testing.T) {
+	support := CreateTestUser(t, uniquePrefix("recdeg")+"_support", "Support")
+	token := getToken(t, support)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/modtools/recommendations/stats?days=30&jwt="+token, nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var body struct {
+		Degraded bool `json:"degraded"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.False(t, body.Degraded, "queries complete against the test DB, so the panel is not degraded")
+}
+
 // holdoutStats fetches the holdout block as the given Support user. Values are
 // global to the DB, so callers compare deltas around their own fixture.
 func holdoutStats(t *testing.T, token string) (holdoutUsers, holdoutReplies, shownUsers, shownReplies int64) {
