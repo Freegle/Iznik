@@ -122,6 +122,34 @@ export const useMobileStore = defineStore({
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
+      this.startBadgeSync()
+    },
+
+    // Keep the native app-icon badge in sync with the member's own live
+    // unread state (chats + notifications), independent of which component
+    // happens to be on screen. useNavbar()'s chatCount computed also nudges
+    // the badge, but only as a side effect of NavbarMobile's bottom-nav badge
+    // being rendered - and that badge is hidden in favour of ChatMobileNavbar
+    // while viewing a specific chat on a phone (NavbarMobile.vue
+    // isSpecificChatPage), which is exactly when a chat gets marked read.
+    // ChatMobileNavbar calls useNavbar() too but never reads its chatCount,
+    // so that recompute (and its setBadgeCount call) never fires there. If
+    // the member reads the chat and backgrounds the app before visiting a
+    // screen where the bottom-nav badge re-renders, the icon badge is left
+    // showing a stale non-zero count forever (Discourse 9953). This watch
+    // lives in the store instead, so it fires on every count change
+    // regardless of what's mounted.
+    startBadgeSync() {
+      if (!this.isApp) return
+      const chatStore = useChatStore()
+      const notificationStore = useNotificationStore()
+      return watch(
+        () => (chatStore.unreadCount || 0) + (notificationStore.count || 0),
+        (total) => {
+          this.setBadgeCount(total)
+        },
+        { immediate: true }
+      )
     },
 
     async getDeviceInfo(Device) {
@@ -352,7 +380,10 @@ export const useMobileStore = defineStore({
           .filter(Boolean)
         if (!paths.length) return
         this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
-        console.log('Shared images received (iOS)', this.pendingSharedImages.length)
+        console.log(
+          'Shared images received (iOS)',
+          this.pendingSharedImages.length
+        )
         const router = useRouter()
         router.push('/give/mobile/photos')
       } catch (e) {

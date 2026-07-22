@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { reactive, nextTick } from 'vue'
 
 let mockPlatform = 'web'
 vi.mock('@capacitor/core', () => ({
@@ -45,16 +46,26 @@ vi.mock('~/stores/auth', () => ({
 
 const mockFetchChats = vi.fn()
 const mockFetchMessages = vi.fn()
+// Reactive so startBadgeSync's watch() (a real Vue watch) reacts to changes,
+// exactly as it does against the real Pinia chat/notification stores.
+const mockChatState = reactive({ unreadCount: 0 })
 vi.mock('~/stores/chat', () => ({
   useChatStore: () => ({
     fetchChats: mockFetchChats,
     fetchMessages: mockFetchMessages,
+    get unreadCount() {
+      return mockChatState.unreadCount
+    },
   }),
 }))
 
+const mockNotificationState = reactive({ count: 0 })
 vi.mock('~/stores/notification', () => ({
   useNotificationStore: () => ({
     fetchCount: vi.fn(),
+    get count() {
+      return mockNotificationState.count
+    },
   }),
 }))
 
@@ -86,6 +97,8 @@ describe('mobile store', () => {
     mockPlatform = 'web'
     mockAuthUser = null
     mockMobileVersion = '1.0.0'
+    mockChatState.unreadCount = 0
+    mockNotificationState.count = 0
     setActivePinia(createPinia())
     const mod = await import('~/stores/mobile')
     useMobileStore = mod.useMobileStore
@@ -173,17 +186,13 @@ describe('mobile store', () => {
 
     it('returns false when no query string', () => {
       const store = useMobileStore()
-      const result = store.extractQueryStringParams(
-        'https://example.com/path'
-      )
+      const result = store.extractQueryStringParams('https://example.com/path')
       expect(result).toBe(false)
     })
 
     it('handles empty query string', () => {
       const store = useMobileStore()
-      const result = store.extractQueryStringParams(
-        'https://example.com?'
-      )
+      const result = store.extractQueryStringParams('https://example.com?')
       expect(result).toEqual({})
     })
 
@@ -282,6 +291,109 @@ describe('mobile store', () => {
     })
   })
 
+  describe('startBadgeSync', () => {
+    // Discourse 9953: the native app-icon badge was only ever set from an
+    // incoming push payload (or forced to 0 at startup) - reading a chat or
+    // notification *within* the app never told the OS to clear a
+    // previously-set badge, so it could get stuck showing a stale count
+    // forever even with nothing unread.
+    let badgeSetSpy
+    let stopWatch
+
+    beforeEach(() => {
+      badgeSetSpy = vi.fn()
+      stopWatch = null
+      vi.doMock('@capawesome/capacitor-badge', () => ({
+        Badge: { set: badgeSetSpy },
+      }))
+    })
+
+    afterEach(() => {
+      // The watch() set up by startBadgeSync() has no component lifecycle to
+      // auto-stop it — without this it keeps firing against the shared
+      // mockChatState/mockNotificationState in later tests.
+      if (stopWatch) stopWatch()
+    })
+
+    it('does nothing when not on the app', async () => {
+      const store = useMobileStore()
+      store.isApp = false
+      mockChatState.unreadCount = 2
+      mockNotificationState.count = 1
+
+      stopWatch = store.startBadgeSync()
+      await nextTick()
+
+      expect(badgeSetSpy).not.toHaveBeenCalled()
+    })
+
+    it('immediately applies the current live chat+notification total to the native badge', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      mockChatState.unreadCount = 2
+      mockNotificationState.count = 1
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+
+      // AssertFlip: before the fix, nothing ever calls setBadgeCount() from
+      // live store state - only from a push payload - so this never fires
+      // and the badge is left however a past push last set it.
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 3 })
+      )
+      logSpy.mockRestore()
+    })
+
+    it('clears a stale non-zero badge once everything has been read in-app, with no new push', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      // A past push left the device badge on a real, non-zero count.
+      store.lastBadgeCount = 3
+      // The member has since read everything in-app - no unread chats or
+      // notifications remain - but no push arrives to say so.
+      mockChatState.unreadCount = 0
+      mockNotificationState.count = 0
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 0 })
+      )
+      expect(store.lastBadgeCount).toBe(0)
+      logSpy.mockRestore()
+    })
+
+    it('reacts live as the underlying chat/notification counts change', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      mockChatState.unreadCount = 0
+      mockNotificationState.count = 0
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 0 })
+      )
+
+      badgeSetSpy.mockClear()
+      mockChatState.unreadCount = 1
+      await nextTick()
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 1 })
+      )
+
+      badgeSetSpy.mockClear()
+      mockChatState.unreadCount = 0
+      await nextTick()
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 0 })
+      )
+      logSpy.mockRestore()
+    })
+  })
+
   describe('handleNotification', () => {
     let store
 
@@ -311,11 +423,7 @@ describe('mobile store', () => {
 
     it('ignores legacy notifications without channel_id', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      await store.handleNotification(
-        { data: { route: '/chats/1' } },
-        {},
-        {}
-      )
+      await store.handleNotification({ data: { route: '/chats/1' } }, {}, {})
       expect(store.route).toBe(false)
       logSpy.mockRestore()
     })
@@ -372,10 +480,7 @@ describe('mobile store', () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       mockChatSend.mockResolvedValue({})
 
-      await store.handleReplyAction(
-        { data: { chatids: '42' } },
-        'Hello!'
-      )
+      await store.handleReplyAction({ data: { chatids: '42' } }, 'Hello!')
 
       expect(mockChatSend).toHaveBeenCalledWith({
         roomid: 42,
