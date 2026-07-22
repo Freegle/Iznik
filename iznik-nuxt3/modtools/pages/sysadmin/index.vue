@@ -53,7 +53,7 @@
           <b-tabs v-model="mailSubTab" content-class="mt-3" pills>
             <b-tab @click="onEmailStatsTab">
               <template #title>
-                <span class="h5">
+                <span class="subtab-label">
                   Outgoing
                   <b-badge
                     v-if="supportOrAdmin && work?.emailout"
@@ -70,7 +70,7 @@
             </b-tab>
             <b-tab @click="onIncomingEmailTab">
               <template #title>
-                <span class="h5">
+                <span class="subtab-label">
                   Incoming
                   <b-badge
                     v-if="supportOrAdmin && work?.emailin"
@@ -99,7 +99,7 @@
                  position, and browse-feed scroll depth. -->
             <b-tab @click="onDigestClicksTab">
               <template #title>
-                <span class="h5">Scrolling</span>
+                <span class="subtab-label">Scrolling</span>
               </template>
               <template v-if="showDigestClicks">
                 <h3 class="ms-2 mt-2">Digest click-through by position</h3>
@@ -115,7 +115,7 @@
             </b-tab>
             <b-tab @click="onRecommendationsTab">
               <template #title>
-                <span class="h5">Recommendations</span>
+                <span class="subtab-label">Recommendations</span>
               </template>
               <ModSysAdminRecommendations
                 v-if="showRecommendations"
@@ -124,7 +124,7 @@
             </b-tab>
             <b-tab @click="onReengageTab">
               <template #title>
-                <span class="h5">Reengagement</span>
+                <span class="subtab-label">Reengagement</span>
               </template>
               <ModSysAdminReengageEffectiveness
                 v-if="showReengage"
@@ -284,3 +284,41 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped lang="scss">
+.subtab-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Sub-tab pill nav (Mail / Behaviour). The top-level tabs use the `card`
+   (.nav-tabs) variant, so scoping to .nav-pills targets only these sub-tabs. */
+:deep(.nav-pills) {
+  gap: 0.375rem;
+  border-bottom: 1px solid #e3e8ee;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+:deep(.nav-pills .nav-link) {
+  color: #5a6672;
+  padding: 0.4rem 1.1rem;
+  border-radius: 2rem;
+  border: 1px solid transparent;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+:deep(.nav-pills .nav-link:hover:not(.active)) {
+  color: #008000;
+  background-color: #eef6e6;
+}
+
+:deep(.nav-pills .nav-link.active) {
+  color: #fff;
+  background-color: #61ae24;
+  box-shadow: 0 2px 4px rgba(97, 174, 36, 0.35);
+}
+</style>
