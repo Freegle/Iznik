@@ -2503,10 +2503,11 @@ class IncomingMailService
 
         $postId = $email->getTrashNothingPostId();
         $tnType = strtolower((string) Message::determineType($email->subject));
-        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $tnType . ' group_id=' . $email->targetGroupName . ' date=' . ($email->date?->format('Y-m-d\TH:i:s\Z')) . ' title=' . substr((string) $email->subject, 0, 60));
 
-        // Find the group
+        // Find the group before logging so we can emit the numeric group ID to match the API path.
         $group = $this->findGroup($email->targetGroupName);
+        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $tnType . ' group_id=' . ($group?->id ?? $email->targetGroupName) . ' date=' . ($email->date?->format('Y-m-d\TH:i:s\Z')) . ' title=' . substr((string) $email->subject, 0, 60));
+
         if ($group === null) {
             Log::warning('Post to unknown group', [
                 'group' => $email->targetGroupName,

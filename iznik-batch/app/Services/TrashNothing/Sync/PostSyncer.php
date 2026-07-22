@@ -164,15 +164,15 @@ class PostSyncer
     }
 
     /**
-     * Mirrors IncomingMailService::findGroup()
+     * TN API returns the Freegle group's numeric database ID as group_id.
      */
-    private function findGroup(string $nameshort): ?Group
+    private function findGroup(string $groupId): ?Group
     {
-        if (empty($nameshort)) {
+        if (empty($groupId) || !is_numeric($groupId)) {
             return null;
         }
 
-        return Group::where('nameshort', $nameshort)->first();
+        return Group::find((int) $groupId);
     }
 
     private function throttle(): void
