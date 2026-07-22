@@ -3028,26 +3028,43 @@ func TestWorkCountInactiveModChatReviewGoesToOther(t *testing.T) {
 	assert.GreaterOrEqual(t, chatreviewother, float64(1), "Inactive mod: chatreview should go to chatreviewother (blue)")
 }
 
+// TestWorkCountWiderChatReviewGoesToOther exercises the actual "wider review" path:
+// the mod moderates ownGroupID (which has widerchatreview=1, granting them
+// HasWiderReview permission) but the message's recipient is on a SEPARATE
+// widerchatreview=1 group the mod does not moderate at all. This must be picked
+// up by the wider-review add-on and land in chatreviewother.
+//
+// The recipient must NOT also be a member of one of the mod's own groups: the
+// wider-review query deliberately excludes recipients who are (session.go's
+// "NOT EXISTS ... m2.groupid IN (mod's own groups)" guard, to avoid double-
+// counting a message that the base chatReviewSQL already counts via direct
+// group membership). Putting the recipient in the mod's own group — as this
+// test originally did — exercises the BASE chatreview path (recipient in
+// mod's own group, unheld -> chatreview) instead of the wider-review add-on,
+// so it never reaches chatreviewother regardless of the wider-review logic.
 func TestWorkCountWiderChatReviewGoesToOther(t *testing.T) {
 	prefix := uniquePrefix("wc_wider_chat")
 	db := database.DBConn
 
-	// Create a group with widerchatreview=1.
-	widerGroupID := CreateTestGroup(t, prefix+"_wider")
-	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", widerGroupID)
-
-	// Create a mod ON the wider group (they must be on a group with
-	// widerchatreview=1 to participate in wider review, matching PHP).
+	// The mod's own group: widerchatreview=1 grants HasWiderReview, but the mod
+	// does not otherwise moderate the recipient's group below.
+	ownGroupID := CreateTestGroup(t, prefix+"_own")
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", ownGroupID)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, widerGroupID, "Moderator")
+	CreateTestMembership(t, modID, ownGroupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Create two users — user1 on the wider group, user2 elsewhere.
+	// A separate widerchatreview=1 group the mod does NOT moderate or belong to.
+	otherWiderGroupID := CreateTestGroup(t, prefix+"_otherwider")
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", otherWiderGroupID)
+
+	// Recipient (user1) is a member of the OTHER wider group only; sender (user2)
+	// has no Freegle group membership at all.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, widerGroupID, "Member")
+	CreateTestMembership(t, user1ID, otherWiderGroupID, "Member")
 
-	// Create a chat and review-required message.
+	// Create a chat and review-required message from user2 to user1 (the recipient).
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	var msgID uint64
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, reviewrejected, reportreason) "+
@@ -3056,9 +3073,12 @@ func TestWorkCountWiderChatReviewGoesToOther(t *testing.T) {
 	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", msgID)
 
 	work := getSessionWork(t, token)
+	chatreview := work["chatreview"].(float64)
 	chatreviewother := work["chatreviewother"].(float64)
+	assert.Equal(t, float64(0), chatreview,
+		"the mod does not moderate the recipient's group, so this must not land in the base chatreview count")
 	assert.GreaterOrEqual(t, chatreviewother, float64(1),
-		"Wider chat review messages should appear in chatreviewother (blue badge)")
+		"wider chat review messages (recipient on a different widerchatreview group) should appear in chatreviewother (blue badge)")
 }
 
 // ---------------------------------------------------------------------------
