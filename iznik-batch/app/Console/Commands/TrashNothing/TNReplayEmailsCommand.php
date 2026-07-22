@@ -25,18 +25,20 @@ use Illuminate\Support\Facades\Log;
 class TNReplayEmailsCommand extends Command
 {
     protected $signature = 'tn:replay-emails
-                            {--local-testing : Load from local fixture CSV instead of downloading from TN}';
+                            {--local-testing : Load from local fixture CSV instead of downloading from TN}
+                            {--date-min= : Only replay emails on or after this UTC timestamp (ISO-8601, e.g. 2026-07-22T10:00:00Z)}';
 
     protected $description = 'Replay TN post-email records through the legacy email-ingestion path, for parity testing against the API-based PostSyncer.';
 
     public function handle(LokiService $loki, MailParserService $parser, IncomingMailService $mailService): int
     {
         $localTesting = (bool) $this->option('local-testing');
+        $dateMin      = $this->option('date-min') ?: null;
 
         Log::info('TN-SYNC-TRACE [EMAILS-START]');
 
         $syncer = new EmailReplaySyncer($localTesting, $loki, $parser, $mailService);
-        [$count, $minDate, $maxDate] = $syncer->sync();
+        [$count, $minDate, $maxDate] = $syncer->sync($dateMin);
 
         $this->info("Replayed {$count} TN post emails through the legacy path.");
         $this->info('Date range: from=' . ($minDate ?? 'null') . ' to=' . ($maxDate ?? 'null'));

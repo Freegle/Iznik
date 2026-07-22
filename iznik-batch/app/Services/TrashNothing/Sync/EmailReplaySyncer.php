@@ -47,11 +47,17 @@ class EmailReplaySyncer
     /**
      * Load and replay all records from the CSV.
      *
+     * @param  string|null  $dateMin  ISO-8601 UTC cutoff; records with an earlier date are skipped.
      * @return array{int, string|null, string|null} [count, minDate, maxDate]
      */
-    public function sync(): array
+    public function sync(?string $dateMin = null): array
     {
         $records = $this->loadAllRecords();
+
+        if ($dateMin !== null) {
+            $records = array_filter($records, static fn (array $r) => ($r['date'] ?? '') >= $dateMin);
+            $records = array_values($records);
+        }
 
         Log::info('TN-SYNC-TRACE [EMAILS-PAGE] count=' . count($records));
 
