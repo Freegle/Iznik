@@ -620,6 +620,76 @@ export function selectExtraPrsToClose(
   })
 }
 
+/**
+ * Read a balanced JSON array out of `s` starting at the `[` at index `open`,
+ * respecting string literals (so `]` inside a string value does not close the
+ * array). Returns the array substring, or null if the brackets never balance.
+ */
+function readBalancedArray(s: string, open: number): string | null {
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = open; i < s.length; i++) {
+    const c = s[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (c === '\\') esc = true
+      else if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') inStr = true
+    else if (c === '[') depth++
+    else if (c === ']') {
+      depth--
+      if (depth === 0) return s.slice(open, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * Extract a single-line JSON-array marker (CLASSIFICATIONS=[...] /
+ * SENTRY_ISSUES=[...]) from the FULL delegate output stream.
+ *
+ * Why this exists: the driver used to leave these markers for the collate brain
+ * to scrape out of `stdoutTail` — only the last ~1500 chars of the stream. A
+ * verbose delegate (heavy grounding output, then a prose summary) pushes the
+ * marker out of that window, so its bugs were silently dropped while the topic
+ * cursor still advanced inside the delegate — making the loss unrecoverable.
+ * Topic 9808 posts 622 & 633 were lost exactly this way on 2026-07-22. Parsing
+ * from the whole stream here (like ANALYSIS_COMPLETE already is) removes the
+ * dependence on where the marker happens to land.
+ *
+ * Returns the parsed array, the LAST valid occurrence if emitted more than once
+ * (retries echo the marker), or null when the marker is absent or unparseable.
+ * A null return lets callers fall back to an empty list / the stdoutTail scrape.
+ */
+export function extractJsonArrayMarker(combined: string, marker: string): unknown[] | null {
+  const token = `${marker}=`
+  let searchFrom = 0
+  let last: unknown[] | null = null
+  for (;;) {
+    const at = combined.indexOf(token, searchFrom)
+    if (at === -1) break
+    const open = combined.indexOf('[', at + token.length)
+    // Only accept a '[' that immediately follows '=' (whitespace allowed) — do
+    // not grab a stray bracket from prose after a non-array emission.
+    if (open === -1 || combined.slice(at + token.length, open).trim() !== '') {
+      searchFrom = at + token.length
+      continue
+    }
+    const arr = readBalancedArray(combined, open)
+    if (arr !== null) {
+      try {
+        const parsed = JSON.parse(arr)
+        if (Array.isArray(parsed)) last = parsed
+      } catch { /* malformed — keep any earlier valid value, try next occurrence */ }
+    }
+    searchFrom = at + token.length
+  }
+  return last
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -2286,6 +2356,9 @@ If you omit the marker, your work is considered failed regardless of what actual
       const directPushSha = directMatch ? directMatch[1] : undefined
       const commitPushedSha = commitMatch ? commitMatch[1] : undefined
       const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+      // See extractJsonArrayMarker: parse from the full stream, not stdoutTail.
+      const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
+      const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -2318,6 +2391,8 @@ If you omit the marker, your work is considered failed regardless of what actual
           lastTool,
           stdoutTail: redactSecrets(textStream.slice(-2000)),
           stderrTail: redactSecrets(stderr.slice(-2000)),
+          classifications,
+          sentryIssues,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -2485,6 +2560,13 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         const directPushSha = directMatch ? directMatch[1] : undefined
         const commitPushedSha = commitMatch ? commitMatch[1] : undefined
         const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+        // Parse the machine-readable markers from the FULL stream, not the
+        // truncated stdoutTail the collate brain sees — a verbose delegate
+        // buries them beyond the tail window (topic 9808/622+633 loss). Attach
+        // structurally so COLLATE_RESULTS reads result.classifications /
+        // result.sentryIssues instead of scraping stdoutTail.
+        const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
+        const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -2536,6 +2618,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           commitPushedSha,
           pushed,
           analysisComplete,
+          classifications,
+          sentryIssues,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
