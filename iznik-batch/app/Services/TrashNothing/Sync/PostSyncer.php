@@ -3,6 +3,7 @@
 namespace App\Services\TrashNothing\Sync;
 
 use App\Models\Group;
+use App\Models\Location;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
@@ -134,6 +135,8 @@ class PostSyncer
         $type      = is_array($post) ? ($post['type'] ?? '') : $post->getType();
         $groupId   = is_array($post) ? ($post['group_id'] ?? '') : $post->getGroupId();
         $title     = is_array($post) ? ($post['title'] ?? '') : $post->getTitle();
+        $lat       = is_array($post) ? ($post['latitude'] ?? null) : $post->getLatitude();
+        $lng       = is_array($post) ? ($post['longitude'] ?? null) : $post->getLongitude();
 
         if ($date && (!$maxDate || $date > $maxDate)) {
             $maxDate = $date;
@@ -141,12 +144,20 @@ class PostSyncer
 
         Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $type . ' group_id=' . $groupId . ' date=' . $date . ' title=' . substr((string) $title, 0, 60));
 
-        // Resolve the Freegle group by nameshort — TN uses the Freegle group nameshort
-        // as the group_id in its API responses, matching how the email path resolves
-        // groups via IncomingMailService::findGroup($email->targetGroupName).
-        $group = $this->findGroup((string) $groupId);
+        // Resolve the Freegle group purely from the post's own lat/lng — the group TN thinks
+        // a post belongs to (group_id) is just where the member happened to post it, which
+        // drifts out of step with Freegle's group boundaries, so it is never used to place a
+        // post. Location::groupsNear() is the same polygon-containment-then-nearest-centroid
+        // logic used for member group boundaries (see Location::groupsNear() and the Go port
+        // in iznik-server-go/location/location.go).
+        if ($lat === null || $lng === null) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=no-coordinates group_id=' . $groupId . ' post_id=' . $postId);
+            return $maxDate;
+        }
+
+        $group = $this->findGroupByLocation((float) $lat, (float) $lng);
         if ($group === null) {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=unknown-group group_id=' . $groupId . ' post_id=' . $postId);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=not-in-any-group-bounds lat=' . $lat . ' lng=' . $lng . ' post_id=' . $postId);
             return $maxDate;
         }
 
@@ -164,15 +175,13 @@ class PostSyncer
     }
 
     /**
-     * TN API returns the Freegle group's numeric database ID as group_id.
+     * Resolve the Freegle group whose area contains this post's coordinates.
      */
-    private function findGroup(string $groupId): ?Group
+    private function findGroupByLocation(float $lat, float $lng): ?Group
     {
-        if (empty($groupId) || !is_numeric($groupId)) {
-            return null;
-        }
+        $groupIds = Location::groupsNear($lat, $lng, limit: 1);
 
-        return Group::find((int) $groupId);
+        return empty($groupIds) ? null : Group::find($groupIds[0]);
     }
 
     private function throttle(): void
