@@ -2116,11 +2116,25 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Set ctx.Groupid to the primary acted-on group (for logging).
 	ctx.Groupid = authorizedGroups[0]
 
+	// Restrict to authorised group rows that are still live. A withdraw racing this
+	// approve (handleOutcome) soft-deletes the messages_groups row (deleted = 1) but
+	// leaves collection = Pending; without this check the UPDATE below would still
+	// match it on "collection != Approved" and flip it to Approved while leaving
+	// deleted = 1 and messages.deleted set. That row then fails every listing AND
+	// Support Tools search query (they all require mg.deleted = 0 AND m.deleted IS
+	// NULL), so the message becomes findable nowhere even though the mod is told
+	// "Success" (Discourse #9954).
+	var liveGroups []uint64
+	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND groupid IN ? AND deleted = 0",
+		req.ID, authorizedGroups).Scan(&liveGroups)
+	if len(liveGroups) == 0 {
+		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer available and was not approved"})
+	}
+
 	// Move to Approved with arrival=NOW() so immediate-email recipients get it.
 	// Guard against double-approve by requiring collection != Approved.
-	// Restrict to groups the caller is authorised for.
 	if result := db.Exec("UPDATE messages_groups SET collection = ?, approvedby = ?, approvedat = NOW(), arrival = NOW() WHERE msgid = ? AND groupid IN ? AND collection != ?",
-		utils.COLLECTION_APPROVED, myid, req.ID, authorizedGroups, utils.COLLECTION_APPROVED); result.Error != nil {
+		utils.COLLECTION_APPROVED, myid, req.ID, liveGroups, utils.COLLECTION_APPROVED); result.Error != nil {
 		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
 	}
 

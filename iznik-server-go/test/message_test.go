@@ -1207,6 +1207,62 @@ func TestPostMessageApprove(t *testing.T) {
 	// (not synchronously in the Go API), so no log or push_notify_group_mods assertions here.
 }
 
+// TestPostMessageApproveWithdrawnRace covers the approve/withdraw race from Discourse
+// #9954: a member withdraws a still-Pending post at ~the same instant a moderator
+// approves it. handleOutcome's Withdrawn-while-pending path (message.go) soft-deletes
+// the messages_groups row (deleted = 1) and the message itself (messages.deleted set),
+// but leaves messages_groups.collection = Pending untouched. We drive that exact
+// post-withdrawal state directly (no goroutines/sleeps) and then call Approve against
+// it, to prove the handler never resurrects a soft-deleted row into "Approved but
+// deleted" - a combination that is findable in no listing (mg.deleted = 0 fails) and
+// not via Support Tools subject search either (m.deleted IS NULL fails too), even
+// though the moderator was told "Success".
+func TestPostMessageApproveWithdrawnRace(t *testing.T) {
+	prefix := uniquePrefix("msgmod_appr_race")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Drive the interleaved state directly: the withdraw has already landed and
+	// soft-deleted this messages_groups row and the message, exactly as
+	// handleOutcome's Withdrawn-while-pending path leaves them (collection is
+	// NOT changed by that path - only deleted flags are set).
+	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", msgID)
+
+	// The moderator's approve click, which raced behind the withdraw, now lands.
+	body, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Approve"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var collection string
+	var deleted int
+	db.Raw("SELECT collection, deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Row().Scan(&collection, &deleted)
+
+	// Coherence: a row that ends up in the Approved collection must be live
+	// (deleted = 0), or it is findable in no listing and no Support Tools search -
+	// exactly the "message vanished" report in #9954. This is the buggy-code
+	// assertion inverted: on unfixed code, collection flips to "Approved" while
+	// deleted stays 1, so this fails.
+	if collection == "Approved" {
+		assert.Equal(t, 0, deleted, "approve must not leave an Approved row soft-deleted - it becomes findable nowhere")
+	}
+
+	// And the withdrawal itself must not be silently undone: the row the member
+	// deleted must stay deleted.
+	assert.Equal(t, 1, deleted, "a withdrawn messages_groups row must stay soft-deleted, not be resurrected by a racing approve")
+}
+
 // TestApproveAddsApprovedMessageToSpatial verifies that a Pending message with a
 // location is not in messages_spatial, and that approving it adds it (so it then
 // shows in the public browse) with the correct coordinates.
