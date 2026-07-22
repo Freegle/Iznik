@@ -32,6 +32,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Coding standards | [./reference/coding-standards.md](./reference/coding-standards.md) |
 | Adding a Go v2 API endpoint | [../../iznik-server-go/API-GUIDE.md](../../iznik-server-go/API-GUIDE.md) |
 | Database read/write split | [../ops/reference/database-read-write-split.md](../ops/reference/database-read-write-split.md) |
+| Index hygiene and schema parity | [../ops/reference/database-index-hygiene.md](../ops/reference/database-index-hygiene.md) |
 | Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |

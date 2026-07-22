@@ -259,6 +259,9 @@ func TestAppleLoginTNUser(t *testing.T) {
 
 	db := database.DBConn
 	fullname := fmt.Sprintf("TN User %s", prefix)
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99999)
 	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('TN', ?, ?, 'User', 99999)",
 		prefix, fullname)
 

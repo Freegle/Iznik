@@ -490,7 +490,11 @@ func TestSocialMatchOrCreateTNUser(t *testing.T) {
 	// Create user with tnuserid set.
 	db := database.DBConn
 	fullname := fmt.Sprintf("Test User %s", prefix)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('Test', ?, ?, 'User', 12345)",
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it. 12346 keeps this distinct from the
+	// membership partner test, which uses 12345.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12346)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('Test', ?, ?, 'User', 12346)",
 		prefix, fullname)
 
 	var userID uint64

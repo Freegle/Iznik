@@ -3685,7 +3685,9 @@ func TestPutMembershipsPartnerSubscribe(t *testing.T) {
 	email := prefix + "@test.com"
 	userID := CreateTestUser(t, prefix+"_user", "User")
 
-	// Set tnuserid on the user.
+	// Set tnuserid on the user. It is UNIQUE in production, so release it from
+	// any user left by an earlier run first.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12345)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 12345, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
@@ -3717,7 +3719,12 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	email := prefix + "-gtest@test.com"
 
-	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=99999&email=%s&groupid=%d", key, email, groupID)
+	// tnuserid is UNIQUE in production. 99998 keeps this distinct from
+	// apple_login_test, which claims 99999. Release it from any user left by an
+	// earlier run so the auto-create below can take it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99998)
+
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=99998&email=%s&groupid=%d", key, email, groupID)
 	req := httptest.NewRequest("PUT", url, nil)
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
@@ -3732,7 +3739,7 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	// Verify user was created with tnuserid.
 	var tnuserid uint64
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", uint64(fduserid.(float64))).Scan(&tnuserid)
-	assert.Equal(t, uint64(99999), tnuserid)
+	assert.Equal(t, uint64(99998), tnuserid)
 
 	// Verify membership.
 	var count int64
