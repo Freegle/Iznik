@@ -564,15 +564,36 @@ services:
       - "traefik.http.routers.ai-support-helper.entrypoints=web"
       - "traefik.http.services.ai-support-helper.loadbalancer.server.port=3000"
     environment:
-      # Anthropic API key for Claude API calls
+      # Claude auth: set ANTHROPIC_API_KEY for api mode (edge/prod). Leave it unset and
+      # mount ~/.claude (see volumes) for session mode (local testing on the logged-in session).
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Go API base URL used to verify the caller is an authenticated moderator.
-      # Point at apiv2-live (live DB) by container name: the helper works on live,
-      # de-anonymised data, and a live mod's Support/Admin token only validates
-      # against the live backend - not the local test-DB apiv2. apiv2-live:8192 is
-      # a plain container-to-container hostname on the shared network (apiv2.localhost
-      # is a host-only Traefik route and doesn't resolve from inside this container).
+      - SUPPORT_AI_MODEL=${SUPPORT_AI_MODEL:-claude-sonnet-4-20250514}
+      # Go API: verifies the caller is a mod/support/admin AND serves get_user_dump.
       - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      - API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      # Read-only DB. Local: the whole-stack percona. Edge: a read-only grant on a read replica.
+      - DB_HOST=${SUPPORT_DB_HOST:-percona}
+      - DB_PORT=${SUPPORT_DB_PORT:-3306}
+      - DB_USER=${SUPPORT_DB_USER:-root}
+      - DB_PASSWORD=${SUPPORT_DB_PASSWORD:-iznik}
+      - DB_NAME=${SUPPORT_DB_NAME:-iznik}
+      # Loki. Local :3100 has null user_id (health noise); edge points at the prod tunnel.
+      - LOKI_URL=${SUPPORT_LOKI_URL:-http://loki:3100}
+      # Sentry - real errors behind "oh dear something went wrong".
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Discourse - where mods/members report bugs; fixes cite topic numbers absent from support emails.
+      - DISCOURSE_API_KEY=${DISCOURSE_API_KEY:-}
+      - DISCOURSE_API_USER=${DISCOURSE_API_USER:-Edward_Hibbert}
+      # Audit trail (who investigated whom, with what) - durable on the audit volume.
+      - AUDIT_LOG_PATH=/app/audit/audit.jsonl
+    volumes:
+      # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
+      # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This
+      # bounds what a prompt-injected read could exfiltrate. Edge/prod uses
+      # ANTHROPIC_API_KEY (api mode) and should OMIT this mount entirely.
+      - ${SUPPORT_CLAUDE_DIR:-/home/edward/.claude}/.credentials.json:/home/claude/.claude/.credentials.json:ro
+      - ai-support-audit:/app/audit
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
@@ -1805,105 +1826,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # =========================================
-  # MCP Support Tools (Privacy-Preserving Log Analysis)
-  # =========================================
-
-  # Container 0: Query Sanitizer - Frontend-facing, extracts and tokenizes PII
-  mcp-query-sanitizer:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-sanitizer
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/query-sanitizer
-      network: host
-    networks:
-      - default
-    ports:
-      - "${PORT_MCP_SANITIZER:-8084}:8080"
-    environment:
-      - PORT=8080
-      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
-    depends_on:
-      mcp-pseudonymizer:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mcp-sanitizer.rule=Host(`mcp-sanitizer.localhost`)"
-      - "traefik.http.routers.mcp-sanitizer.entrypoints=web"
-      - "traefik.http.services.mcp-sanitizer.loadbalancer.server.port=8080"
-
-  # Container 2: MCP Interface - Stateless proxy, NO key, forwards to pseudonymizer
-  mcp-interface:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-interface
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/mcp-interface
-      network: host
-    networks:
-      - default
-    environment:
-      - PORT=8080
-      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
-    depends_on:
-      mcp-pseudonymizer:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Container 3: Pseudonymizer - Has the key, queries Loki, pseudonymizes results
-  mcp-pseudonymizer:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-pseudonymizer
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/pseudonymizer
-      network: host
-    networks:
-      - default
-    volumes:
-      - mcp-pseudonymizer-data:/data
-      - mcp-audit-logs:/var/log/mcp-audit
-    environment:
-      - PORT=8080
-      - LOKI_URL=http://loki:3100
-      - DATA_DIR=/data
-      - AUDIT_LOG_DIR=/var/log/mcp-audit
-      # Database access for pseudonymized SQL queries
-      - DB_HOST=percona
-      - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASSWORD=iznik
-      - DB_NAME=iznik
-    depends_on:
-      loki:
-        condition: service_healthy
-        required: false
-      percona:
-        condition: service_healthy
-        required: false
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
 volumes:
   rebuild-requests:
     driver: local
@@ -1928,11 +1850,7 @@ volumes:
     driver: local
   apiv2_logs:
     driver: local
-  mcp-pseudonymizer-data:
-    driver: local
   embedding_model_cache:
-    driver: local
-  mcp-audit-logs:
     driver: local
   # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
   delivery-cache:
@@ -1947,6 +1865,8 @@ volumes:
     driver: local   # Grafana Alloy positions/WAL (edge log shipping)
   wiki-elastic-data:
     driver: local   # Elasticsearch index for the wiki's CirrusSearch (edge)
+  ai-support-audit:
+    driver: local   # durable audit log of AI Support Helper investigations (who queried whom)
 
 networks:
   default:
