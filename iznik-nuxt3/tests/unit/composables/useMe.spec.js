@@ -624,7 +624,17 @@ describe('fetchMe', () => {
     expect(mockFetchUser).toHaveBeenCalledTimes(1)
   })
 
-  it('does not double-fetch when hitServer=true and already fetching', async () => {
+  it('fetches again when hitServer=true arrives while an earlier fetch is still in flight (Discourse #9951)', async () => {
+    // Regression test for the ModTools pending-message hold/release badge not
+    // updating live (Discourse topic 9951): checkWork() calls fetchMe(true)
+    // expecting a guaranteed up-to-date result (its own doc comment says "we
+    // really care about the data being tightly in sync"). A moderator can
+    // trigger a second hitServer=true call (e.g. holding a second message)
+    // while an earlier one — started BEFORE that hold committed — is still
+    // in flight. If the second call just piggybacks on the first one's
+    // promise instead of making its own request, it silently returns data
+    // from before the mutation, and the badge only corrects itself on a full
+    // page reload (which has no in-flight promise to collide with).
     let resolveFirst
     const firstFetch = new Promise((resolve) => {
       resolveFirst = resolve
@@ -633,13 +643,15 @@ describe('fetchMe', () => {
     mockFetchUser.mockReturnValueOnce(firstFetch)
     // Start a concurrent hitServer=true call
     const p1 = fetchMe(true)
-    // Before p1 resolves, a second hitServer=true comes in — it should wait
-    // for p1, not start a new fetch
+    // Before p1 resolves, a second hitServer=true comes in wanting fresh data
+    // — it must trigger its own server round trip, not just wait for p1's.
+    mockFetchUser.mockResolvedValueOnce({ id: 1 })
     const p2 = fetchMe(true)
     resolveFirst({ id: 1 })
     await Promise.all([p1, p2])
-    // fetchUser should only have been called once (by p1)
-    expect(mockFetchUser).toHaveBeenCalledTimes(1)
+    // fetchUser must have been called twice: once for each hitServer=true
+    // caller that explicitly asked for guaranteed-fresh data.
+    expect(mockFetchUser).toHaveBeenCalledTimes(2)
   })
 
   it('returns immediately when hitServer=false and user already loaded', async () => {

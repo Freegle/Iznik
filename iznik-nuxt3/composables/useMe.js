@@ -26,6 +26,13 @@ export async function fetchMe(hitServer) {
   // Because multiple pages/components may call fetchMe to ensure that they have data they need, we
   // want to minimise the number of calls.  We have some fairly complex logic below to keep the number of parallel
   // calls down and return earlier if we happen to already be fetching what we need.
+  //
+  // hitServer = true is a guarantee of freshness (see above), so it must never settle for an
+  // already-in-flight fetch on its own: that fetch may have been sent before whatever change the
+  // caller is waiting to see (e.g. a moderator's own hold/release) reached the server, in which case
+  // its response is stale. Wait for it to keep request ordering sane, then always issue a fresh one.
+  // Discourse #9951: ModTools pending-message hold/release badge counts only updated after a manual
+  // page refresh, because checkWork()'s fetchMe(true) silently reused a stale in-flight fetch.
 
   let needToFetch = false
 
@@ -39,14 +46,14 @@ export async function fetchMe(hitServer) {
     // We always need to fetch to do the background update.
     needToFetch = true
   } else {
-    // We have been asked to hit the server.
-    // eslint-disable-next-line no-lonely-if
+    // We have been asked to hit the server and guarantee up-to-date data.
     if (fetchingPromise) {
-      // We are in the process of fetching the user, so we need to wait until that completes.
+      // Wait for the in-progress fetch first so we don't fire two requests at once...
       await fetchingPromise
-    } else {
-      needToFetch = true
     }
+    // ...but always follow up with our own fetch: the one we waited for may predate whatever
+    // change this caller needs reflected.
+    needToFetch = true
   }
 
   if (needToFetch) {
