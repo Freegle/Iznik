@@ -79,9 +79,9 @@ Keep the single sync-date file. Each syncer runs in try/catch; if any throws, th
 - Images — from API image URLs (replacing `scrapeTnImageUrls` on textbody); confirm URLs match the email path's final URLs
 
 ### D. Behavioral parity — slices of `handleGroupPost` to replicate
-- Group lookup (by name? id? — depends on API shape)
+- Group lookup — done differently to email path; see section P (coordinate-based, not membership-based)
 - User lookup (API gives `fd_user_id` directly — simpler than email-based lookup, but verify parity for unmapped/banned/deleted users)
-- Membership check (`collection = Approved`)
+- ~~Membership check (`collection = Approved`)~~ — **removed for the API path**, see section P: the group is chosen via `Location::groupsNear()`, not supplied by the poster, so the poster need not be an Approved member of the resolved group. Confirm `GroupPostIngestionService` does not carry over the email path's membership gate for API posts.
 - TAKEN/RECEIVED subject swallow
 - Spam check decision (see open items)
 - Posting-status decision tree: `ourPostingStatus`, Big Switch (`overridemoderation`), mod-post-to-pending, group `moderated` setting, unmapped user, worry words
@@ -144,6 +144,23 @@ Each would follow the `PostSyncer` pattern: constructor takes `(bool $dryRun, bo
 
 **Not required for the posts ingestion go-live**, but recommended before the codebase grows further.
 
+### P. Coordinate-based group selection & moderator-messaging consent (new, not yet implemented)
+
+Follows on from the section 6 decision (`Location::groupsNear()` replacing TN's `group_id`) and the `freegle_group_ids` starter code in `PostSyncer.php`.
+
+**Group selection consequences (TODO):**
+- Since the group is *chosen for* the post (via `groupsNear()` on lat/lng) rather than *supplied by* the poster, the poster is frequently not an Approved member of the resolved group. The email path's membership check (`collection = Approved`, see section D) must **not** be applied to API posts — confirm this is the case in `GroupPostIngestionService` and add an explicit test (`GroupPostIngestionServiceTest`) covering "post to a group the TN user is not a member of" as a success case, not a skip.
+- Audit the rest of `handleGroupPost`'s decision tree (section D: `ourPostingStatus`, unmapped-user handling, moderated-group handling) for any other logic that implicitly assumes the poster is a member of the target group, since that assumption no longer holds on the API path.
+- Confirm `notifyGroupMods` / any group-scoped side effects still fire correctly for a poster who isn't a member.
+- Decide whether a non-member TN post should always land as pending (mod review) regardless of the group's `moderated` setting, given the poster has no established relationship with that group — currently undecided.
+
+**Moderator-messaging consent (TODO):**
+- `PostSyncer::processPost()` (lines ~164–177) already computes `$moderatorMessagingAllowed` from `freegle_group_ids` (confirmed to already be in Freegle's own group-id space) but only logs it (`TN-SYNC-TRACE [POST-META] ... moderator_messaging_allowed=...`) — it is not persisted or acted on.
+- No existing storage for this concept anywhere in the schema (checked `messages`, `messages_groups`, `groups.settings`/`rules`) — this will need new storage, most naturally a per-post column (e.g. on `messages` or `messages_groups`, since consent is per-TN-post) rather than reusing any per-user consent flag (`users.marketingconsent` etc., which are unrelated platform-marketing consent, not mod-contact consent).
+- Design and implement: schema change, `GroupPostIngestionService::ingest()` wiring to persist the flag, and the actual gate in the mod-messaging feature (ModTools UI/API) that reads it before allowing a moderator to contact the poster directly.
+- Add fixture/test coverage for `freegle_group_ids` — none exists today (`tests/fixtures/tn_sync/*.json`, `PostSyncerTest.php`).
+- Confirm behaviour when `freegle_group_ids` is absent (non-FD API key) vs present-but-empty (explicit no groups consented) — should probably default to "not allowed" either way, but make it explicit.
+
 ### M. NOT in scope
 - Modifying `IncomingMailService` in any way.
 - Extracting/sharing helpers between email + API paths during parallel running.
@@ -152,7 +169,7 @@ Each would follow the `PostSyncer` pattern: constructor takes `(bool $dryRun, bo
 
 ## Open items still to resolve
 
-_(none)_
+- See section P: removing the membership check on the API path (group is chosen, not supplied), and persisting/acting on `moderatorMessagingAllowed` from `freegle_group_ids` (new storage + gating logic needed, none exists today).
 
 ## Resolved decisions
 
@@ -161,5 +178,5 @@ _(none)_
 4. **Spam check on API path** — skipped entirely. The email path uses `shouldSkipSpamCheck()` to skip for TN emails with a valid secret; all API posts are from TN by definition, so the check is always skipped. Behavior is identical to the email path. ✅
 4. **Worry-words on API path** — applied. `GroupPostIngestionService::subjectContainsWorryWords()` is a direct duplicate of `IncomingMailService::containsWorryWords()` and runs unconditionally, matching the email path. ✅
 5. **Missing user handling** — stub user created via `findOrCreateUser()`: inserts a minimal `users` row (explicit `id = $fdUserId`), a synthetic `tn{id}@user.trashnothing.com` email, and an Approved membership. `UserChangesSyncer` fills in the real name/email on the next sync. In dry-run mode the stub is not created and the post is skipped. ✅
-6. **Group lookup** — TN uses the Freegle group `nameshort` as `group_id` in API responses (confirmed from `iznik-server/http/api/group.php`). `PostSyncer::findGroup()` mirrors `IncomingMailService::findGroup()`: `Group::where('nameshort', $nameshort)->first()`. No config map. ✅
+6. **Group lookup** — superseded by commit `676ed453b`. TN's `group_id` in API responses is TN's own opaque internal ID (not the Freegle `nameshort` originally assumed), and drifts out of step with Freegle's group boundaries, so it is never used for placement. `PostSyncer::processPost()` instead resolves the group from the post's lat/lng via `Location::groupsNear($lat, $lng, limit: 1)`, matching the member-placement logic. No config map exists from TN group IDs to Freegle groups. ✅
 7. **Duplicate detection in dry-run** — trace lines carry `would_be_duplicate=true` when a row with the same `tnpostid` already exists. ✅
