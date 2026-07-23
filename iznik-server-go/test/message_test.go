@@ -7689,6 +7689,55 @@ func TestPatchMessageNonContentEditKeepsContentCheck(t *testing.T) {
 	assert.True(t, checkedAtStillSet, "a non-content edit should not discard the existing content-check stamp")
 }
 
+// TestPatchMessageSubjectEditInvalidatesSearchIndex (Discourse 9954/5): the keyword
+// search index (messages_index) is built once from the message's subject by the
+// batch reindexer (MessageSearchService::indexUnindexedMessages(), iznik-batch),
+// which skips a msgid entirely once it has ANY messages_index rows at all. If a
+// subject edit leaves those stale rows in place, a term only present in the new
+// subject (e.g. a brand name added after the initial post) can never be found by
+// search, while an old, now-removed term stays searchable forever. Editing the
+// subject must clear the stale rows so the message looks "unindexed" again and
+// the batch job rebuilds it from the current subject.
+func TestPatchMessageSubjectEditInvalidatesSearchIndex(t *testing.T) {
+	prefix := uniquePrefix("msgedit_reindex")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	// Simulate the batch reindexer having already indexed the message under its
+	// original subject (as it would have, shortly after approval).
+	var wordID uint64
+	db.Exec("INSERT IGNORE INTO words (word, firstthree, soundex, popularity) VALUES ('drive', 'dri', SOUNDEX('drive'), 1)")
+	db.Raw("SELECT id FROM words WHERE word = 'drive'").Scan(&wordID)
+	require.NotZero(t, wordID, "test setup: word row should exist")
+	db.Exec("INSERT INTO messages_index (msgid, wordid, arrival, groupid) VALUES (?, ?, UNIX_TIMESTAMP(), ?)", msgID, wordID, groupID)
+
+	var indexRowsBefore int64
+	db.Raw("SELECT COUNT(*) FROM messages_index WHERE msgid = ?", msgID).Scan(&indexRowsBefore)
+	require.EqualValues(t, 1, indexRowsBefore, "test setup: message should start with a stale index row")
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"subject": prefix + " edited subject with a new brand name",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var indexRowsAfter int64
+	db.Raw("SELECT COUNT(*) FROM messages_index WHERE msgid = ?", msgID).Scan(&indexRowsAfter)
+	assert.EqualValues(t, 0, indexRowsAfter, "editing the subject should clear the stale search index rows so the batch job rebuilds them from the new subject")
+}
+
 // --- tnpostid and expiresat tests ---
 
 func TestGetMessageTnpostid(t *testing.T) {

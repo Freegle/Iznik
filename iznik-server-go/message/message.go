@@ -3457,6 +3457,18 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
 	}
 
+	// The keyword search index (messages_index) is built once from the message's
+	// subject by the batch reindexer (MessageSearchService::indexUnindexedMessages(),
+	// iznik-batch), which skips a msgid entirely once it has ANY messages_index rows
+	// - so a subject edit otherwise leaves the OLD subject's words searchable forever
+	// while a term only present in the NEW subject (e.g. a brand name added after the
+	// original post) can never be found by search (Discourse 9954/5). Deleting the
+	// stale rows here makes the message look "unindexed" again so the next batch run
+	// rebuilds it from the current subject.
+	if subjectChanged {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", req.ID)
+	}
+
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
 		// Store oldtype/newtype only when type actually changed.
 		var oldType, newType interface{}
