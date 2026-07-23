@@ -4475,6 +4475,24 @@ jobs:
           name: Auto-release Apps from Pending Developer Release
           command: bundle exec fastlane ios auto_release
 
+  # Cross-platform release-divergence guard: fails (red CI + failure notification) when the
+  # iOS App Store and Google Play live releases have drifted apart for over a week — e.g. an
+  # iOS version stuck in Prepare for Submission / Apple review while Play keeps shipping.
+  check-release-divergence:
+    executor: android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - bundle-v1-{{ checksum "Gemfile.lock" }}
+            - bundle-v1-
+      - setup-android-fastlane
+      - run:
+          name: Check iOS App Store vs Google Play release divergence
+          command: bundle exec fastlane ios check_release_divergence
+
   check-hotfix-promote:
     docker:
       - image: cimg/base:stable

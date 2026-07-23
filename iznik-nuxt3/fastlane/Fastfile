@@ -874,9 +874,10 @@ platform :ios do
         UI.message("✅ Version #{version} is already released")
         next
       when "DEVELOPER_REJECTED", "REJECTED"
-        UI.message("⚠️  Version #{version} was rejected (status: #{state})")
-        UI.message("💡 You may need to manually create a new version in App Store Connect")
-        next
+        UI.error("⚠️  Version #{version} was rejected (status: #{state})")
+        UI.error("💡 You may need to manually create a new version in App Store Connect")
+        # HARDENING: fail loudly. A rejected release needs a human; exiting green hides it.
+        UI.user_error!("❌ iOS submission halted: version #{version} is #{state} and needs manual action in App Store Connect.")
       when "PREPARE_FOR_SUBMISSION"
         UI.message("📝 Version #{version} is in PREPARE_FOR_SUBMISSION state - will attempt to submit")
       when "READY_FOR_REVIEW"
@@ -907,7 +908,11 @@ platform :ios do
       UI.message("   1. Go to https://appstoreconnect.apple.com/apps/1563499899/appstore/ios/version/deliverable")
       UI.message("   2. Either approve/release version #{other_blocking.version_string}, or remove it to clear the way")
       UI.message("   3. Only one version can be in the submission pipeline at a time")
-      next
+      # HARDENING: fail instead of exiting green. A stale version stuck in an editable
+      # state (e.g. PREPARE_FOR_SUBMISSION) silently blocked every weekly auto-submit for
+      # two weeks while CI stayed green — Freegle iOS sat at 100.0.750 (2026-07-07) while
+      # builds kept uploading. Failing turns the stall into a red job + CircleCI alert.
+      UI.user_error!("❌ iOS auto-submit blocked by version #{other_blocking.version_string} (#{other_blocking.app_store_state}). Clear it in App Store Connect. Failing so the stall is not silently ignored.")
     end
 
     # Check processing status - don't submit if still processing
@@ -967,6 +972,8 @@ platform :ios do
         UI.error("📝 Error details: #{e.message}")
         UI.message("💡 Check App Store Connect for versions in review or pending release")
         UI.message("💡 You may need to reject or approve the blocking version first")
+        # HARDENING: this path previously swallowed the error and exited green.
+        UI.user_error!("❌ iOS auto-submit failed (blocking version): #{e.message}")
       elsif error_message.include?("pre-release build could not be added")
         UI.error("❌ Build #{build_number} cannot be added to the version")
         UI.error("📝 Error details: #{e.message}")
@@ -1069,7 +1076,8 @@ platform :ios do
     other_blocking = all_versions.find { |v| v.version_string != version && editable_states.include?(v.app_store_state) }
     if other_blocking
       UI.error("⚠️  Cannot submit ModTools: Version #{other_blocking.version_string} is blocking (status: #{other_blocking.app_store_state})")
-      next
+      # HARDENING: fail instead of exiting green so a stuck ModTools version is visible.
+      UI.user_error!("❌ ModTools auto-submit blocked by version #{other_blocking.version_string} (#{other_blocking.app_store_state}). Clear it in App Store Connect.")
     end
 
     # Wait up to 30 minutes for Apple to finish processing the build (6 × 5-min sleeps).
@@ -1129,6 +1137,8 @@ platform :ios do
       elsif error_message.include?("cannot submit") || error_message.include?("could not find an editable version") || error_message.include?("relationship value is not acceptable")
         UI.error("❌ Cannot submit ModTools: Another version may be blocking submission")
         UI.error("📝 Error details: #{e.message}")
+        # HARDENING: previously swallowed → job went green while nothing was submitted.
+        UI.user_error!("❌ ModTools auto-submit failed (blocking version): #{e.message}")
       elsif error_message.include?("pre-release build could not be added")
         UI.error("❌ ModTools build #{build_number} cannot be added — may still be processing")
         UI.error("📝 Error details: #{e.message}")
@@ -1317,5 +1327,98 @@ platform :ios do
     end
 
     UI.success("✅ Test version cleanup completed!")
+  end
+
+  desc "Alert if the iOS App Store and Google Play live releases have diverged for over a week"
+  # Catches the failure mode where one store keeps shipping while the other is silently
+  # stuck (e.g. an iOS version wedged in Prepare for Submission / Apple review while Play
+  # auto-publishes). Fails the job on confirmed divergence so it shows up as red CI + a
+  # CircleCI failure notification. Tunable via RELEASE_DIVERGENCE_MAX_DAYS (default 10).
+  lane :check_release_divergence do
+    require 'net/http'
+    require 'json'
+    require 'time'
+    require 'googleauth'
+    require 'google/apis/androidpublisher_v3'
+
+    # "Over a week", with a couple of days' margin so normal Apple-review latency (submit
+    # Wed, approve Thu/Fri) never trips it — only a genuinely missed cycle does. Tunable.
+    max_skew_days = (ENV['RELEASE_DIVERGENCE_MAX_DAYS'] || '10').to_i
+
+    # --- iOS: live App Store version + release date via the public iTunes lookup. This is
+    #     the authoritative "what users actually have" signal and, crucially, reflects
+    #     Apple-review stalls that our own pipeline reports success for. No auth needed. ---
+    ios_version = nil
+    ios_release_date = nil
+    begin
+      res = Net::HTTP.get(URI('https://itunes.apple.com/lookup?bundleId=org.ilovefreegle.iphone&country=gb'))
+      result = (JSON.parse(res)['results'] || []).first
+      if result
+        ios_version = result['version']
+        ios_release_date = Time.parse(result['currentVersionReleaseDate']) if result['currentVersionReleaseDate']
+      end
+    rescue => e
+      UI.important("⚠️  Could not read iOS App Store version: #{e.message}")
+    end
+
+    # --- Android: live Google Play production version. The Play Developer API does not
+    #     expose a reliable publish timestamp (see the note in the auto_promote lane), so
+    #     we take the production release's version name and compare version numbers. ---
+    android_version = nil
+    begin
+      json_key_data = JSON.parse(File.read('google-play-api-key.json'))
+      credentials = Google::Auth::ServiceAccountCredentials.make_creds(
+        json_key_io: StringIO.new(json_key_data.to_json),
+        scope: 'https://www.googleapis.com/auth/androidpublisher'
+      )
+      service = Google::Apis::AndroidpublisherV3::AndroidPublisherService.new
+      service.authorization = credentials
+      edit = service.insert_edit('org.ilovefreegle.direct')
+      prod = service.get_edit_track('org.ilovefreegle.direct', edit.id, 'production')
+      service.delete_edit('org.ilovefreegle.direct', edit.id) rescue nil
+      release = (prod.releases || []).find { |r| r.status == 'completed' } || (prod.releases || []).first
+      android_version = release&.name
+    rescue => e
+      UI.important("⚠️  Could not read Google Play production version: #{e.message}")
+    end
+
+    ios_age_days = ios_release_date ? ((Time.now - ios_release_date) / 86400.0) : nil
+    UI.message("📱 iOS App Store live: #{ios_version || 'unknown'} (released #{ios_release_date&.strftime('%Y-%m-%d') || 'unknown'}#{ios_age_days ? ", #{ios_age_days.round}d ago" : ''})")
+    UI.message("🤖 Google Play  live: #{android_version || 'unknown'}")
+
+    # Don't raise a false alarm if we couldn't read a side, or the versions aren't in the
+    # shared X.Y.Z scheme (Play release names can be customised) — report and stop.
+    valid = ->(v) { v.to_s =~ /\A\d+\.\d+\.\d+\z/ }
+    unless valid.call(ios_version) && valid.call(android_version)
+      UI.important("⚠️  Skipping divergence check — need both stores in X.Y.Z form (iOS #{ios_version.inspect}, Play #{android_version.inspect}).")
+      next
+    end
+
+    cmp = (ios_version.split('.').map(&:to_i) <=> android_version.split('.').map(&:to_i))
+
+    # Direction comes from the version numbers; the "over a week" clock comes from the iOS
+    # release DATE (the only reliable timestamp — the Play API exposes none). Normally iOS
+    # trails Play slightly (Apple review), so a stale iOS date resolves both directions:
+    #   - iOS behind Play, iOS build stale   → iOS release stuck.
+    #   - iOS ahead of Play, iOS build stale → Play hasn't caught up to a >week-old iOS build,
+    #                                          i.e. the Android promotion is stuck.
+    # A fresh iOS date (< threshold) means the trailing store is mid-catch-up → no alarm,
+    # which also skips the harmless window right after a promote before Play publishes.
+    if cmp < 0 && ios_age_days && ios_age_days > max_skew_days
+      UI.user_error!(
+        "🚨 RELEASE DIVERGENCE: iOS App Store is stuck on #{ios_version} " \
+        "(released #{ios_release_date.strftime('%Y-%m-%d')}, #{ios_age_days.round} days ago) while " \
+        "Google Play is on #{android_version}. No iOS release in over #{max_skew_days} days — " \
+        "check App Store Connect for a version wedged in Prepare for Submission / review."
+      )
+    elsif cmp > 0 && ios_age_days && ios_age_days > max_skew_days
+      UI.user_error!(
+        "🚨 RELEASE DIVERGENCE: Google Play is stuck on #{android_version} — it has not caught up " \
+        "to iOS #{ios_version}, which shipped #{ios_age_days.round} days ago. The Android production " \
+        "promotion may be stuck; check the Play console."
+      )
+    else
+      UI.success("✅ iOS and Android live releases are in step (iOS #{ios_version}, Play #{android_version}).")
+    end
   end
 end
