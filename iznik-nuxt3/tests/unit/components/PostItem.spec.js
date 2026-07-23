@@ -169,6 +169,8 @@ describe('PostItem', () => {
       ['helmet', 'Motorcycle and cycle helmets'],
       ['car seat', 'Car seats'],
       ['knife', 'Knives'],
+      ['contact lens solution', 'Contact lens solution'],
+      ['all in one contact lens fluid', 'Contact lens solution'],
     ])('shows warning for "%s"', (item, expectedType) => {
       mockMessage.mockReturnValue({ item })
       const wrapper = createWrapper()

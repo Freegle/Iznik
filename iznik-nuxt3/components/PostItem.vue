@@ -163,6 +163,18 @@ const warnings = [
     keywords: ['knife', 'knives', 'sword', 'swords'],
   },
   {
+    type: 'Contact lens solution',
+    message:
+      'Please make sure contact lens solution is sealed and in date - it goes in the eyes, so it needs to be sterile and safe to use.',
+    keywords: [
+      'contact lens solution',
+      'contact lens fluid',
+      'contact lens cleaner',
+      'lens solution',
+      'lens fluid',
+    ],
+  },
+  {
     type: 'Free',
     message:
       "Everything on Freegle is given away freely.  You don't need to say that - and it keeps things simpler if you remove it.",
