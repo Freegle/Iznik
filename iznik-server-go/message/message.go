@@ -2096,6 +2096,18 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	}
 }
 
+// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and vector
+// embedding (messages_embeddings) rows for a message whose subject/body has just been
+// edited. Both are populated ONCE for messages "missing" from those tables
+// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
+// refreshed on edit, so a search for a term the edit introduced would never match.
+// Deleting the stale rows lets those background jobs re-index and re-embed from the new
+// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
+func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64) {
+	db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgid)
+	db.Exec("DELETE FROM messages_embeddings WHERE msgid = ?", msgid)
+}
+
 // handleApprove approves a pending message.
 func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -2651,6 +2663,8 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		if edit.Newtext != nil {
 			db.Exec("UPDATE messages SET textbody = ? WHERE id = ?", *edit.Newtext, req.ID)
 		}
+		// Applied an edit → the keyword index and vector embedding are now stale.
+		invalidateMessageSearchIndexes(db, req.ID)
 	}
 
 	// Mark ALL pending edits as approved.
@@ -3455,6 +3469,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// flag also need the clean edit re-verified.
 	if subjectChanged || textChanged || itemsChanged {
 		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
+	}
+
+	// The subject/body drive both search indexes (messages_index keyword search and
+	// messages_embeddings vector search), which are each populated once for "missing"
+	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
+	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	if subjectChanged || textChanged {
+		invalidateMessageSearchIndexes(db, req.ID)
 	}
 
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
