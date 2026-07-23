@@ -1,3 +1,12 @@
-# Headers for Netlify.  csp.js seems to kick in during dev but not when deployed.
-# Disabled because we show ads which come in from a variety of domains.
-# Content-Security-Policy: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; report-uri https://fdapilive.ilovefreegle.org/csp.php
+# Security headers for the Netlify-hosted site.
+#
+# The CSP is REPORT-ONLY: it reports violations to csp.php without blocking, so we can tune it
+# against the ad/analytics domains before enforcing. Enforcing CSP was previously disabled entirely
+# because ads load from many domains; report-only is safe alongside ads and gives us the violation
+# data (including any cross-origin framing, via frame-ancestors) needed to move to enforcement later.
+# Note the policy keeps 'unsafe-inline'/'unsafe-eval' for now, so it is defence-in-depth (blocks
+# external script injection from non-allowlisted hosts), not a complete XSS control on its own.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Content-Security-Policy-Report-Only: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; frame-ancestors 'self'; report-uri https://fdapilive.ilovefreegle.org/csp.php

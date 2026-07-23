@@ -1,9 +1,11 @@
 package message
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -582,11 +584,65 @@ func buildBulkSummary(items []BulkItemInput, slots []string) string {
 
 // fetchRemoteImage downloads an image from an http(s) URL, returning its bytes
 // and MIME type. Bounded size/time; verifies the content is an image.
+// isDisallowedIP reports whether an IP is one a user-supplied fetch must never reach: loopback,
+// private (RFC1918), link-local (incl. the 169.254.169.254 cloud-metadata endpoint), unspecified
+// or multicast.
+// allowLoopbackFetch relaxes the SSRF dialer to permit loopback/private targets. It exists solely so
+// unit tests can fetch from a local httptest server (which listens on 127.0.0.1); it stays false in
+// production, where the dialer must block every internal address.
+var allowLoopbackFetch = false
+
+func isDisallowedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
+}
+
+// ssrfSafeDialContext resolves the target host and refuses to connect to any non-public address,
+// checked on the ACTUAL resolved IP. http.Transport calls this for every connection including each
+// redirect hop, so it also defeats DNS rebinding and redirects to internal hosts.
+func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	d := &net.Dialer{Timeout: 10 * time.Second}
+	var lastErr error = fmt.Errorf("no usable address for %s", host)
+	for _, ipa := range ips {
+		if !allowLoopbackFetch && isDisallowedIP(ipa.IP) {
+			return nil, fmt.Errorf("refusing to connect to non-public address %s", ipa.IP)
+		}
+		conn, derr := d.DialContext(ctx, network, net.JoinHostPort(ipa.IP.String(), port))
+		if derr == nil {
+			return conn, nil
+		}
+		lastErr = derr
+	}
+	return nil, lastErr
+}
+
 func fetchRemoteImage(url string) ([]byte, string, error) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return nil, "", fmt.Errorf("not an http(s) url")
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	// SECURITY: this fetches an attacker-supplied bulk-offer photo URL server-side. Use an SSRF-safe
+	// dialer that blocks internal/private targets, and cap redirects.
+	client := &http.Client{
+		Timeout:   20 * time.Second,
+		Transport: &http.Transport{DialContext: ssrfSafeDialContext},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, "", err

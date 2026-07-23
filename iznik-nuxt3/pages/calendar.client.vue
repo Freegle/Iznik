@@ -127,11 +127,30 @@ const eventData = computed(() => {
   }
 })
 
+/**
+ * Escape HTML so attacker-controlled text can never inject markup when rendered
+ * via v-html. The event `description` comes entirely from the `?data=` query
+ * param (see rawData/parsed above) and is never seen by the server, so it must
+ * be treated as hostile.
+ */
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 const descriptionWithLinks = computed(() => {
   if (!eventData.value.description) return ''
-  return eventData.value.description.replace(
-    /(https?:\/\/[^\s]+)/g,
-    '<a href="$1" target="_blank">$1</a>'
+  // SECURITY: escape BEFORE linkifying (escape-then-linkify). Rendering the raw
+  // description via v-html was a reflected XSS: a crafted /calendar?data=... link
+  // executed script in the ilovefreegle.org origin. After escaping, no '<', '>',
+  // '"' or "'" survives, so only our own <a> markup and http(s) links remain.
+  return escapeHtml(eventData.value.description).replace(
+    /(https?:\/\/[^\s<]+)/g,
+    '<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>'
   )
 })
 
