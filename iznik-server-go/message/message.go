@@ -2704,6 +2704,10 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+
+		// Reverting restored the previous subject/body, so the keyword index and vector
+		// embedding are out of sync with the message again - drop them to be rebuilt.
+		invalidateMessageSearchIndexes(db, req.ID)
 	} else {
 		// No recorded old values — just clear the editedby flag.
 		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
