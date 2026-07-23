@@ -162,7 +162,7 @@ func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint
 		for _, s := range bodyTier {
 			seen[s.result.Msgid] = true
 		}
-		lexical := embedding.Global.LexicalMatch(queryWords, msgtype, groupids, swlat, swlng, nelat, nelng)
+		lexical := embedding.Global.LexicalMatch(queryWords, msgtype, groupids, allowedIDs, swlat, swlng, nelat, nelng)
 		for _, lr := range lexical {
 			if seen[lr.Msgid] {
 				continue

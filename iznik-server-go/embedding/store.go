@@ -441,14 +441,17 @@ func tokenizeWords(s string) map[string]bool {
 }
 
 // LexicalMatch returns every open entry whose subject contains ALL of the given
-// words (case-insensitive), subject to the same type/group/bbox filters as
-// Search. This is the in-memory replacement for the retired keyword index's
-// exact-match guarantee: a post whose subject literally contains the query words
-// is always findable, even when its embedding cosine is low (short titles, UK
-// retail terms the model misses). O(N × words) over the store — single-digit ms
-// for the ~100k open-message store. Words must already be lower-cased.
+// words (case-insensitive), subject to the same type/group/allowedIDs/bbox
+// filters as Search — including allowedIDs, the browse-scoped Nearby-feed
+// universe restriction, so the lexical guarantee can't surface a post outside
+// the viewer's reach that the cosine path would have excluded. This is the
+// in-memory replacement for the retired keyword index's exact-match guarantee:
+// a post whose subject literally contains the query words is always findable,
+// even when its embedding cosine is low (short titles, UK retail terms the
+// model misses). O(N × words) over the store — single-digit ms for the ~100k
+// open-message store. Words must already be lower-cased.
 func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
-	swlat, swlng, nelat, nelng float32) []VectorSearchResult {
+	allowedIDs map[uint64]bool, swlat, swlng, nelat, nelng float32) []VectorSearchResult {
 
 	if len(words) == 0 {
 		return nil
@@ -475,6 +478,9 @@ func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
 			continue
 		}
 		if hasGroupFilter && !groupSet[e.Groupid] {
+			continue
+		}
+		if allowedIDs != nil && !allowedIDs[e.Msgid] {
 			continue
 		}
 		if hasBoxFilter {
