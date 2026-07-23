@@ -1718,7 +1718,10 @@ func PatchSession(c *fiber.Ctx) error {
 		}
 
 		var emails []EmailRecord
-		db.Raw("SELECT id, userid, email FROM users_emails WHERE validatekey = ?", *req.Key).Scan(&emails)
+		// SECURITY: reject keys older than 7 days so a validatekey is not an indefinitely-valid
+		// bearer credential (it can trigger an account merge below). NULL validatetime (legacy rows
+		// predating this) stays accepted for compatibility; new keys always set it.
+		db.Raw("SELECT id, userid, email FROM users_emails WHERE validatekey = ? AND (validatetime IS NULL OR validatetime > NOW() - INTERVAL 7 DAY)", *req.Key).Scan(&emails)
 
 		if len(emails) == 0 {
 			return c.JSON(fiber.Map{

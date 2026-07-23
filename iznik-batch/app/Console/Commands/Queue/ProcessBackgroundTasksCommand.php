@@ -998,9 +998,13 @@ class ProcessBackgroundTasksCommand extends Command
         $key = $recentKey;
 
         if (! $key) {
-            $key = uniqid();
+            // SECURITY: use a CSPRNG, not uniqid() (a time-based, guessable value). This key is a
+            // bearer credential - a successful guess confirms ownership of the email and can trigger
+            // an account merge in the Go PatchSession consumer. 128 bits of entropy makes it
+            // unguessable, and validatetime lets the consumer expire it.
+            $key = bin2hex(random_bytes(16));
             DB::statement(
-                'INSERT INTO users_emails (email, canon, validatekey, backwards) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE validatekey = ?',
+                'INSERT INTO users_emails (email, canon, validatekey, backwards, validatetime) VALUES (?, ?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE validatekey = ?, validatetime = NOW()',
                 [$email, $canon, $key, strrev($canon), $key]
             );
         }

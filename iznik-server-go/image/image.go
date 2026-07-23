@@ -154,6 +154,45 @@ func Post(c *fiber.Ctx) error {
 	return doCreate(c, &req)
 }
 
+// ownsImageParent reports whether myid may attach or modify an image on the given parent
+// entity. A system-role moderator may act on any content; otherwise the caller must own the
+// specific parent. This is what stops anyone attaching or rotating images on another user's
+// existing posts, groups, events, avatars, etc.
+func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
+	if myid == 0 || parentID == 0 {
+		return false
+	}
+	if auth.IsSystemMod(myid) {
+		return true
+	}
+	if imgType == "User" {
+		return parentID == myid
+	}
+	var ownerCol, table string
+	switch imgType {
+	case "Message":
+		ownerCol, table = "fromuser", "messages"
+	case "ChatMessage":
+		ownerCol, table = "userid", "chat_messages"
+	case "CommunityEvent":
+		ownerCol, table = "userid", "communityevents"
+	case "Volunteering":
+		ownerCol, table = "userid", "volunteering"
+	case "Story":
+		ownerCol, table = "userid", "users_stories"
+	case "Newsfeed":
+		ownerCol, table = "userid", "newsfeed"
+	default:
+		// Group, Newsletter, Noticeboard: mod-managed content. Non-mods have no ownership
+		// claim (system mods are already allowed above), so deny.
+		return false
+	}
+	db := database.DBConn
+	var owner uint64
+	db.Raw("SELECT `"+ownerCol+"` FROM `"+table+"` WHERE id = ?", parentID).Scan(&owner)
+	return owner != 0 && owner == myid
+}
+
 func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	if req.ExternalUID == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "externaluid is required")
@@ -168,16 +207,25 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 
 	parentID := req.resolveParentID()
 
-	// Avatar uploads (imgtype='User') require authentication and ownership:
-	// the requester must be the target user (or an admin/support account).
-	// All other imgtypes remain no-auth so the pre-signup give/post flow is not broken.
+	// Avatar uploads (imgtype='User') always require authentication, even for an unlinked upload.
 	if imgType == "User" {
-		myid := auth.WhoAmI(c)
-		if myid == 0 {
+		if auth.WhoAmI(c) == 0 {
 			return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to upload a user avatar")
 		}
-		if parentID != 0 && myid != parentID && !auth.IsAdminOrSupport(myid) {
-			return fiber.NewError(fiber.StatusForbidden, "Cannot set another user's avatar")
+	}
+
+	// SECURITY: attaching an image to an EXISTING parent entity (non-zero id) requires the caller
+	// to own that entity (or be a system moderator). Anonymous unlinked uploads (parentID == 0)
+	// stay open: the pre-signup give/post flow uploads images first and links them to the freshly
+	// created draft on submit, so a legitimate upload has no parent yet. Without this, anyone could
+	// attach an arbitrary image to another user's live post, group, event, avatar, etc.
+	if parentID != 0 {
+		myid := auth.WhoAmI(c)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to attach an image to existing content")
+		}
+		if !ownsImageParent(myid, imgType, parentID) {
+			return fiber.NewError(fiber.StatusForbidden, "Cannot attach an image to content you do not own")
 		}
 	}
 
@@ -244,9 +292,22 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid imgtype")
 	}
 
+	// SECURITY: rotating mutates an existing image row. Resolve the row's parent entity and
+	// require the caller to own it (or be a system moderator); otherwise anyone could rotate
+	// (deface) any user's avatar, post photo, group image, etc. by iterating image ids.
+	myid := auth.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to rotate an image")
+	}
+	db := database.DBConn
+	var rotateParentID uint64
+	db.Raw("SELECT `"+cfg.IDColumn+"` FROM `"+cfg.Table+"` WHERE id = ?", req.ID).Scan(&rotateParentID)
+	if !ownsImageParent(myid, imgType, rotateParentID) {
+		return fiber.NewError(fiber.StatusForbidden, "Cannot rotate an image you do not own")
+	}
+
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`
 
-	db := database.DBConn
 	result := db.Exec("UPDATE `"+cfg.Table+"` SET externalmods = ? WHERE id = ?", modsJSON, req.ID)
 
 	if result.Error != nil {

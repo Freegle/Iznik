@@ -51,7 +51,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function dGet(path, apiKey, attempt = 0) {
   const resp = await fetch(`${DISCOURSE_BASE}${path}`, {
-    headers: { 'User-Api-Key': apiKey, 'Api-Username': 'Edward_Hibbert', Accept: 'application/json' },
+    headers: { 'Api-Key': apiKey, Accept: 'application/json' },
   })
   if (resp.status === 429 && attempt < 6) {
     const retryAfter = Number(resp.headers.get('Retry-After')) || 0
@@ -161,8 +161,7 @@ async function main() {
         const resp = await fetch(`${DISCOURSE_BASE}/posts/${reply.id}.json`, {
           method: 'PUT',
           headers: {
-            'User-Api-Key': apiKey,
-            'Api-Username': 'Edward_Hibbert',
+            'Api-Key': apiKey,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({

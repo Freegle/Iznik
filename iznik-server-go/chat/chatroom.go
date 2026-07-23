@@ -1457,7 +1457,10 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	canUpdate := false
 	switch room.Chattype {
 	case utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_GROUP, utils.CHAT_TYPE_MOD2MOD:
-		canUpdate = true
+		// SECURITY: the caller must be a participant of the room or a platform (system-role)
+		// moderator. Without this any authenticated user could read/forge the roster of an
+		// arbitrary modmail or mod-team chat simply by guessing its (small, sequential) id.
+		canUpdate = (myid == room.User1 || myid == room.User2 || auth.IsSystemMod(myid))
 	case utils.CHAT_TYPE_USER2USER:
 		canUpdate = (myid == room.User1 || myid == room.User2)
 	}

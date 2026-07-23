@@ -188,6 +188,47 @@ func TestAppleLoginExistingUserByEmail(t *testing.T) {
 	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
 }
 
+// TestAppleLoginClientEmailNotTrusted covers the account-takeover fix: when the verified Apple
+// identity token has NO email claim, a client-supplied email must NOT be used to match an existing
+// account. Otherwise an attacker holding any valid email-less Apple token could log in as any user
+// whose email address they know. The attacker's login must instead create a fresh, separate account.
+func TestAppleLoginClientEmailNotTrusted(t *testing.T) {
+	prefix := uniquePrefix("apple-cross")
+	victimID := CreateTestUser(t, prefix, "User")
+
+	db := database.DBConn
+	var victimEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? LIMIT 1", victimID).Scan(&victimEmail)
+	assert.NotEmpty(t, victimEmail, "victim should have an email on file")
+
+	attackerAppleUID := "apple-attacker-" + prefix
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.NoError(t, err)
+	kid := "apple-test-kid-cross"
+	jwksServer := newAppleJWKSServer(privateKey, kid)
+	defer jwksServer.Close()
+
+	// Token has NO email claim; the attacker puts the victim's email in the request body.
+	identityToken := makeAppleIdentityToken(privateKey, kid, attackerAppleUID, "", "", "")
+	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
+	defer os.Unsetenv("APPLE_JWKS_URL")
+
+	resp := postAppleSession(identityToken, attackerAppleUID, victimEmail, "", "")
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The attacker's Apple UID must be linked to a NEW account, never the victim's.
+	var loginUserID uint64
+	db.Raw("SELECT userid FROM users_logins WHERE type = 'Apple' AND uid = ?", attackerAppleUID).Scan(&loginUserID)
+	assert.NotEqual(t, uint64(0), loginUserID, "a new account should have been created")
+	assert.NotEqual(t, victimID, loginUserID, "attacker login must NOT be linked to the victim account")
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_logins WHERE userid = ?", loginUserID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", loginUserID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", loginUserID)
+	db.Exec("DELETE FROM users WHERE id = ?", loginUserID)
+}
+
 func TestAppleLoginExistingUserByAppleUID(t *testing.T) {
 	prefix := uniquePrefix("apple-uid")
 	appleUID := "apple-uid-" + prefix
