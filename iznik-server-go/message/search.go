@@ -503,3 +503,70 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 
 	return results
 }
+
+// reindexMessageSearchWords refreshes the messages_index rows for a message from its
+// CURRENT subject, so word search (Support Tools, member search - see GetWordsExact et
+// al above) reflects an edit immediately. Call this whenever a message's subject changes.
+//
+// The nightly iznik-batch catch-up job (MessageSearchService::indexUnindexedMessages)
+// only indexes messages it has never indexed before (it filters on msgid NOT IN
+// messages_index) - once a message is indexed, that job never revisits it. Without this,
+// editing a message to add new wording leaves the OLD wording searchable and the NEW
+// wording invisible (Discourse 9954/3: "Moulinex food processor" added to a WANTED post
+// stayed unsearchable while "spindle"/"stem" from the original wording kept matching).
+//
+// Only Approved messages are indexed: messages_index is always joined to
+// messages_spatial (see GetWordsExact/GetWordsTypo/GetWordsStarts/GetWordsSounds above),
+// which - like the batch job - only has rows for Approved messages, so indexing a
+// Pending/Rejected edit would never surface in a search result anyway.
+func reindexMessageSearchWords(db *gorm.DB, msgid uint64) {
+	type approvedRow struct {
+		Subject string
+		Arrival time.Time
+		Groupid uint64
+	}
+	var row approvedRow
+	db.Raw("SELECT messages.subject, messages_groups.arrival, messages_groups.groupid FROM messages "+
+		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
+		"WHERE messages.id = ? AND messages_groups.collection = 'Approved' AND messages_groups.deleted = 0 "+
+		"ORDER BY messages_groups.arrival DESC LIMIT 1", msgid).Scan(&row)
+
+	if row.Subject == "" {
+		return
+	}
+
+	// Full recompute rather than an incremental diff: simpler, and matches the batch
+	// job's own indexString, which always upserts the complete current word set.
+	db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgid)
+
+	// V1/batch parity: arrival is stored negated so the existing ORDER BY arrival ASC
+	// callers see newest-first (see MessageSearchService::indexString).
+	arrival := -row.Arrival.Unix()
+
+	for _, word := range GetWords(row.Subject) {
+		// words.word is varchar(10) (see MessageSearchService::getWords).
+		if len(word) > 10 {
+			word = word[:10]
+		}
+
+		firstThree := word
+		if len(firstThree) > 3 {
+			firstThree = firstThree[:3]
+		}
+
+		var wordID uint64
+		db.Raw("SELECT id FROM words WHERE word = ?", word).Scan(&wordID)
+		if wordID == 0 {
+			db.Exec("INSERT IGNORE INTO words (word, firstthree, soundex) VALUES (?, ?, SUBSTRING(SOUNDEX(?), 1, 10))",
+				word, firstThree, word)
+			db.Raw("SELECT id FROM words WHERE word = ?", word).Scan(&wordID)
+		}
+		if wordID == 0 {
+			continue
+		}
+
+		db.Exec("INSERT INTO messages_index (msgid, wordid, arrival, groupid) VALUES (?, ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE arrival = VALUES(arrival)", msgid, wordID, arrival, row.Groupid)
+		db.Exec("UPDATE words SET popularity = -(SELECT COUNT(*) FROM messages_index WHERE wordid = ?) WHERE id = ?", wordID, wordID)
+	}
+}

@@ -2690,6 +2690,14 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+
+		// The rejected edit's subject already reached messages_index (applyPatchMessageCore
+		// refreshes it live, before a mod ever reviews it) - restoring the old subject here
+		// must refresh it again, or the index is left showing the reverted wording instead
+		// of the original (same gap as Discourse 9954/3, on the revert path).
+		if old.Oldsubject != nil {
+			reindexMessageSearchWords(db, req.ID)
+		}
 	} else {
 		// No recorded old values — just clear the editedby flag.
 		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
@@ -3455,6 +3463,17 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// flag also need the clean edit re-verified.
 	if subjectChanged || textChanged || itemsChanged {
 		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
+	}
+
+	// The full-text search index (messages_index, queried by Support Tools and member
+	// search - see search.go) is derived from the subject. The nightly iznik-batch catch-up
+	// job (MessageSearchService::indexUnindexedMessages) only indexes messages it has never
+	// indexed before, so once a message is indexed it is never revisited - editing in new
+	// wording silently leaves the OLD wording searchable and the NEW wording invisible
+	// (Discourse 9954/3). Refresh it here, for both mods and owners, whenever the subject
+	// changes.
+	if subjectChanged {
+		reindexMessageSearchWords(db, req.ID)
 	}
 
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {

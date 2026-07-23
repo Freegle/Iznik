@@ -7657,6 +7657,59 @@ func TestPatchMessageSubjectEditResetsContentCheck(t *testing.T) {
 	assert.False(t, checkedAtStillSet, "editing the subject should clear contentcheck_checked_at so the batch job re-checks the new content")
 }
 
+// TestPatchMessageSubjectEditRefreshesSearchIndex verifies Discourse 9954/3: a member
+// (topic 9954 post 3) edited a WANTED post's subject from "Spindle/stem/drive shaft" to
+// add "Moulinex food processor", and Support Tools search for "Moulinex" could not find
+// the message even though it was still live - only the OLD wording ("spindle"/"stem")
+// matched. The nightly iznik-batch catch-up job (MessageSearchService::
+// indexUnindexedMessages) only indexes messages it has never indexed before, so it
+// silently never re-indexes an edited subject. Editing a message must refresh
+// messages_index immediately so a search on newly-added wording finds it.
+func TestPatchMessageSubjectEditRefreshesSearchIndex(t *testing.T) {
+	prefix := uniquePrefix("msgedit_reindex")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: spindle stem driveshaft", 55.9533, -3.1883)
+
+	// Sanity check: the original wording is indexed and searchable, matching the
+	// Discourse report ("spindle or stem find it").
+	origWords := message.GetWords("spindle")
+	origResults := message.GetWordsExact(db, origWords, 100, []uint64{groupID}, nil, "All", 0, 0, 0, 0)
+	require.True(t, containsMsgid(origResults, msgID), "test setup: original wording should be indexed and searchable")
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"subject": "WANTED: spindle stem driveshaft moulinex foodprocessor",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	newWords := message.GetWords("moulinex")
+	require.Equal(t, 1, len(newWords), "test setup: 'moulinex' should survive the common-word filter")
+
+	newResults := message.GetWordsExact(db, newWords, 100, []uint64{groupID}, nil, "All", 0, 0, 0, 0)
+	assert.True(t, containsMsgid(newResults, msgID),
+		"searching for a word added in an edit should find the message - the search index must be refreshed on edit")
+}
+
+func containsMsgid(results []message.SearchResult, msgid uint64) bool {
+	for _, r := range results {
+		if r.Msgid == msgid {
+			return true
+		}
+	}
+	return false
+}
+
 // TestPatchMessageNonContentEditKeepsContentCheck: editing a field that
 // ContentCheckService::checkMessage() never inspects (availablenow) must NOT
 // discard the existing content-check stamp — only subject/textbody/item edits
