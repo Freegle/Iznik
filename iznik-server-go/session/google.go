@@ -32,11 +32,14 @@ func getGoogleTokenInfoURL() string {
 type googleTokenInfoResponse struct {
 	Sub        string `json:"sub"`
 	Email      string `json:"email"`
-	GivenName  string `json:"given_name"`
-	FamilyName string `json:"family_name"`
-	Name       string `json:"name"`
-	Aud        string `json:"aud"`
-	Picture    string `json:"picture"`
+	// tokeninfo returns email_verified as the string "true"; other Google endpoints use a bool, so
+	// accept either.
+	EmailVerified any    `json:"email_verified"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Name          string `json:"name"`
+	Aud           string `json:"aud"`
+	Picture       string `json:"picture"`
 }
 
 // handleGoogleLogin verifies a Google ID token and logs the user in.
@@ -100,6 +103,14 @@ func handleGoogleLogin(c *fiber.Ctx, jwtToken string) error {
 			"ret":    2,
 			"status": "Google token missing subject",
 		})
+	}
+
+	// SECURITY: only trust the email for account matching if Google reports it verified. Some
+	// Google/Workspace accounts carry an email the token holder does not actually control; using
+	// such an address to match would let an attacker link into an existing Freegle account by that
+	// address. If it is not verified, drop it so socialMatchOrCreate matches by the Google `sub` only.
+	if tokenInfo.EmailVerified != true && tokenInfo.EmailVerified != "true" {
+		tokenInfo.Email = ""
 	}
 
 	// Find or create the user.

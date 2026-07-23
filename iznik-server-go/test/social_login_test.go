@@ -32,14 +32,61 @@ func newGoogleMockServer(sub, email, givenName, familyName, name, aud string, st
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{
-			"sub":         sub,
-			"email":       email,
-			"given_name":  givenName,
-			"family_name": familyName,
-			"name":        name,
-			"aud":         aud,
+			"sub":            sub,
+			"email":          email,
+			"email_verified": "true",
+			"given_name":     givenName,
+			"family_name":    familyName,
+			"name":           name,
+			"aud":            aud,
 		})
 	}))
+}
+
+// TestGoogleLoginUnverifiedEmailNotTrusted covers the account-linking fix: a Google token whose
+// email is NOT verified must not be used to match an existing account by that email; the login must
+// link by the Google `sub` only, creating a fresh account.
+func TestGoogleLoginUnverifiedEmailNotTrusted(t *testing.T) {
+	prefix := uniquePrefix("google-unverified")
+	clientID := "test-google-client-id"
+
+	victimID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+	var victimEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? LIMIT 1", victimID).Scan(&victimEmail)
+	assert.NotEmpty(t, victimEmail, "victim should have an email on file")
+
+	attackerSub := "google-attacker-" + prefix
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Attacker's sub, victim's email, but email_verified = "false".
+		json.NewEncoder(w).Encode(map[string]string{
+			"sub":            attackerSub,
+			"email":          victimEmail,
+			"email_verified": "false",
+			"aud":            clientID,
+		})
+	}))
+	defer server.Close()
+
+	os.Setenv("GOOGLE_TOKENINFO_URL", server.URL)
+	os.Setenv("GOOGLE_CLIENT_ID", clientID)
+	defer os.Unsetenv("GOOGLE_TOKENINFO_URL")
+	defer os.Unsetenv("GOOGLE_CLIENT_ID")
+
+	resp := postSession(`{"googlelogin":true,"googlejwt":"fake-jwt-token"}`)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var loginUserID uint64
+	db.Raw("SELECT userid FROM users_logins WHERE type = 'Google' AND uid = ?", attackerSub).Scan(&loginUserID)
+	assert.NotEqual(t, uint64(0), loginUserID, "a new account should have been created")
+	assert.NotEqual(t, victimID, loginUserID, "unverified-email login must NOT link to the victim account")
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_logins WHERE userid = ?", loginUserID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", loginUserID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", loginUserID)
+	db.Exec("DELETE FROM users WHERE id = ?", loginUserID)
 }
 
 func TestGoogleLoginNewUser(t *testing.T) {
