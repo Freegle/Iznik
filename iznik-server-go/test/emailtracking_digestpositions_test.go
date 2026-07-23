@@ -276,11 +276,20 @@ func TestDigestPositions_CohortSplit(t *testing.T) {
 	now := time.Now()
 	etype := uniqueDigestType()
 
-	// Synthetic high userids with no matching users row (LEFT JOIN → tnuserid
-	// NULL → passes the cohort's tnuserid filter). 990000000 % 10 == 0 (holdout);
-	// 990000001 % 10 == 1 (ranked).
+	// Deterministic high userids (well above any real user id) so the cohort
+	// split (userid % 10) lands exactly on holdout/ranked. email_tracking.userid
+	// has a foreign key on users(id), so these must be real (if minimal) rows -
+	// but not Trash Nothing imports, so the cohort query's LEFT JOIN users u ON
+	// e.userid = u.id still yields u.tnuserid IS NULL. 990000000 % 10 == 0
+	// (holdout); 990000001 % 10 == 1 (ranked).
 	const holdoutUser = uint64(990000000)
 	const rankedUser = uint64(990000001)
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO users (id, firstname, lastname, fullname, systemrole, lastlocation) "+
+		"VALUES (?, 'Cohort', 'Test', 'Cohort Test Holdout', 'User', NULL)", holdoutUser)
+	db.Exec("INSERT IGNORE INTO users (id, firstname, lastname, fullname, systemrole, lastlocation) "+
+		"VALUES (?, 'Cohort', 'Test', 'Cohort Test Ranked', 'User', NULL)", rankedUser)
+	defer db.Exec("DELETE FROM users WHERE id IN (?, ?)", holdoutUser, rankedUser)
 
 	// Holdout recipient: 2-post digest, clicks position 0.
 	idHold := createDigestTrackingRecordForUser(t, etype, now, 2, holdoutUser)
