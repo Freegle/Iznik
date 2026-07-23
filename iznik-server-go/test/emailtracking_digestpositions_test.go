@@ -264,6 +264,27 @@ func createDigestTrackingRecordForUser(t *testing.T, emailType string, sentAt ti
 	return id
 }
 
+// createSyntheticCohortUser inserts a minimal real users row at an explicit
+// id, so email_tracking.userid (FK'd to users.id since the 2026-07-21
+// schema-parity migration) can be set to that id without violating the
+// constraint. tnuserid is left NULL, so the row still passes the cohort
+// query's Trash Nothing exclusion like any other test user.
+func createSyntheticCohortUser(t *testing.T, id uint64) {
+	db := database.DBConn
+	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
+	result := db.Exec("INSERT INTO users (id, firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES (?, 'Synthetic', 'CohortUser', ?, 'User', NULL, ?)",
+		id, fmt.Sprintf("Synthetic Cohort User %d", id), settings)
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to create synthetic cohort user %d: %v", id, result.Error)
+	}
+}
+
+func deleteSyntheticCohortUser(id uint64) {
+	db := database.DBConn
+	db.Exec("DELETE FROM users WHERE id = ?", id)
+}
+
 // TestDigestPositions_CohortSplit verifies the ranked/holdout cohort filter
 // (userid % 10) partitions the click data: a holdout recipient's clicks appear
 // only under cohort=holdout, a ranked recipient's only under cohort=ranked, and
@@ -276,11 +297,16 @@ func TestDigestPositions_CohortSplit(t *testing.T) {
 	now := time.Now()
 	etype := uniqueDigestType()
 
-	// Synthetic high userids with no matching users row (LEFT JOIN → tnuserid
-	// NULL → passes the cohort's tnuserid filter). 990000000 % 10 == 0 (holdout);
-	// 990000001 % 10 == 1 (ranked).
+	// Recipient users for the cohort split. email_tracking.userid FKs to
+	// users.id (added by the 2026-07-21 schema-parity migration), so these
+	// must be real rows rather than arbitrary high numbers. 990000000 % 10
+	// == 0 (holdout); 990000001 % 10 == 1 (ranked).
 	const holdoutUser = uint64(990000000)
 	const rankedUser = uint64(990000001)
+	createSyntheticCohortUser(t, holdoutUser)
+	createSyntheticCohortUser(t, rankedUser)
+	defer deleteSyntheticCohortUser(holdoutUser)
+	defer deleteSyntheticCohortUser(rankedUser)
 
 	// Holdout recipient: 2-post digest, clicks position 0.
 	idHold := createDigestTrackingRecordForUser(t, etype, now, 2, holdoutUser)
