@@ -163,15 +163,23 @@ const warnings = [
     keywords: ['knife', 'knives', 'sword', 'swords'],
   },
   {
-    type: 'Contact lens solution',
-    message:
-      'Please make sure contact lens solution is sealed and in date - it goes in the eyes, so it needs to be sterile and safe to use.',
+    type: 'Sealed and in date',
+    message: 'Please make sure this is sealed and in date.',
     keywords: [
       'contact lens solution',
       'contact lens fluid',
       'contact lens cleaner',
       'lens solution',
       'lens fluid',
+      'cosmetics',
+      'make up',
+      'makeup',
+      'mascara',
+      'sunscreen',
+      'sun cream',
+      'suncream',
+      'sun lotion',
+      'aftersun',
     ],
   },
   {
