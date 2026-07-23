@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	neturl "net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -1336,8 +1337,28 @@ func isValidRedirectURL(url string) bool {
 	// Allow freegle.in for Freegle PayPal short links (e.g. donate CTA)
 	allowedDomains = append(allowedDomains, "freegle.in")
 
+	// Same-origin relative paths (e.g. "/mypost/123") are safe to redirect to.
+	if strings.HasPrefix(url, "/") && !strings.HasPrefix(url, "//") {
+		return true
+	}
+
+	// Match on the exact host, not a naive substring: strings.Contains(url, domain) would
+	// accept "https://evil.com/modtools.org" and "https://modtools.org.evil.com" as valid.
+	parsed, err := neturl.Parse(url)
+	if err != nil {
+		return false
+	}
+	// Only http(s) redirects (blocks javascript:, data:, etc.).
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return false
+	}
 	for _, domain := range allowedDomains {
-		if strings.Contains(url, domain) {
+		d := strings.ToLower(domain)
+		if host == d || strings.HasSuffix(host, "."+d) {
 			return true
 		}
 	}

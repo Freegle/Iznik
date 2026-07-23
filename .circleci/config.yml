@@ -155,7 +155,7 @@ jobs:
             if [ "${RUNNER_PROVIDER:-katapult}" = "hetzner" ]; then
               HTOKEN="${HETZNER_API_TOKEN:?HETZNER_API_TOKEN env var not set}"
               HAPI="https://api.hetzner.cloud/v1"
-              RUNNER_LAUNCH_TOKEN="${RUNNER_LAUNCH_TOKEN:-ac43519948448b967b504c5e97e6dc552fa403b4ea259713dfe1973d3db391ae2cc6b794ed974d2e}"
+              RUNNER_LAUNCH_TOKEN="${RUNNER_LAUNCH_TOKEN:-DUMMY_RUNNER_LAUNCH_TOKEN_ROTATE_AND_SET_ENV}"
               MAX_RUNNERS=2
               EXISTING=$(curl -sf -H "Authorization: Bearer $HTOKEN" "$HAPI/servers?per_page=50" 2>/dev/null | jq '[.servers[]|select(.name|startswith("hetzner-runner-"))]|length' 2>/dev/null || echo 0)
               echo "Hetzner runners: $EXISTING / $MAX_RUNNERS"
@@ -183,7 +183,7 @@ jobs:
             fi
 
             # Katapult is the default runner for all CI builds.
-            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
+            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-DUMMY_KATAPULT_API_TOKEN_ROTATE_AND_SET_ENV}"
             KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
             KATAPULT_API="https://api.katapult.io/core/v1"
             MAX_VMS=2

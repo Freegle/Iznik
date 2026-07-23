@@ -68,7 +68,9 @@ func TestCreateImageAttachmentWithParent(t *testing.T) {
 }
 
 func TestCreateImageNoAuth(t *testing.T) {
-	// Image POST does not require auth - images are uploaded before the user signs up.
+	// SECURITY: an anonymous caller may NOT attach an image to an EXISTING message - that would
+	// let anyone deface another user's post. (Unlinked pre-signup uploads with no parent id are
+	// still allowed - see TestCreateImageNoAuthUnlinked.)
 	prefix := uniquePrefix("CreateImageNoAuth")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
@@ -80,13 +82,42 @@ func TestCreateImageNoAuth(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, _ := getApp().Test(req)
-	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
 
-	respBody := rsp(resp)
+// TestCreateImageNoAuthUnlinked verifies the pre-signup give/post flow still works: an image
+// uploaded with no parent id (linked to the draft on submit) is accepted without auth.
+func TestCreateImageNoAuthUnlinked(t *testing.T) {
+	prefix := uniquePrefix("CreateImageUnlinked")
+	body := fmt.Sprintf(`{"externaluid":"freegletusd-unlinked-%s","imgtype":"Message"}`, prefix)
+	req := httptest.NewRequest("POST", "/api/image", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 	var result map[string]interface{}
-	json.Unmarshal(respBody, &result)
-	assert.NotZero(t, result["id"])
+	json.Unmarshal(rsp(resp), &result)
 	assert.Equal(t, float64(0), result["ret"])
+}
+
+// TestCreateImageCrossUserDenied verifies a logged-in user cannot attach an image to another
+// user's existing message.
+func TestCreateImageCrossUserDenied(t *testing.T) {
+	prefix := uniquePrefix("CreateImageCross")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	msgID := CreateTestMessage(t, ownerID, groupID, "Cross test "+prefix, 55.9533, -3.1883)
+
+	attackerID := CreateTestUser(t, prefix+"attacker", "User")
+	_, token := CreateTestSession(t, attackerID)
+
+	body := fmt.Sprintf(`{"externaluid":"freegletusd-cross-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
 // TestCreateUserAvatarOwnedByRequester verifies that uploading an avatar for
@@ -306,7 +337,8 @@ func TestRotateImageWithBooleanFlag(t *testing.T) {
 }
 
 func TestRotateImageNoAuth(t *testing.T) {
-	// Rotate also works without auth - consistent with create.
+	// SECURITY: rotating an image now requires authentication and ownership - an anonymous
+	// caller may not rotate (deface) an existing image.
 	prefix := uniquePrefix("RotateNoAuth")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
@@ -326,16 +358,11 @@ func TestRotateImageNoAuth(t *testing.T) {
 	json.Unmarshal(createRespBody, &createResult)
 	imageID := createResult["id"].(float64)
 
-	// Rotate without auth.
+	// Rotate without auth is now rejected.
 	rotateBody := fmt.Sprintf(`{"id":%d,"rotate":90,"type":"Message"}`, int(imageID))
 	rotateReq := httptest.NewRequest("POST", "/api/image", strings.NewReader(rotateBody))
 	rotateReq.Header.Set("Content-Type", "application/json")
 
 	rotateResp, _ := getApp().Test(rotateReq)
-	assert.Equal(t, fiber.StatusOK, rotateResp.StatusCode)
-
-	rotateRespBody := rsp(rotateResp)
-	var rotateResult map[string]interface{}
-	json.Unmarshal(rotateRespBody, &rotateResult)
-	assert.Equal(t, float64(0), rotateResult["ret"])
+	assert.Equal(t, fiber.StatusUnauthorized, rotateResp.StatusCode)
 }
