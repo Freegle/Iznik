@@ -2110,12 +2110,20 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 // body-only edit must not drop the keyword index - those rows still accurately reflect the
 // unchanged subject, and dropping them would make the message unsearchable by keyword for
 // no reason until the next background run.
+//
+// Deleting the messages_embeddings row is necessary but not sufficient for vector search:
+// apiv2 serves vector search entirely from an in-process store (embedding.Global) that
+// Refresh()es every ~2 min and is presence-keyed, so a delete+re-embed landing between two
+// ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
+// We therefore also Evict the msgid from that store so the next Refresh reloads the
+// regenerated blob.
 func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
 	if subjectChanged {
 		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgid)
 	}
 	if subjectChanged || textChanged {
 		db.Exec("DELETE FROM messages_embeddings WHERE msgid = ?", msgid)
+		embedding.Global.Evict(msgid)
 	}
 }
 
