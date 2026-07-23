@@ -259,6 +259,28 @@ class GroupPostIngestionServiceTest extends TestCase
         $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
         $this->assertNotNull($mg, 'Expected a messages_groups row');
         $this->assertSame(MessageGroup::COLLECTION_APPROVED, $mg->collection);
+        $this->assertTrue($mg->mod_messaging_allowed, 'mod_messaging_allowed should default to true when not passed');
+    }
+
+    public function test_live_persists_mod_messaging_disallowed_when_specified(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-live-nomodmsg-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $result = $this->makeService(dryRun: false)->ingest($post, $group, modMessagingAllowed: false);
+
+        $this->assertSame('approved', $result);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+
+        $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
+        $this->assertNotNull($mg);
+        $this->assertFalse($mg->mod_messaging_allowed);
     }
 
     public function test_live_creates_pending_message_when_group_is_moderated(): void

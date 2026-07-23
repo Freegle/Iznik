@@ -40,9 +40,10 @@ class GroupPostIngestionService
      *
      * @param  mixed  $post  OpenAPI Post object or fixture array
      * @param  Group  $group  Resolved Freegle group
+     * @param  bool  $modMessagingAllowed  Whether mods on $group may message this poster directly
      * @return string  'approved'|'pending'|'duplicate'|'dropped'|'skipped'
      */
-    public function ingest(mixed $post, Group $group): string
+    public function ingest(mixed $post, Group $group, bool $modMessagingAllowed = true): string
     {
         $postId   = $this->getField($post, 'post_id', 'getPostId');
         $fdUserId = $this->getField($post, 'user_id', 'getUserId');
@@ -130,7 +131,7 @@ class GroupPostIngestionService
         }
 
         // Create the message record.
-        $messageId = $this->createMessage($user, $group, $subject, $content, $lat, $lng, $date, $postId, $photos);
+        $messageId = $this->createMessage($user, $group, $subject, $content, $lat, $lng, $date, $postId, $photos, $modMessagingAllowed);
 
         if ($messageId === null) {
             return 'skipped';
@@ -180,6 +181,7 @@ class GroupPostIngestionService
         mixed $date,
         string $postId,
         array $photos,
+        bool $modMessagingAllowed,
     ): ?int {
         try {
             $type = Message::determineType($subject);
@@ -269,14 +271,19 @@ class GroupPostIngestionService
             $messageId = $message?->id ?? 0;
 
             // messages_groups entry — starts as Incoming; collection updated after routing.
+            // NB: this trace line is diffed byte-for-byte against the email path in
+            // EmailApiParityTest, so mod_messaging_allowed (an API-only field with no
+            // email-path equivalent) is deliberately NOT included here — see the
+            // separate TN-SYNC-TRACE [POST-META] line in PostSyncer for that.
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',msgtype=' . $type . ',collection=Incoming');
             if (!$this->dryRun) {
                 MessageGroup::create([
-                    'msgid'      => $messageId,
-                    'groupid'    => $group->id,
-                    'msgtype'    => $type,
-                    'collection' => MessageGroup::COLLECTION_INCOMING,
-                    'arrival'    => now(),
+                    'msgid'                 => $messageId,
+                    'groupid'               => $group->id,
+                    'msgtype'               => $type,
+                    'collection'            => MessageGroup::COLLECTION_INCOMING,
+                    'arrival'               => now(),
+                    'mod_messaging_allowed' => $modMessagingAllowed,
                 ]);
             }
 

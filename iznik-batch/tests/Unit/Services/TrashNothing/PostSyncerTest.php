@@ -134,4 +134,65 @@ class PostSyncerTest extends TestCase
             'longitude' => -40.0,
         ]));
     }
+
+    public function test_mod_messaging_disallowed_when_freegle_group_ids_absent(): void
+    {
+        // Non-FD API key / no field at all: no consent given, so every TN post
+        // defaults to mod messaging disallowed.
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+
+        $spy->expects($this->once())
+            ->method('ingest')
+            ->with($this->anything(), $this->anything(), false)
+            ->willReturn('approved');
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'  => 10.0,
+            'longitude' => 10.0,
+        ]));
+    }
+
+    public function test_mod_messaging_allowed_true_when_resolved_group_in_freegle_group_ids(): void
+    {
+        $group = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+
+        $spy->expects($this->once())
+            ->method('ingest')
+            ->with($this->anything(), $this->anything(), true)
+            ->willReturn('approved');
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [$group->id],
+        ]));
+    }
+
+    public function test_mod_messaging_allowed_false_when_resolved_group_not_in_freegle_group_ids(): void
+    {
+        // TN explicitly told us which groups the poster consented to — resolved
+        // group isn't among them, so messaging is disallowed.
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+        $other = $this->createTestGroup(['lat' => -10.0, 'lng' => 100.0]);
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+
+        $spy->expects($this->once())
+            ->method('ingest')
+            ->with($this->anything(), $this->anything(), false)
+            ->willReturn('approved');
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [$other->id],
+        ]));
+    }
 }

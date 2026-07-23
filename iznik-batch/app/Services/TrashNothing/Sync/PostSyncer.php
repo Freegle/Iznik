@@ -166,9 +166,12 @@ class PostSyncer
         // messages from. Both array (fixture) and Post object post shapes support
         // ArrayAccess, so this works for either without a getter on the model.
         //
-        // Not acted on yet — traced so it's visible ahead of a future feature that will
-        // gate TN moderator messaging on whether the resolved group is in this list.
-        $freegleGroupIds          = $post['freegle_group_ids'] ?? [];
+        // Unlike messages_groups.mod_messaging_allowed's table-wide default (allowed,
+        // for ordinary Freegle posts), every TN post is disallowed by default: TN
+        // posters haven't consented to mod contact unless the resolved group is
+        // explicitly present in freegle_group_ids. A missing/empty field (e.g. a
+        // non-FD API key) means no consent was given, so it stays disallowed.
+        $freegleGroupIds           = $post['freegle_group_ids'] ?? [];
         $moderatorMessagingAllowed = in_array($group->id, $freegleGroupIds, true);
 
         // Own trace tag (not [POST-RESULT]/[POST-SKIP]/[WRITE]) — EmailApiParityTest diffs
@@ -177,7 +180,7 @@ class PostSyncer
         Log::info('TN-SYNC-TRACE [POST-META] post_id=' . $postId . ' moderator_messaging_allowed=' . ($moderatorMessagingAllowed ? 'true' : 'false'));
 
         try {
-            $result = $this->ingestionService->ingest($post, $group);
+            $result = $this->ingestionService->ingest($post, $group, $moderatorMessagingAllowed);
             Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=' . $result);
         } catch (\Throwable $e) {
             Log::error('TN sync: post ingestion failed', [
