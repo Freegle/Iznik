@@ -147,16 +147,30 @@ class GroupPostIngestionServiceTest extends TestCase
         );
     }
 
-    public function test_skips_when_user_not_a_member(): void
+    public function test_creates_post_for_non_member_of_resolved_group(): void
     {
-        $user  = $this->createTestUser();
+        // The group here is resolved from the post's own coordinates
+        // (Location::groupsNear), not from membership, so the poster is
+        // frequently not a member of the resolved group — that must still
+        // succeed, using the same 'DEFAULT' posting status a brand-new
+        // member would get, rather than being skipped.
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
-        // No membership created.
-        $post = $this->makePost(['user_id' => $user->id]);
+        // Deliberately no membership created.
 
-        $result = $this->makeService()->ingest($post, $group);
+        $postId = 'tn-non-member-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('skipped', $result);
+        $this->assertSame('approved', $result);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message, 'Expected a messages row even though the poster is not a group member');
+
+        $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
+        $this->assertNotNull($mg, 'Expected a messages_groups row for the non-member post');
+        $this->assertSame(MessageGroup::COLLECTION_APPROVED, $mg->collection);
     }
 
     public function test_returns_duplicate_when_post_already_ingested(): void

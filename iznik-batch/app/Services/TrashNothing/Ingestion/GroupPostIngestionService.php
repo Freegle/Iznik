@@ -80,20 +80,25 @@ class GroupPostIngestionService
             DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()]);
         }
 
-        // Membership check: user must be an approved member.
+        // No membership gate: the group here was chosen for the post (via
+        // Location::groupsNear() on its own coordinates), not supplied by a member
+        // posting to a group they belong to, so the poster is frequently not an
+        // Approved member of the resolved group — that's expected, not an error.
+        // If a membership does exist, its ourPostingStatus still applies (matches
+        // the email path for genuine members); otherwise fall back to the same
+        // 'DEFAULT' a brand-new member gets. The group's own moderation settings
+        // below still apply regardless.
         $membership = Membership::where('userid', $user->id)
             ->where('groupid', $group->id)
             ->where('collection', 'Approved')
             ->first();
 
         if ($membership === null) {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
-            $this->loki->logEvent('tn-sync', 'post-skip-non-member', ['tn_post_id' => $postId, 'user_id' => $user->id]);
-            return 'skipped';
+            Log::info('TN-SYNC-TRACE [POST-META] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
         }
 
         // Determine posting status, applying the same override hierarchy as the email path.
-        $postingStatus = $membership->ourPostingStatus;
+        $postingStatus = $membership->ourPostingStatus ?? 'DEFAULT';
 
         $overrideModeration = $group->overridemoderation ?? 'None';
         if ($overrideModeration === 'ModerateAll') {
