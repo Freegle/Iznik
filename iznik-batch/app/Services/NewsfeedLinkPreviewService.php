@@ -74,14 +74,71 @@ class NewsfeedLinkPreviewService
         return $this->create($url);
     }
 
+    /**
+     * Reject URLs that resolve to a non-public address, to stop SSRF: a member can put any URL in a
+     * newsfeed post and this job fetches it server-side. Without this an attacker points it at
+     * internal services (cloud metadata, other containers) and reads a slice of the response back
+     * via the stored preview title/description. Host resolution is split into resolveHostIps() so
+     * tests can supply deterministic IPs (there is no external DNS in the test environment) while
+     * these range checks still run for real.
+     */
+    protected function resolveHostIps(string $host): array
+    {
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return [$host];
+        }
+        $ips = [];
+        $v4 = @gethostbynamel($host);
+        if ($v4) {
+            $ips = array_merge($ips, $v4);
+        }
+        foreach (@dns_get_record($host, DNS_AAAA) ?: [] as $r) {
+            if (!empty($r['ipv6'])) {
+                $ips[] = $r['ipv6'];
+            }
+        }
+        return $ips;
+    }
+
+    protected function isFetchableUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+        $scheme = strtolower($parts['scheme'] ?? '');
+        // parse_url keeps the [...] around an IPv6 literal host; strip them so it validates as an IP.
+        $host = trim($parts['host'] ?? '', '[]');
+        if (!in_array($scheme, ['http', 'https'], true) || $host === '') {
+            return false;
+        }
+
+        $ips = $this->resolveHostIps($host);
+        if (empty($ips)) {
+            return false;
+        }
+        foreach ($ips as $ip) {
+            // Reject private (RFC1918) and reserved (loopback, link-local, etc.) ranges.
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     protected function create(string $url): ?int
     {
         $fetchUrl = str_replace('http://', 'https://', $url);
 
+        // SECURITY: block SSRF before fetching a user-supplied URL server-side (see isFetchableUrl).
+        // Redirects are disabled below so a public URL cannot bounce us to an internal one.
+        if (!$this->isFetchableUrl($fetchUrl)) {
+            return $this->upsertInvalid($url);
+        }
+
         try {
-            $response = Http::timeout(15)->withHeaders([
-                'User-Agent' => 'Mozilla/5.0 (compatible; Freegle/1.0)',
-            ])->get($fetchUrl);
+            $response = Http::timeout(15)
+                ->withOptions(['allow_redirects' => false])
+                ->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (compatible; Freegle/1.0)',
+                ])->get($fetchUrl);
 
             if (!$response->successful()) {
                 return $this->upsertInvalid($url);

@@ -297,6 +297,9 @@ services:
     volumes:
       - ./delivery-nginx.conf:/etc/nginx/nginx.conf:ro
       - ./delivery-imagesweserv.conf:/etc/nginx/imagesweserv.conf:ro
+      # Local dev: empty deny file (allows Docker-network fetches). Edge overrides this with the
+      # full private-range deny list (docker-compose.override.edge.yml) for SSRF protection.
+      - ./delivery-weserv-deny-private.dev.conf:/etc/nginx/weserv-deny-private.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
       interval: 10s
