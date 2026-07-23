@@ -51,10 +51,8 @@ func TestListMessagesMTApprovedOriginOnly(t *testing.T) {
 		require.NoError(t, json2.NewDecoder(resp.Body).Decode(&result))
 		msgs, _ := result["messages"].([]interface{})
 		for _, m := range msgs {
-			if mm, ok := m.(map[string]interface{}); ok {
-				if id, ok := mm["id"].(float64); ok && uint64(id) == msgID {
-					return true
-				}
+			if id, ok := m.(float64); ok && uint64(id) == msgID {
+				return true
 			}
 		}
 		return false
