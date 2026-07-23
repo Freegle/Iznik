@@ -52,6 +52,45 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $result);
     }
 
+    public function test_indexes_cross_posted_message_once_per_group(): void
+    {
+        // A message approved on more than one group must get a messages_spatial row PER
+        // GROUP, so it shows in browse on each. Regression for the single-column
+        // UNIQUE(msgid) that collapsed every group onto one row, leaving a cross-posted /
+        // rippled post visible on only one (non-deterministic) group (Discourse 9954).
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: cross-posted item (London)',
+            'textbody' => 'Cross-posted.',
+            'source' => 'Platform',
+            'date' => now()->subDays(3),
+            'arrival' => now()->subDays(3),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        foreach ([$groupA->id, $groupB->id] as $gid) {
+            MessageGroup::create([
+                'msgid' => $message->id,
+                'groupid' => $gid,
+                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(3),
+            ]);
+        }
+
+        $this->service->updateSpatialIndex();
+
+        $groupids = DB::table('messages_spatial')->where('msgid', $message->id)->pluck('groupid')->all();
+        sort($groupids);
+        $expected = [$groupA->id, $groupB->id];
+        sort($expected);
+        $this->assertEquals($expected, $groupids, 'a cross-posted message is indexed once per group');
+    }
+
     public function test_removes_withdrawn_message_from_spatial_index(): void
     {
         $user = $this->createTestUser();
