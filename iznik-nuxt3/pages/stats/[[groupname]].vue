@@ -10,7 +10,7 @@
               :group="group"
               :show-join="false"
             />
-            <div v-if="route.query.financialYear" class="mt-2 mb-3">
+            <div v-if="dateRangeDescription" class="mt-2 mb-3">
               <div class="bg-light p-2 rounded">
                 <small class="text-muted">
                   <strong>Showing data for: {{ dateRangeDescription }}</strong>
@@ -27,9 +27,9 @@
                   Give and get stuff for free in your local community. Don't
                   throw it away, give it away!
                 </h5>
-                <div v-if="route.query.financialYear" class="mt-1">
+                <div v-if="dateRangeDescription" class="mt-1">
                   <small class="text-muted">
-                    <strong>{{ dateRangeDescription }}</strong>
+                    <strong>Showing data for: {{ dateRangeDescription }}</strong>
                   </small>
                 </div>
               </div>
@@ -292,7 +292,15 @@ const dateRangeDescription = computed(() => {
         .substring(2)} (Apr 6 ${startYear} - Apr 5 ${startYear + 1})`
     }
   }
-  return 'the last 12 months'
+  // Default: the last 12 COMPLETE months. The current, part-finished month is
+  // deliberately excluded so it can't render as a cliff on the monthly charts.
+  // Name the end date explicitly - without it the page silently looks stale for
+  // the whole of the current month (e.g. all through July it ends on 30 June).
+  if (end.value) {
+    return `the 12 months to ${end.value.format('D MMMM YYYY')}`
+  }
+
+  return 'the last 12 complete months'
 })
 
 const totalWeight = computed(() => {
