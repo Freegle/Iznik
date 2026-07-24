@@ -29,6 +29,7 @@ const mockApi = {
 
 const mockGroupStore = {
   get: vi.fn().mockReturnValue(null),
+  fetch: vi.fn(),
 }
 
 vi.mock('~/stores/compose', () => ({
@@ -62,10 +63,21 @@ describe('ComposeGroup', () => {
     mockComposeStore.group = null
     mockComposeStore.setPostcode = vi.fn()
     mockGroupStore.get.mockReturnValue(null)
+    mockGroupStore.fetch = vi.fn()
   })
 
   function createWrapper(props = {}) {
-    return mount(ComposeGroup, { props })
+    return mount(ComposeGroup, {
+      props,
+      global: {
+        stubs: {
+          'b-img': {
+            template: '<img :src="src" :alt="alt" />',
+            props: ['src', 'alt', 'rounded'],
+          },
+        },
+      },
+    })
   }
 
   it('shows the derived origin community read-only, with no picker', async () => {
@@ -146,5 +158,34 @@ describe('ComposeGroup', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Finding your local community')
     expect(mockApi.location.typeahead).not.toHaveBeenCalled()
+  })
+
+  it('fetches the full group and shows its profile picture and tagline', async () => {
+    // groupsnear entries are trimmed to name-only, so the card fetches the full group
+    // record for its profile image and tagline (like GroupHeader).
+    mockGroupStore.get.mockReturnValue({
+      id: 1,
+      namedisplay: 'London Central',
+      profile: 'https://example.com/logo.png',
+      tagline: 'Reuse in central London',
+    })
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(mockGroupStore.fetch).toHaveBeenCalledWith(1)
+    const img = wrapper.find('.compose-group__logo')
+    expect(img.attributes('src')).toBe('https://example.com/logo.png')
+    expect(wrapper.find('.compose-group__tagline').text()).toBe(
+      'Reuse in central London'
+    )
+  })
+
+  it('uses the default icon and omits the tagline when the group has neither', async () => {
+    // get() returns null (full group not loaded), so profile falls back and no tagline shows.
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('.compose-group__logo').attributes('src')).toBe(
+      '/icon.png'
+    )
+    expect(wrapper.find('.compose-group__tagline').exists()).toBe(false)
   })
 })
