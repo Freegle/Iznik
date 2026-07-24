@@ -163,6 +163,26 @@ const warnings = [
     keywords: ['knife', 'knives', 'sword', 'swords'],
   },
   {
+    type: 'Sealed and in date',
+    message: 'Please make sure this is sealed and in date.',
+    keywords: [
+      'contact lens solution',
+      'contact lens fluid',
+      'contact lens cleaner',
+      'lens solution',
+      'lens fluid',
+      'cosmetics',
+      'make up',
+      'makeup',
+      'mascara',
+      'sunscreen',
+      'sun cream',
+      'suncream',
+      'sun lotion',
+      'aftersun',
+    ],
+  },
+  {
     type: 'Free',
     message:
       "Everything on Freegle is given away freely.  You don't need to say that - and it keeps things simpler if you remove it.",

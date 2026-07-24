@@ -103,6 +103,14 @@ const imgAttrsComputed = computed(() => {
   return undefined
 })
 
+// Whether this fires depends on incidental test data (some rendered image's
+// src happening to contain "gimg_0.jpg"), so it flips covered/uncovered
+// between Playwright runs and repeatedly trips Coveralls' "coverage
+// decreased" check on unrelated PRs - the same disease previously fixed for
+// SpinButton.vue/LoginModal.vue (PR #910/#1007). Excluded from V8/Playwright
+// coverage only; vitest (istanbul, which ignores v8 comments) still counts
+// it, and ProxyImage.spec.js covers it deterministically.
+/* v8 ignore next 5 */
 if (process.client && props.src.includes('gimg_0.jpg')) {
   import('@sentry/browser').then((Sentry) => {
     Sentry.captureMessage('Broken image: ' + props.src)
