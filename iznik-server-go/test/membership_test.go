@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -3837,6 +3838,61 @@ func TestPutMembershipsPartnerInvalidKey(t *testing.T) {
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// Discourse #9961: TrashNothing reported a member's join request as stuck
+// "pending" because it never reached a Freegle moderator. V1 parity check
+// (User::addMembership/isBanned via the legacy PHP partner handler) shows the
+// original behaviour: a banned member's partner join returned ret=4 "Failed -
+// likely ban", a genuine failure the partner could act on. The V2 Go port
+// (putMembershipsPartner) dropped that and unconditionally returns ret=0
+// "Success" for a banned member instead - no membership row, no
+// memberships_history row, no log entry, nothing anywhere for a moderator to
+// find, while telling the partner the join worked. Production data confirms
+// this path is reachable: thousands of TN-linked (userid, groupid) pairs are
+// currently banned with no corresponding membership row.
+func TestPutMembershipsPartnerBannedNotFakeSuccess(t *testing.T) {
+	prefix := uniquePrefix("mem_partbanned")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	email := prefix + "@test.com"
+	tnuserid := uint64(7654322)
+
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+
+	key := insertTestPartnerKey(t, prefix, "test.com")
+
+	// First request auto-creates the TN-linked user via the normal partner join.
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
+	req := httptest.NewRequest("PUT", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var userID uint64
+	db.Raw("SELECT id FROM users WHERE tnuserid = ?", tnuserid).Scan(&userID)
+	assert.NotZero(t, userID)
+
+	// Simulate a member who was previously banned from this group (e.g. by a
+	// moderator, independently of TN) then has TN retry the join on their
+	// behalf - TN has no visibility into Freegle-side bans.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", userID, groupID, userID)
+
+	req2 := httptest.NewRequest("PUT", url, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+
+	// Inverted (correct) assertion: a banned member's join attempt must be
+	// reported as a failure, not a fake Success, so the partner and the member
+	// both know it did not happen.
+	assert.Equal(t, fiber.StatusForbidden, resp2.StatusCode,
+		"a banned member's join attempt must not be reported as Success to the partner")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&count)
+	assert.Equal(t, int64(0), count, "a banned member must not gain a membership row via the partner path")
 }
 
 func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
