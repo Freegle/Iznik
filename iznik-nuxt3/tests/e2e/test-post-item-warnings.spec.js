@@ -233,39 +233,16 @@ test.describe('PostItem compose warnings (desktop)', () => {
     expect(first.id).toBeTruthy()
 
     try {
-      // postMessage() lands on /myposts, whose mount awaits
-      // messageStore.fetch(id) for every active post before it stops showing
-      // its loading state (see the `myid` watcher in pages/myposts.vue) -
-      // populating messageStore.list, which is what PostItem's duplicate
-      // check actually reads (via messageStore.all). That population lives
-      // only in this tab's Pinia store: a hard reload (page.goto/
-      // page.reload) wipes it, and /give's own mount never repopulates
-      // messageStore.list.
-      //
-      // TODO: latent bug - duplicate-open-post detection in PostItem.vue
-      // only works if messageStore.list already happens to hold the user's
-      // other posts from earlier in the same session (e.g. a /myposts
-      // visit); loading /give or /find directly never shows the warning.
-      // useCompose.js:133 fires a messageStore.fetchByUser() call that looks
-      // like it should cover this gap, but it's fire-and-forget (not
-      // awaited by setup()) AND it writes into messageStore.byUserList, a
-      // different key that the duplicate check does not read - so it can
-      // never populate messageStore.list no matter how long you wait.
-      // This test therefore navigates the way a real user does right after
-      // posting - via the in-app nav link (a client-side transition that
-      // preserves the Pinia store) - rather than a reload.
+      // Load /give with a fresh full page load (page.goto wipes the Pinia store),
+      // the way a member arriving directly to post does - not a client-side nav that
+      // would carry over a prior /myposts fetch. useCompose loads the member's active
+      // posts as full messages into messageStore.list on mount, so the duplicate
+      // check finds the still-open first post even on a cold /give visit.
       await expect(page).toHaveURL(/\/myposts/, {
         timeout: timeouts.navigation.default,
       })
 
-      const messageCard = page
-        .locator(`.message-card:has-text("${uniqueItem}")`)
-        .first()
-      await expect(messageCard).toBeVisible({
-        timeout: timeouts.ui.appearance,
-      })
-
-      await page.locator('#menu-option-give').click()
+      await page.goto('/give')
       await expect(page).toHaveURL(/\/give/, {
         timeout: timeouts.navigation.default,
       })
