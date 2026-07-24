@@ -3902,12 +3902,19 @@ func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 54321, userID)
+
+	// tnuserid is UNIQUE in production. Release it from any user left by an
+	// earlier run before claiming it here (same pattern as
+	// TestPutMembershipsPartnerSubscribe/AutoCreate) - without this, a stale row
+	// left by a prior run of this test collides on this fixed value.
+	tnuserid := 54321
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	email := prefix + "_user@test.com"
 
-	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=54321&email=%s&groupid=%d", key, email, groupID)
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
 	req := httptest.NewRequest("DELETE", url, nil)
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
