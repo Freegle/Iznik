@@ -78,6 +78,34 @@ func TestGetGiftAid_Success(t *testing.T) {
 	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
 }
 
+// TestGetGiftAid_RevokedSessionDenied verifies that logging out (deleting the
+// session row) stops GET /giftaid returning the user's Gift Aid PII, even though
+// the JWT itself is still unexpired. Previously GetGiftAid read the JWT directly
+// and never signalled authUsed, so the auth middleware's session-revocation check
+// was skipped and a captured-but-logged-out token kept working for up to 30 days.
+func TestGetGiftAid_RevokedSessionDenied(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("giftaidrevoke")
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, token := CreateTestSession(t, userID)
+
+	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress, postcode, housenameornumber)
+		VALUES (?, 'Past4YearsAndFuture', 'Revoke Test', '1 Revoke Road', 'RE1 1RE', '1')`, userID)
+	defer db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
+
+	// While logged in, the record is returned.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/giftaid?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Log out: delete the session row. The JWT is unchanged and unexpired.
+	db.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
+
+	// The same token must now be rejected rather than leaking the PII.
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", "/api/giftaid?jwt="+token, nil))
+	assert.Equal(t, 401, resp2.StatusCode)
+}
+
 func TestGetGiftAid_WithReviewed(t *testing.T) {
 	// Create a test user
 	prefix := uniquePrefix("giftaidrev")
