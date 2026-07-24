@@ -17,7 +17,12 @@
  * 1 preload+fetchpriority="high" and image 3 neither, exercising both
  * ProxyImage branches in one render. NationalReuseDay.vue's banner
  * (src="/NRD/Banner.png?a=1", non-http, contains '?') exercises the
- * fullSrc branches, and its SupportLink exercises both auth branches.
+ * fullSrc branches, and its (logged-out) SupportLink covers that branch.
+ * The logged-in SupportLink branch is exercised on /mobile instead:
+ * NationalReuseDay uses the 'no-navbar' layout, which never calls
+ * useBootSession()/fetchMe(), so authStore.user is never populated there
+ * regardless of login - see the comment on that test below. /mobile uses
+ * the default layout (which does boot the session).
  */
 const { test, expect } = require('./fixtures')
 const { timeouts } = require('./config')
@@ -76,33 +81,31 @@ test.describe('ProxyImage and SupportLink branch coverage', () => {
     expect(loggedOutHref).toContain('not logged in when contacting Support')
   })
 
-  test('National Reuse Day: logged-in support link href includes the user id note', async ({
+  test('Mobile app page: logged-in support link href includes the user id note', async ({
     page,
     testEnv,
   }) => {
-    // TODO: latent bug - SupportLink.vue's `const myid = authStore.user?.id`
-    // (line 29) is a plain, non-reactive const captured once when the
-    // <client-only>-wrapped component's <script setup> runs. Confirmed via
-    // this exact session (login + /qr showing genuine mod-only content,
-    // proving the user really is authenticated): the mailto href still says
-    // "not logged in when contacting Support", because SupportLink's own
-    // setup ran before the auth store finished restoring from localStorage,
-    // and nothing re-evaluates myid afterwards. Not fixed here (production
-    // code is out of scope for this PR) - see PR comment.
-    test.skip(
-      true,
-      'latent bug: SupportLink.vue myid is captured non-reactively and never reflects a login that completes after its own client-only mount'
-    )
-
+    // NationalReuseDay uses the 'no-navbar' layout, which never calls
+    // useBootSession()/fetchMe() - so authStore.user is never populated
+    // there regardless of login, and SupportLink's logged-in branch can't be
+    // observed on that page. /mobile uses the default layout (which does
+    // boot the session) and also renders a plain, unconditional
+    // <SupportLink /> - see components/ProxyImage.vue coverage tests above
+    // for why NationalReuseDay is still the right page for the other
+    // branches.
     await loginViaHomepage(page, testEnv.user.email, 'freegle')
 
-    await page.gotoAndVerify('/NationalReuseDay')
+    await page.gotoAndVerify('/mobile')
 
     const supportLink = page.locator(
-      'a[href^="mailto:partnerships@ilovefreegle.org"]'
+      'a[href^="mailto:support@ilovefreegle.org"]'
     )
-    await expect(supportLink).toBeVisible({ timeout: timeouts.ui.appearance })
-    const loggedInHref = await supportLink.getAttribute('href')
-    expect(loggedInHref).toContain('logged in as user id')
+    // Poll the attribute itself (rather than a single getAttribute snapshot
+    // right after visibility) since the default layout's session boot and
+    // this <client-only> component's own mount both happen asynchronously,
+    // in no guaranteed order.
+    await expect(supportLink).toHaveAttribute('href', /logged in as user id/, {
+      timeout: timeouts.ui.appearance,
+    })
   })
 })
