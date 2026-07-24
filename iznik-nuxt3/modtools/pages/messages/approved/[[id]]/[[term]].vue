@@ -19,6 +19,9 @@
       />
       <span v-else class="mt-2"> Select a community to search messages. </span>
       <ModtoolsViewControl misckey="modtoolsMessagesApprovedSummary" />
+      <b-form-checkbox v-model="originOnly" class="mt-2">
+        Only this group's own posts (hide rippled-in)
+      </b-form-checkbox>
     </div>
     <div>
       <NoticeMessage v-if="loaded && !messages.length && !busy" class="mt-2">
@@ -90,6 +93,8 @@ const bump = ref(0)
 const urlOverride = ref(false)
 const loaded = ref(false)
 const highlightMsgId = ref(null)
+// 9808/638: when on, ask the API for this group's OWN posts only (exclude rippled-in).
+const originOnly = ref(false)
 
 // Computed properties
 const id = computed(() => {
@@ -142,6 +147,16 @@ watch(visibleMessages, (newVal) => {
       })
     }
   }
+})
+
+// 9808/638: re-run the listing from a clean slate when the rippled-in filter toggles.
+watch(originOnly, () => {
+  show.value = 0
+  context.value = null
+  modMessages.listingIds.value = new Set()
+  modMessages.listingIdOrder.value = []
+  messageStore.clear()
+  bump.value++
 })
 
 // Lifecycle
@@ -287,6 +302,11 @@ async function loadMore($state) {
         modtools: true,
         summary: false,
       }
+    }
+
+    // 9808/638: exclude posts that rippled in from other groups when the mod asks.
+    if (originOnly.value) {
+      params.originonly = true
     }
 
     params.context = context.value
