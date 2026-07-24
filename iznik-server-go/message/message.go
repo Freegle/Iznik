@@ -2096,6 +2096,37 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	}
 }
 
+// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and/or vector
+// embedding (messages_embeddings) rows for a message whose subject/body has just changed.
+// Both are populated ONCE for messages "missing" from those tables
+// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
+// refreshed on edit, so a search for a term the edit introduced would never match.
+// Deleting the stale rows lets those background jobs re-index and re-embed from the new
+// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
+//
+// The two stores are driven by different fields, so they take independent invalidation
+// flags: messages_index is derived from the message SUBJECT only (indexString is only ever
+// called with subject text), while messages_embeddings is derived from subject+textbody. A
+// body-only edit must not drop the keyword index - those rows still accurately reflect the
+// unchanged subject, and dropping them would make the message unsearchable by keyword for
+// no reason until the next background run.
+//
+// Deleting the messages_embeddings row is necessary but not sufficient for vector search:
+// apiv2 serves vector search entirely from an in-process store (embedding.Global) that
+// Refresh()es every ~2 min and is presence-keyed, so a delete+re-embed landing between two
+// ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
+// We therefore also Evict the msgid from that store so the next Refresh reloads the
+// regenerated blob.
+func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
+	if subjectChanged {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgid)
+	}
+	if subjectChanged || textChanged {
+		db.Exec("DELETE FROM messages_embeddings WHERE msgid = ?", msgid)
+		embedding.Global.Evict(msgid)
+	}
+}
+
 // handleApprove approves a pending message.
 func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -2651,6 +2682,9 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		if edit.Newtext != nil {
 			db.Exec("UPDATE messages SET textbody = ? WHERE id = ?", *edit.Newtext, req.ID)
 		}
+		// Applied an edit → whichever of the keyword index / vector embedding depend on
+		// the field(s) just written are now stale.
+		invalidateMessageSearchIndexes(db, req.ID, edit.Newsubject != nil, edit.Newtext != nil)
 	}
 
 	// Mark ALL pending edits as approved.
@@ -2690,6 +2724,11 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+
+		// Reverting restored the previous subject/body, so whichever of the keyword index
+		// / vector embedding depend on the restored field(s) are out of sync again - drop
+		// them to be rebuilt.
+		invalidateMessageSearchIndexes(db, req.ID, old.Oldsubject != nil, old.Oldtext != nil)
 	} else {
 		// No recorded old values — just clear the editedby flag.
 		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
@@ -3455,6 +3494,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// flag also need the clean edit re-verified.
 	if subjectChanged || textChanged || itemsChanged {
 		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
+	}
+
+	// The subject/body drive the search indexes (messages_index keyword search and
+	// messages_embeddings vector search), which are each populated once for "missing"
+	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
+	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	if subjectChanged || textChanged {
+		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
 	}
 
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
