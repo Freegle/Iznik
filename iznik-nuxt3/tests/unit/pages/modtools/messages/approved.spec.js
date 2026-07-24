@@ -594,6 +594,29 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         await wrapper.vm.loadMore(mockState)
         expect(mockState.complete).toHaveBeenCalled()
       })
+
+      it('keeps scrolling when a page returns real messages that are already cached from another group (rippled/cross-posted posts)', async () => {
+        // Regression (Discourse 9954/5): a moderator of several adjacent groups
+        // scrolled one group's Approved queue looking for a post she'd just
+        // approved, and never found it. Rippled/cross-posted messages mean the
+        // same msgid often already sits in the shared messageStore.list from an
+        // earlier group/search in the session. The backend genuinely returned a
+        // fresh page (fetchedIds non-empty, context set => more pages exist),
+        // but because that page's id(s) were already keys in the global store,
+        // the old completion check (comparing Object.keys(messageStore.list)
+        // before/after) saw no size change and wrongly called $state.complete(),
+        // permanently stopping the scroll long before reaching older messages.
+        mockMessageStore.list = { 555: { id: 555 } }
+        mockMessages.value = [{ id: 555 }]
+        mockShow.value = 1
+        mockMessageStore.fetchMessagesMT.mockResolvedValue([555])
+        mockMessageStore.context = { date: 123, id: 555 }
+        const wrapper = mountComponent()
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(mockState.complete).not.toHaveBeenCalled()
+        expect(mockState.loaded).toHaveBeenCalled()
+      })
     })
   })
 
