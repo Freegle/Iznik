@@ -227,6 +227,22 @@ class ChatProcessService
                 'created_at' => now(),
                 'attempts' => 0,
             ]);
+
+            // Surface the room in recipients' chat list now the message is deliverable.
+            // ListForUser filters chat_rooms.latestmessage >= now - CHAT_ACTIVE_LIMIT (31d),
+            // and neither CreateChatMessage nor this service bumped latestmessage - only the
+            // hourly chats:update-counts recompute did. So a reply landing in a room dormant
+            // for >31 days (Freegle keeps one User2User room per pair, reused across items)
+            // stayed out of the recipient's list until that hourly cron ran, even though the
+            // notification email fired immediately - up to ~1h of "email arrived but the chat
+            // isn't showing". Bump here, gated on the same deliverability the email/in-app
+            // fetch use (not held for review, not spam), so list visibility tracks delivery.
+            // GREATEST guards against moving latestmessage backwards when a burst is processed
+            // out of natural order; the hourly recompute remains as a backfill.
+            DB::update(
+                'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
+                [$message->date, $message->date, $chatid]
+            );
         }
 
         return true;
