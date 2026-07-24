@@ -25,18 +25,26 @@ use PHPUnit\Framework\TestCase;
  * reference to the `Drafter` interface to load the file as a side effect, so
  * running that command for real (`new TemplateDrafter()` via pure autoload,
  * not a manual require) would fatal with "Class ... not found". The same
- * pattern affects `LlmExtractor` in Extractor.php. See
- * test_template_drafter_is_not_reachable_via_autoload_alone() below, which
- * documents this without a manual require and is the only test in this class
- * that would fail; every other test below works around the gap with an
- * explicit require of Drafter.php so the class's own logic can still be
- * exercised and covered.
+ * pattern affects `LlmExtractor` in Extractor.php.
+ * test_template_drafter_is_not_reachable_via_autoload_alone() below pins this
+ * as a passing regression test (not a skip): it runs in its own process, with
+ * no manual require, and asserts the class is currently NOT autoloadable. If
+ * someone fixes the underlying file-layout bug, this test will start failing,
+ * which is the intended signal to update/remove it. Every other test below
+ * works around the gap with an explicit require of Drafter.php so the
+ * class's own logic can still be exercised and covered.
  */
 class TemplateDrafterTest extends TestCase
 {
     private TemplateDrafter $drafter;
 
-    protected function setUp(): void
+    /**
+     * Deliberately NOT in setUp(): test_template_drafter_is_not_reachable_via_autoload_alone()
+     * below needs a process where this has NOT run yet, to observe plain
+     * autoload's real behaviour. Every other test calls this at the start of
+     * its body instead.
+     */
+    private function loadTemplateDrafter(): void
     {
         if (!class_exists(TemplateDrafter::class)) {
             require_once __DIR__ . '/../../../../app/Services/Concierge/Drafter.php';
@@ -44,23 +52,25 @@ class TemplateDrafterTest extends TestCase
         $this->drafter = new TemplateDrafter();
     }
 
+    /**
+     * Latent bug (see class docblock): App\Services\Concierge\TemplateDrafter is
+     * defined in Drafter.php, so Composer's PSR-4/classmap autoloader never finds
+     * it (confirmed absent from vendor/composer/autoload_classmap.php even with
+     * --optimize-autoloader). ConciergeRunCommand::handle() calls
+     * `new TemplateDrafter()` directly, with nothing else loading Drafter.php
+     * first, so running that command for real would fatal with "Class
+     * App\Services\Concierge\TemplateDrafter not found".
+     *
+     * This is a regression test that PASSES by pinning the current (buggy)
+     * behaviour, not a skip: in its own fresh process, with no manual require
+     * anywhere yet, plain autoload cannot find the class. Fix (out of scope for
+     * this test-only PR): move TemplateDrafter to its own TemplateDrafter.php
+     * file (same for LlmExtractor in Extractor.php). Once fixed, this
+     * assertion flips to true and this test should be deleted.
+     */
     #[RunInSeparateProcess]
     public function test_template_drafter_is_not_reachable_via_autoload_alone(): void
     {
-        $this->markTestSkipped(
-            // TODO: latent bug - App\Services\Concierge\TemplateDrafter is defined in
-            // Drafter.php, so Composer's PSR-4/classmap autoloader never finds it
-            // (confirmed: absent from vendor/composer/autoload_classmap.php even with
-            // --optimize-autoloader). ConciergeRunCommand::handle() calls
-            // `new TemplateDrafter()` directly, with nothing else loading Drafter.php
-            // first, so running that command for real would fatal with "Class
-            // App\Services\Concierge\TemplateDrafter not found". Fix: move
-            // TemplateDrafter to its own TemplateDrafter.php file (same for
-            // LlmExtractor in Extractor.php).
-            'latent bug: TemplateDrafter is unreachable via autoload alone (see class docblock)'
-        );
-
-        // In a fresh process (no prior manual require), plain autoload cannot find it.
         $this->assertFalse(class_exists(TemplateDrafter::class, true));
     }
 
@@ -81,6 +91,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_confirm_collection_drafts_subject_and_body_with_day_and_item(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_CONFIRM_COLLECTION, 'item' => 1, 'day' => 'Monday'];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -96,6 +108,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_apologise_shortfall_drafts_have_and_promised_counts(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_APOLOGISE_SHORTFALL, 'item' => 1, 'have' => 2, 'promised' => 4];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -108,6 +122,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_offer_menu_lists_available_items_and_notes_gone_items(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = [
             'kind' => ConciergeEngine::A_OFFER_MENU,
             'items' => [1, 2],
@@ -131,6 +147,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_offer_menu_without_gone_items_omits_the_gone_clause(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_OFFER_MENU, 'items' => [1], 'gone' => []];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -141,6 +159,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_offer_menu_with_no_items_returns_null(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_OFFER_MENU, 'items' => [], 'gone' => [5]];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -150,6 +170,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_offer_alt_drafts_the_alternative_item(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_OFFER_ALT, 'item' => 1];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -161,6 +183,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_holding_note_drafts_a_generic_holding_message(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_HOLDING_NOTE];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -171,6 +195,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_decline_ack_drafts_a_thank_you_message(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_DECLINE_ACK];
 
         $draft = $this->drafter->draft($action, $this->replier(), $this->context());
@@ -192,6 +218,8 @@ class TemplateDrafterTest extends TestCase
     #[DataProvider('internalOnlyActionProvider')]
     public function test_internal_only_and_unknown_actions_produce_no_draft(string $kind): void
     {
+        $this->loadTemplateDrafter();
+
         $draft = $this->drafter->draft(['kind' => $kind], $this->replier(), $this->context());
 
         $this->assertNull($draft);
@@ -199,6 +227,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_missing_replier_name_defaults_to_there(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_DECLINE_ACK];
 
         $draft = $this->drafter->draft($action, [], $this->context());
@@ -208,6 +238,8 @@ class TemplateDrafterTest extends TestCase
 
     public function test_missing_context_falls_back_to_sensible_defaults(): void
     {
+        $this->loadTemplateDrafter();
+
         $action = ['kind' => ConciergeEngine::A_CONFIRM_COLLECTION, 'item' => 1, 'day' => 'Friday'];
 
         $draft = $this->drafter->draft($action, $this->replier(), []);
