@@ -1215,20 +1215,36 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
 	}
 
-	// Insert membership.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	// Insert membership. This must not be swallowed: if it fails, the partner
+	// (e.g. Trash Nothing) gets told the join succeeded while no membership
+	// row - and nothing else downstream - was ever created, so the request
+	// silently never reaches a moderator (Discourse #9961).
+	if err := InsertPartnerMembership(db, userid, groupid); err != nil {
+		stdlog.Printf("Failed to insert partner membership user %d group %d: %v", userid, groupid, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to join group")
+	}
 
 	// Record in memberships_history with processingrequired=1 so the
 	// Laravel batch (memberships:process) sends the group welcome email,
 	// runs spam checks, and applies review flags. Without this row the
 	// cron has nothing to do and welcomes are silently dropped.
-	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
-		userid, groupid, utils.COLLECTION_APPROVED)
+	if result := db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+		userid, groupid, utils.COLLECTION_APPROVED); result.Error != nil {
+		stdlog.Printf("Failed to insert partner memberships_history user %d group %d: %v", userid, groupid, result.Error)
+	}
 
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
+}
+
+// InsertPartnerMembership inserts the memberships row for a partner
+// (Trash Nothing) join. It is a package-level var - rather than a plain
+// function - purely so tests can substitute a stub that simulates a DB
+// failure without needing to physically break the connection.
+var InsertPartnerMembership = func(db *gorm.DB, userid uint64, groupid uint64) error {
+	return db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
+		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED).Error
 }
 
 // addMemberToGroup is the shared logic for adding a user to a group (JWT auth paths).

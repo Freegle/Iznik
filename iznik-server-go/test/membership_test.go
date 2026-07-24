@@ -3,13 +3,16 @@ package test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/membership"
 	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
 )
 
 func TestPutMembershipsNotLoggedIn(t *testing.T) {
@@ -3837,6 +3840,54 @@ func TestPutMembershipsPartnerInvalidKey(t *testing.T) {
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// Discourse #9961: TrashNothing reported join requests "showing as pending" on
+// their side because they never reached a Freegle moderator. Production data
+// confirmed accounts created via the partner path (tnuserid set) with zero
+// memberships ever recorded. Root cause: putMembershipsPartner discarded the
+// error from the memberships INSERT and always reported "Success" to the
+// partner, so a failed insert vanished silently - no membership row, nothing
+// for a moderator to see, and no signal to the partner that anything was
+// wrong. This uses the InsertPartnerMembership seam to simulate that INSERT
+// failing without needing to break the real DB connection.
+func TestPutMembershipsPartnerInsertFailureNotSwallowed(t *testing.T) {
+	prefix := uniquePrefix("mem_partinsertfail")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	email := prefix + "@test.com"
+	tnuserid := uint64(7654321)
+
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+
+	key := insertTestPartnerKey(t, prefix, "test.com")
+
+	original := membership.InsertPartnerMembership
+	membership.InsertPartnerMembership = func(_ *gorm.DB, _ uint64, _ uint64) error {
+		return errors.New("simulated DB failure")
+	}
+	defer func() { membership.InsertPartnerMembership = original }()
+
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
+	req := httptest.NewRequest("PUT", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	// Inverted (correct) assertion: a failed insert must not be reported as a
+	// success to the partner.
+	assert.NotEqual(t, 200, resp.StatusCode,
+		"a failed membership insert must not be reported as Success to the partner")
+
+	// And the user that was auto-created for this join must not be left with
+	// a membership row it doesn't actually have.
+	var userID uint64
+	db.Raw("SELECT id FROM users WHERE tnuserid = ?", tnuserid).Scan(&userID)
+	if userID > 0 {
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&count)
+		assert.Equal(t, int64(0), count)
+	}
 }
 
 func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
