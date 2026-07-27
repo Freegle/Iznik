@@ -57,6 +57,7 @@ import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 import { actions } from './actions/index.js'
 import { sanitizeLLMDecision } from './llm-json.js'
 import { ensureUsableInstanceStore } from './instance-store.js'
+import { pruneInstances } from './prune-instances.js'
 import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
@@ -67,6 +68,9 @@ const exec = promisify(execFile)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const WORKFLOW_PATH = resolve(__dirname, '../workflow.json')
 const INSTANCE_STORE = resolve(__dirname, '../instance-store.json')
+// How many recent workflow instances to retain in the store. We never resume an old one,
+// so this is purely a debugging window; the rest are pruned each run to bound the file.
+const KEEP_INSTANCES = 20
 
 const MAX_STEPS = 40 // hard cap; real iterations should settle in ~15-25
 
@@ -378,6 +382,19 @@ async function main() {
     actions,
     maxLLMRetries: 2,
   })
+
+  // Bound the instance store BEFORE we add this run's instance. We never resume an old
+  // instance (see below), so completed/errored ones pile up in instance-store.json - it
+  // had bloated to ~100MB / 1165 instances, which slows every load+save and eventually
+  // killed the loop. Keep the most recent few for debugging; delete the rest. Non-fatal.
+  try {
+    const pruned = await pruneInstances(engine, storage, KEEP_INSTANCES)
+    if (pruned > 0) {
+      out(`pruned ${pruned} old workflow instances (kept ${KEEP_INSTANCES})`)
+    }
+  } catch (e: any) {
+    outWarn(`instance prune failed (non-fatal): ${e?.message ?? e}`)
+  }
 
   // Fresh instance per driver run — iterations should not resume.
   const iterationStartTs = new Date().toISOString()
