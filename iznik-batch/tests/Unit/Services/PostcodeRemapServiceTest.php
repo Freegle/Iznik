@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\PostcodeRemapService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -101,5 +102,45 @@ class PostcodeRemapServiceTest extends TestCase
         $result  = $this->service->remapPostcodes(null, $polygon);
 
         $this->assertEquals(0, $result);
+    }
+
+    public function test_remap_postcodes_seeds_the_area_into_the_local_index(): void
+    {
+        // In production each container runs its OWN spatial-knn instance with an
+        // independent in-memory index. The remap must seed the area into the
+        // instance it is about to query, or a brand-new area gets no postcodes
+        // until the nightly full remap (Discourse #9950).
+        Http::fake([
+            '*/v1/locations/upsert' => Http::response(['upserted' => 1], 200),
+            '*/v1/locations/knn*'   => Http::response(['results' => []], 200),
+        ]);
+
+        $id  = 990000001;
+        $wkt = 'POLYGON((-1 53, -0.9 53, -0.9 53.1, -1 53.1, -1 53))';
+        DB::table('locations')->insert([
+            'id'       => $id,
+            'name'     => 'Seedville',
+            'type'     => 'Polygon',
+            'geometry' => DB::raw("ST_GeomFromText('{$wkt}', 3857)"),
+        ]);
+
+        $this->service->remapPostcodes($id, $wkt);
+
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/v1/locations/upsert')
+            && $request['items'][0]['id'] === $id
+            && str_contains($request['items'][0]['wkt'], 'POLYGON')
+            && $request['items'][0]['extra']['type'] === 'Polygon');
+    }
+
+    public function test_remap_postcodes_without_location_id_does_not_seed(): void
+    {
+        Http::fake([
+            '*/v1/locations/upsert' => Http::response(['upserted' => 1], 200),
+            '*/v1/locations/knn*'   => Http::response(['results' => []], 200),
+        ]);
+
+        $this->service->remapPostcodes(null, 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))');
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/v1/locations/upsert'));
     }
 }
