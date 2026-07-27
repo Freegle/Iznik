@@ -1345,6 +1345,13 @@ for i, tid in enumerate(sorted(topic_ids)):
         pn = post.get('post_number', 0)
         if pn <= effective_cursor:
             continue
+        # Skip the monitor's OWN account (AI_Edward). Its posts are our diagnostic /
+        # "possible fix, please retest" replies, not member bug reports; classifying them
+        # re-opens bugs we just fixed and dispatches duplicate fix delegates (the feedback
+        # loop that produced duplicate PRs #1165/#1166 for topic 9954). The cursor still
+        # advances past them (latestPostNumber above), so they are marked seen.
+        if post.get('username', '') == 'AI_Edward':
+            continue
         cooked = post.get('cooked', '')
         text = re.sub(r'<[^>]+>', '', cooked)
         text = html.unescape(text)
