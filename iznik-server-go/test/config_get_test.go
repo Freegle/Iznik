@@ -70,3 +70,23 @@ func TestConfigGet_AllowlistedNoAuth(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/config/app_fd_version_android_required", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+func TestConfigGet_PublicFeatureFlags(t *testing.T) {
+	// The exact-match public flags (ads_enabled regressed CI when it was missing).
+	for _, key := range []string{"ads_enabled", "voicepost_rollout_pct"} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/config/"+key, nil))
+		assert.Equal(t, 200, resp.StatusCode, "public flag %s should be readable", key)
+	}
+}
+
+func TestConfigGet_AppVersionPrefixes(t *testing.T) {
+	// App-version metadata is matched by prefix, covering FD/MT × iOS/Android ×
+	// required/latest/date without enumerating every combination.
+	for _, key := range []string{
+		"app_fd_version_ios_latest", "app_fd_version_android_date",
+		"app_mt_version_ios_latest", "app_mt_version_android_date",
+	} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/config/"+key, nil))
+		assert.Equal(t, 200, resp.StatusCode, "app version key %s should be readable", key)
+	}
+}

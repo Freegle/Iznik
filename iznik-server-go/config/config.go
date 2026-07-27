@@ -75,22 +75,28 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 	}
 }
 
-// publicConfigKeys are the only keys readable through the unauthenticated
+// isPublicConfigKey reports whether a key may be read through the unauthenticated
 // GET /config/:key endpoint. The config store is admin-writable and holds
-// operational keys that should not be world-readable; anything not listed here
-// must go through the Support/Admin-gated /config/admin routes. These three are
-// the only keys the public web/app clients fetch (rollout flag + required app
-// versions), verified against the Nuxt config store usage.
-var publicConfigKeys = map[string]bool{
-	"voicepost_rollout_pct":           true,
-	"app_fd_version_ios_required":     true,
-	"app_fd_version_android_required": true,
+// operational keys that must not be world-readable; anything else has to go through
+// the Support/Admin-gated /config/admin routes. Only client-facing values are
+// exposed: two feature flags (ads_enabled, voicepost_rollout_pct) plus the app
+// version metadata under the app_fd_version_* / app_mt_version_* namespaces, which
+// the web and mobile clients poll to decide rollout and update prompts. The version
+// keys are matched by prefix so adding a new version field (a new platform, a new
+// "latest"/"date"/"required" variant) doesn't need a code change here. Verified
+// against every configStore.fetch()/config.fetchv2() call site in iznik-nuxt3.
+func isPublicConfigKey(key string) bool {
+	switch key {
+	case "ads_enabled", "voicepost_rollout_pct":
+		return true
+	}
+	return strings.HasPrefix(key, "app_fd_version_") || strings.HasPrefix(key, "app_mt_version_")
 }
 
 func Get(c *fiber.Ctx) error {
 	key := c.Params("key")
 
-	if !publicConfigKeys[key] {
+	if !isPublicConfigKey(key) {
 		return fiber.NewError(fiber.StatusForbidden, "Key not publicly readable")
 	}
 
