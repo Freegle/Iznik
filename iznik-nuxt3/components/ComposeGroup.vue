@@ -1,10 +1,10 @@
 <template>
   <div class="compose-group" data-test="compose-group">
     <div v-if="groupName" class="compose-group__card">
-      <b-img
-        rounded
-        alt="Community profile picture"
-        :src="profile"
+      <GroupProfileImage
+        :image="profile"
+        size="sm"
+        alt-text="Community profile picture"
         class="compose-group__logo"
       />
       <div class="compose-group__info">
@@ -21,6 +21,7 @@
 </template>
 <script setup>
 import { computed, onMounted, watch } from 'vue'
+import GroupProfileImage from '~/components/GroupProfileImage.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import api from '~/api'
@@ -121,11 +122,9 @@ onMounted(async () => {
 }
 
 .compose-group__logo {
-  width: 56px;
-  height: 56px;
+  /* GroupProfileImage sizes itself (60px via size="sm") and draws its own
+     thumbnail border; just stop it being squashed in the flex row. */
   flex-shrink: 0;
-  object-fit: cover;
-  border: 2px solid $color-gray--light;
 }
 
 .compose-group__info {

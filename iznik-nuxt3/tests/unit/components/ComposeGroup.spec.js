@@ -71,9 +71,11 @@ describe('ComposeGroup', () => {
       props,
       global: {
         stubs: {
-          'b-img': {
-            template: '<img :src="src" :alt="alt" />',
-            props: ['src', 'alt', 'rounded'],
+          // GroupProfileImage renders the group's profile with an @error fallback to
+          // /icon.png; stub it to a plain img so we can assert the src it receives.
+          GroupProfileImage: {
+            template: '<img :src="image" :alt="altText" />',
+            props: ['image', 'size', 'altText'],
           },
         },
       },
