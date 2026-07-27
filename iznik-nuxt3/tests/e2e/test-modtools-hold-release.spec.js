@@ -92,12 +92,17 @@ test.describe('ModTools hold and release message', () => {
       await firstCard.locator('button:has-text("Release")').first().click()
       // Wait for Hold button to reappear after release
       await firstCard
-        .locator('button:has-text("Hold")')
+        .getByRole('button', { name: 'Hold', exact: true })
         .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     }
 
-    // Find and click the Hold button within the first card
-    const holdButton = firstCard.locator('button:has-text("Hold")')
+    // Find and click the Hold button within the first card.
+    // Use exact match: a "Hold & Message" button also exists in the same
+    // card, and button:has-text("Hold") would match both.
+    const holdButton = firstCard.getByRole('button', {
+      name: 'Hold',
+      exact: true,
+    })
     await expect(holdButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
