@@ -56,6 +56,16 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/stdmsg [get]
 func GetStdMsg(c *fiber.Ctx) error {
+	// Standard messages are moderator canned-reply templates. Reading them requires
+	// a moderator, matching PostStdMsg/PatchStdMsg; the GET was previously wide open.
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+	}
+	if !auth.IsSystemMod(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to view standard messages"})
+	}
+
 	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
 	if id == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
