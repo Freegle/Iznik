@@ -2677,21 +2677,28 @@ jobs:
             wait $PLAYWRIGHT_PID 2>/dev/null || true
             [ -n "${VITEST_PID:-}" ] && wait $VITEST_PID 2>/dev/null || true
 
-            # For killed tests, fetch final logs from the status API
-            if [ "$TESTS_KILLED_EARLY" = "true" ]; then
-              echo "📋 Capturing final logs for killed tests..."
-              for test_type in laravel go playwright; do
-                outfile=~/test-output/${test_type}.out
-                result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
-                if [ "$result" = "running" ] || [ "$result" = "unknown" ]; then
-                  echo "📋 Fetching final logs for $test_type..."
-                  status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/${test_type}/status || echo '{}')
-                  echo "" >> "$outfile"
-                  echo "=== Test killed by fail-fast ===" >> "$outfile"
-                  echo "$status_response" | jq -r '.logs // "No logs available"' >> "$outfile" 2>/dev/null || true
-                fi
-              done
-            fi
+            # Ensure each suite's output file actually has content, then fall
+            # back to the status API otherwise. Playwright runs via a backgrounded
+            # status-API poller whose buffered stdout is torn down (unflushed)
+            # when the monitoring loop breaks — on fail-fast OR when all suites
+            # complete — so on a Playwright failure playwright.out was left EMPTY,
+            # hiding the failing spec (the artifact uploaded 0 bytes). Re-fetch the
+            # logs from the status API for any suite that did not pass or whose
+            # .out file is empty. Runs unconditionally now (was gated on
+            # TESTS_KILLED_EARLY and only captured 'running'/'unknown', which
+            # skipped a Playwright 'fail').
+            echo "📋 Ensuring final test logs are captured..."
+            for test_type in laravel go playwright; do
+              outfile=~/test-output/${test_type}.out
+              result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
+              if [ "$result" != "pass" ] || [ ! -s "$outfile" ]; then
+                echo "📋 Fetching final logs for $test_type (result=$result)..."
+                status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/${test_type}/status || echo '{}')
+                echo "" >> "$outfile"
+                echo "=== Final status-API logs (result=$result) ===" >> "$outfile"
+                echo "$status_response" | jq -r '.logs // "No logs available"' >> "$outfile" 2>/dev/null || true
+              fi
+            done
 
             # Check results from files
             LARAVEL_RESULT=$(cat /tmp/laravel-result 2>/dev/null || echo "fail")
