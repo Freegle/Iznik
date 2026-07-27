@@ -380,6 +380,8 @@ async function click(callback) {
       stdmsgAction.value = 'Reject'
     } else if (props.leave) {
       stdmsgAction.value = 'Leave'
+    } else if (props.holdMessage) {
+      stdmsgAction.value = 'Hold Message'
     } else if (props.stdmsgid) {
       // We have a standard message.  Fetch it into the store.
       await stdmsgStore.fetch(props.stdmsgid)

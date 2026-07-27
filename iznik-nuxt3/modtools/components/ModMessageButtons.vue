@@ -64,6 +64,15 @@
         label="Hold"
       />
       <ModMessageButton
+        v-if="!message.heldby"
+        :messageid="message.id"
+        :groupid="groupid"
+        variant="warning"
+        icon="comment"
+        hold-message
+        label="Hold & Message"
+      />
+      <ModMessageButton
         v-else
         :messageid="message.id"
         :groupid="groupid"

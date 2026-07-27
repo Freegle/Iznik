@@ -103,6 +103,7 @@ describe('ModMessageButtons', () => {
           reject: reject === '' || reject === true,
           delete: $props.delete === '' || $props.delete === true,
           hold: hold === '' || hold === true,
+          holdMessage: holdMessage === '' || holdMessage === true,
           release: release === '' || release === true,
           spam: spam === '' || spam === true,
           approveedits: approveedits === '' || approveedits === true,
@@ -120,6 +121,7 @@ describe('ModMessageButtons', () => {
         'reject',
         'delete',
         'hold',
+        'holdMessage',
         'release',
         'spam',
         'approveedits',
@@ -242,6 +244,35 @@ describe('ModMessageButtons', () => {
         }
       )
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(false)
+    })
+
+    // Discourse 9808: mods need to hold a post AND ask a question (e.g. for a
+    // charity request, "please provide your charity number") in one click,
+    // the same way Reject already lets them compose a custom message.
+    it('shows a hold-and-message button for pending messages without heldby', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [{ groupid: 456, collection: 'Pending' }],
+          heldby: null,
+        }
+      )
+      expect(wrapper.find('.mod-message-button.holdMessage').exists()).toBe(
+        true
+      )
+    })
+
+    it('hides hold-and-message button when message is held', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [{ groupid: 456, collection: 'Pending' }],
+          heldby: { id: 1 },
+        }
+      )
+      expect(wrapper.find('.mod-message-button.holdMessage').exists()).toBe(
+        false
+      )
     })
 
     it('shows spam button for pending messages', () => {

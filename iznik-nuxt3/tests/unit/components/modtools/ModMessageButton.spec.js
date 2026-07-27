@@ -367,6 +367,24 @@ describe('ModMessageButton', () => {
     })
   })
 
+  describe('holdMessage action (standard message modal)', () => {
+    // Discourse 9808: a mod reviewing a charity-request post wanted to hold it
+    // and ask for a charity number, but ModTools only offered a one-click
+    // compose-and-send for Reject/Leave - Hold had no equivalent, so the raw
+    // Hold button just silently held with no way to explain why.
+    it('sets stdmsgAction to Hold Message when holdMessage prop is true', async () => {
+      const wrapper = mountComponent({ holdMessage: true })
+      await wrapper.vm.click()
+      expect(wrapper.vm.stdmsgAction).toBe('Hold Message')
+    })
+
+    it('shows stdmsg modal when holdMessage prop is true', async () => {
+      const wrapper = mountComponent({ holdMessage: true })
+      await wrapper.vm.click()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
+  })
+
   describe('stdmsgid action (fetch standard message)', () => {
     it('fetches standard message when stdmsgid prop is set', async () => {
       const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
