@@ -1,13 +1,27 @@
 <template>
   <div class="compose-group" data-test="compose-group">
-    <span v-if="groupName" class="compose-group__name">{{ groupName }}</span>
+    <div v-if="groupName" class="compose-group__card">
+      <GroupProfileImage
+        :image="profile"
+        size="sm"
+        alt-text="Community profile picture"
+        class="compose-group__logo"
+      />
+      <div class="compose-group__info">
+        <span class="compose-group__name">{{ groupName }}</span>
+        <p v-if="tagline" class="compose-group__tagline">
+          {{ tagline }}
+        </p>
+      </div>
+    </div>
     <span v-else class="compose-group__finding text-muted">
       Finding your local community…
     </span>
   </div>
 </template>
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import GroupProfileImage from '~/components/GroupProfileImage.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import api from '~/api'
@@ -49,6 +63,36 @@ const groupName = computed(() => {
   )
 })
 
+// The postcode's groupsnear entries are deliberately trimmed (id/name only) to keep the
+// compose store small, so the profile picture and tagline come from the full group record.
+// We hold the FETCHED group in a local ref and drive the card from it, rather than reading
+// groupStore.get(id) reactively: get() returns a cross-store getter result whose dependency
+// on list[id] didn't reliably re-render the card once the fetch resolved, so the profile
+// image could stay on the /icon.png fallback (logged-in EH4 1HY showed the default instead
+// of the Edinburgh logo). Awaiting fetch() and assigning the result is deterministic. Name
+// shows immediately; profile/tagline fill in when the fetch resolves.
+const fullGroup = ref(null)
+
+watch(
+  selectedGroupId,
+  async (id) => {
+    fullGroup.value = null
+    if (!id) {
+      return
+    }
+    const g = await groupStore.fetch(id)
+    // Guard against a stale resolution if the origin group changed while awaiting.
+    if (id === selectedGroupId.value) {
+      fullGroup.value = g
+    }
+  },
+  { immediate: true }
+)
+
+const profile = computed(() => fullGroup.value?.profile || '/icon.png')
+
+const tagline = computed(() => fullGroup.value?.tagline || null)
+
 onMounted(async () => {
   // Refetch the postcode so its group list is fresh (groups can merge), then lock the origin
   // group to the containing-or-closest community, overriding any pre-set group.
@@ -70,8 +114,42 @@ onMounted(async () => {
   }
 })
 </script>
-<style scoped>
+<style scoped lang="scss">
+@import 'assets/css/_color-vars.scss';
+
+.compose-group__card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid $color-gray--light;
+  border-radius: 8px;
+  background: $color-white;
+}
+
+.compose-group__logo {
+  /* GroupProfileImage sizes itself (60px via size="sm") and draws its own
+     thumbnail border; just stop it being squashed in the flex row. */
+  flex-shrink: 0;
+}
+
+.compose-group__info {
+  flex: 1;
+  min-width: 0;
+}
+
 .compose-group__name {
-  font-weight: 600;
+  display: block;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: $color-header;
+  line-height: 1.2;
+}
+
+.compose-group__tagline {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: $color-gray--darker;
+  line-height: 1.3;
 }
 </style>
