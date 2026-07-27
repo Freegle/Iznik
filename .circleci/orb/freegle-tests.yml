@@ -1369,8 +1369,19 @@ commands:
               exit 0
             fi
             echo "📦 Installing Node.js 22..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # deb.nodesource.com is Cloudflare-fronted and 403s datacenter/CI IPs; fall back to
+            # nodejs.org's official tarball (a separate CDN) into /usr/local when NodeSource fails.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
             echo "✅ Node.js $(node --version) installed"
       - run:
           name: Run Vitest unit tests
@@ -3255,8 +3266,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3392,8 +3420,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - restore_cache:
@@ -3632,8 +3677,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - restore_cache:
@@ -3915,8 +3977,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4540,8 +4619,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
