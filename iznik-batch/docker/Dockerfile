@@ -9,6 +9,14 @@
 # inlining onto elements is required for Gmail, so we bump to mrml 6 and
 # enable css-inline. mrml 5->6 needs no source changes to the extension.
 #
+# Pin mrml to EXACTLY 6.0.1 (not "6" = ^6). With "6" + `rm Cargo.lock`, cargo
+# resolved whatever the latest 6.x was at build time, so the baked extension
+# drifted between builds. mj-raw rendering changed across 6.x: 6.0.1 emits
+# <mj-raw> content (e.g. the tracking pixel <img>) verbatim, but a later 6.x
+# dropped it, which turned CI's cached build red on TrackingPixelOutlookTest
+# while a freshly-built local image (6.0.1) passed. Exact-pinning makes the
+# build reproducible and keeps mj-raw working.
+#
 # Built here (per-branch) rather than in Dockerfile.base because the base
 # image only rebuilds on push to master, so a base-only change would not be
 # exercised by a PR's CI. No BuildKit-only features (the orb builds the batch
@@ -37,7 +45,7 @@ RUN n=0; until curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /build
 RUN git clone --depth 1 --branch v1.2.1 https://github.com/alekitto/mjml-php.git . \
-    && sed -i 's/^mrml = "5"/mrml = { version = "6", features = ["css-inline"] }/' Cargo.toml \
+    && sed -i 's/^mrml = "5"/mrml = { version = "=6.0.1", features = ["css-inline"] }/' Cargo.toml \
     && rm -f Cargo.lock \
     && grep -q 'css-inline' Cargo.toml
 # Fix an upstream bug: RENDER_EXCEPTION is declared but never assigned, so every
@@ -56,6 +64,17 @@ FROM ghcr.io/freegle/freegle-batch-base:latest
 
 # Install + enable the mrml extension built above. Fail the build if the
 # extension does not load (so a broken build never ships).
+#
+# Cache-bust keyed to the mrml version. On CI the batch build runs with
+# `--cache-from ci/batch:latest`; because mjml-ext-builder is a separate stage
+# whose layers are NOT in that inline cache, the cross-stage COPY below can be
+# served stale from the cache image, so a version bump in mjml-ext-builder alone
+# does not reach the final image (this is exactly why pinning mrml=6.0.1 did not
+# take on the first attempt). Referencing MRML_VERSION in a RUN before the COPY
+# changes this layer's cache key whenever the pin changes, forcing the fresh
+# extension to be copied in. Keep MRML_VERSION in step with the pin above.
+ARG MRML_VERSION=6.0.1
+RUN echo "installing mrml ${MRML_VERSION} extension"
 COPY --from=mjml-ext-builder /mjml.so /tmp/mjml.so
 RUN cp /tmp/mjml.so "$(php-config --extension-dir)/mjml.so" \
     && rm /tmp/mjml.so \
