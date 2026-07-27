@@ -229,6 +229,54 @@ class ChatNotificationTest extends TestCase
         $this->assertStringNotContainsString('[', $mail->replySubject);
     }
 
+    public function test_chat_notification_text_keeps_apostrophe_in_ref_subject(): void
+    {
+        // Blade {{ }} in the text/plain template runs htmlspecialchars, turning a
+        // real apostrophe in the referenced item subject into &#039; — which trips
+        // rspamd's default rules on the recipient side (e.g. TrashNothing) and can
+        // spam-bin the email. The refMessage subject must render via {!! !!} so the
+        // text/plain part carries the literal character (reported 2026-07-26).
+        $user1 = $this->createTestUser(['fullname' => 'Coralie']);
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user1, $group);
+
+        $refMessage = $this->createTestMessage($user1, $group, [
+            'subject' => "OFFER: Lavazza A Modo Mio 'Jolie' Coffee Pod Machine (Oxford OX1)",
+        ]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+            'created' => now(),
+        ]);
+
+        // A message referencing the item — this renders the referenced subject in
+        // the body (matches the reported "promised this to you" email).
+        $message = ChatMessage::create([
+            'chatid' => $room->id,
+            'userid' => $user1->id,
+            'message' => 'Coralie promised this to you',
+            'type' => ChatMessage::TYPE_DEFAULT,
+            'date' => now(),
+            'refmsgid' => $refMessage->id,
+            'reviewrequired' => 0,
+            'processingrequired' => 0,
+            'processingsuccessful' => 1,
+            'mailedtoall' => 0,
+            'seenbyall' => 0,
+            'reviewrejected' => 0,
+            'platform' => 1,
+        ]);
+
+        $mail = new ChatNotification($user2, $user1, $room, $message, ChatRoom::TYPE_USER2USER);
+
+        // The text/plain part must carry the literal apostrophe, never &#039;.
+        $mail->assertDontSeeInText('&#039;', false);
+        $mail->assertSeeInText("A Modo Mio 'Jolie'", false);
+    }
+
     public function test_chat_notification_user2mod_subject(): void
     {
         $user = $this->createTestUser();
