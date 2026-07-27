@@ -70,4 +70,43 @@ class SpatialAdminService
             Log::warning("SpatialAdmin: rebuild {$dataset} failed: {$e->getMessage()}");
         }
     }
+
+    /**
+     * Insert or replace specific items in a dataset's in-memory index straight
+     * away, without waiting for the periodic delta sync.
+     *
+     * Needed because each container runs its OWN spatial-knn instance with an
+     * independent in-memory index. A caller that must query the index it just
+     * changed a row in (e.g. PostcodeRemapService remapping a brand-new area,
+     * Discourse #9950) has to seed THIS process's instance first; the write-time
+     * upsert done elsewhere lands on a different instance and never reaches here.
+     *
+     * $items: [['id' => int, 'wkt' => string, 'extra' => ['name' => ?, 'type' => ?]], ...].
+     *
+     * Failures are logged as warnings and do not throw — the periodic delta and
+     * the nightly rebuild remain as backstops.
+     */
+    public function upsertItems(string $dataset, array $items): void
+    {
+        if (empty($items)) {
+            return;
+        }
+
+        try {
+            $response = Http::timeout(5)->post(
+                "{$this->adminUrl}/v1/{$dataset}/upsert",
+                ['items' => array_values($items)]
+            );
+
+            if (!$response->successful()) {
+                Log::warning("SpatialAdmin: upsert {$dataset} HTTP {$response->status()}", [
+                    'items_count' => count($items),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("SpatialAdmin: upsert {$dataset} failed: {$e->getMessage()}", [
+                'items_count' => count($items),
+            ]);
+        }
+    }
 }
