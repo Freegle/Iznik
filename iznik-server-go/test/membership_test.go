@@ -118,7 +118,9 @@ func TestPutMembershipsGoBannedCannotRejoin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	// Discourse #9961: a banned join must be a real failure, not a fake "Success"
+	// that silently drops the request with nothing for a moderator to find.
+	assert.Equal(t, 403, resp.StatusCode, "Banned member rejoin should fail, not fake-succeed")
 
 	// Verify user is NOT added to Approved membership.
 	var approvedCount int64
@@ -160,7 +162,8 @@ func TestPutMembershipsV1BannedCannotRejoin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	// Discourse #9961: banned rejoin is a real failure, not a fake "Success".
+	assert.Equal(t, 403, resp.StatusCode, "V1-banned member rejoin should fail, not fake-succeed")
 
 	// Verify user is NOT added to Approved membership.
 	var approvedCount int64
