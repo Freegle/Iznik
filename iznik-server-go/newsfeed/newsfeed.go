@@ -107,46 +107,79 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 	// Over-fetch from the spatial index so that, after dropping alerts and posts
 	// older than the feed window, we still have at least nearbyLimit candidates.
 	const overFetch = 10
+	// maxNearbyKm bounds every radius computed below - the largest radius the
+	// pre-#459 doubling-box algorithm ever searched (1km doubling to 128km)
+	// before giving up. getFeed() treats a 0 return as "no geographic
+	// filtering at all", so every path here MUST end up at a positive,
+	// capped value rather than an unbounded or zero one - Discourse #9937
+	// (a 169-mile-away post topping a "Nearby" feed because the radius
+	// silently became "no restriction").
+	const maxNearbyKm = 128.0
+	// minNearbyKm floors the same result from the other end. Both
+	// data-driven branches below can legitimately compute a distance of
+	// exactly 0 - a newsfeed post at the user's own coordinates (their own
+	// post, or someone else's right on top of them) has KNN distance 0 in
+	// decimal degrees - which hits the exact same "no restriction" path as
+	// an unbounded radius, per the comment above. That's #9937 again.
+	const minNearbyKm = 1.0
 
 	latlng := user.GetLatLng(uid)
 	if latlng.Lat == 0 && latlng.Lng == 0 {
+		// We don't know where this user is at all, so there's no reference
+		// point to size a "nearby" radius from - the caller must fall back
+		// to an unfiltered feed.
 		return 0, latlng, 0, 0, 0, 0
 	}
+
+	// Default to the capped ceiling; every branch below either leaves this
+	// alone or overwrites it with a data-driven value that gets clamped
+	// between minNearbyKm and maxNearbyKm before we return.
+	distKm := maxNearbyKm
 
 	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
-	if err != nil || len(results) < nearbyLimit {
-		return 0, latlng, 0, 0, 0, 0
-	}
-
-	// The spatial "newsfeed" index has no type/timestamp columns, so it can't
-	// exclude alerts or stale posts — applying that here restores the
-	// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
-	// computed radius).
-	ids := make([]int64, len(results))
-	for i, r := range results {
-		ids[i] = r.ID
-	}
-	allowed := RecentNonAlertNewsfeedIDs(ids)
-
-	// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
-	// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
-	count := 0
-	distDeg := 0.0
-	for _, r := range results {
-		if _, ok := allowed[r.ID]; !ok {
-			continue
+	if err == nil && len(results) >= nearbyLimit {
+		// The spatial "newsfeed" index has no type/timestamp columns, so it can't
+		// exclude alerts or stale posts — applying that here restores the
+		// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
+		// computed radius).
+		ids := make([]int64, len(results))
+		for i, r := range results {
+			ids[i] = r.ID
 		}
-		count++
+		allowed := RecentNonAlertNewsfeedIDs(ids)
+
+		// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
+		// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
+		count := 0
+		distDeg := 0.0
+		for _, r := range results {
+			if _, ok := allowed[r.ID]; !ok {
+				continue
+			}
+			count++
+			if count == nearbyLimit {
+				distDeg = r.Distance
+				break
+			}
+		}
+
 		if count == nearbyLimit {
-			distDeg = r.Distance
-			break
+			// Enough recent, non-alert posts nearby - size the radius from their true density.
+			distKm = distDeg * 111.0
+		} else {
+			// Too few passed the recency/alert filter, but there's still enough
+			// raw local density data (>= nearbyLimit raw candidates) to size a
+			// radius from, rather than falling straight back to the flat ceiling.
+			distKm = results[nearbyLimit-1].Distance * 111.0
 		}
 	}
-	if count < nearbyLimit {
-		return 0, latlng, 0, 0, 0, 0
+
+	if distKm > maxNearbyKm {
+		distKm = maxNearbyKm
+	} else if distKm < minNearbyKm {
+		distKm = minNearbyKm
 	}
 
-	distKm := distDeg * 111.0
 	p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
 	ne := p.PointAtDistanceAndBearing(distKm, 45)
 	sw := p.PointAtDistanceAndBearing(distKm, 225)
