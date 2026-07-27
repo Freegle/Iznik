@@ -66,6 +66,49 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(0, $count);
     }
 
+    public function test_notify_by_email_deduplicates_identical_rows_from_single_send(): void
+    {
+        // A single chat send occasionally inserts two identical chat_messages
+        // rows ~1s apart (double-submit / retry with no dedup guard at insert).
+        // We email once per row, so without dedup the recipient gets two copies
+        // of the same message seconds apart. Only one notification should go out.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        // Two identical rows for a single logical send (same body/type/refmsgid).
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5),
+        ]);
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5)->addSecond(),
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        // The recipient must receive exactly one notification, not one per row.
+        $toRecipient = Mail::sent(ChatNotification::class)->filter(
+            fn (ChatNotification $mail) => $mail->hasTo($recipient->email_preferred)
+        );
+        $this->assertCount(1, $toRecipient);
+    }
+
     public function test_notify_by_email_with_specific_chat(): void
     {
         $sender = $this->createTestUser();
