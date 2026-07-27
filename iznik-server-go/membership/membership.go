@@ -1199,12 +1199,17 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		}
 	}
 
-	// Check if banned.
+	// Check if banned. V1 parity: User::addMembership returns FALSE for
+	// isBanned(), and the legacy partner handler reported that as ret=4
+	// "Failed - likely ban" - a genuine failure. Reporting a fake "Success"
+	// here instead (Discourse #9961) leaves no membership, memberships_history,
+	// or log row anywhere, so a banned member's join attempt vanishes with
+	// nothing for a moderator to find while the partner is told it worked.
 	var bannedCount int64
 	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
 		userid, groupid).Scan(&bannedCount)
 	if bannedCount > 0 {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
+		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
 	// Check if already a member.
@@ -1249,12 +1254,17 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
 	}
 
-	// Check if banned.
+	// Check if banned. V1 parity: User::addMembership returns FALSE for isBanned(),
+	// a genuine failure. Reporting a fake "Success" here (Discourse #9961) leaves no
+	// membership, memberships_history, or log row anywhere, so a banned member's join
+	// attempt vanishes with nothing for a moderator to find while the caller (a partner
+	// like TrashNothing, or a moderator using the Add button) is told it worked. Return
+	// a real failure so the join doesn't silently disappear.
 	var bannedCount int64
 	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
 		userid, groupid).Scan(&bannedCount)
 	if bannedCount > 0 {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
+		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
 	// Insert membership as approved member.

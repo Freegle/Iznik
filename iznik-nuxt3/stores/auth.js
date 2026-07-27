@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
+import { isBannedFailure } from '~/api/bannedFailure'
 import {
   abortAllPendingRequests,
   enterLogoutMode,
@@ -536,11 +537,21 @@ export const useAuthStore = defineStore({
       return this.user
     },
     async joinGroup(userid, groupid, manual) {
-      await this.$api.memberships.joinGroup({
-        userid,
-        groupid,
-        manual,
-      })
+      try {
+        await this.$api.memberships.joinGroup({
+          userid,
+          groupid,
+          manual,
+        })
+      } catch (e) {
+        // A banned member's own join is refused server-side (403 "Failed - banned").
+        // Swallow it silently: we don't reveal the ban to them, we just don't join.
+        // Anything else is a real error and must propagate.
+        if (isBannedFailure(e)) {
+          return this.user
+        }
+        throw e
+      }
       await this.fetchUser()
       return this.user
     },

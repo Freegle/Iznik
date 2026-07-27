@@ -1,5 +1,6 @@
 import BaseAPI from '@/api/BaseAPI'
 import { notAHeldConflict } from '~/api/heldConflict'
+import { notABannedFailure } from '~/api/bannedFailure'
 
 export default class MembershipsAPI extends BaseAPI {
   update(data) {
@@ -7,7 +8,9 @@ export default class MembershipsAPI extends BaseAPI {
   }
 
   joinGroup(data) {
-    return this.$putv2('/memberships', data)
+    // A banned member's join is refused with 403 "Failed - banned" - expected, so
+    // don't log it to Sentry (the caller handles it).
+    return this.$putv2('/memberships', data, notABannedFailure)
   }
 
   leaveGroup(data) {
@@ -44,7 +47,9 @@ export default class MembershipsAPI extends BaseAPI {
   }
 
   put(data) {
-    return this.$putv2('/memberships', data)
+    // Used by the moderator "Add member" flow; a banned target returns 403
+    // "Failed - banned" - expected, so keep it out of Sentry (the modal surfaces it).
+    return this.$putv2('/memberships', data, notABannedFailure)
   }
 
   approveMember(userid, groupid, subject = null, stdmsgid = null, body = null) {
