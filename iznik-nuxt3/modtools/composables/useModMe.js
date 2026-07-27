@@ -24,7 +24,7 @@ async function makebeep() {
 
 export function useModMe() {
   function hasPermission(perm) {
-    const { me, fetchMe } = useMe()
+    const { me } = useMe()
     const perms = me.value ? me.value.permissions : null
     return perms && perms.includes(perm)
   }
@@ -77,6 +77,7 @@ export function useModMe() {
     const authStore = useAuthStore()
     const chatStore = useChatStore()
     const miscStore = useMiscStore()
+    const { fetchMe } = useMe()
     if (miscStore.workTimer) {
       clearTimeout(miscStore.workTimer)
     }
