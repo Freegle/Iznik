@@ -24,7 +24,7 @@ async function makebeep() {
 
 export function useModMe() {
   function hasPermission(perm) {
-    const { me } = useMe()
+    const { me, fetchMe } = useMe()
     const perms = me.value ? me.value.permissions : null
     return perms && perms.includes(perm)
   }
@@ -101,14 +101,13 @@ export function useModMe() {
       let currentTotal = 0
       if (authStore.work) currentTotal += authStore.work.total
       if (chatStore) currentTotal += Math.min(99, chatStore.unreadCount)
-      // Call authStore.fetchUser() directly rather than the shared fetchMe(true)
-      // helper. fetchMe() dedups concurrent hitServer=true calls onto a single
-      // in-flight promise - fine for e.g. two layouts booting at once, but wrong
-      // here: a mod action (Hold, then Release moments later) needs THIS call to
-      // reflect state as of now, not piggyback on an earlier still-in-flight
-      // fetch and pick up stale counts, which left the pending-message badges
-      // showing the pre-action state until a manual page refresh (Discourse #9951).
-      await authStore.fetchUser()
+      // Refresh the work counts (the source of the blue/red pending-message badges).
+      // Use forceServer so the result reflects state as of NOW: a mod action (Hold, then
+      // Release moments later) must not piggyback on an earlier still-in-flight fetchMe()
+      // and pick up stale counts, which left the badges showing the pre-action state until
+      // a manual page refresh (Discourse #9951). fetchMe coalesces these forceServer calls
+      // onto a single trailing refetch, so rapid actions don't flood /session.
+      await fetchMe(true, true)
       await modGroupStore.getModGroups()
 
       const chatcount = chatStore ? Math.min(99, chatStore.unreadCount) : 0
