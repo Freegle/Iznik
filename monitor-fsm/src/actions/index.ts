@@ -162,6 +162,238 @@ export function buildFailedReviewCloseComment(
   ].join('\n')
 }
 
+// Blocker categories a follow-up commit on the SAME branch can resolve, rather than
+// throwing the PR away. Keyed by substring so the classifier tolerates the reviewer's
+// free-text category names (e.g. "partial-implementation", "Partial implementation",
+// "incomplete diff"). These are the findings where the fix is on the right track but
+// doesn't go far enough - exactly the case that used to churn: close -> re-dispatch ->
+// same partial fix -> close again. Expanding the existing fix breaks that loop.
+const COMPLETABLE_BLOCKER_PATTERNS = [
+  'partial',            // partial implementation - symptom fixed, root cause / other branches left
+  'incomplete',         // incomplete diff - claims to fix X but misses part of the path
+  'other call site',    // sibling handler / adjacent file has the same bug
+  'call sites',
+  'sibling',
+  'missing test',       // no reproduction test, or test proves nothing
+  'test proves nothing',
+  'no reproduction',
+  'coverage',           // test doesn't cover the trigger path
+  'regression',         // removed/weakened a passing test - restore it
+]
+
+// Blocker categories where completing the SAME diff is the wrong move - the approach
+// itself is unsafe or misdirected, so a corrective commit can't be trusted to fix it.
+// These still close (the human should look). Security issues are here because silently
+// bolting on more code to an unsafe change is riskier than parking it.
+const TERMINAL_BLOCKER_PATTERNS = [
+  'security',
+  'sql injection',
+  'auth bypass',
+  'path traversal',
+  'wrong', // "wrong approach", "fixes the wrong thing"
+]
+
+/**
+ * Classify a review's blocker findings into ones a follow-up commit on the same branch
+ * can resolve ("completable") and ones that mean the approach is unsound ("terminal").
+ * A blocker matching a terminal pattern is terminal even if it also matches a completable
+ * one (safety-first). Unknown categories are treated as completable, since the default
+ * response to "the fix doesn't go far enough" is to expand it, not discard it.
+ */
+export function classifyReviewBlockers(
+  blockers: Array<{ category?: string; description?: string }>,
+): { completable: typeof blockers; terminal: typeof blockers; allCompletable: boolean } {
+  const completable: typeof blockers = []
+  const terminal: typeof blockers = []
+  for (const b of blockers ?? []) {
+    const hay = `${b?.category ?? ''} ${b?.description ?? ''}`.toLowerCase()
+    if (TERMINAL_BLOCKER_PATTERNS.some((p) => hay.includes(p))) {
+      terminal.push(b)
+    } else {
+      completable.push(b)
+    }
+  }
+  return { completable, terminal, allCompletable: terminal.length === 0 && completable.length > 0 }
+}
+
+/**
+ * Decide what a failed adversarial review should DO, encoding the "expand fixes, don't
+ * close them" policy. A review that passed → 'pass'. A review that failed only on
+ * completable blockers, and hasn't already been expanded too many times → 'expand'
+ * (dispatch a follow-up commit on the same branch). Otherwise → 'close' (terminal
+ * blocker, or the expansion budget is exhausted, so hand it back for retry/human triage).
+ */
+export function decideReviewAction(
+  args: { passed: boolean; blockers: Array<{ category?: string; description?: string }>; expansionAttempts?: number; maxExpansions?: number },
+): { action: 'pass' | 'expand' | 'close'; reason: string } {
+  const { passed, blockers, expansionAttempts = 0, maxExpansions = 1 } = args
+  if (passed) return { action: 'pass', reason: 'review passed' }
+  const { terminal, allCompletable } = classifyReviewBlockers(blockers)
+  if (terminal.length > 0) {
+    return { action: 'close', reason: `terminal blocker(s): ${terminal.map((b) => b.category ?? 'issue').join(', ')}` }
+  }
+  if (!allCompletable) {
+    return { action: 'close', reason: 'no completable blockers to expand' }
+  }
+  if (expansionAttempts >= maxExpansions) {
+    return { action: 'close', reason: `expansion budget exhausted (${expansionAttempts}/${maxExpansions})` }
+  }
+  return { action: 'expand', reason: 'completable blockers — expand the fix on the same branch' }
+}
+
+/**
+ * Build the coder brief for expanding an existing fix to clear the adversarial review's
+ * completable blockers. Exported for testing. The delegate must push to the SAME branch
+ * (this is a follow-up commit, not a new PR) and emit COMMIT_PUSHED so the caller can
+ * verify the branch advanced before re-reviewing.
+ */
+export function buildFixExpansionBrief(
+  prNumber: number,
+  branch: string,
+  blockers: Array<{ category?: string; description?: string }>,
+): string {
+  const findings = (blockers ?? []).length
+    ? blockers.map((b) => `- ${b.category ?? 'issue'}: ${(b.description ?? '').slice(0, 400)}`).join('\n')
+    : '- (no specific findings recorded)'
+  return [
+    `An adversarial review of PR #${prNumber} found the fix is on the right track but does not go far enough. COMPLETE it - do not start over, do not open a new PR.`,
+    '',
+    `Check out the existing branch and push a follow-up commit that resolves EVERY finding below:`,
+    `  gh pr checkout ${prNumber} -R Freegle/Iznik   (or: git fetch origin && git checkout ${branch})`,
+    '',
+    'Findings to resolve:',
+    findings,
+    '',
+    'Rules:',
+    '- Fix the ROOT cause and EVERY sibling/other-call-site the review names, not just the one already patched.',
+    '- Keep the existing fix and tests; add to them. If a finding is about a missing or weak reproduction test, add one that fails before the fix and passes after.',
+    `- Push to the SAME branch (${branch}); do NOT open a new PR.`,
+    '- Keep the change minimal and in the style of the surrounding code.',
+  ].join('\n')
+}
+
+/**
+ * Expand an existing fix PR to clear completable review blockers by dispatching ONE
+ * headless coder delegate that pushes a follow-up commit to the SAME branch. Returns
+ * whether the branch advanced (a new commit landed on origin/<branch>). Self-contained
+ * so it doesn't perturb delegate_parallel_tasks (the hot path). Best-effort and bounded:
+ * a hung delegate is killed by the silence/hard-cap timers, and the caller only re-reviews
+ * when this reports pushed=true.
+ */
+export async function runFixExpansion(
+  prNumber: number,
+  branch: string,
+  blockers: Array<{ category?: string; description?: string }>,
+  repo = 'Freegle/Iznik',
+  repoCwd = '/home/edward/FreegleDockerWSL',
+): Promise<{ pushed: boolean; sha?: string; timedOut: boolean }> {
+  const { execFileSync, spawn } = await import('node:child_process')
+  const delegateModel = process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+  const SILENCE_TOOL_MS = 1_800_000
+  const SILENCE_IDLE_MS = 180_000
+  const HARD_CAP_MS = 1_800_000
+
+  // Record where origin/<branch> is now, so we can confirm the delegate actually advanced it.
+  let baseSha = ''
+  try {
+    const { stdout } = await exec('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: repoCwd, timeout: 20_000 })
+    baseSha = (stdout || '').trim().split(/\s+/)[0] ?? ''
+  } catch { /* best effort */ }
+
+  const worktreeDir = `/tmp/monitor-fsm-expand-${process.pid}-${Date.now()}`
+  let worktreeCreated = false
+  for (const base of ['master', 'HEAD']) {
+    try {
+      execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], { cwd: repoCwd, stdio: 'pipe' })
+      worktreeCreated = true
+      break
+    } catch { /* try next base */ }
+  }
+  const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
+  const fullPrompt = `${buildFixExpansionBrief(prNumber, branch, blockers)}
+
+==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. Complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
+STAGING RULES: never \`git add -A\`. Always stage explicit paths.
+Before emitting the marker, verify the push landed: \`git log origin/${branch} -1 --format=%H\`.
+OUTPUT MARKER — emit exactly one on its own line at the very end:
+  - Pushed the follow-up commit: COMMIT_PUSHED=<sha>
+  - Could not complete:          DELEGATE_FAILED=<one-line-reason>
+`
+
+  type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
+  const result = await new Promise<{ textStream: string; stderr: string; code: number; killReason: KillReason }>((resolve) => {
+    const child = spawn(
+      CLAUDE_BIN,
+      ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+        '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+        '--model', delegateModel],
+      { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+    )
+    let stderr = '', textStream = '', lineBuffer = ''
+    let lastEventAt = Date.now()
+    let currentTool: string | null = null
+    let killReason: KillReason = null
+    const processLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed) return
+      let ev: any
+      try { ev = JSON.parse(trimmed) } catch { return }
+      const content = ev?.message?.content ?? ev?.content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text' && typeof block.text === 'string') textStream += block.text
+          else if (block.type === 'tool_use') currentTool = block.name
+          else if (block.type === 'tool_result') currentTool = null
+        }
+      } else if (typeof content === 'string') textStream += content
+      if (ev?.type === 'result' && typeof ev.result === 'string') textStream += ev.result
+    }
+    child.stdout.on('data', (d) => {
+      lastEventAt = Date.now()
+      lineBuffer += String(d)
+      const lines = lineBuffer.split('\n'); lineBuffer = lines.pop() ?? ''
+      for (const l of lines) processLine(l)
+    })
+    child.stderr.on('data', (d) => { stderr += String(d); lastEventAt = Date.now() })
+    const silenceTick = setInterval(() => {
+      const silence = Date.now() - lastEventAt
+      if (silence > (currentTool ? SILENCE_TOOL_MS : SILENCE_IDLE_MS)) {
+        killReason = currentTool ? 'tool-silence' : 'idle-silence'
+        child.kill('SIGTERM')
+      }
+    }, 30_000)
+    const hardCap = setTimeout(() => { killReason = 'hardCap'; child.kill('SIGTERM') }, HARD_CAP_MS)
+    child.on('close', (code) => {
+      clearInterval(silenceTick); clearTimeout(hardCap)
+      if (lineBuffer) processLine(lineBuffer)
+      resolve({ textStream, stderr, code: code ?? 1, killReason })
+    })
+    child.stdin.write(fullPrompt)
+    child.stdin.end()
+  })
+
+  if (worktreeCreated) {
+    try { execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repoCwd, stdio: 'pipe' }) } catch { /* best effort */ }
+  }
+
+  const timedOut = result.killReason !== null || result.code === 143
+
+  // Trust the remote, not the delegate's self-report: confirm origin/<branch> actually moved.
+  let headSha = ''
+  try {
+    const { stdout } = await exec('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: repoCwd, timeout: 20_000 })
+    headSha = (stdout || '').trim().split(/\s+/)[0] ?? ''
+  } catch { /* best effort */ }
+  const pushed = headSha !== '' && headSha !== baseSha
+  if (pushed) out(`runFixExpansion: PR #${prNumber} branch ${branch} advanced ${baseSha.slice(0, 9)} → ${headSha.slice(0, 9)}`)
+  else out(`runFixExpansion: PR #${prNumber} not advanced (${timedOut ? 'delegate timed out' : 'no new commit'})`)
+
+  return { pushed, sha: pushed ? headSha : undefined, timedOut }
+}
+
 /**
  * Did a human leave a "this is not an actionable bug" signal on a (closed) PR?
  * Scans non-bot comments for a WONTFIX_CLOSE_PATTERN. Returns the matched comment
@@ -3359,6 +3591,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
     handler: async (params, context) => {
       const { prNumber, repo = 'Freegle/Iznik' } = params as any
       try {
+        // Review the current PR diff. Wrapped in a closure so the identical logic runs
+        // for the initial review AND the post-expansion re-review. Returns null when the
+        // diff can't be fetched (a hard fail that must never trigger expansion).
+        const reviewOnce = async (): Promise<{ passed: boolean; issues: any[]; blockers: any[]; summary: string } | null> => {
         // Fetch PR diff
         const { stdout: diff } = await exec('gh', [
           'pr', 'diff', String(prNumber),
@@ -3366,11 +3602,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         ], { maxBuffer: 50 * 1024 * 1024, timeout: 30 * 1000 })
 
         if (!diff || diff.trim().length === 0) {
-          return {
-            passed: false,
-            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
-            summary: 'Failed to fetch PR diff',
-          }
+          return null
         }
 
         // Review with Opus
@@ -3439,44 +3671,77 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
         }
 
         const passed = review.passed !== false && (!Array.isArray(review.blockers) || review.blockers.length === 0)
+        const blockers = Array.isArray(review.blockers) ? review.blockers : []
         const issues = [
-          ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
+          ...blockers.map((b: any) => ({ ...b, severity: 'error' })),
           ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
           ...(Array.isArray(review.info) ? review.info.map((i: any) => ({ ...i, severity: 'info' })) : []),
         ]
+        return { passed, issues, blockers, summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues') }
+        } // end reviewOnce
 
-        // A failed review must NOT leave a bad PR open for the human to find (that's
-        // how #661/#662/#663/#668/#670 reached the operator). Auto-close the PR; the
-        // bug then re-enters the reopen→retry→escalate path via sync_pr_states. Only
-        // touch FSM-authored fix branches (fix/ or fix-), never a human PR, and never
-        // a passing one. The close comment carries FSM_AUTOCLOSE_MARKER so it is not
-        // mistaken for a human wontfix (which would park instead of retry).
+        let r = await reviewOnce()
+        if (!r) {
+          return {
+            passed: false,
+            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
+            summary: 'Failed to fetch PR diff',
+          }
+        }
+
+        // "Expand fixes, don't close them" (operator directive). A failed review whose
+        // blockers are all COMPLETABLE (partial implementation, sibling call sites, a
+        // missing/weak reproduction test, ...) gets ONE follow-up commit on the SAME branch
+        // to finish the fix, then a re-review — instead of the old
+        // close→re-dispatch→same-partial-fix churn (#1164/#1167/#1171 each hit this).
+        // We still auto-close on a TERMINAL blocker (security / wrong-approach) or when the
+        // expansion fails to land or fails to clear the blockers, so a bad PR never reaches
+        // the operator (the failure mode behind #661/#662/#663/#668/#670). Only ever touch
+        // FSM fix branches (fix/ or fix-) that are still OPEN; the close comment carries
+        // FSM_AUTOCLOSE_MARKER so it isn't mistaken for a human wontfix (which parks instead).
         let autoClosed = false
-        if (!passed) {
-          try {
-            const { stdout: branchOut } = await exec(
-              'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
-              { timeout: 20 * 1000 },
-            )
-            const [branch, state] = (branchOut || '').trim().split(' ')
-            if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+        let expanded = false
+        if (!r.passed) {
+          const { stdout: branchOut } = await exec(
+            'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+            { timeout: 20 * 1000 },
+          ).catch(() => ({ stdout: '' }))
+          const [branch, state] = (branchOut || '').trim().split(' ')
+          const closePr = async (reason: string) => {
+            try {
               await exec(
-                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, issues)],
+                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, r!.issues)],
                 { timeout: 30 * 1000 },
               )
               autoClosed = true
-              out(`adversarial_review_pr: auto-closed PR #${prNumber} (failed review: ${issues.filter((i: any) => i.severity === 'error').map((i: any) => i.category).join(', ') || 'blockers'})`)
+              out(`adversarial_review_pr: auto-closed PR #${prNumber} (${reason})`)
+            } catch (e: any) {
+              outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
             }
-          } catch (e: any) {
-            outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
+          }
+          if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+            const decision = decideReviewAction({ passed: r.passed, blockers: r.blockers })
+            if (decision.action === 'expand') {
+              out(`adversarial_review_pr: PR #${prNumber} — ${decision.reason}; expanding on ${branch}`)
+              const exp = await runFixExpansion(prNumber, branch, r.blockers, repo)
+              if (exp.pushed) {
+                expanded = true
+                const r2 = await reviewOnce()
+                if (r2) r = r2
+              }
+              if (!r.passed) await closePr(exp.pushed ? 'expansion did not clear blockers' : 'expansion did not land')
+            } else {
+              await closePr(decision.reason)
+            }
           }
         }
 
         return {
-          passed,
+          passed: r.passed,
           autoClosed,
-          issues,
-          summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
+          expanded,
+          issues: r.issues,
+          summary: r.summary,
         }
       } catch (err: any) {
         outWarn(`[adversarial-review] error: ${err.message}`)
