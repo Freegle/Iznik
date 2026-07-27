@@ -58,12 +58,17 @@ beforeEach(() => {
     body: { style: { overflow: '' } },
     title: '',
   }
-  // Reset store state via globalThis pattern used by pre-aliased mocks
+  // Reset store state via globalThis pattern used by pre-aliased mocks.
+  // fetchUser defaults to mockFetchMe so existing tests that configure
+  // mockFetchMe's implementation (to set globalThis.__mockAuthStore.work)
+  // keep working now that checkWork() calls authStore.fetchUser() directly
+  // instead of the shared, deduped fetchMe() helper.
   globalThis.__mockAuthStore = {
     work: null,
     user: { settings: {} },
     member: vi.fn(() => null),
     groups: [],
+    fetchUser: mockFetchMe,
   }
   globalThis.__mockChatStore = {
     unreadCount: 0,
@@ -257,5 +262,46 @@ describe('useModMe document.title refresh after mod action', () => {
     // FAILS on buggy code: guard blocks title refresh when body overflow is 'hidden'
     // and force is not passed, leaving stale '(2) ModTools' as the tab title.
     expect(global.document.title).toBe('ModTools')
+  })
+})
+
+describe('useModMe checkWork badge freshness after rapid mod actions (Discourse 9951)', () => {
+  it('refreshes work counts via a direct, un-deduped fetch rather than the shared fetchMe() promise', async () => {
+    // useMe.js's exported fetchMe() dedups concurrent hitServer=true calls onto
+    // a single in-flight authStore.fetchUser() promise. When a mod holds a
+    // pending message and releases it moments later, the Release action's
+    // checkWorkDeferGetMessages() -> checkWork() can fire while the Hold
+    // action's own checkWork() is still awaiting fetchMe(true) - so it
+    // piggybacks on that in-flight promise and resolves with counts captured
+    // BEFORE the release happened, leaving the blue/red badges stuck showing
+    // the held state until a manual page refresh.
+    //
+    // Simulate that here: fetchMe() (the deduped path) resolves with stale
+    // counts, while a direct authStore.fetchUser() call (which never dedups)
+    // resolves with the true, current counts.
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = {
+        total: 1,
+        pending: 1,
+        pendingother: 0,
+      }
+    })
+    globalThis.__mockAuthStore.fetchUser = vi.fn(async () => {
+      globalThis.__mockAuthStore.work = {
+        total: 0,
+        pending: 0,
+        pendingother: 0,
+      }
+    })
+
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+
+    // FAILS on buggy code: checkWork() calls the deduped fetchMe(true), which
+    // never touches authStore.fetchUser() in this test, so work stays at the
+    // stale snapshot (pending: 1) instead of the fresh one (pending: 0).
+    expect(globalThis.__mockAuthStore.fetchUser).toHaveBeenCalled()
+    expect(globalThis.__mockAuthStore.work.pending).toBe(0)
   })
 })

@@ -101,8 +101,14 @@ export function useModMe() {
       let currentTotal = 0
       if (authStore.work) currentTotal += authStore.work.total
       if (chatStore) currentTotal += Math.min(99, chatStore.unreadCount)
-      const { fetchMe } = useMe()
-      await fetchMe(true)
+      // Call authStore.fetchUser() directly rather than the shared fetchMe(true)
+      // helper. fetchMe() dedups concurrent hitServer=true calls onto a single
+      // in-flight promise - fine for e.g. two layouts booting at once, but wrong
+      // here: a mod action (Hold, then Release moments later) needs THIS call to
+      // reflect state as of now, not piggyback on an earlier still-in-flight
+      // fetch and pick up stale counts, which left the pending-message badges
+      // showing the pre-action state until a manual page refresh (Discourse #9951).
+      await authStore.fetchUser()
       await modGroupStore.getModGroups()
 
       const chatcount = chatStore ? Math.min(99, chatStore.unreadCount) : 0
