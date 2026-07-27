@@ -454,10 +454,36 @@ func Get(c *fiber.Ctx) error {
 		}
 	}
 
-	// Pre-tusd rows whose bytes live in the legacy `data` column. V1 served
-	// those bytes straight from the DB; we deliberately don't (migration plan
-	// Stage 4 decision) - they are ancient, mostly profile thumbnails, so the
-	// default profile image is served rather than keeping blob-serving alive.
+	// Pre-tusd rows whose bytes live in the legacy `data` column. V1's image.php
+	// served these straight from the DB. Retiring image.php (e24b58833) dropped
+	// that path, which left ~85% of group logos - still stored as blobs and never
+	// migrated to tusd - falling back to the default (Discourse: group profile
+	// images all showing the Freegle logo). Serve the blob bytes so those images
+	// work again. We fetch `data` only HERE, not in the main SELECT above, so the
+	// common external/archived path never loads a longblob.
+	blobCols := "data"
+	if cfg.HasContentType {
+		blobCols += ", COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype"
+	} else {
+		blobCols += ", 'image/jpeg' AS contenttype"
+	}
+	var blob struct {
+		Data        []byte
+		Contenttype string
+	}
+	db.Raw("SELECT "+blobCols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&blob)
+	if len(blob.Data) > 0 {
+		ct := blob.Contenttype
+		if ct == "" {
+			ct = "image/jpeg"
+		}
+		c.Set("Content-Type", ct)
+		// Immutable for a given id - let the CDN/browser cache it hard.
+		c.Set("Cache-Control", "public, max-age=86400")
+		return c.Send(blob.Data)
+	}
+
+	// No usable bytes anywhere (missing/ancient row) - fall back to the default.
 	return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
 }
 
