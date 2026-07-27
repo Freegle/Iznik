@@ -18,6 +18,9 @@ import (
 // documented contract instead of just re-reading whatever the constant says.
 const maxNearbyKmForTest = 128.0
 
+// minNearbyKmForTest mirrors newsfeed.go's minNearbyKm floor - see below.
+const minNearbyKmForTest = 1.0
+
 // Regression test for the PR #459 review: the spatial "newsfeed" index dropped
 // the type!=ALERT and 31-day recency filters that the old GetNearbyDistance
 // query applied. RecentNonAlertNewsfeedIDs restores them so alerts and stale
@@ -155,4 +158,74 @@ func TestGetNearbyDistanceCapsHappyPathRadius(t *testing.T) {
 
 	assert.Greater(t, dist, 0.0)
 	assert.LessOrEqual(t, dist, maxNearbyKmForTest, "even the happy-path (enough recent, non-alert posts) radius must be capped so a sparse/spread-out area can't produce an unbounded 'Nearby' radius")
+}
+
+// Regression test from the adversarial review of the #9937 fix: capping the
+// radius from above isn't enough, because both data-driven branches can
+// compute a distance of exactly 0, not just an unbounded one. A newsfeed
+// post at the user's own coordinates - their own post, or someone else's
+// right on top of them - has KNN distance 0 in decimal degrees, and 0 hits
+// getFeed()'s "no restriction at all" path exactly like an unbounded radius
+// does. This exercises the "happy path" branch (>= nearbyLimit recent,
+// non-alert posts, all co-located with the user).
+func TestGetNearbyDistanceFloorsHappyPathZeroRadius(t *testing.T) {
+	uid := CreateTestUser(t, "nearbyfloorhappy", "User")
+	lat, lng := 55.9533, -3.1883
+
+	var ids []int64
+	var dists []float64
+
+	addPoint := func(degrees float64) {
+		id := CreateTestNewsfeedWithType(t, uid, lat, lng, fmt.Sprintf("floorhappy post %d", len(ids)), "Message", 24)
+		ids = append(ids, int64(id))
+		dists = append(dists, degrees)
+	}
+
+	// 10 recent, non-alert posts, all at the user's exact coordinates - the
+	// 10th-nearest (index 9) is 0 degrees away.
+	for i := 0; i < 10; i++ {
+		addPoint(0.0)
+	}
+
+	restore := mockNewsfeedKNN(t, ids, dists)
+	defer restore()
+
+	dist, _, _, _, _, _ := newsfeed.GetNearbyDistance(uid)
+
+	assert.GreaterOrEqual(t, dist, minNearbyKmForTest, "a 0-degree happy-path radius must be floored to a positive value, not left at 0 (which getFeed() treats as 'no restriction', reintroducing #9937)")
+}
+
+// Same review finding, but for the raw-KNN fallback branch: too few recent,
+// non-alert posts to reach nearbyLimit, and the raw nearbyLimit-th KNN
+// candidate is also co-located with the user (distance 0).
+func TestGetNearbyDistanceFloorsRawKNNFallbackZeroRadius(t *testing.T) {
+	uid := CreateTestUser(t, "nearbyfloorfallback", "User")
+	lat, lng := 55.9533, -3.1883
+
+	var ids []int64
+	var dists []float64
+
+	addPoint := func(hoursAgo int, degrees float64) {
+		id := CreateTestNewsfeedWithType(t, uid, lat, lng, fmt.Sprintf("floorfallback post %d", len(ids)), "Message", hoursAgo)
+		ids = append(ids, int64(id))
+		dists = append(dists, degrees)
+	}
+
+	// Only 2 recent, non-alert posts - fewer than nearbyLimit (10), so
+	// GetNearbyDistance must fall back to raw KNN density.
+	for i := 0; i < 2; i++ {
+		addPoint(24, 0.0)
+	}
+	// 13 more raw KNN candidates (stale, >31 days), all co-located with the
+	// user - the 10th-nearest overall (index 9) is 0 degrees away.
+	for i := 0; i < 13; i++ {
+		addPoint(24*40, 0.0)
+	}
+
+	restore := mockNewsfeedKNN(t, ids, dists)
+	defer restore()
+
+	dist, _, _, _, _, _ := newsfeed.GetNearbyDistance(uid)
+
+	assert.GreaterOrEqual(t, dist, minNearbyKmForTest, "a 0-degree raw-KNN fallback radius must be floored to a positive value, not left at 0 (which getFeed() treats as 'no restriction', reintroducing #9937)")
 }

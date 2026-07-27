@@ -115,6 +115,13 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 	// (a 169-mile-away post topping a "Nearby" feed because the radius
 	// silently became "no restriction").
 	const maxNearbyKm = 128.0
+	// minNearbyKm floors the same result from the other end. Both
+	// data-driven branches below can legitimately compute a distance of
+	// exactly 0 - a newsfeed post at the user's own coordinates (their own
+	// post, or someone else's right on top of them) has KNN distance 0 in
+	// decimal degrees - which hits the exact same "no restriction" path as
+	// an unbounded radius, per the comment above. That's #9937 again.
+	const minNearbyKm = 1.0
 
 	latlng := user.GetLatLng(uid)
 	if latlng.Lat == 0 && latlng.Lng == 0 {
@@ -125,8 +132,8 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 	}
 
 	// Default to the capped ceiling; every branch below either leaves this
-	// alone or overwrites it with a data-driven value that gets clamped to
-	// the same ceiling before we return.
+	// alone or overwrites it with a data-driven value that gets clamped
+	// between minNearbyKm and maxNearbyKm before we return.
 	distKm := maxNearbyKm
 
 	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
@@ -169,6 +176,8 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 
 	if distKm > maxNearbyKm {
 		distKm = maxNearbyKm
+	} else if distKm < minNearbyKm {
+		distKm = minNearbyKm
 	}
 
 	p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
