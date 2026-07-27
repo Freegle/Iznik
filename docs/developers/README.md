@@ -39,6 +39,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
+| SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,

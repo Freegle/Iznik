@@ -10,19 +10,12 @@
       },
     }"
     class="position-relative"
-    itemscope
-    itemtype="http://schema.org/Product"
   >
-    <div
-      itemprop="offers"
-      itemscope
-      itemtype="http://schema.org/Offer"
-      class="d-none"
-    >
-      <meta itemprop="priceCurrency" content="GBP" />
-      <span itemprop="price">0</span> |
-      <span itemprop="availability">Instock</span>
-    </div>
+    <!-- Structured data lives in the JSON-LD block emitted by the message page
+    (composables/useMessageJsonLd.js). The microdata that used to sit here declared a
+    schema.org/Product but carried no name, image or description, so Google discarded
+    it, and it was inside a d-none element, which their guidelines don't allow for
+    microdata. -->
     <div v-if="startExpanded">
       <MessageExpanded
         :id="message.id"

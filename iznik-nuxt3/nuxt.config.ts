@@ -210,7 +210,10 @@ export default defineNuxtConfig({
     '/explore/region/**': { isr: 3600 },
     '/communityevent/**': { isr: 3600 },
     '/communityevents/**': { isr: 3600 },
-    '/explore/**': { isr: 3600 },
+    // A community page is the crawl path into that community's new posts, so an
+    // hour of cache meant a new post could sit invisible to a crawler for an hour
+    // after it landed. Ten minutes matches how fast the board actually moves.
+    '/explore/**': { isr: 600 },
     '/message/**': { isr: 600 },
     '/story/**': { isr: 3600 },
     '/shortlink/**': { isr: 600 },
@@ -220,6 +223,12 @@ export default defineNuxtConfig({
     // Static comparison pages ("Freegle vs ..."). Server-rendered so crawlers and
     // AI answer engines can read them; cached on the CDN until the next deploy.
     '/compare/**': { isr: true },
+
+    // Sitemaps. The post list turns over as fast as the board does, so it gets the
+    // same short window as the posts themselves; the community list barely moves.
+    '/sitemap.xml': { isr: 600 },
+    '/sitemap-posts/**': { isr: 600 },
+    '/sitemap-pages.xml': { isr: 3600 },
 
     // Allow CORS for chunk fetches - required for Netlify hosting.
     // Immutable cache for hashed assets — these filenames change on every build.
@@ -240,7 +249,12 @@ export default defineNuxtConfig({
 
     prerender: prerenderRoutes
       ? {
-          routes: ['/404.html', '/sitemap.xml'],
+          // /sitemap.xml is deliberately NOT prerendered. It now lists live posts,
+          // which turn over constantly, so a copy baked at deploy time would be
+          // stale within minutes and would keep pointing Google at posts that have
+          // since been taken. It's served on demand with a short ISR window instead
+          // (see routeRules).
+          routes: ['/404.html'],
 
           // Don't prerender the messages - too many.
           // Also ignore asset paths and CDN URLs - these are built separately and don't need prerendering
