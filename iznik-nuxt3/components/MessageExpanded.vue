@@ -67,7 +67,7 @@
                 v-if="attachment.ouruid"
                 :src="attachment.ouruid"
                 :modifiers="attachment.externalmods"
-                alt="Thumbnail"
+                :alt="thumbnailAlt(index)"
                 class="thumbnail-image"
                 :width="80"
                 :height="80"
@@ -78,7 +78,7 @@
                 provider="uploadcare"
                 :src="attachment.externaluid"
                 :modifiers="attachment.externalmods"
-                alt="Thumbnail"
+                :alt="thumbnailAlt(index)"
                 class="thumbnail-image"
                 :width="80"
                 :height="80"
@@ -86,7 +86,7 @@
               <ProxyImage
                 v-else-if="attachment.path"
                 class-name="thumbnail-image"
-                alt="Thumbnail"
+                :alt="thumbnailAlt(index)"
                 :src="attachment.path"
                 :width="80"
                 :height="80"
@@ -105,7 +105,7 @@
               v-if="currentAttachment?.ouruid"
               :src="currentAttachment.ouruid"
               :modifiers="currentAttachment.externalmods"
-              alt="Item Photo"
+              :alt="photoAlt"
               class="photo-image"
               :width="640"
               :height="480"
@@ -116,7 +116,7 @@
               provider="uploadcare"
               :src="currentAttachment.externaluid"
               :modifiers="currentAttachment.externalmods"
-              alt="Item Photo"
+              :alt="photoAlt"
               class="photo-image"
               :width="640"
               :height="480"
@@ -124,7 +124,7 @@
             <ProxyImage
               v-else-if="currentAttachment?.path"
               class-name="photo-image"
-              alt="Item picture"
+              :alt="photoAlt"
               :src="currentAttachment.path"
               :width="640"
               :height="480"
@@ -743,6 +743,19 @@ const {
   categoryIcon,
   poster,
 } = useMessageDisplay(props.id)
+
+/* Alt text for the item photos. It used to be the literal "Item Photo" / "Thumbnail"
+on every image on the site, which tells a screen reader nothing and gives Google Images
+nothing to match a search against. */
+const photoAlt = computed(() => subjectItemName.value || 'Item photo')
+
+function thumbnailAlt(index) {
+  const name = subjectItemName.value || 'Item'
+
+  return attachmentCount.value > 1
+    ? `${name} - photo ${index + 1} of ${attachmentCount.value}`
+    : name
+}
 
 // All the communities this post is on (it can be on several once it has rippled
 // out or been cross-posted). Resolve each to the group record for its display

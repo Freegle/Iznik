@@ -62,6 +62,7 @@
           :attachments="message.attachments"
           :sample-image="message.sampleimage"
           :disabled="message.successful"
+          :subject="message.subject"
           thumbnail
           :preload="preload"
         />

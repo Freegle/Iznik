@@ -653,6 +653,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.Message
 		rg.Get("/group/:id/message", group.GetGroupMessages)
 
+		// Group Message Summaries
+		// @Router /group/{id}/message/summary [get]
+		// @Summary Get id + subject for a group's live posts
+		// @Description Backs the server-rendered, crawlable post list on the community page
+		// @Tags group,message
+		// @Produce json
+		// @Param id path integer true "Group ID"
+		// @Success 200 {array} group.GroupMessageSummary
+		rg.Get("/group/:id/message/summary", group.GetGroupMessageSummaries)
+
 		// Group PATCH
 		// @Router /group [patch]
 		// @Summary Update group settings
@@ -881,6 +891,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags message
 		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+
+		// Message Sitemap
+		// @Router /message/sitemap [get]
+		// @Summary Live posts for the search-engine sitemap
+		// @Description Returns id + lastmod for every currently-live Offer/Wanted post, for building sitemap.xml
+		// @Tags message
+		// @Produce json
+		// @Success 200 {array} message.SitemapEntry
+		rg.Get("/message/sitemap", message.Sitemap)
 
 		// Message Count
 		// @Router /message/count [get]

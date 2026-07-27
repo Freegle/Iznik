@@ -40,7 +40,7 @@
           v-if="message.attachments[0]?.ouruid"
           :src="message.attachments[0].ouruid"
           :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
+          :alt="photoAlt"
           class="photo-image"
           :width="400"
           fit="inside"
@@ -53,7 +53,7 @@
           provider="uploadcare"
           :src="message.attachments[0].externaluid"
           :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
+          :alt="photoAlt"
           class="photo-image"
           :width="400"
           fit="inside"
@@ -64,7 +64,7 @@
         <ProxyImage
           v-else-if="message.attachments[0]?.path"
           class-name="photo-image"
-          alt="Item picture"
+          :alt="photoAlt"
           :src="message.attachments[0].path"
           :width="400"
           fit="inside"
@@ -193,6 +193,10 @@ const {
   placeholderClass,
   categoryIcon,
 } = useMessageDisplay(idRef)
+
+/* Name the item in the alt text rather than the literal "Item Photo" that used to be
+on every photo on the site. */
+const photoAlt = computed(() => subjectItemName.value || 'Item photo')
 
 // Bulk offer ("clearance") indicator. bulkCount only gates the badge (is this a
 // bulk offer?); the badge itself shows the TOTAL quantity available, matching the
