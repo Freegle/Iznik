@@ -62,6 +62,30 @@ func TestStory_InvalidID(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+// TestStory_UnreviewedHiddenFromAnon verifies GET /story/:id gates unreviewed /
+// non-public stories: anonymous callers get 404, the author still sees it.
+func TestStory_UnreviewedHiddenFromAnon(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("storyunrev")
+	userID := CreateTestUser(t, prefix, "User")
+
+	// public=1 but reviewed=0 — not yet approved, so it must not be world-readable.
+	db.Exec("INSERT INTO users_stories (userid, date, public, headline, story, reviewed) "+
+		"VALUES (?, NOW(), 1, 'Secret Headline', 'Secret text', 0)", userID)
+	var storyID uint64
+	db.Raw("SELECT id FROM users_stories WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&storyID)
+	defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
+
+	// Anonymous: hidden.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story/"+fmt.Sprint(storyID), nil))
+	assert.Equal(t, 404, resp.StatusCode)
+
+	// Author: can still see their own unreviewed story.
+	_, token := CreateTestSession(t, userID)
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", "/api/story/"+fmt.Sprint(storyID)+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp2.StatusCode)
+}
+
 func TestListStory(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story", nil))
 	assert.Equal(t, 200, resp.StatusCode)

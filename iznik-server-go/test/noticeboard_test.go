@@ -240,9 +240,8 @@ func TestPostNoticeboardNotLoggedIn(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/noticeboard", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
-	// Handler doesn't require auth explicitly - addedby will be 0 (anonymous).
-	// This tests that the endpoint doesn't crash without auth.
-	assert.Equal(t, 200, resp.StatusCode)
+	// Anonymous writes are rejected: POST now requires login, matching PATCH/DELETE.
+	assert.Equal(t, 401, resp.StatusCode)
 }
 
 func TestPostNoticeboardInvalidAction(t *testing.T) {

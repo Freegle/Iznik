@@ -75,8 +75,24 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 	}
 }
 
+// publicConfigKeys are the only keys readable through the unauthenticated
+// GET /config/:key endpoint. The config store is admin-writable and holds
+// operational keys that should not be world-readable; anything not listed here
+// must go through the Support/Admin-gated /config/admin routes. These three are
+// the only keys the public web/app clients fetch (rollout flag + required app
+// versions), verified against the Nuxt config store usage.
+var publicConfigKeys = map[string]bool{
+	"voicepost_rollout_pct":           true,
+	"app_fd_version_ios_required":     true,
+	"app_fd_version_android_required": true,
+}
+
 func Get(c *fiber.Ctx) error {
 	key := c.Params("key")
+
+	if !publicConfigKeys[key] {
+		return fiber.NewError(fiber.StatusForbidden, "Key not publicly readable")
+	}
 
 	var items []ConfigItem
 
