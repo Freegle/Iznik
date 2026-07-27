@@ -78,7 +78,13 @@ trait TrackableEmail
 
     /**
      * Get MJML for a tracking pixel image.
-     * Add this inside an mj-section at the end of your email.
+     * Add this at the end of your email, inside mj-column or directly in mj-body.
+     *
+     * Deliberately mj-raw rather than mj-image: MJML renders mj-image as a
+     * table stack whose <img> gets width:100%, and a 1px-natural-width image
+     * displayed at 100% makes Outlook Web inject "Show original size" overlay
+     * buttons that overhang the end of the body, adding a stray inner
+     * scrollbar to every tracked email.
      */
     public function getTrackingPixelMjml(): string
     {
@@ -86,8 +92,7 @@ trait TrackableEmail
             return '';
         }
 
-        $pixelUrl = $this->tracking->getPixelUrl();
-        return '<mj-image src="' . htmlspecialchars($pixelUrl) . '" width="1px" height="1px" alt="" padding="0" />';
+        return '<mj-raw>' . $this->getTrackingPixelHtml() . '</mj-raw>';
     }
 
     /**

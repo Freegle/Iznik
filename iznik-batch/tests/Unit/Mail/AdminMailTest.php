@@ -265,7 +265,9 @@ class AdminMailTest extends TestCase
         // other mailable (welcome, chase, digest siblings, etc.) wraps its
         // tracking pixel in its own <mj-section padding="0"><mj-column> - this
         // pins admin.blade.php to the same pattern.
-        $pixel = '<mj-image src="https://example.com/pixel.png" width="1px" height="1px" alt="" padding="0" />';
+        // Matches the current getTrackingPixelMjml() output (mj-raw, not
+        // mj-image - see TrackingPixelOutlookTest for why).
+        $pixel = '<mj-raw><img src="https://example.com/pixel.png" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;" /></mj-raw>';
 
         $html = view('emails.mjml.admin.admin', [
             'user' => (object) ['email_preferred' => 'test@example.com', 'displayname' => 'Test User'],
