@@ -29,7 +29,8 @@ const mockApi = {
 
 const mockGroupStore = {
   get: vi.fn().mockReturnValue(null),
-  fetch: vi.fn(),
+  // The card awaits fetch(id) and drives the profile/tagline off its resolved value.
+  fetch: vi.fn().mockResolvedValue(null),
 }
 
 vi.mock('~/stores/compose', () => ({
@@ -63,7 +64,7 @@ describe('ComposeGroup', () => {
     mockComposeStore.group = null
     mockComposeStore.setPostcode = vi.fn()
     mockGroupStore.get.mockReturnValue(null)
-    mockGroupStore.fetch = vi.fn()
+    mockGroupStore.fetch = vi.fn().mockResolvedValue(null)
   })
 
   function createWrapper(props = {}) {
@@ -162,10 +163,12 @@ describe('ComposeGroup', () => {
     expect(mockApi.location.typeahead).not.toHaveBeenCalled()
   })
 
-  it('fetches the full group and shows its profile picture and tagline', async () => {
-    // groupsnear entries are trimmed to name-only, so the card fetches the full group
-    // record for its profile image and tagline (like GroupHeader).
-    mockGroupStore.get.mockReturnValue({
+  it('shows the profile picture and tagline from the awaited fetch result', async () => {
+    // groupsnear entries are trimmed to name-only, so the card awaits the full group
+    // record (fetch) and drives the card off its result - NOT groupStore.get(), whose
+    // reactive dependency left the profile stuck on /icon.png for a logged-in member
+    // (Discourse #1170 follow-up: EH4 1HY showed the default instead of the group logo).
+    mockGroupStore.fetch.mockResolvedValue({
       id: 1,
       namedisplay: 'London Central',
       profile: 'https://example.com/logo.png',
@@ -181,8 +184,12 @@ describe('ComposeGroup', () => {
     )
   })
 
-  it('uses the default icon and omits the tagline when the group has neither', async () => {
-    // get() returns null (full group not loaded), so profile falls back and no tagline shows.
+  it('uses the default icon and omits the tagline when the fetch has no profile/tagline', async () => {
+    // fetch resolves a group without profile/tagline → falls back to /icon.png, no tagline.
+    mockGroupStore.fetch.mockResolvedValue({
+      id: 1,
+      namedisplay: 'London Central',
+    })
     const wrapper = createWrapper()
     await flushPromises()
     expect(wrapper.find('.compose-group__logo').attributes('src')).toBe(

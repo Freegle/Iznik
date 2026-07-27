@@ -20,7 +20,7 @@
   </div>
 </template>
 <script setup>
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import GroupProfileImage from '~/components/GroupProfileImage.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
@@ -64,28 +64,34 @@ const groupName = computed(() => {
 })
 
 // The postcode's groupsnear entries are deliberately trimmed (id/name only) to keep the
-// compose store small, so the profile picture and tagline come from the full group record,
-// which we fetch below. Name shows immediately; profile/tagline fill in once it loads.
-const fullGroup = computed(() => {
-  const id = selectedGroupId.value
-  return id ? groupStore.get(id) : null
-})
+// compose store small, so the profile picture and tagline come from the full group record.
+// We hold the FETCHED group in a local ref and drive the card from it, rather than reading
+// groupStore.get(id) reactively: get() returns a cross-store getter result whose dependency
+// on list[id] didn't reliably re-render the card once the fetch resolved, so the profile
+// image could stay on the /icon.png fallback (logged-in EH4 1HY showed the default instead
+// of the Edinburgh logo). Awaiting fetch() and assigning the result is deterministic. Name
+// shows immediately; profile/tagline fill in when the fetch resolves.
+const fullGroup = ref(null)
 
-const profile = computed(() => fullGroup.value?.profile || '/icon.png')
-
-const tagline = computed(() => fullGroup.value?.tagline || null)
-
-// Fetch the full group whenever the derived origin changes, so the card can show its
-// profile picture and tagline.
 watch(
   selectedGroupId,
-  (id) => {
-    if (id) {
-      groupStore.fetch(id)
+  async (id) => {
+    fullGroup.value = null
+    if (!id) {
+      return
+    }
+    const g = await groupStore.fetch(id)
+    // Guard against a stale resolution if the origin group changed while awaiting.
+    if (id === selectedGroupId.value) {
+      fullGroup.value = g
     }
   },
   { immediate: true }
 )
+
+const profile = computed(() => fullGroup.value?.profile || '/icon.png')
+
+const tagline = computed(() => fullGroup.value?.tagline || null)
 
 onMounted(async () => {
   // Refetch the postcode so its group list is fresh (groups can merge), then lock the origin
