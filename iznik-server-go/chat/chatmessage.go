@@ -651,6 +651,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		recordReplyAttribution(db, myid, *payload.Refmsgid, reach, payload.Replysource)
 	}
 
+	// Replying to a post joins the replier to its group. This is meant to happen in the Nuxt reply
+	// flow (useReplyStateMachine handleJoinGroup) via PUT /memberships, but a stale/racy client
+	// isMember check can skip it, leaving a replier with a chat but NO group membership and no
+	// location — the "member with no groups & no location" a mod flagged (Discourse #9969; ~2/day in
+	// prod). Enforce it here, atomic with the reply, so it can't be skipped by any client. Held
+	// (out-of-reach) replies are excluded: the post hasn't reached the replier yet. AddMembership is
+	// the same idempotent join the LoveJunk path and the /memberships endpoint use — it skips
+	// banned/already-member and writes the memberships_history processingrequired row that drives the
+	// welcome email + spam check. Params mirror a normal web join's DB defaults (emailfrequency
+	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
+	// hiccup must never fail the reply.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+		var refGroup uint64
+		db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY groupid LIMIT 1", *payload.Refmsgid).Scan(&refGroup)
+		if refGroup > 0 {
+			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+		}
+	}
+
 	// A report from the website is a User2Mod chat message referencing the reported
 	// post (that's what the report flow sends). Treat it as a microvolunteering Reject
 	// verdict feeding the review quorum: a moderator of the reported community pulls that
