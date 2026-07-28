@@ -567,8 +567,11 @@ services:
       - "traefik.http.routers.ai-support-helper.entrypoints=web"
       - "traefik.http.services.ai-support-helper.loadbalancer.server.port=3000"
     environment:
-      # Claude auth: set ANTHROPIC_API_KEY for api mode (edge/prod). Leave it unset and
+      # Claude auth: set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, bills to the
+      # subscription) or ANTHROPIC_API_KEY for api mode (bills to API credits). The OAuth
+      # token wins when both are set (see claude-agent-sdk/auth.js). Leave both unset and
       # mount ~/.claude (see volumes) for session mode (local testing on the logged-in session).
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       # Unpinned alias, not a dated snapshot (snapshots get retired and the SDK
       # then 404s). On the Claude subscription (session mode) Opus is available.
