@@ -172,10 +172,10 @@ async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200
 // token/timeout win vs many separate queries.
 // ---------------------------------------------------------------------------
 const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
-async function fetchUserDump({ userId, jwt, since = '90d' }) {
-  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=raw&include=db,loki,sentry&since=${encodeURIComponent(
-    since
-  )}&jwt=${encodeURIComponent(jwt || '')}`
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry' }) {
+  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=raw&include=${encodeURIComponent(
+    include
+  )}&since=${encodeURIComponent(since)}&jwt=${encodeURIComponent(jwt || '')}`
   const res = await fetch(url, { signal: AbortSignal.timeout(120000) })
   if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
   const buf = Buffer.from(await res.arrayBuffer())
@@ -185,8 +185,29 @@ async function fetchUserDump({ userId, jwt, since = '90d' }) {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-request dump cache. `state` is rebuilt every message, so without this a
+// follow-up question re-downloads the whole (expensive: DB + Loki + ~tens of
+// seconds of Sentry) snapshot each time. Keyed by member+window; swept on TTL.
+// Files are the owner-only PII snapshots, so the TTL is short.
+// ---------------------------------------------------------------------------
+const DUMP_TTL_MS = 10 * 60 * 1000
+const dumpCache = new Map() // `${userId}:${since}` -> { file, at }
+function sweepDumpCache(now = Date.now()) {
+  for (const [k, v] of dumpCache) {
+    if (now - v.at > DUMP_TTL_MS) {
+      try {
+        fs.unlinkSync(v.file)
+      } catch {}
+      dumpCache.delete(k)
+    }
+  }
+}
+const _dumpSweep = setInterval(sweepDumpCache, 60 * 1000)
+if (_dumpSweep.unref) _dumpSweep.unref()
+
+// ---------------------------------------------------------------------------
 // Tool factory. Each request builds tools bound to that caller's JWT + the
-// member they picked, plus a per-request dump cache so query_dump reuses it.
+// member they picked. The user dump is cached across requests (see dumpCache).
 // ---------------------------------------------------------------------------
 function buildTools(ctx) {
   // ctx: { jwt, userId (selected member or 0), progress }
@@ -253,9 +274,28 @@ function buildTools(ctx) {
       try {
         const id = a.userid || ctx.userId
         if (!id) return err('No member selected/provided')
-        audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'get_user_dump', since: a.since || '90d' })
-        p('tool', `Downloading full snapshot for user ${id}…`)
-        state.dumpFile = await fetchUserDump({ userId: id, jwt: ctx.jwt, since: a.since || '90d' })
+        const since = a.since || '90d'
+        // Audit every access, even a cache hit — the trail must stay complete.
+        audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'get_user_dump', since })
+        const key = `${id}:${since}`
+        const cached = dumpCache.get(key)
+        if (cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS) {
+          state.dumpFile = cached.file
+          state.dumpCached = true
+          const ageS = Math.round((Date.now() - cached.at) / 1000)
+          p('tool', `Reusing snapshot for user ${id} (built ${ageS}s ago)…`)
+        } else {
+          p('tool', `Downloading full snapshot for user ${id}…`)
+          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since })
+          if (cached && cached.file !== file) {
+            try {
+              fs.unlinkSync(cached.file)
+            } catch {}
+          }
+          dumpCache.set(key, { file, at: Date.now() })
+          state.dumpFile = file
+          state.dumpCached = true
+        }
         const db = new Database(state.dumpFile, { readonly: true })
         const tables = db
           .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -427,8 +467,11 @@ function buildTools(ctx) {
             title: i.title,
             culprit: i.culprit,
             level: i.level,
-            count: i.count,
-            userCount: i.userCount,
+            // WHOLE-ISSUE totals across ALL users, NOT the queried member. Named
+            // explicitly so a per-user view never presents them as the member's
+            // own event/user counts.
+            totalEventsAllUsers: i.count,
+            totalUsersAffected: i.userCount,
             lastSeen: i.lastSeen,
             permalink: i.permalink,
           }))
@@ -536,7 +579,9 @@ function buildTools(ctx) {
       'git_fixed_already',
     ],
     cleanup() {
-      if (state.dumpFile) {
+      // Cached dumps are owned by dumpCache (swept on TTL) so a follow-up
+      // question can reuse them — only delete a one-off, uncached file.
+      if (state.dumpFile && !state.dumpCached) {
         try {
           fs.unlinkSync(state.dumpFile)
         } catch {}
@@ -545,4 +590,4 @@ function buildTools(ctx) {
   }
 }
 
-module.exports = { buildTools, getPool, lokiQuery, dbSelect, guardSelect, audit }
+module.exports = { buildTools, getPool, lokiQuery, dbSelect, guardSelect, audit, fetchUserDump }

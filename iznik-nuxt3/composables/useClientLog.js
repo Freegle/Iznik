@@ -13,6 +13,14 @@ let runtimeConfig = null
 // Auth store reference - will be set when useClientLog is called.
 let authStore = null
 
+// Native app version (Capacitor App.getInfo().version), set from the mobile
+// store at app startup via setAppVersion(). Null on the website. Kept as a
+// module var (not a store import) to avoid a circular dependency.
+let nativeAppVersion = null
+export function setAppVersion(v) {
+  nativeAppVersion = v || null
+}
+
 /**
  * Get the current user ID if logged in.
  * Returns null if not logged in or store not available.
@@ -320,7 +328,9 @@ function getEnvironmentInfo() {
     // spoofed string), where optional chaining still reaches a .join that is not
     // a function and throws — which crashed page renders into a 500 ("e.languages
     // ?.join is not a function"). Only join a real array.
-    languages: Array.isArray(nav.languages) ? nav.languages.join(',') : undefined,
+    languages: Array.isArray(nav.languages)
+      ? nav.languages.join(',')
+      : undefined,
     cookie_enabled: nav.cookieEnabled,
     do_not_track: nav.doNotTrack,
 
@@ -333,6 +343,17 @@ function getEnvironmentInfo() {
     // App detection
     is_standalone: window.matchMedia('(display-mode: standalone)').matches,
     is_touch: 'ontouchstart' in window || nav.maxTouchPoints > 0,
+
+    // The REAL native app version (Capacitor App.getInfo().version), set from
+    // the mobile store. Null on the website (which has no app version — web
+    // freshness is the build_date question below). NB not MOBILE_VERSION, which
+    // is just a hand-bumped web build constant, unrelated to the installed app.
+    app_version: nativeAppVersion,
+
+    // Build timestamp of this bundle (nuxt.config BUILD_DATE). For the WEB,
+    // "up to date" is a build-date question: a build older than a couple of days
+    // means they're on stale code and a refresh will fix it.
+    build_date: runtimeConfig?.public?.BUILD_DATE || null,
 
     // Referrer and timezone
     referrer: document.referrer || null,

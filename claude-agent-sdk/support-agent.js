@@ -12,7 +12,10 @@ const { query, createSdkMcpServer } = require('@anthropic-ai/claude-agent-sdk')
 const { buildTools, audit } = require('./tools')
 const { driverMode } = require('./auth')
 
-const MODEL = process.env.SUPPORT_AI_MODEL || 'claude-sonnet-4-20250514'
+// Use an unpinned alias, not a dated snapshot: snapshots get retired and then
+// the SDK 404s on the model. On the Claude subscription (session mode) we can
+// use Opus. Override with SUPPORT_AI_MODEL if needed.
+const MODEL = process.env.SUPPORT_AI_MODEL || 'opus'
 const CODEBASE = process.env.CODEBASE_DIR || '/app/codebase'
 
 
@@ -48,7 +51,11 @@ function systemPrompt(userId) {
     `- **sentry_search** — real errors from Sentry (nuxt3=frontend/SSR, go=Go API, capacitor=mobile app, modtools): ` +
     `by is:unresolved, a message substring, trace_id:<id>, source:error-page-mount, or user.id:<n>. Fast route to the ` +
     `truth behind "oh dear something went wrong" — but it only has THROWN exceptions, so an empty result doesn't mean ` +
-    `nothing happened (a slow-query timeout / silent no-op / blank page throws nothing).\n` +
+    `nothing happened (a slow-query timeout / silent no-op / blank page throws nothing). IMPORTANT: totalEventsAllUsers/` +
+    `totalUsersAffected are WHOLE-ISSUE totals across everyone, NOT this member — never show them next to a member as if ` +
+    `they were the member's own counts. For a member's Sentry issues, a compact list of the issue title, level, when it ` +
+    `last hit them, and a permalink is enough; you may note in words if an issue is widespread, but don't tabulate the ` +
+    `global event/user numbers.\n` +
     `- **discourse_search** — the volunteer forum where mods/members report bugs. Real fixes often cite a Discourse ` +
     `topic number that never appears in the support email — search here for the original report and discussion.\n` +
     `- **code_history_search** — search ALL git history for commits matching a symptom keyword ("diff against the ` +
@@ -161,7 +168,10 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
     // the narrowed ~/.claude mount — the container only exposes the OAuth
     // credential, not memory/transcripts).
     additionalDirectories: [CODEBASE],
-    maxTurns: Number(process.env.SUPPORT_AI_MAX_TURNS || 20),
+    // A real investigation fans out: dump, several SQL queries, Sentry across
+    // ~5 projects, Loki, Discourse. 20 ran out mid-way (error_max_turns), so
+    // give it real headroom. Tunable via SUPPORT_AI_MAX_TURNS.
+    maxTurns: Number(process.env.SUPPORT_AI_MAX_TURNS || 80),
     cwd: CODEBASE,
   }
   if (agentSessionId) options.resume = agentSessionId
@@ -185,7 +195,10 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
       } else if (message.type === 'result') {
         if (message.subtype === 'success') {
           analysis = message.result || ''
-          costUsd = message.total_cost_usd || 0
+          // Session mode runs on the Claude subscription — there is no per-query
+          // API charge, so report $0 rather than the SDK's notional token cost.
+          costUsd =
+            driverMode() === 'session' ? 0 : message.total_cost_usd || 0
           usage = {
             inputTokens: message.usage?.input_tokens || 0,
             outputTokens: message.usage?.output_tokens || 0,

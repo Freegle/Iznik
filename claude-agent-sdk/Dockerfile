@@ -19,10 +19,13 @@ RUN useradd -m -s /bin/bash claude && \
 
 WORKDIR /app
 
-# Clone the Freegle codebase (public repos) as root, then fix ownership
-RUN git clone --depth 1 https://github.com/Freegle/iznik-nuxt3.git /app/codebase/iznik-nuxt3 && \
-    git clone --depth 1 https://github.com/Freegle/iznik-server.git /app/codebase/iznik-server && \
-    git clone --depth 1 https://github.com/Freegle/iznik-server-go.git /app/codebase/iznik-server-go && \
+# Clone the Freegle MONOREPO (public) as root, then fix ownership. The old
+# standalone repos (iznik-nuxt3, iznik-server-go, ...) were retired in Apr 2026
+# and now just carry a "redirect to monorepo" commit, so cloning them left the
+# agent 3+ months stale. The monorepo has the same subdirs (iznik-nuxt3/,
+# iznik-server-go/, ...) at the same /app/codebase/<name> paths, minus secrets
+# (.env is gitignored).
+RUN git clone --depth 1 https://github.com/Freegle/Iznik.git /app/codebase && \
     chown -R claude:claude /app/codebase
 
 # Copy package files and install dependencies

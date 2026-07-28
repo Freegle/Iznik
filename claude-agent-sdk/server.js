@@ -73,11 +73,8 @@ function checkAuth() {
  * Update codebase from git.
  */
 function updateCodebase() {
-  const repos = [
-    '/app/codebase/iznik-nuxt3',
-    '/app/codebase/iznik-server',
-    '/app/codebase/iznik-server-go',
-  ]
+  // One monorepo clone (its subdirs are iznik-nuxt3/, iznik-server-go/, ...).
+  const repos = ['/app/codebase']
 
   for (const repo of repos) {
     if (fs.existsSync(repo)) {
@@ -214,6 +211,86 @@ app.post('/api/log-analysis', async (req, res) => {
       error: 'ANALYSIS_FAILED',
       message: error.message || 'Unknown error',
     })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Device summary — a deterministic (no-AI) view of the member's recent devices,
+// shown as soon as a user is selected. Reads `session_start` events (viewport/
+// screen/DPR/user-agent) straight from PRODUCTION Loki over the tunnel (see
+// SUPPORT_LOKI_URL). user_id is an indexed Loki label, so this is one cheap,
+// targeted query — NOT the full user dump, whose email/session passes do
+// full-text scans that time out against prod. No Anthropic cost; Support/Admin-
+// gated and audited.
+// ---------------------------------------------------------------------------
+const { lokiQuery, audit } = require('./tools')
+const { parseSessionStart, buildDeviceSummary } = require('./device-summary')
+
+// The deployed web/app version to compare a member's loaded version against, so
+// we can flag "needs a refresh". Read from the cloned frontend config (kept
+// current by updateCodebase). Best-effort — null just leaves freshness unknown.
+function currentMobileVersion() {
+  try {
+    const cfg = fs.readFileSync('/app/codebase/iznik-nuxt3/config.js', 'utf8')
+    const m = /MOBILE_VERSION:\s*['"]([^'"]+)['"]/.exec(cfg)
+    return m ? m[1] : null
+  } catch (_) {
+    return null
+  }
+}
+
+app.get('/api/device-summary', async (req, res) => {
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
+  }
+  const userId = parseInt(req.query.userId, 10)
+  if (!userId || userId < 1) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'userId is required' })
+  }
+  // Accessing a member's device/usage data — record who looked at whom.
+  audit({ mod: mod.id, modEmail: mod.email, target: userId, tool: 'device_summary' })
+  const window = '7d'
+  try {
+    // Client session_start events for this member, straight from prod Loki.
+    // user_id is an indexed label, so this is a cheap targeted lookup. userId is
+    // a validated positive integer, so it is safe to interpolate into the label
+    // selector (no injection surface).
+    const rows = await lokiQuery({
+      query: `{app="freegle", source="client", user_id="${userId}"} |= "session_start"`,
+      start: window,
+      limit: 500,
+    })
+
+    const seen = new Set()
+    const records = []
+    for (const r of rows) {
+      const d = parseSessionStart(r.line)
+      if (!d) continue
+      if (d.sessionId && seen.has(d.sessionId)) continue
+      if (d.sessionId) seen.add(d.sessionId)
+      records.push(d)
+    }
+    const currentVersion = currentMobileVersion()
+    const devices = buildDeviceSummary(records, currentVersion)
+
+    res.json({
+      userId,
+      window,
+      generatedAt: new Date().toISOString(),
+      // Newest device sighting doubles as "last active on a device".
+      lastaccess: devices[0]?.lastSeen || null,
+      currentVersion,
+      deviceCount: devices.length,
+      devices,
+      // freshness needs app_version (app) / build_date (web) in session_start,
+      // which the frontend only just started logging — so sessions from before
+      // that deploy show freshness 'unknown' (no up-to-date badge) until revisit.
+      note: 'freshness comes from app_version/build_date in session_start going forward; older sessions show unknown.',
+    })
+  } catch (error) {
+    console.error('[DeviceSummary] Error:', error)
+    res.status(500).json({ error: 'DEVICE_SUMMARY_FAILED', message: error.message })
   }
 })
 

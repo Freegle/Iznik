@@ -570,7 +570,9 @@ services:
       # Claude auth: set ANTHROPIC_API_KEY for api mode (edge/prod). Leave it unset and
       # mount ~/.claude (see volumes) for session mode (local testing on the logged-in session).
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - SUPPORT_AI_MODEL=${SUPPORT_AI_MODEL:-claude-sonnet-4-20250514}
+      # Unpinned alias, not a dated snapshot (snapshots get retired and the SDK
+      # then 404s). On the Claude subscription (session mode) Opus is available.
+      - SUPPORT_AI_MODEL=${SUPPORT_AI_MODEL:-opus}
       # Go API: verifies the caller is a mod/support/admin AND serves get_user_dump.
       - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
       - API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}

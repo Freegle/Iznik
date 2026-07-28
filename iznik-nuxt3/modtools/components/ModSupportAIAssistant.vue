@@ -51,9 +51,11 @@
             v-if="selectedUser"
             class="selected-user-chip d-flex align-items-center ms-3"
           >
-            <strong>{{ selectedUser.displayname || 'User' }}</strong>
-            <small class="text-muted ms-1">(ID: {{ selectedUser.id }})</small>
-            <span class="text-muted ms-1">{{ selectedUser.email }}</span>
+            <span class="d-inline-flex align-items-baseline flex-wrap">
+              <strong>{{ selectedUser.displayname || 'User' }}</strong>
+              <small class="text-muted ms-1">(ID: {{ selectedUser.id }})</small>
+              <span class="text-muted ms-1">{{ selectedUser.email }}</span>
+            </span>
             <b-button
               variant="outline-secondary"
               size="sm"
@@ -159,6 +161,99 @@
             <pre v-if="entry.data" class="debug-data mt-1 mb-0">{{
               formatDebugData(entry.data)
             }}</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Device summary (recent devices) — kept visible during the whole
+           conversation as reference context, not just before it starts. -->
+      <div
+        v-if="deviceSummary || loadingDevices || deviceError"
+        class="device-summary log-analysis-step p-3"
+      >
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h6 class="mb-0">
+            Recent devices
+            <small class="text-muted fw-normal">(last 7 days)</small>
+          </h6>
+          <small v-if="deviceSummary?.lastaccess" class="text-muted">
+            Last active: {{ formatLastSeen(deviceSummary.lastaccess) }}
+          </small>
+        </div>
+
+        <div v-if="loadingDevices" class="text-muted small">
+          <b-spinner small class="me-1" /> Loading devices&hellip;
+        </div>
+        <NoticeMessage
+          v-else-if="deviceError"
+          variant="warning"
+          class="mb-0 small"
+        >
+          {{ deviceError }}
+        </NoticeMessage>
+        <div
+          v-else-if="!deviceSummary?.devices?.length"
+          class="text-muted small"
+        >
+          No device sessions found in the last 7 days.
+        </div>
+        <div v-else class="device-cards d-flex flex-wrap gap-2">
+          <div
+            v-for="(dev, i) in deviceSummary.devices"
+            :key="i"
+            class="device-card p-2"
+          >
+            <!-- Identity: browser/app + version, then OS, then up-to-date badge. -->
+            <div class="d-flex align-items-center flex-wrap gap-1 mb-1">
+              <v-icon
+                v-if="!dev.isApp && dev.browserIcon"
+                :icon="['fab', dev.browserIcon]"
+                class="device-browser-icon"
+                :title="dev.browser"
+              />
+              <v-icon
+                :icon="dev.formIcon"
+                class="text-secondary"
+                :title="dev.isApp ? dev.formFactor + ' app' : dev.formFactor"
+              />
+              <!-- Keep the name and OS on a shared text baseline (they differ in
+                   size), so the OS doesn't sit off-line from the browser name. -->
+              <span class="d-inline-flex align-items-baseline gap-1 ms-1">
+                <strong>{{ primaryLabel(dev) }}</strong>
+                <span class="text-muted small">{{ dev.os }}</span>
+              </span>
+              <b-badge
+                v-if="freshnessBadge(dev)"
+                :variant="freshnessBadge(dev).variant"
+                class="ms-1"
+                :title="freshnessBadge(dev).title"
+              >
+                {{ freshnessBadge(dev).text }}
+              </b-badge>
+            </div>
+            <!-- Window sizes used, on the (fixed) screen size. -->
+            <div
+              v-if="dev.windows?.length"
+              class="device-pills d-flex flex-wrap align-items-center gap-1 mb-1"
+            >
+              <span
+                v-for="(win, wi) in dev.windows"
+                :key="wi"
+                class="device-pill"
+                :title="windowTitle(win)"
+              >
+                {{ win.w }}&times;{{ win.h }}
+              </span>
+              <span v-if="dev.screen" class="text-muted small ms-1">
+                on {{ dev.screen.w }}&times;{{ dev.screen.h }}
+              </span>
+            </div>
+            <div class="device-meta text-muted">
+              {{ dev.sessions }} session{{ dev.sessions === 1 ? '' : 's' }}
+              <span v-if="dev.lastSeen">
+                &middot; seen {{ formatLastSeen(dev.lastSeen) }}</span
+              >
+            </div>
           </div>
         </div>
       </div>
@@ -304,6 +399,11 @@ const searchResults = ref([])
 const noResults = ref(false)
 const selectedUser = ref(null)
 
+// Device summary (recent devices for the selected member)
+const deviceSummary = ref(null)
+const loadingDevices = ref(false)
+const deviceError = ref('')
+
 // Query input
 const query = ref('')
 
@@ -379,6 +479,8 @@ function selectUser(user) {
   selectedUser.value = user
   searchResults.value = []
   userSearch.value = ''
+  // Fetch the device summary up front so support sees what the member is on.
+  loadDeviceSummary(user.id)
   // Focus the query input after Vue updates the DOM
   nextTick(() => {
     const textarea = document.querySelector('.log-analysis-container textarea')
@@ -399,6 +501,109 @@ function changeUser() {
   debugLog.value = []
   searchResults.value = []
   userSearch.value = ''
+  deviceSummary.value = null
+  deviceError.value = ''
+}
+
+// Fetch the recent-device summary for a member from the AI support helper.
+// This is a deterministic (no-AI) endpoint, so it runs on select without cost.
+async function loadDeviceSummary(userId) {
+  deviceSummary.value = null
+  deviceError.value = ''
+  if (!userId) return
+  loadingDevices.value = true
+  try {
+    const authStore = useAuthStore()
+    const jwt = authStore.auth?.jwt
+    const res = await fetch(
+      `${AI_SUPPORT_URL}/api/device-summary?userId=${encodeURIComponent(
+        userId
+      )}`,
+      { headers: { ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) } }
+    )
+    if (!res.ok) {
+      deviceError.value =
+        res.status === 403
+          ? 'Not authorised to view device data.'
+          : `Could not load devices (${res.status}).`
+      return
+    }
+    deviceSummary.value = await res.json()
+  } catch (e) {
+    deviceError.value = 'Device summary service is not available.'
+  } finally {
+    loadingDevices.value = false
+  }
+}
+
+// "Chrome 150" / "Safari 17" — browser name with its major version when known.
+function browserLabel(dev) {
+  return dev.browserVersion
+    ? `${dev.browser} ${dev.browserVersion}`
+    : dev.browser
+}
+
+// The bold identity: a web browser shows "Chrome 150"; the app shows
+// "App 3.2.28" (or just "App" until the app reports its version), so the app
+// reads the same way as a browser — the thing, then its version, then the OS.
+function primaryLabel(dev) {
+  if (!dev.isApp) return browserLabel(dev)
+  return dev.appVersion ? `App ${dev.appVersion}` : 'App'
+}
+
+// Tooltip for a window-size pill.
+function windowTitle(win) {
+  const s = `${win.sessions} session${win.sessions === 1 ? '' : 's'}`
+  return `Window ${win.w}×${win.h} — ${s}`
+}
+
+// "Are they up to date?" badge, or null to show nothing. We can only judge the
+// APP by version (needs an old app updating), WEB by build-date age (needs a
+// refresh). `dev.freshness` is computed server-side; 'unknown' shows nothing
+// rather than a misleading badge (e.g. before the frontend logs version/build).
+function freshnessBadge(dev) {
+  if (dev.freshness === 'current') {
+    return {
+      variant: 'success',
+      text: 'up to date',
+      title: dev.isApp
+        ? 'Running the current app version.'
+        : 'Loaded a recent web build.',
+    }
+  }
+  if (dev.freshness === 'stale') {
+    if (dev.isApp) {
+      const cur = deviceSummary.value?.currentVersion
+      return {
+        variant: 'warning',
+        text: 'update the app',
+        title: `On v${dev.appVersion || '?'}${
+          cur ? `; current is v${cur}` : ''
+        } — they need to update the app.`,
+      }
+    }
+    return {
+      variant: 'warning',
+      text: 'out of date',
+      title: 'Running an old web build — a page refresh will update them.',
+    }
+  }
+  return null
+}
+
+// Human "x ago" for an ISO timestamp (session_start ts or DB lastaccess).
+function formatLastSeen(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  const mins = Math.round((Date.now() - d.getTime()) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.round(hrs / 24)
+  if (days < 7) return `${days}d ago`
+  return d.toLocaleDateString()
 }
 
 function scrollToBottom() {
@@ -824,6 +1029,53 @@ function formatDate(dateStr) {
   max-height: 150px;
   overflow-y: auto;
   color: #b0bec5;
+}
+
+/* Device summary panel */
+.device-summary h6 {
+  font-size: 0.95rem;
+}
+
+.device-card {
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  min-width: 210px;
+  font-size: 0.85rem;
+}
+
+.device-browser-icon {
+  font-size: 1.05rem;
+  color: #495057;
+}
+
+.device-screen {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.device-pill {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 1rem;
+  background: #e7f1ff;
+  color: #0d6efd;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.device-meta {
+  font-size: 0.75rem;
+}
+
+.device-unavailable {
+  border-top: 1px dashed #dee2e6;
+  padding-top: 0.4rem;
+}
+
+.gap-1 {
+  gap: 0.25rem;
 }
 
 .gap-2 {
