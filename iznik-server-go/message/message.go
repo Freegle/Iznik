@@ -621,6 +621,25 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
+
+			// Per-group hold visibility. The message-level messages.heldby mirror
+			// (set globally by Hold / Back-to-Pending) selected into Heldby above
+			// leaks one group's hold to mods of every OTHER group the post rippled
+			// to ("posts held by mods not on my team"). Resolve the hold the viewer
+			// should actually see: one on a group THEY moderate. Non-mods see none.
+			message.Heldby = nil
+			if isGroupMod {
+				var myModGroups []uint64
+				db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+					myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&myModGroups)
+				if len(myModGroups) > 0 {
+					viewer := make(map[uint64]bool, len(myModGroups))
+					for _, g := range myModGroups {
+						viewer[g] = true
+					}
+					message.Heldby = effectiveHeldby(messageGroups, viewer)
+				}
+			}
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
 			message.MessageReply = messageReply
