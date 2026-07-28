@@ -15,10 +15,15 @@ const CONFIG = {
   SPATIAL_SERVER_URL: process.env.SPATIAL_SERVER_URL || 'http://localhost:8196',
 
   // AI Support Helper backend (device summary + log analysis). Local dev reaches
-  // it via traefik at ai-support-helper.localhost; a deployed build MUST set
-  // AI_SUPPORT_URL to the helper's public HTTPS URL. The client refuses to call
-  // a *.localhost helper from a non-localhost page (Chrome blocks it as a
-  // private-network request), so leaving this at the local default on a public
+  // it via traefik at ai-support-helper.localhost. A deployed build sets
+  // AI_SUPPORT_URL to where the (Support/Admin-gated) helper is served. Preferred
+  // is a SAME-ORIGIN PATH, e.g. AI_SUPPORT_URL="/aihelper", path-routed to the
+  // container in HAProxy (no CORS, no separate domain). The client requests
+  // AI_SUPPORT_URL + "/api/device-summary" | "/api/log-analysis", so HAProxy
+  // should route "/aihelper/*" to the helper's :3000 and strip the "/aihelper"
+  // prefix (Express serves "/api/..."). A full https URL also works. The client
+  // refuses to call a *.localhost helper from a non-localhost page (Chrome blocks
+  // it as a private-network request), so leaving the local default on a public
   // deploy just disables the tool rather than erroring.
   AI_SUPPORT_URL:
     process.env.AI_SUPPORT_URL || 'http://ai-support-helper.localhost',
