@@ -219,7 +219,7 @@ func buildPlan(sqlDB *sql.DB, targetID int64, emails []string, include map[strin
 		plan = append(plan, section{
 			name:   "sentry_issues",
 			weight: 8,
-			run:    func(b *Builder) (int, error) { return collectSentry(b, newSentryClient(), uid, em) },
+			run:    func(b *Builder) (int, error) { return collectSentry(b, newSentryClient(), uid, em, startNs, endNs) },
 		})
 	}
 
