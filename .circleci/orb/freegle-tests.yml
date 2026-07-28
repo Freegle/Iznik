@@ -764,10 +764,28 @@ commands:
             rm -rf ./iznik-batch/vendor/
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
-            docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
-              spamassassin-app reverse-proxy tusd delivery loki mjml \
-              batch status host-scripts
+            # Retry the bringup. On Katapult cloud instances the Docker Hub pull-through
+            # mirror (185.44.254.6:5000) is sometimes not loaded by the running dockerd (see
+            # the mirror setup above), so :latest image pulls (mjml, percona, ...) hit Docker
+            # Hub's anonymous rate limit (toomanyrequests) and this up fails. That is a
+            # transient, per-instance flake — the same commit passes on a healthy instance —
+            # so retry, nudging the mirror back between attempts, rather than failing the
+            # whole run on one 429.
+            for attempt in 1 2 3; do
+              if docker-compose up -d \
+                percona postgres redis beanstalkd mailpit \
+                spamassassin-app reverse-proxy tusd delivery loki mjml \
+                batch status host-scripts; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 1 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the pull-through mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for percona to be healthy..."
             for i in $(seq 1 60); do
@@ -822,7 +840,16 @@ commands:
             fi
 
             echo "=== Phase 2: Starting all remaining containers ==="
-            docker-compose up -d
+            for attempt in 1 2 3; do
+              if docker-compose up -d; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 2 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for application services to start..."
             sleep 30
@@ -941,10 +968,23 @@ commands:
             # Phase 2: All remaining containers (databases already waiting for them)
 
             echo "=== Phase 1: Infrastructure + migrations ==="
-            docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
-              spamassassin-app reverse-proxy tusd delivery loki mjml \
-              batch status host-scripts
+            # Retry the bringup — a transient Docker Hub 429 (pull-through mirror not loaded
+            # on this instance) must not fail the whole run. See start-docker-services.
+            for attempt in 1 2 3; do
+              if docker-compose up -d \
+                percona postgres redis beanstalkd mailpit \
+                spamassassin-app reverse-proxy tusd delivery loki mjml \
+                batch status host-scripts; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 1 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for percona to be healthy..."
             for i in $(seq 1 60); do
@@ -996,7 +1036,16 @@ commands:
             fi
 
             echo "=== Phase 2: Starting all remaining containers ==="
-            docker-compose up -d
+            for attempt in 1 2 3; do
+              if docker-compose up -d; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 2 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for application services to start..."
             sleep 30
