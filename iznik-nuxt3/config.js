@@ -14,6 +14,15 @@ const CONFIG = {
   // Spatial/routing server URL (for /rippling moderator tool).
   SPATIAL_SERVER_URL: process.env.SPATIAL_SERVER_URL || 'http://localhost:8196',
 
+  // AI Support Helper backend (device summary + log analysis). Local dev reaches
+  // it via traefik at ai-support-helper.localhost; a deployed build MUST set
+  // AI_SUPPORT_URL to the helper's public HTTPS URL. The client refuses to call
+  // a *.localhost helper from a non-localhost page (Chrome blocks it as a
+  // private-network request), so leaving this at the local default on a public
+  // deploy just disables the tool rather than erroring.
+  AI_SUPPORT_URL:
+    process.env.AI_SUPPORT_URL || 'http://ai-support-helper.localhost',
+
   // This is where the user site is.
   USER_SITE: process.env.USER_SITE || 'https://www.ilovefreegle.org',
   USER_DOMAIN: 'ilovefreegle.org',
@@ -39,10 +48,9 @@ const CONFIG = {
   // weserv doesn't fetch from a now-wrong URL.
   IMAGE_SRC_URL:
     process.env.IMAGE_SRC_URL ||
-    (process.env.TUS_UPLOADER || 'https://uploads.ilovefreegle.org:8080').replace(
-      ':8080',
-      ''
-    ),
+    (
+      process.env.TUS_UPLOADER || 'https://uploads.ilovefreegle.org:8080'
+    ).replace(':8080', ''),
 
   // OpenStreetMap Tile Server
   OSM_TILE:

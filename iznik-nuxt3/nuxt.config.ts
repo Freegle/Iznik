@@ -378,6 +378,7 @@ export default defineNuxtConfig({
       BUILD_DATE: new Date().toISOString(),
       ISAPP: config.ISAPP,
       MOBILE_VERSION: config.MOBILE_VERSION,
+      AI_SUPPORT_URL: config.AI_SUPPORT_URL,
       NETLIFY_DEPLOY_ID: process.env.DEPLOY_ID,
       NETLIFY_SITE_NAME: process.env.SITE_NAME,
       NETLIFY_BRANCH: process.env.BRANCH,

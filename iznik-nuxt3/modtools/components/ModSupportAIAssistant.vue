@@ -386,7 +386,31 @@ import { useAuthStore } from '~/stores/auth'
 // analysis endpoint - the backend has its own moderator/admin auth and
 // runs with real (non-anonymised) data since it is only reachable by
 // authenticated support/mod staff.
-const AI_SUPPORT_URL = 'http://ai-support-helper.localhost'
+// Local dev reaches the helper via traefik at ai-support-helper.localhost; a
+// deployed build sets config AI_SUPPORT_URL to the public HTTPS URL.
+const AI_SUPPORT_URL =
+  useRuntimeConfig()?.public?.AI_SUPPORT_URL ||
+  'http://ai-support-helper.localhost'
+
+// A *.localhost helper is only reachable when the page itself is on localhost.
+// From a public (https) page the browser blocks it as a private-network request
+// ("trying to access other services"), so treat the tool as unavailable rather
+// than firing a request that will fail. A deployed build must point
+// AI_SUPPORT_URL at a real public endpoint to enable it.
+function aiHelperReachable() {
+  if (!AI_SUPPORT_URL) return false
+  if (typeof window === 'undefined') return false
+  try {
+    const host = new URL(AI_SUPPORT_URL, window.location.href).hostname
+    const helperIsLocal = host === 'localhost' || host.endsWith('.localhost')
+    const pageIsLocal =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname.endsWith('.localhost')
+    return !(helperIsLocal && !pageIsLocal)
+  } catch (e) {
+    return false
+  }
+}
 
 // UI state
 const debugMode = ref(false)
@@ -511,6 +535,11 @@ async function loadDeviceSummary(userId) {
   deviceSummary.value = null
   deviceError.value = ''
   if (!userId) return
+  if (!aiHelperReachable()) {
+    deviceError.value =
+      'The AI support helper is not available on this site (no reachable backend configured).'
+    return
+  }
   loadingDevices.value = true
   try {
     const authStore = useAuthStore()
@@ -666,6 +695,13 @@ async function submitQuery() {
 }
 
 async function queryLogsForUser(userQuery) {
+  if (!aiHelperReachable()) {
+    return {
+      analysis:
+        '**AI Support Helper unavailable**\n\nThis tool has no reachable backend on this site. It runs against a support backend that is only wired up in the internal/dev environment.',
+      costUsd: 0,
+    }
+  }
   try {
     const requestBody = {
       query: userQuery,
