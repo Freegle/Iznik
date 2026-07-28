@@ -339,7 +339,6 @@ describe('ModSettingsGroup', () => {
       'Spam Detection',
       'Duplicate Detection',
       'Mapping',
-      'Social Media',
       'Status',
     ])('renders %s accordion', (accordionName) => {
       const wrapper = mountComponent()
@@ -474,46 +473,6 @@ describe('ModSettingsGroup', () => {
       }
       wrapper = mountComponent()
       expect(wrapper.findAll('.shortlink').length).toBe(2)
-    })
-  })
-
-  describe('Facebook section', () => {
-    it('handles Facebook connection states', () => {
-      // No Facebook linked shows warning
-      let wrapper = mountComponent({}, { facebook: [] })
-      expect(wrapper.text()).toContain('not linked to Facebook')
-
-      // Valid Facebook connection does not show "not linked" warning
-      wrapper = mountComponent(
-        {},
-        {
-          facebook: [
-            {
-              id: '123',
-              name: 'Test Page',
-              valid: true,
-              authdate: '2024-01-01',
-            },
-          ],
-        }
-      )
-      expect(wrapper.text()).not.toContain('not linked to Facebook')
-
-      // Invalid Facebook connection shows error
-      wrapper = mountComponent(
-        {},
-        {
-          facebook: [
-            {
-              id: '123',
-              name: 'Test Page',
-              valid: false,
-              lasterror: 'Token expired',
-            },
-          ],
-        }
-      )
-      expect(wrapper.text()).toContain('error')
     })
   })
 

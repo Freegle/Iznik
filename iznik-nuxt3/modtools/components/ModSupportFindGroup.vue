@@ -103,26 +103,6 @@
       <!-- eslint-disable-next-line -->
       <ExternalLink v-if="group.groupemail" :href="'mailto:' + group.groupemail">{{ group.groupemail }}</ExternalLink>
       <br />
-      <div v-if="!group.facebook || !group.facebook.length">Facebook: none</div>
-      <div v-else>
-        <div
-          v-for="facebook in group.facebook"
-          :key="'facebook-' + facebook.id"
-        >
-          <div v-if="facebook.type === 'Page'">
-            <ModClipboard
-              class="me-3 mb-1"
-              :value="'https://facebook.com/pg/' + facebook.id"
-            />
-            Facebook:
-            <ExternalLink :href="'https://facebook.com/pg/' + facebook.id">
-              {{ facebook.name }}
-            </ExternalLink>
-            <span v-if="!facebook.valid" class="text-danger"> Invalid </span>
-          </div>
-        </div>
-      </div>
-      <br />
       Affiliation last confirmed: {{ dateonly(group.affiliationconfirmed) }} by
       <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
         group.affiliationconfirmedby
