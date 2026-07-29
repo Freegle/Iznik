@@ -168,6 +168,53 @@ describe('useFetchRetry', () => {
       vi.useRealTimers()
     })
 
+    it('should retry a 504 Gateway Timeout once, after a 10s delay', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 504,
+          statusText: 'Gateway Timeout',
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+
+      // The 504 backoff is 10s, much longer than the usual attempt * 1000ms.
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should give up after a second 504 rather than stacking more retries', async () => {
+      mockFetch.mockResolvedValue({
+        status: 504,
+        statusText: 'Gateway Timeout',
+        json: vi.fn().mockRejectedValue(new Error('no body')),
+      })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+      promise.catch(() => {}) // Avoid unhandled rejection noise before we assert.
+
+      await vi.advanceTimersByTimeAsync(30000)
+
+      await expect(promise).rejects.toThrow('Request failed with 504')
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
     it('should retry on "load failed" error message', async () => {
       const responseData = { success: true }
 
