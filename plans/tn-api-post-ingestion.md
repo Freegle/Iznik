@@ -107,7 +107,7 @@ Email path emits structured logs at every routing decision (`routing_reason`, `u
 - Every DB-write call in new services must respect `dryRun`.
 - Convention: services receive `bool $dryRun` in the constructor.
 - Fixture files at `tests/fixtures/tn_sync/posts_page_*.json` and `chat_messages_page_*.json` — schema decided before generation.
-- Trace log format: machine-parseable JSON (`TRACE [WRITE] {"table":...,"op":...,"set":{...}}`). Possibly emit both JSON (for diff tool) and existing `key=value` style (for humans) — open item.
+- Trace log format: resolved as key=value, not JSON — see Resolved decisions #3.
 
 ### K. Feature flag / rollout ✅
 - `config('freegle.trashnothing.ingest_posts_via_api')` (default false) added to `config/freegle.php`.
@@ -115,7 +115,8 @@ Email path emits structured logs at every routing decision (`routing_reason`, `u
 - Separate flag to disable email path once parity proven — flipped much later. Both flags on = double-write (needs idempotency from B).
 
 ### L. Test strategy ✅ (posts)
-- `GroupPostIngestionServiceTest` covers: null user skip, unknown user skip, non-member skip, duplicate detection (idempotency), dry-run trace log + no DB writes, pending routing (unmapped user + moderated group), live approved creation, live pending creation, RFC822 blob content.
+- `GroupPostIngestionServiceTest` covers: null user skip, unknown user skip, non-member success (not a skip — see section P), duplicate detection (idempotency), dry-run trace log + no DB writes, pending routing (unmapped user + moderated group), live approved creation, live pending creation, RFC822 blob content, `mod_messaging_allowed` default-true and explicit-false persistence.
+- `PostSyncerTest` additionally covers `mod_messaging_allowed` derivation from `freegle_group_ids`: absent field, group present in list, group absent from list.
 - `messages.source` uses `Message::SOURCE_EMAIL` to match the email path (no new enum value or migration needed).
 - Parity test (email vs API path producing same rows) — not yet written; deferred until chat path is also done.
 - Existing `IncomingMailServiceTest` suite stays green untouched.
@@ -144,22 +145,22 @@ Each would follow the `PostSyncer` pattern: constructor takes `(bool $dryRun, bo
 
 **Not required for the posts ingestion go-live**, but recommended before the codebase grows further.
 
-### P. Coordinate-based group selection & moderator-messaging consent (new, not yet implemented)
+### P. Coordinate-based group selection & moderator-messaging consent
 
 Follows on from the section 6 decision (`Location::groupsNear()` replacing TN's `group_id`) and the `freegle_group_ids` starter code in `PostSyncer.php`.
 
-**Group selection consequences:**
-- ✅ Since the group is *chosen for* the post (via `groupsNear()` on lat/lng) rather than *supplied by* the poster, the poster is frequently not an Approved member of the resolved group. The email path's membership check no longer skips API posts: `GroupPostIngestionService::ingest()` looks up an Approved membership if one exists (to reuse its `ourPostingStatus`), but falls back to `'DEFAULT'` — the same status a brand-new member gets — when none is found, instead of returning `'skipped'`. The group's own `moderated`/`overridemoderation` settings still apply regardless. Covered by `GroupPostIngestionServiceTest::test_creates_post_for_non_member_of_resolved_group` (success case, not a skip).
-- Audit the rest of `handleGroupPost`'s decision tree (section D: unmapped-user handling) for any other logic that implicitly assumes the poster is a member of the target group — `ourPostingStatus`/moderated-group handling is now confirmed membership-independent (see above), unmapped-user (`lastlocation === null`) is unaffected since it's a user-level check, not membership-level.
-- `notifyGroupMods` still fires unconditionally on the Pending branch, independent of membership — confirmed no membership dependency there.
+**Group selection consequences:** ✅ all resolved
+- Since the group is *chosen for* the post (via `groupsNear()` on lat/lng) rather than *supplied by* the poster, the poster is frequently not an Approved member of the resolved group. The email path's membership check no longer skips API posts: `GroupPostIngestionService::ingest()` looks up an Approved membership if one exists (to reuse its `ourPostingStatus`), but falls back to `'DEFAULT'` — the same status a brand-new member gets — when none is found, instead of returning `'skipped'`. The group's own `moderated`/`overridemoderation` settings still apply regardless. Covered by `GroupPostIngestionServiceTest::test_creates_post_for_non_member_of_resolved_group` (success case, not a skip).
+- Audited the rest of `handleGroupPost`'s decision tree (section D) for other logic that implicitly assumed membership: `ourPostingStatus`/moderated-group handling is confirmed membership-independent (see above); unmapped-user (`lastlocation === null`) is unaffected since it's a user-level check, not membership-level.
+- `notifyGroupMods` fires unconditionally on the Pending branch, independent of membership — confirmed no membership dependency there.
 - Non-member TN posts are **not** forced to Pending — they follow the same routing tree as a `DEFAULT` member (approved unless the group is moderated, worry words, or the user is unmapped). This was an open question; resolved by defaulting to `'DEFAULT'` rather than special-casing non-members to always-pending.
 
-**Moderator-messaging consent:**
-- ✅ `PostSyncer::processPost()` computes `$moderatorMessagingAllowed` from `freegle_group_ids` and now defaults to **disallowed**: every TN post starts with mod messaging off unless the resolved group is explicitly present in `freegle_group_ids` (an absent/empty field means no consent was given, so it stays disallowed). This differs from the table-wide column default (allowed, for ordinary non-TN Freegle posts) — TN posts always pass an explicit boolean, so the column default never applies to them.
+**Moderator-messaging consent:** storage + ingestion wiring done; ModTools-side gate still outstanding
+- ✅ `PostSyncer::processPost()` computes `$moderatorMessagingAllowed` from `freegle_group_ids` and defaults to **disallowed**: every TN post starts with mod messaging off unless the resolved group is explicitly present in `freegle_group_ids` (an absent/empty field means no consent was given, so it stays disallowed). This differs from the table-wide column default (allowed, for ordinary non-TN Freegle posts) — TN posts always pass an explicit boolean, so the column default never applies to them.
 - ✅ Storage added: `messages_groups.mod_messaging_allowed` (migration `2026_07_23_000001_add_mod_messaging_allowed_to_messages_groups`), boolean, defaults to `1` (allowed) at the schema level for non-TN rows.
 - ✅ `GroupPostIngestionService::ingest()`/`createMessage()` take `bool $modMessagingAllowed` and persist it on the `MessageGroup::create()` call. Deliberately **not** added to the shared `[WRITE] table=messages_groups` trace line, since `EmailApiParityTest` diffs that line byte-for-byte against the email path (which has no equivalent field) — logged separately via the existing `[POST-META]` tag instead.
-- TODO: the actual gate in the mod-messaging feature (ModTools UI/API) that reads `mod_messaging_allowed` before allowing a moderator to contact the poster directly — not built yet, only the storage and ingestion wiring exist so far.
-- Fixture/test coverage added: `PostSyncerTest` covers absent field (disallowed), group in list (allowed), group not in list (disallowed); `GroupPostIngestionServiceTest` covers default persists true and explicit false persists.
+- ✅ Fixture/test coverage: `PostSyncerTest` covers absent field (disallowed), group in list (allowed), group not in list (disallowed); `GroupPostIngestionServiceTest` covers default persists true and explicit false persists.
+- ❌ **TODO — not started**: the actual gate in the mod-messaging feature (ModTools UI/API) that reads `mod_messaging_allowed` before allowing a moderator to contact the poster directly. Only the storage and ingestion wiring exist so far; no ModTools code reads this column yet.
 
 ### M. NOT in scope
 - Modifying `IncomingMailService` in any way.
@@ -169,14 +170,17 @@ Follows on from the section 6 decision (`Location::groupsNear()` replacing TN's 
 
 ## Open items still to resolve
 
-- See section P: removing the membership check on the API path (group is chosen, not supplied), and persisting/acting on `moderatorMessagingAllowed` from `freegle_group_ids` (new storage + gating logic needed, none exists today).
+- See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly — no UI/API code reads the column yet, only ingestion writes it.
+- Comparison tooling for the parallel-run period (section A) — still TBD.
 
 ## Resolved decisions
 
 2. **Comparison tooling** — no dedicated tool. Same approach as the TNSync V1→iznik-batch port: run with `--dry-run` in parallel alongside the email path; TRACE logs are inspected manually (via Loki) against DB rows written by the email path, joined on `tnpostid`. No artisan compare command. ✅
 3. **Trace log format** — key=value (`TN-SYNC-TRACE [WRITE] table=foo op=insert set=...`). Human-readable, consistent across all syncers. No JSON. ✅
 4. **Spam check on API path** — skipped entirely. The email path uses `shouldSkipSpamCheck()` to skip for TN emails with a valid secret; all API posts are from TN by definition, so the check is always skipped. Behavior is identical to the email path. ✅
-4. **Worry-words on API path** — applied. `GroupPostIngestionService::subjectContainsWorryWords()` is a direct duplicate of `IncomingMailService::containsWorryWords()` and runs unconditionally, matching the email path. ✅
-5. **Missing user handling** — stub user created via `findOrCreateUser()`: inserts a minimal `users` row (explicit `id = $fdUserId`), a synthetic `tn{id}@user.trashnothing.com` email, and an Approved membership. `UserChangesSyncer` fills in the real name/email on the next sync. In dry-run mode the stub is not created and the post is skipped. ✅
-6. **Group lookup** — superseded by commit `676ed453b`. TN's `group_id` in API responses is TN's own opaque internal ID (not the Freegle `nameshort` originally assumed), and drifts out of step with Freegle's group boundaries, so it is never used for placement. `PostSyncer::processPost()` instead resolves the group from the post's lat/lng via `Location::groupsNear($lat, $lng, limit: 1)`, matching the member-placement logic. No config map exists from TN group IDs to Freegle groups. ✅
-7. **Duplicate detection in dry-run** — trace lines carry `would_be_duplicate=true` when a row with the same `tnpostid` already exists. ✅
+5. **Worry-words on API path** — applied. `GroupPostIngestionService::subjectContainsWorryWords()` is a direct duplicate of `IncomingMailService::containsWorryWords()` and runs unconditionally, matching the email path. ✅
+6. **Missing user handling** — stub user created via `findOrCreateUser()`: inserts a minimal `users` row (explicit `id = $fdUserId`), a synthetic `tn{id}@user.trashnothing.com` email, and an Approved membership. `UserChangesSyncer` fills in the real name/email on the next sync. In dry-run mode the stub is not created and the post is skipped. ✅
+7. **Group lookup** — superseded by commit `676ed453b`. TN's `group_id` in API responses is TN's own opaque internal ID (not the Freegle `nameshort` originally assumed), and drifts out of step with Freegle's group boundaries, so it is never used for placement. `PostSyncer::processPost()` instead resolves the group from the post's lat/lng via `Location::groupsNear($lat, $lng, limit: 1)`, matching the member-placement logic. No config map exists from TN group IDs to Freegle groups. ✅
+8. **Duplicate detection in dry-run** — trace lines carry `would_be_duplicate=true` when a row with the same `tnpostid` already exists. ✅
+9. **Non-member group posting (API path)** — the group is chosen for the post via coordinates, not supplied by a member, so the email path's membership gate does not apply. See section P. ✅
+10. **Moderator-messaging consent storage** — `messages_groups.mod_messaging_allowed`, computed from TN's `freegle_group_ids`, defaults to disallowed for TN posts specifically. See section P. Gating logic in ModTools is not yet built. ✅ (storage/ingestion only)

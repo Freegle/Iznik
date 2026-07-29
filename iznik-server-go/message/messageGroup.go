@@ -42,4 +42,10 @@ type MessageGroup struct {
 	// routing/KNN calls failed at ripple-in time — the frontend shows nothing in all three cases.
 	RippleProximityP *string `json:"ripple_proximity_p,omitempty"`
 	RippleProximityQ *string `json:"ripple_proximity_q,omitempty"`
+
+	// ModMessagingAllowed is whether mods on this group may message the poster of this
+	// message directly. Defaults true for ordinary Freegle posts; TN API ingestion sets
+	// it false unless TN told us the poster consented for this group (see
+	// PostSyncer::processPost / GroupPostIngestionService in iznik-batch).
+	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
 }
