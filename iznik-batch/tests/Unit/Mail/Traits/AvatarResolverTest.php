@@ -82,6 +82,28 @@ class AvatarResolverTest extends TestCase
         $this->assertStringContainsString('user.png', $url);
     }
 
+    public function test_uploaded_image_not_used_when_useprofile_false(): void
+    {
+        // Regression: a member with an anonymous profile (settings.useprofile =
+        // false) received a digest showing the image harvested from their Google
+        // account. Emails must fall back to the generated avatar, like the website.
+        config(['freegle.avatar_server_url' => 'https://avatars.example.com/api']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['useprofile' => false];
+        $user->save();
+        \App\Models\UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://lh3.googleusercontent.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $url = $this->host->resolveAvatarUrl($user, 36);
+
+        $this->assertStringNotContainsString('googleusercontent', $url);
+        $this->assertStringStartsWith('https://avatars.example.com/api/', $url);
+    }
+
     public function test_avatar_server_url_is_configured_so_avatars_resolve_to_real_endpoint(): void
     {
         // Regression: config/freegle.php had no avatar_server_url key, so config()
