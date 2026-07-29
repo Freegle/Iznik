@@ -92,6 +92,39 @@ func TestBullseye(t *testing.T) {
 	assert.Equal(t, 0, empty[0].NReplies)
 }
 
+// The fast-SQL analytics endpoint runs its four query blocks concurrently (and the two inside
+// section 3 likewise) - serially they added up past the production gateway timeout. This guards
+// that the route is registered and that the concurrent handler assembles a complete, well-formed
+// payload (every section present, no panic from the goroutine fan-out) even on an empty test DB.
+func TestRipplingAnalyticsEndpoint(t *testing.T) {
+	prefix := uniquePrefix("rippleanalytics")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	url := fmt.Sprintf("/api/rippling/analytics?jwt=%s&stratum=rural", token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil), 30000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "analytics route must be registered and answer")
+
+	var body map[string]interface{}
+	json.Unmarshal(rsp(resp), &body)
+	assert.NotNil(t, body["sample_target"], "carries the drive-time sample target for the UI")
+	assert.Equal(t, "rural", body["stratum"], "echoes the requested stratum")
+
+	s1, ok := body["section1"].(map[string]interface{})
+	assert.True(t, ok, "section1 KPI block present")
+	assert.NotNil(t, s1["posts"], "section1 carries the post count")
+
+	s2, ok := body["section2"].(map[string]interface{})
+	assert.True(t, ok, "section2 trend block present")
+	_, hasKpis := s2["kpis"]
+	assert.True(t, hasKpis, "trend block carries the per-day kpis series")
+
+	s3, ok := body["section3"].(map[string]interface{})
+	assert.True(t, ok, "section3 rippled-out block present")
+	assert.NotNil(t, s3["rescued_takes"], "section3 carries the rescue floor")
+}
+
 // The sysadmin analytics UI loads drive-times from a SEPARATE set of endpoints so the slow routing
 // pass never blocks the fast panels and never 504s. The client drives it: fetch the SAMPLE, score
 // it one chunk after another (serial), then aggregate. This guards that all three routes are
