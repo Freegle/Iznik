@@ -54,6 +54,24 @@ import (
 // instead.
 const MinSimilarScore = 0.80
 
+// similarBoxLatDeg / similarBoxLngDeg size the box around the "nearby" centre that
+// the candidate search is restricted to, before the exact reach filter. ~0.6 lat and
+// ~0.9 lng degrees is roughly a 65km radius at UK latitudes — comfortably wider than
+// a post's rippling reach, so the box never cuts a candidate that is actually
+// repliable; it only keeps the globally-most-similar-but-far posts out of the
+// top-by-score set, which is what used to empty the strip for viewers away from the
+// semantic cluster.
+const similarBoxLatDeg = 0.6
+const similarBoxLngDeg = 0.9
+
+// similarCandidatePool is how many by-score candidates to pull from the box before
+// the reach filter, independent of the requested limit. The reach filter can reject
+// almost all of the highest-scoring candidates when the viewer sits in a sparsely-
+// rippled area, so a small pool (the old limit*3) leaves nothing even though
+// reachable-but-lower-scored matches exist further down the ranking. A generous pool
+// lets those survive; the box already bounds it to nearby posts so it stays cheap.
+const similarCandidatePool = 200
+
 // similarPostsEnabled reports whether the similar-posts feature is on.
 // FEATURE_SIMILAR_POSTS=off is a no-deploy killswitch (default on); when off the
 // endpoint returns an empty list so the frontend strip renders nothing.
@@ -76,9 +94,12 @@ type SimilarResult struct {
 // the STORED subject embedding of the source post (no sidecar/query-embed call):
 // from the in-memory store when the post is open, else a single indexed read of
 // messages_embeddings. Excludes the source post and its own author, applies
-// MinSimilarScore, and — for a logged-in viewer whose location is known — drops
-// candidates the viewer could not reply to because they are outside the post's
-// rippling reach.
+// MinSimilarScore, and restricts results to posts near — and repliable from — a
+// centre: the viewer's location when we know it, otherwise the post's own location
+// (so a logged-out reader, or one we can't place, still gets posts local to what
+// they are looking at rather than the globally-most-similar, which may be hundreds
+// of miles away and unrepliable). "Repliable" is the rippling-reach containment
+// check; distant candidates the viewer could not reply to are dropped, never shown.
 //
 // @Router /message/{id}/similar [get]
 // @Summary Posts similar to a given post (recommendations)
@@ -113,18 +134,23 @@ func Similar(c *fiber.Ctx) error {
 	var srcVec []float32
 	var srcType string
 	var srcFromuser uint64
+	var srcLat, srcLng float64
 
 	if e, ok := embedding.Global.FindByMsgid(id); ok {
 		srcVec = e.SubjectVec[:]
 		srcType = e.Msgtype
 		srcFromuser = e.Fromuser
+		srcLat = e.Lat
+		srcLng = e.Lng
 	} else {
 		var row struct {
-			SubjectEmbedding []byte `gorm:"column:subject_embedding"`
-			Fromuser         uint64 `gorm:"column:fromuser"`
-			Type             string `gorm:"column:type"`
+			SubjectEmbedding []byte  `gorm:"column:subject_embedding"`
+			Fromuser         uint64  `gorm:"column:fromuser"`
+			Type             string  `gorm:"column:type"`
+			Lat              float64 `gorm:"column:lat"`
+			Lng              float64 `gorm:"column:lng"`
 		}
-		db.Raw("SELECT me.subject_embedding, m.fromuser, m.type "+
+		db.Raw("SELECT me.subject_embedding, m.fromuser, m.type, m.lat, m.lng "+
 			"FROM messages_embeddings me INNER JOIN messages m ON m.id = me.msgid "+
 			"WHERE me.msgid = ?", id).Scan(&row)
 		if len(row.SubjectEmbedding) == 0 {
@@ -138,29 +164,68 @@ func Similar(c *fiber.Ctx) error {
 		srcVec = vec
 		srcType = row.Type
 		srcFromuser = row.Fromuser
+		srcLat = row.Lat
+		srcLng = row.Lng
 	}
 
-	// Over-fetch so post-filtering (self, same author, threshold, reach) still
-	// leaves enough. Same-type only; no group/bbox filter (nearby handled by the
-	// recommendation being about this post; reach handles "can I reply").
-	candidates := embedding.Global.Search(srcVec, limit*3, srcType, nil, nil, 0, 0, 0, 0)
-
-	// Reach filter: for a logged-in viewer with a known location, drop candidates
-	// they could not reply to (rippled out but not yet to them). Fail-open.
-	var blocked map[uint64]bool
+	// "Nearby" centre: the viewer's own location when we know it, else the post's
+	// location — so a logged-out reader, or one we can't place, still gets posts local
+	// to what they are looking at rather than the globally-most-similar.
+	centreLat, centreLng := srcLat, srcLng
 	myid := user.WhoAmI(c)
 	if myid > 0 {
 		ll := user.GetLatLng(myid)
 		if ll.Lat != 0 || ll.Lng != 0 {
-			ids := make([]uint64, 0, len(candidates))
-			for _, cnd := range candidates {
-				ids = append(ids, cnd.Msgid)
-			}
-			blocked = ReachBlockedSet(ids, float64(ll.Lat), float64(ll.Lng))
+			centreLat, centreLng = float64(ll.Lat), float64(ll.Lng)
 		}
 	}
 
+	// Viewing your OWN post flips the type: for your Wanted show Offers ("is what I want
+	// available?"), for your Offer show Wanteds ("who wants what I have?"). For anyone
+	// else's post, like-with-like (same type) is what "more like this" means.
+	searchType := srcType
+	if myid > 0 && myid == srcFromuser {
+		if srcType == "Offer" {
+			searchType = "Wanted"
+		} else if srcType == "Wanted" {
+			searchType = "Offer"
+		}
+	}
+
+	// Constrain the candidate search to a generous box around the centre so the
+	// top-by-score set is drawn from posts plausibly in reach, not from the global
+	// pool. Without this the strongest semantic matches can all sit in one distant
+	// cluster, and the reach filter below then empties the strip entirely. The box is
+	// deliberately wide; the reach filter is the precise "can I reply" cut. With no
+	// centre at all (a post with no location) it falls back to an unbounded search.
+	var swlat, swlng, nelat, nelng float32
+	if centreLat != 0 || centreLng != 0 {
+		swlat = float32(centreLat - similarBoxLatDeg)
+		nelat = float32(centreLat + similarBoxLatDeg)
+		swlng = float32(centreLng - similarBoxLngDeg)
+		nelng = float32(centreLng + similarBoxLngDeg)
+	}
+	candidates := embedding.Global.Search(srcVec, similarCandidatePool, searchType, nil, nil, swlat, swlng, nelat, nelng)
+
+	// Reach filter: drop candidates that could not be replied to from the centre
+	// (rippled out but not yet to it). Applies to logged-out readers too, using the
+	// post's location. Fail-open — no reach row, or any error, never blocks.
+	var blocked map[uint64]bool
+	if centreLat != 0 || centreLng != 0 {
+		ids := make([]uint64, 0, len(candidates))
+		for _, cnd := range candidates {
+			ids = append(ids, cnd.Msgid)
+		}
+		blocked = ReachBlockedSet(ids, centreLat, centreLng)
+	}
+
 	out := make([]SimilarResult, 0, limit)
+	// De-duplicate items that appear more than once. A single post rippled to many
+	// groups is one msgid (fine), but rippling can also strand genuine COPIES — a
+	// separate msgid per group for the same item — which would otherwise show as
+	// repeated cards. Same author + same subject identifies those; keep the first
+	// (highest-scoring, since candidates are score-ordered).
+	seen := make(map[string]bool)
 	for _, cnd := range candidates {
 		if cnd.Msgid == id {
 			continue // the source post itself
@@ -174,6 +239,11 @@ func Similar(c *fiber.Ctx) error {
 		if blocked[cnd.Msgid] {
 			continue // viewer can't reply (outside reach)
 		}
+		dedupKey := strconv.FormatUint(cnd.Fromuser, 10) + "\x00" + cnd.Subject
+		if seen[dedupKey] {
+			continue // a rippled copy of an item already included
+		}
+		seen[dedupKey] = true
 		lat, lng := utils.Blur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,

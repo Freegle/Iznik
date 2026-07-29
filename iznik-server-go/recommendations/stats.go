@@ -14,17 +14,13 @@ import (
 // panel tags "wanted_match".
 var trackedSources = []string{"similar_posts", "wanted_match"}
 
-// holdoutCohortSource is the view tag the message page writes
-// (iznik-nuxt3/pages/message/[id].vue passes view-source="message_page"). It marks
-// "this member loaded a message page", which is where the similar-posts strip
-// renders, so it identifies the population the holdout is meant to split in two.
-//
-// Crucially it is written for holdout members too: they load the page and get the
-// tag, they just never see the strip. That is what makes it a valid cohort for the
-// comparison, where the similar_posts tag itself would not be - holdout members have
-// no similar_posts rows by construction, so selecting on that would drop the entire
-// control group.
-const holdoutCohortSource = "message_page"
+// The two impression tags the message-page strip writes, one per arm of the random
+// holdout (SimilarPosts.vue): holdoutShownSource when a member is shown the strip,
+// holdoutControlSource when the same eligible view is held out and shown nothing.
+// Recording both is what lets the comparison below split the population, now that arm
+// assignment is a per-view RNG rather than anything derivable from the user id.
+const holdoutShownSource = "similar_posts"
+const holdoutControlSource = "similar_posts_holdout"
 
 // DailyPoint is one day's funnel for a source.
 type DailyPoint struct {
@@ -44,9 +40,12 @@ type SourceStats struct {
 	Daily             []DailyPoint `json:"daily"`
 }
 
-// HoldoutStats compares reply behaviour of the 10% holdout (userid % 10 == 0,
-// who never see recommendations) against everyone else, over message-page-active
-// users, so we can read whether showing recommendations changes reply rate.
+// HoldoutStats compares reply behaviour of the holdout (a random ~10% of eligible
+// logged-in, non-mod views that are shown nothing) against the members who were shown
+// the similar-posts strip, so we can read whether showing recommendations changes
+// reply rate. Both arms are drawn from the same eligible population - a view that
+// actually had recommendations to show - and each records an impression, so the two
+// cohorts come straight from those recorded tags rather than from the user id.
 //
 // Known caveat: the holdout is only enforced for the similar-posts strip
 // (SimilarPosts.vue). WantedMatches.vue has no holdout check, so holdout members
@@ -189,38 +188,32 @@ func Stats(c *fiber.Ctx) error {
 		out = append(out, *ss)
 	}
 
-	// Holdout comparison, over users who actually reached the surface: the cohort is
-	// people with a message-page view, which is where the similar-posts strip
-	// renders. The strip is the thing the holdout gates, so this compares like with
-	// like.
+	// Holdout comparison, over the two recorded arms of the random holdout. A member is
+	// in the shown cohort if any of their eligible views recorded the shown tag, and in
+	// the holdout cohort only if every one was held out (MAX(...) = 0) - so a member who
+	// was shown on one post and held out on another counts as shown, and the arms stay
+	// disjoint. Only views that actually had recommendations record either tag, so both
+	// sides are the like-with-like population the strip gates.
 	//
-	// This used to bucket every user with any View row, which is essentially every
-	// active member: 51,314 users over 30 days against 1,032 recommendation
-	// impressions all-time. Under 2% of the "shown" cohort had ever been shown
-	// anything, so both sides were near-identical populations and the comparison
-	// could not detect the effect it exists to measure. It reported a 1.7% gap in
-	// the holdout's favour, which was noise. Scoping to message_page is what the
-	// HoldoutStats doc comment always said this measured.
-	//
-	// The two sides are also aggregated independently rather than joined directly.
+	// The two sides are aggregated independently rather than joined directly.
 	// messages_likes LEFT JOIN chat_messages on userid alone, with no message
 	// correlation, fans every view row out across every Interested message that user
-	// sent and undoes it with COUNT(DISTINCT). At the old cohort size that was ~640M
-	// join rows and never completed (killed at 7 min on live).
+	// sent; aggregating replies per user first keeps the join small and correct.
 	var cohortRows []struct {
 		Holdout int   `gorm:"column:holdout"`
 		Users   int64 `gorm:"column:users"`
 		Replies int64 `gorm:"column:replies"`
 	}
-	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ (u.userid % 10 = 0) holdout,
+	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ u.holdout,
 	               COUNT(*) users,
 	               COALESCE(SUM(r.replies), 0) replies
-	        FROM (SELECT DISTINCT userid FROM messages_likes
-	              WHERE source = ? AND timestamp >= ?) u
+	        FROM (SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes
+	              WHERE source IN (?, ?) AND timestamp >= ?
+	              GROUP BY userid) u
 	        LEFT JOIN (SELECT userid, COUNT(*) replies FROM chat_messages
 	                   WHERE type = 'Interested' AND date >= ?
 	                   GROUP BY userid) r ON r.userid = u.userid
-	        GROUP BY holdout`, holdoutCohortSource, since, since).Scan(&cohortRows).Error; err != nil {
+	        GROUP BY u.holdout`, holdoutShownSource, holdoutShownSource, holdoutControlSource, since, since).Scan(&cohortRows).Error; err != nil {
 		degraded = true
 	}
 

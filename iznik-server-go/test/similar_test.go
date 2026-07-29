@@ -120,6 +120,58 @@ func TestSimilarReturnsNearMatchesSameType(t *testing.T) {
 	assert.Equal(t, uint64(100), results[0].Groupid)
 }
 
+// TestSimilarFlipsTypeOnOwnPost: viewing your OWN post flips the type — a Wanted you
+// posted surfaces Offers (what you want, available), and an Offer surfaces Wanteds.
+// Anyone else viewing the same post gets like-with-like (same type).
+func TestSimilarFlipsTypeOnOwnPost(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("similarflip")
+	author := CreateTestUser(t, prefix+"a", "Member")
+	other := CreateTestUser(t, prefix+"o", "Member")
+	for _, u := range []uint64{author, other} {
+		db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+			"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", u)
+	}
+	authorToken := getToken(t, author)
+	otherToken := getToken(t, other)
+
+	base := makeTestVec(0.5)
+	near := makeTestVec(0.5001)
+	const srcID, offerID, wantedID = 880001, 880002, 880003
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: srcID, Fromuser: author, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want a sofa", Arrival: time.Now(), SubjectVec: base},
+		// A matching OFFER by someone else — the flipped type for the author.
+		{Msgid: offerID, Fromuser: 99001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Sofa", Arrival: time.Now(), SubjectVec: near},
+		// Another WANTED — same type as the source.
+		{Msgid: wantedID, Fromuser: 99002, Groupid: 100, Msgtype: "Wanted", Lat: 51.5, Lng: -0.1, Subject: "Want sofa too", Arrival: time.Now(), SubjectVec: near},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	// Author views their own Wanted → sees the Offer, not the other Wanted.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/880001/similar?jwt="+authorToken, nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+	var mine []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&mine)
+	gotMine := map[uint64]bool{}
+	for _, r := range mine {
+		gotMine[r.Msgid] = true
+	}
+	assert.True(t, gotMine[uint64(offerID)], "own Wanted surfaces a matching Offer")
+	assert.False(t, gotMine[uint64(wantedID)], "own Wanted does not surface other Wanteds")
+
+	// A different viewer gets same-type (Wanted) matches, not flipped.
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/880001/similar?jwt="+otherToken, nil), 60000)
+	var theirs []message.SimilarResult
+	json.NewDecoder(resp2.Body).Decode(&theirs)
+	gotTheirs := map[uint64]bool{}
+	for _, r := range theirs {
+		gotTheirs[r.Msgid] = true
+	}
+	assert.True(t, gotTheirs[uint64(wantedID)], "another viewer gets same-type (Wanted) matches")
+	assert.False(t, gotTheirs[uint64(offerID)], "another viewer does not get the flipped Offer")
+}
+
 // TestSimilarMessageNotInStore: a source post that isn't in the in-memory store
 // but has an embedding row in the DB resolves via the fallback read and still
 // matches store candidates.
@@ -165,6 +217,81 @@ func TestSimilarNoEmbedding(t *testing.T) {
 
 // TestSimilarFlagOff: FEATURE_SIMILAR_POSTS=off short-circuits to an empty list
 // regardless of available matches.
+// TestSimilarOverfetchSurvivesReachRejection: a reachable match that scores BELOW
+// more candidates than the requested limit*3 must still be shown. The search pulls a
+// large fixed candidate pool before the reach filter; if it only took the top limit*3
+// by score, a viewer in a sparsely-rippled area — whose highest-scoring nearby posts
+// are all out of reach — would get an empty strip even though reachable matches exist
+// further down the ranking (the "still showing []" bug).
+func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
+	t.Setenv("RIPPLE_ENABLED", "true")
+	db := database.DBConn
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("similaroverfetch")
+	viewerID := CreateTestUser(t, prefix+"v", "Viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+	token := getToken(t, viewerID)
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"p", "Member")
+
+	base := makeTestVec(0.5)
+	strong := makeVecWithCosine(base, 0.95) // higher score than the reachable one
+	reachableVec := makeVecWithCosine(base, 0.85)
+
+	const srcID = 870001
+	entries := []embedding.Entry{
+		{Msgid: srcID, Fromuser: 88001, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "src", Arrival: time.Now(), SubjectVec: base},
+	}
+
+	// Eight higher-scoring candidates, all near the viewer (in the box) but rippled
+	// far away so the viewer is outside their reach → every one is blocked. That is
+	// more than the old limit*3 pool for a small requested limit.
+	blocked := make([]uint64, 0, 8)
+	for i := 0; i < 8; i++ {
+		mid := CreateTestMessage(t, poster, groupID, fmt.Sprintf("%s blocked %d", prefix, i), 51.5, -0.1)
+		entries = append(entries, embedding.Entry{Msgid: mid, Fromuser: poster, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: fmt.Sprintf("blocked %d", i), Arrival: time.Now(), SubjectVec: strong})
+		blocked = append(blocked, mid)
+		db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+			"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), "+
+			"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", mid)
+	}
+	t.Cleanup(func() {
+		for _, m := range blocked {
+			db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", m)
+		}
+	})
+
+	// One lower-scoring, reachable candidate (no reach row → fail-open). It ranks below
+	// all eight blocked ones, so at limit=2 (old pool = 6) it never entered the set.
+	const reachableID = 870999
+	entries = append(entries, embedding.Entry{Msgid: reachableID, Fromuser: 88002, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "reachable", Arrival: time.Now(), SubjectVec: reachableVec})
+	embedding.Global.SetEntries(entries)
+	defer embedding.Global.SetEntries(nil)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/870001/similar?limit=2&jwt="+token, nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+	var results []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	got := map[uint64]bool{}
+	for _, r := range results {
+		got[r.Msgid] = true
+	}
+	assert.True(t, got[uint64(reachableID)], "the reachable lower-scored match survives the large over-fetch")
+	for _, m := range blocked {
+		assert.False(t, got[m], "out-of-reach candidates are dropped")
+	}
+}
+
 func TestSimilarFlagOff(t *testing.T) {
 	t.Setenv("FEATURE_SIMILAR_POSTS", "off")
 	base := makeTestVec(0.5)
@@ -186,8 +313,8 @@ func TestSimilarFlagOff(t *testing.T) {
 
 // TestSimilarReachFiltered: for a logged-in viewer with a known location, a
 // candidate whose rippling reach doesn't cover the viewer is dropped, while a
-// candidate with no reach row is kept (fail-open). An anonymous request gets no
-// reach filtering.
+// candidate with no reach row is kept (fail-open). An anonymous request is filtered
+// the same way but centred on the POST's location instead of the viewer's.
 func TestSimilarReachFiltered(t *testing.T) {
 	t.Setenv("RIPPLE_ENABLED", "true")
 	db := database.DBConn
@@ -242,7 +369,9 @@ func TestSimilarReachFiltered(t *testing.T) {
 	assert.True(t, got[uint64(inReachID)], "candidate with no reach row is kept (fail open)")
 	assert.False(t, got[uint64(outReachID)], "candidate outside the viewer's reach is dropped")
 
-	// Anonymous viewer: no location, no reach filtering — out-of-reach appears.
+	// Anonymous viewer: no viewer location, so the reach filter centres on the POST's
+	// location (51.5, -0.1) instead. outReachID's reach doesn't cover that point, so it
+	// is dropped here too; inReachID (no reach row) is kept.
 	respAnon, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/840001/similar", nil), 60000)
 	require.Equal(t, 200, respAnon.StatusCode)
 	var anon []message.SimilarResult
@@ -251,5 +380,79 @@ func TestSimilarReachFiltered(t *testing.T) {
 	for _, r := range anon {
 		gotAnon[r.Msgid] = true
 	}
-	assert.True(t, gotAnon[uint64(outReachID)], "anonymous viewer gets no reach filtering")
+	assert.True(t, gotAnon[uint64(inReachID)], "in-reach candidate kept for anonymous (centred on the post)")
+	assert.False(t, gotAnon[uint64(outReachID)], "out-of-reach candidate dropped for anonymous too, centred on the post")
+}
+
+// TestSimilarBoxRestrictsToCentre pins the geographic pre-filter: a semantically
+// strong candidate far from the centre is excluded by the search box even though it
+// clears the score threshold. This is the bug that emptied the strip — the globally-
+// most-similar posts all sat in one distant cluster, so after the reach cut nothing
+// was left. With no viewer location the box centres on the post itself.
+func TestSimilarBoxRestrictsToCentre(t *testing.T) {
+	base := makeTestVec(0.5)
+	near := makeTestVec(0.5001) // ~1.0 cosine with base — both candidates clear the floor
+	const srcID, nearID, farID = 850001, 850002, 850003
+	const u1, u2 = uint64(97001), uint64(97002)
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Preston drawers", Arrival: time.Now(), SubjectVec: base},
+		// Equally similar, but one is local to the post and one is ~500km away.
+		{Msgid: nearID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "local drawers", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: farID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 55.9, Lng: -3.2, Subject: "distant drawers", Arrival: time.Now(), SubjectVec: near},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	// Anonymous → the box centres on the post (51.5, -0.1); the far candidate is
+	// outside it and never enters the top-by-score set.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/850001/similar", nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+	var results []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	got := map[uint64]bool{}
+	for _, r := range results {
+		got[r.Msgid] = true
+	}
+	assert.True(t, got[uint64(nearID)], "the local strong match is shown")
+	assert.False(t, got[uint64(farID)], "the equally-similar but far match is excluded by the box")
+}
+
+// TestSimilarDedupesRippledCopies: two candidates that are the same item (same
+// author, same subject, different msgid — a rippling copy) collapse to one card,
+// while a different author's same-subject item is kept.
+func TestSimilarDedupesRippledCopies(t *testing.T) {
+	base := makeTestVec(0.5)
+	near := makeTestVec(0.5001)
+	const srcID, copyA, copyB, other = 860001, 860002, 860003, 860004
+	const u1, u2, u3 = uint64(98001), uint64(98002), uint64(98003)
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Oak table", Arrival: time.Now(), SubjectVec: base},
+		// Same author + same subject on two msgids/groups = one rippled item.
+		{Msgid: copyA, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
+		{Msgid: copyB, Fromuser: u2, Groupid: 101, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
+		// Different author, same subject — a genuinely separate offer, must remain.
+		{Msgid: other, Fromuser: u3, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Pine wardrobe", Arrival: time.Now(), SubjectVec: near},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/860001/similar", nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+	var results []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	got := map[uint64]bool{}
+	for _, r := range results {
+		got[r.Msgid] = true
+	}
+	copies := 0
+	if got[uint64(copyA)] {
+		copies++
+	}
+	if got[uint64(copyB)] {
+		copies++
+	}
+	assert.Equal(t, 1, copies, "the two rippled copies collapse to a single card")
+	assert.True(t, got[uint64(other)], "a different author's same-subject item is NOT deduped away")
 }
