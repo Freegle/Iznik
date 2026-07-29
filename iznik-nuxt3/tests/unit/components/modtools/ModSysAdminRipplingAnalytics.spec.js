@@ -84,6 +84,8 @@ const FULL = {
         taken_pct: 45.3,
         mean_replies: 1.23,
         mean_freeglers: 2547,
+        replied_mature: true,
+        taken_mature: true,
       },
       {
         day: '2026-06-25',
@@ -92,6 +94,8 @@ const FULL = {
         taken_pct: 30.0,
         mean_replies: 1.3,
         mean_freeglers: 2600,
+        replied_mature: true,
+        taken_mature: false,
       },
     ],
     drive_time: [
@@ -282,6 +286,38 @@ describe('ModSysAdminRipplingAnalytics', () => {
     expect(areas.length).toBe(5)
     expect(wrapper.html()).toContain('Active freeglers reached')
     expect(wrapper.html()).toContain('Mean reply travel (min)')
+    wrapper.unmount()
+  })
+
+  // The reply/taken/mean-replies trends are fixed-horizon figures with a per-day maturity flag.
+  // Immature days ride into the chart as a Google Charts 'certainty' role column (drawn dashed/
+  // pale) so a still-accruing tail reads as provisional, never as a decline. Freeglers-reached
+  // has no accrual window, so it stays a plain two-column series.
+  it('marks immature trend days uncertain so they draw dashed, not as a decline', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    const wrapper = mountComponent()
+    await flushPromises()
+    const areas = wrapper
+      .findAllComponents({ name: 'GChart' })
+      .filter((c) => c.props('type') === 'AreaChart')
+    // Order matches trendCharts: reply rate, taken rate, mean replies, freeglers, drive-time.
+    const [reply, taken, meanReplies, freeglers] = areas.map((a) =>
+      a.props('data')
+    )
+    for (const data of [reply, taken, meanReplies]) {
+      expect(data[0][2]).toEqual({ type: 'boolean', role: 'certainty' })
+    }
+    // Both fixture days are reply-mature; only the first is taken-mature (14-day window).
+    expect(reply[1][2]).toBe(true)
+    expect(reply[2][2]).toBe(true)
+    expect(taken[1][2]).toBe(true)
+    expect(taken[2][2]).toBe(false)
+    expect(freeglers[0]).toHaveLength(2)
+    // The titles say what the fixed windows are.
+    const html = wrapper.html()
+    expect(html).toContain('Reply rate within 36h (%)')
+    expect(html).toContain('Taken within 14 days (%)')
+    expect(html).toContain('Mean replies within 36h / offer')
     wrapper.unmount()
   })
 

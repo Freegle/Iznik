@@ -137,7 +137,10 @@
       <!-- Section 2 - trends -->
       <h5 class="section-h">Trends</h5>
       <p class="text-muted small mb-2">
-        Each headline number over time, by post arrival day.
+        Each headline number over time, by the day the post entered rippling.
+        Figures use fixed windows (replies within 36h, taken within 14 days) so
+        every day is measured the same way — a dashed tail marks days too
+        recent for the window to have finished, not a real decline.
       </p>
       <div class="kpi-grid trends">
         <div v-for="t in trendCharts" :key="t.title" class="panel">
@@ -645,19 +648,38 @@ const rippledTakersPie = computed(() =>
     : null
 )
 
-function series(rows, key) {
+// A trend series, optionally carrying a per-day maturity flag as a Google Charts 'certainty'
+// role: days too recent for their fixed accrual window to have finished draw dashed/pale, so a
+// still-accruing tail reads as provisional rather than as a decline. A missing flag (older API)
+// is treated as mature.
+function series(rows, key, matureKey) {
   if (!rows || !rows.length) return null
-  return [['Date', 'v'], ...rows.map((r) => [new Date(r.day), r[key] || 0])]
+  if (!matureKey) {
+    return [['Date', 'v'], ...rows.map((r) => [new Date(r.day), r[key] || 0])]
+  }
+  return [
+    ['Date', 'v', { type: 'boolean', role: 'certainty' }],
+    ...rows.map((r) => [new Date(r.day), r[key] || 0, r[matureKey] !== false]),
+  ]
 }
 const trendCharts = computed(() => {
   const k = s2.value.kpis
   const dt = s2.value.drive_time
   return [
-    { title: 'Reply rate (%)', data: series(k, 'replied_pct'), color: POS },
-    { title: 'Taken rate (%)', data: series(k, 'taken_pct'), color: '#146c43' },
     {
-      title: 'Mean replies / offer',
-      data: series(k, 'mean_replies'),
+      title: 'Reply rate within 36h (%)',
+      data: series(k, 'replied_pct', 'replied_mature'),
+      color: POS,
+    },
+    {
+      title: 'Taken within 14 days (%)',
+      data: series(k, 'taken_pct', 'taken_mature'),
+      color: '#146c43',
+      note: 'Outcomes are marked weeks late, so the dashed provisional tail is long.',
+    },
+    {
+      title: 'Mean replies within 36h / offer',
+      data: series(k, 'mean_replies', 'replied_mature'),
       color: '#17a2b8',
     },
     {

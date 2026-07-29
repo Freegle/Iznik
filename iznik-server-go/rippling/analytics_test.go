@@ -2,9 +2,37 @@ package rippling
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// A trend day is mature once EVERY post on it has had the full horizon elapse: day end (midnight
+// after) + horizon must be at or before now. The boundary itself counts as mature - at exactly
+// day-end+horizon the figure can no longer grow.
+func TestTrendMature(t *testing.T) {
+	horizon := time.Duration(ReplyHorizonHours) * time.Hour
+	// Day 2026-07-01 ends 2026-07-02 00:00; +36h horizon -> final from 2026-07-03 12:00.
+	final := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+
+	assert.False(t, trendMature("2026-07-01", horizon, final.Add(-time.Second)),
+		"one second before the last post's horizon elapses the figure can still grow")
+	assert.True(t, trendMature("2026-07-01", horizon, final), "mature exactly at the boundary")
+	assert.True(t, trendMature("2026-07-01", horizon, final.Add(time.Hour)))
+
+	// The taken horizon is much longer, so the same day matures much later.
+	takenHorizon := time.Duration(TakenHorizonDays) * 24 * time.Hour
+	assert.False(t, trendMature("2026-07-01", takenHorizon, final))
+	assert.True(t, trendMature("2026-07-01", takenHorizon,
+		time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)))
+}
+
+// A malformed day never reads as final - drawing garbage as settled would be worse than drawing
+// it as provisional.
+func TestTrendMature_BadDayIsNeverMature(t *testing.T) {
+	assert.False(t, trendMature("not-a-date", time.Hour, time.Now()))
+	assert.False(t, trendMature("", time.Hour, time.Now()))
+}
 
 // bullseyeEdges = [0, 10, 15, 20, 25, 30, 45] -> bands [0,10) [10,15) [15,20)
 // [20,25) [25,30) [30,45]. Every band except the last is hi-exclusive; the

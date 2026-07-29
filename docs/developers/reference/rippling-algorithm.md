@@ -347,6 +347,17 @@ timeout:
 - `/rippling/analytics` (`rippling/analytics.go`) - the KPIs, trends and "is rippling helping?"
   section. Every query anchors on `rippling_reach` (one row per rippled post, bounded by
   `created_at`), which is what keeps it selective.
+
+  The trend series use **fixed accrual horizons** measured from `rippling_reach.created_at`:
+  replies and mean-replies within 36 hours (`ReplyHorizonHours`), taken within 14 days
+  (`TakenHorizonDays`). Counting replies/takes *ever* made recent days - which simply hadn't
+  finished accruing - draw as a steep mechanical decline (taken outcomes are marked a mean of
+  ~19 days after the post enters rippling, so the taken-ever line fell to near zero over the
+  trailing fortnight regardless of reality). Each trend row also carries `replied_mature` /
+  `taken_mature` flags - false until the day's whole horizon has elapsed - which the component
+  renders through a Google Charts `certainty` role, so a still-provisional tail draws dashed
+  rather than as a decline. The clock is reach creation, not `messages_groups.arrival`, because
+  autorepost bumps `arrival` forward, silently granting older posts longer windows.
 - `/rippling/metrics` (`rippling/metrics.go`) - reply attribution channels, geographic hotspots,
   held-reply friction. Small rippling-owned tables only, plus the live-capture boundary date,
   which is cached per process because its query ORs three unindexed nullable columns and so
