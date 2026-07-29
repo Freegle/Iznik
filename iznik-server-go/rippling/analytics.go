@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -422,9 +423,19 @@ func Analytics(c *fiber.Ctx) error {
 		TotalReplies  int
 		MeanFreeglers float64
 	}
+	// The four query blocks below (counts, held replies, trend, section 3) are independent, and
+	// each takes seconds even with the rippling_reach(created_at, total_freeglers) index (they
+	// aggregate per-post/per-reply subqueries over the whole window). Run them concurrently so the
+	// endpoint's wall time is the slowest block, not the sum - serially they added up past the
+	// gateway timeout (504s on the sysadmin KPIs).
+	var wg sync.WaitGroup
+	wg.Add(4)
+
 	// replied_36h: got a reply within 36h of the settling clock (first ripple, else origin
 	// arrival) - the headline convention. replied_ever: any reply eventually - the total.
-	db.Raw(`
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) AS posts,
 		       SUM(replied_36h) AS replied36h,
 		       SUM(nreplies > 0) AS replied_ever,
@@ -445,30 +456,21 @@ func Analytics(c *fiber.Ctx) error {
 		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d`, start, end).Scan(&agg)
-
-	kpi := Section1KPI{Stratum: stratum, Posts: agg.Posts, Replied36h: agg.Replied36h,
-		RepliedEver: agg.RepliedEver, Taken: agg.Taken, MeanFreeglers: agg.MeanFreeglers}
-	if agg.Posts > 0 {
-		kpi.Replied36hPct = float64(agg.Replied36h) / float64(agg.Posts) * 100
-		kpi.RepliedEverPct = float64(agg.RepliedEver) / float64(agg.Posts) * 100
-		kpi.TakenPct = float64(agg.Taken) / float64(agg.Posts) * 100
-		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
-	}
+	}()
 
 	// Reply friction: held replies over the window on rippled-out offers, as a share of all
 	// replies. rippling_held_replies has msgid + created_at so it scopes by post + stratum.
 	var held int
-	db.Raw(`
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) FROM rippling_held_replies hr
 		JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0`+stratumSQL+`
 		JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'
 		WHERE hr.created_at >= ? AND hr.created_at < ?
 		  AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)`,
-		start, end).Scan(&held)
-	kpi.HeldReplies = held
-	if agg.TotalReplies > 0 {
-		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
-	}
+			start, end).Scan(&held)
+	}()
 
 	// The drive-time figures (the Section 1 overall mean, the Section 3 rippled-out mean, the
 	// per-day trend and the reliability bullseye) all come from a sampled routing pass - ~250
@@ -481,14 +483,39 @@ func Analytics(c *fiber.Ctx) error {
 	// Section 2 - trends: the SQL KPIs (reply rate, taken rate, mean replies, freeglers reached)
 	// per arrival day. The sample-based drive-time trend is merged in client-side from the
 	// separate drive-time request.
-	trend := fiber.Map{
-		"kpis":       trendSeries(db, start, end, stratumSQL),
-		"drive_time": []DriveTrendPoint{},
-	}
+	var trendRows []TrendRow
+	go func() {
+		defer wg.Done()
+		trendRows = trendSeries(db, start, end, stratumSQL)
+	}()
 
 	// Section 3 - is rippling helping? Server-derived rippled-out shares, the rescue floor and
 	// contribution range, and the home-vs-rippled comparison. RippleDrive fills in separately.
-	s3 := rippledOutSection(db, start, end, stratumSQL)
+	var s3 Section3RippledOut
+	go func() {
+		defer wg.Done()
+		s3 = rippledOutSection(db, start, end, stratumSQL)
+	}()
+
+	wg.Wait()
+
+	kpi := Section1KPI{Stratum: stratum, Posts: agg.Posts, Replied36h: agg.Replied36h,
+		RepliedEver: agg.RepliedEver, Taken: agg.Taken, MeanFreeglers: agg.MeanFreeglers}
+	if agg.Posts > 0 {
+		kpi.Replied36hPct = float64(agg.Replied36h) / float64(agg.Posts) * 100
+		kpi.RepliedEverPct = float64(agg.RepliedEver) / float64(agg.Posts) * 100
+		kpi.TakenPct = float64(agg.Taken) / float64(agg.Posts) * 100
+		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
+	}
+	kpi.HeldReplies = held
+	if agg.TotalReplies > 0 {
+		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
+	}
+
+	trend := fiber.Map{
+		"kpis":       trendRows,
+		"drive_time": []DriveTrendPoint{},
+	}
 
 	return c.JSON(fiber.Map{
 		"stratum":       stratum,
@@ -698,7 +725,13 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 		RippledTakers  int
 		ClientRippled  int
 	}
-	db.Raw(`
+	// The shares query and the rescue-floor query are independent and both heavy (the rescue floor
+	// is the slowest single query on the tab), so run them concurrently.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) AS replies,
 		       SUM(rippled) AS rippled_replies,
 		       SUM(is_taker) AS takers,
@@ -720,11 +753,14 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 		    WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d`, start, end).Scan(&raw)
+	}()
 
 	// Rescue floor: DISTINCT posts that were taken AND had at least one reply AND had NO reply
 	// from an established home-group member - so the take could only have come via rippling.
 	var rescued int
-	db.Raw(`
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) FROM (
 		    SELECT rr.msgid
 		    FROM rippling_reach rr
@@ -740,6 +776,9 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 		            AND mem.collection = 'Approved' AND mem.added < og.arrival
 		          WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')
 		) x`, start, end).Scan(&rescued)
+	}()
+
+	wg.Wait()
 
 	s := Section3RippledOut{Replies: raw.Replies, RippledReplies: raw.RippledReplies,
 		Takers: raw.Takers, RippledTakers: raw.RippledTakers, RescuedTakes: rescued}
