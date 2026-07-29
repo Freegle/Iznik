@@ -38,6 +38,10 @@ TNSyncCommand (orchestrator)
 - `iznik-batch/tests/fixtures/tn_sync/posts_page_1.json` — local-testing fixture ✅
 - `iznik-batch/tests/Unit/Services/TrashNothing/GroupPostIngestionServiceTest.php` ✅
 - `iznik-batch/config/freegle.php` — `trashnothing.ingest_posts_via_api` feature flag ✅
+- `iznik-batch/app/Console/Commands/TrashNothing/TNParityCheckCommand.php` — `tn:parity-check`, runs both paths + prints the report ✅
+- `iznik-batch/app/Services/TrashNothing/Sync/ParityComparer.php` — coverage-first four-layer comparison logic, see section Q ✅
+- `iznik-batch/tests/fixtures/tn_sync/parity/{all_clean,layer1_missing,layer2_extra,layer3_mismatch,layer4_divergent_group}/` — per-layer parity test fixtures ✅
+- `iznik-batch/tests/Feature/TrashNothing/EmailApiParityTest.php` — four-layer parity tests against `ParityComparer` ✅
 
 ## Key design decisions
 
@@ -162,7 +166,7 @@ Follows on from the section 6 decision (`Location::groupsNear()` replacing TN's 
 - ✅ Fixture/test coverage: `PostSyncerTest` covers absent field (disallowed), group in list (allowed), group not in list (disallowed); `GroupPostIngestionServiceTest` covers default persists true and explicit false persists.
 - ❌ **Deferred, not started**: the actual gate in a mod-messaging feature (ModTools UI/API) that reads `mod_messaging_allowed` before allowing a moderator to contact the poster directly. There is no existing "mod messages the poster directly" feature in ModTools to gate — the current mod chat UI is just the normal reply-to-poster thread, with no separate contact-poster action. Building the gate therefore means designing and building that feature from scratch (new endpoint + UI), which is out of scope until there's a concrete design/decision to build it. Only the storage and ingestion wiring exist so far.
 
-### Q. Parity check redesign — coverage-first, four-layer model (`TNParityCheckCommand` rewritten ✅; `EmailApiParityTest` update still outstanding)
+### Q. Parity check redesign — coverage-first, four-layer model ✅ complete (`TNParityCheckCommand` rewritten; logic extracted to `ParityComparer`; `EmailApiParityTest` rewritten with per-layer fixture coverage)
 
 `TNParityCheckCommand` (`tn:parity-check`) currently asserts the email path and API path produce **byte-identical** `TN-SYNC-TRACE` output — an exact line-for-line diff (`normalizeLines()` + `===` comparison). That model is wrong: the two paths are not supposed to be identical.
 
@@ -183,9 +187,16 @@ Byte-identical trace diffing can't express either of these — it fails the mome
 
 **Output**: plaintext summary counts per layer, plus lists of the failing `post_id`s (Layer 1 misses, Layer 3 mismatches) — not the full raw trace dump `TNParityCheckCommand` used to print. ✅ Implemented as designed.
 
+**Real-run observation — two distinct causes of Layer 1 misses, confirmed against live TN data (2026-07-29):**
+- **Boundary propagation lag** (self-resolving). The API path's own returned `max_date` can trail the query window's `to` by tens of seconds (e.g. one run returned `max_date=2026-07-29T18:41:54Z` against a `to` of `18:42:24Z`) — TN's public Posts API hadn't indexed the newest post(s) yet at query time. Confirmed self-resolving: re-running the identical `--date-min` window ~43 minutes later, the earlier boundary miss (`post_id=47081111`, "Rice cooker") was gone from the failure list. A production run on a schedule will simply pick these up next cycle — not a real regression.
+- **Persistent TN-side data gap** (not a Freegle bug, does not resolve with time). Three posts — `post_id=47081039` ("Chest of drawers", Newlyn TR18), `47081059` ("dfs grey cord sofa", Southport PR8), `47081073` ("Filing cabinet", Fleet Hampshire GU51) — were present in TN's partner email feed (`fd-post-log.csv`) but never appeared in TN's public Posts API at all, confirmed by re-running the same window ~43 minutes later with all pagination fetched (`page=1 count=50` + `page=2 count=38`, correctly terminated). Each is chronologically sandwiched between other posts that *did* sync correctly on both sides, ruling out a pagination or window-boundary explanation. This looks like a genuine completeness gap in TN's own public API relative to their partner email channel, worth raising with TN directly. Until/unless resolved on TN's side, expect a small, low, roughly-constant trickle of Layer 1 misses on real runs that are not Freegle regressions — worth keeping in mind when triaging a `tn:parity-check` failure so a handful of misses isn't mistaken for a code regression.
+
 **Implementation notes**:
-- No changes needed in `PostSyncer`, `GroupPostIngestionService`, or `GroupPostIngestionService` — every trace line needed is already emitted. One correction found in `IncomingMailService`/`EmailReplaySyncer`: see the Layer 1 note above (`[EMAIL-RESULT]`, not `[POST-RESULT]`, is the email path's reliable outcome marker). This was purely a rewrite of `TNParityCheckCommand`'s comparison step (`captureTraceLogs` stays, now also capturing `[POST]`/`[EMAIL]`; `normalizeLines`/`printLineDiff`/the `===` check are replaced with `parseResults`/`parsePreIngestSkips`/`parseMessages`/`parsePostDetails` + `computeLayers`/`classifyOverlapPost`/`diffMessageFields`/`formatLayer1Detail`/`printReport`).
-- ❌ **Still outstanding**: `tests/Feature/TrashNothing/EmailApiParityTest.php` currently does the old byte-identical diff (on a fixture deliberately crafted so every post routes to Pending and both paths land on the same 2 groups). It should be updated to the same four-layer model for consistency, though as a same-group-only fixture it may reduce to just Layer 3 in practice.
+- No changes needed in `GroupPostIngestionService` — every trace line needed is already emitted. One correction found in `IncomingMailService`/`EmailReplaySyncer`: see the Layer 1 note above (`[EMAIL-RESULT]`, not `[POST-RESULT]`, is the email path's reliable outcome marker).
+- ✅ The parsing/four-layer comparison logic (`parseResults`/`parsePreIngestSkips`/`parseMessages`/`parsePostDetails` + `computeLayers`/`classifyOverlapPost`/`diffMessageFields`/`formatLayer1Detail`) was extracted out of `TNParityCheckCommand` into a new standalone class, `App\Services\TrashNothing\Sync\ParityComparer`, so it's unit-testable independently of the CLI. `TNParityCheckCommand` now just runs both paths, calls `(new ParityComparer())->computeLayers(...)`, and prints the report (`captureTraceLogs`/`printReport` stay on the command; `normalizeLines`/`printLineDiff`/the old `===` check are gone).
+- ✅ `EmailReplaySyncer` and `PostSyncer` each gained an optional trailing constructor param (`?string $fixtureCsvPath`, `?string $fixtureDir`) to override the hardcoded `--local-testing` fixture path/directory, defaulting to the original shared fixtures when omitted — needed so each parity test scenario can point at its own dedicated fixture files without touching the shared `tests/fixtures/tn_sync/{fd_post_log.csv,posts_page_1.json}`.
+- ✅ `tests/Feature/TrashNothing/EmailApiParityTest.php` rewritten from the old byte-identical diff to 10 tests against `ParityComparer` (one "flags the issue" + one "silent when clean" per layer, the four silent cases sharing one `all_clean` fixture), using 5 new dedicated fixture pairs under `tests/fixtures/tn_sync/parity/{all_clean,layer1_missing,layer2_extra,layer3_mismatch,layer4_divergent_group}/`. Tests construct `EmailReplaySyncer`/`PostSyncer` directly (not via artisan) to pass the fixture-path overrides.
+  - Found and fixed a real issue while building the `all_clean` fixture (verified via `artisan tinker`, not guesswork): a `DEFAULT`-status membership walks into an existing, already-documented divergence — `IncomingMailService::handleGroupPost()` no longer auto-approves `DEFAULT` posters on arrival, while `GroupPostIngestionService::ingest()` still does — so even byte-identical content routes to different outcomes (`pending` vs `approved`). Switched the shared `seedParityUser()` helper to `MODERATED` (pends on both paths), matching the original test's approach, with the reasoning documented on the helper.
 
 ### M. NOT in scope
 - Modifying `IncomingMailService` in any way.
@@ -196,7 +207,6 @@ Byte-identical trace diffing can't express either of these — it fails the mome
 ## Open items still to resolve
 
 - See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly. Deliberately deferred — there's no existing contact-poster feature to gate, so this needs a concrete feature design before implementation, not just a wiring task.
-- See section Q: rewrite `TNParityCheckCommand`'s comparison logic from byte-identical trace diffing to the four-layer coverage-first model. Design agreed; not yet implemented. `EmailApiParityTest` should follow once the command is updated.
 
 ## Resolved decisions
 

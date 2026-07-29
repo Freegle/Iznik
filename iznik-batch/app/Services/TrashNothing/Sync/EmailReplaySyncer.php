@@ -52,14 +52,22 @@ class EmailReplaySyncer
      * Load and replay all records from the CSV.
      *
      * @param  string|null  $dateMin  ISO-8601 UTC cutoff; records with an earlier date are skipped.
+     * @param  string|null  $dateMax  ISO-8601 UTC cutoff; records with a later date are skipped. Useful
+     *                                for pinning a parity check to a window safely in the past, so
+     *                                results aren't confused by TN's own indexing lag on the newest posts.
      * @return array{int, string|null, string|null} [count, minDate, maxDate]
      */
-    public function sync(?string $dateMin = null): array
+    public function sync(?string $dateMin = null, ?string $dateMax = null): array
     {
         $records = $this->loadAllRecords();
 
         if ($dateMin !== null) {
             $records = array_filter($records, static fn (array $r) => ($r['date'] ?? '') >= $dateMin);
+            $records = array_values($records);
+        }
+
+        if ($dateMax !== null) {
+            $records = array_filter($records, static fn (array $r) => ($r['date'] ?? '') <= $dateMax);
             $records = array_values($records);
         }
 

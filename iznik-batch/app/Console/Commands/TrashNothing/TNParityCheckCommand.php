@@ -43,7 +43,8 @@ class TNParityCheckCommand extends Command
 
     protected $signature = 'tn:parity-check
                             {--local-testing : Use fixture files instead of live CSV / live TN API}
-                            {--date-min= : Only process emails/posts on or after this UTC timestamp (ISO-8601, e.g. 2026-07-22T10:00:00Z). Overrides the oldest-CSV-date used as the API from-date.}';
+                            {--date-min= : Only process emails/posts on or after this UTC timestamp (ISO-8601, e.g. 2026-07-22T10:00:00Z). Overrides the oldest-CSV-date used as the API from-date.}
+                            {--date-max= : Only process emails/posts on or before this UTC timestamp (ISO-8601). Overrides the newest-CSV-date used as the API to-date. Pin this safely in the past (e.g. an hour or more ago) to avoid false Layer 1 misses from TN\'s own indexing lag on its most recent posts — see plans/tn-api-post-ingestion.md section Q.}';
 
     protected $description = 'Compare legacy email path vs API path TN-SYNC-TRACE output for parity.';
 
@@ -54,6 +55,7 @@ class TNParityCheckCommand extends Command
     ): int {
         $localTesting = (bool) $this->option('local-testing');
         $dateMin      = $this->option('date-min') ?: null;
+        $dateMax      = $this->option('date-max') ?: null;
 
         // ── 1. Download (or load) the CSV ──────────────────────────────────
         $csvText = $this->loadCsvText($localTesting);
@@ -63,25 +65,33 @@ class TNParityCheckCommand extends Command
             return Command::FAILURE;
         }
 
-        [$csvFrom, $to] = EmailReplaySyncer::extractDateRangeFromCsvText($csvText);
+        [$csvFrom, $csvTo] = EmailReplaySyncer::extractDateRangeFromCsvText($csvText);
 
-        if ($csvFrom === null || $to === null) {
+        if ($csvFrom === null || $csvTo === null) {
             $this->error('CSV contains no parseable dates — cannot derive sync window.');
             return Command::FAILURE;
         }
 
-        // --date-min overrides the from-date for the API window; the email syncer
-        // uses it as a skip-before cutoff on the already-loaded CSV records.
+        // --date-min/--date-max override the from/to used for the API window; the
+        // email syncer uses them as skip-before/skip-after cutoffs on the
+        // already-loaded CSV records. Capping --date-max safely in the past avoids
+        // false Layer 1 misses from TN's own indexing lag on its newest posts —
+        // see plans/tn-api-post-ingestion.md section Q for confirmed examples.
         $from = $dateMin ?? $csvFrom;
+        $to   = $dateMax ?? $csvTo;
 
-        $this->line("Date range: from={$from} to={$to}" . ($dateMin ? " (--date-min applied)" : ""));
+        $this->line(
+            "Date range: from={$from} to={$to}"
+            . ($dateMin ? ' (--date-min applied)' : '')
+            . ($dateMax ? ' (--date-max applied)' : '')
+        );
 
         // ── 2. Email path ──────────────────────────────────────────────────
         $this->line('Running email path…');
 
-        $emailLines = $this->captureTraceLogs(function () use ($localTesting, $loki, $parser, $mailService, $dateMin) {
+        $emailLines = $this->captureTraceLogs(function () use ($localTesting, $loki, $parser, $mailService, $dateMin, $dateMax) {
             $syncer = new EmailReplaySyncer($localTesting, $loki, $parser, $mailService);
-            $syncer->sync($dateMin);
+            $syncer->sync($dateMin, $dateMax);
         });
 
         $this->line('Email path: ' . count($emailLines) . ' trace line(s).');
