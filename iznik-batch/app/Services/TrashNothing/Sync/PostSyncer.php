@@ -28,6 +28,10 @@ class PostSyncer
         private string $apiKey,
         private string $apiBaseUrl,
         private LokiService $loki,
+        // Override for --local-testing fixture lookup, e.g. for parity tests that
+        // need a scenario-specific fixture directory instead of the shared default.
+        // Defaults to tests/fixtures/tn_sync.
+        private ?string $fixtureDir = null,
     ) {
         $this->ingestionService = new GroupPostIngestionService(
             dryRun: $this->dryRun,
@@ -115,7 +119,8 @@ class PostSyncer
      */
     private function fetchPageFromFixture(int $page): array
     {
-        $fixtureFile = base_path("tests/fixtures/tn_sync/posts_page_{$page}.json");
+        $fixtureDir  = $this->fixtureDir ?? 'tests/fixtures/tn_sync';
+        $fixtureFile = base_path("{$fixtureDir}/posts_page_{$page}.json");
 
         if (!file_exists($fixtureFile)) {
             Log::info('TN-SYNC-TRACE [POSTS-PAGE] missing fixture file=' . $fixtureFile);

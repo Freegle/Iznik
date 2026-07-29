@@ -42,6 +42,10 @@ class EmailReplaySyncer
         private readonly LokiService $loki,
         private readonly MailParserService $parser,
         private readonly IncomingMailService $mailService,
+        // Override for --local-testing fixture lookup, e.g. for parity tests that
+        // need a scenario-specific fixture file instead of the shared default.
+        // Defaults to FIXTURE_CSV_PATH.
+        private readonly ?string $fixtureCsvPath = null,
     ) {}
 
     /**
@@ -137,7 +141,7 @@ class EmailReplaySyncer
 
     private function loadRecordsFromFixtureCsv(): array
     {
-        $path = base_path(self::FIXTURE_CSV_PATH);
+        $path = base_path($this->fixtureCsvPath ?? self::FIXTURE_CSV_PATH);
 
         if (!file_exists($path)) {
             Log::info('TN-SYNC-TRACE [EMAILS-PAGE] missing fixture csv path=' . $path);
