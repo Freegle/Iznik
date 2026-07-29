@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
@@ -41,11 +40,20 @@ func TestRipplingMetricsEndpoint(t *testing.T) {
 	assert.True(t, found, "reply_blocked total present in the rollup")
 }
 
-// The mean-replies-per-post metric is surfaced as a well-formed cohort series. (Like the other
-// per-day reply metrics it carries no seeded fixture here; this guards the wiring + the response
-// shape - the SQL is validated separately, and the query mirrors the proven reply-rate one.)
-func TestRipplingMetricsRepliesPerPost(t *testing.T) {
-	prefix := uniquePrefix("ripplerpp")
+// This endpoint must only read small rippling-owned tables (or a window-bounded slice of
+// rippling_reply_attribution), so it always answers well inside the production gateway's
+// timeout. The per-day reply-rate / replies-per-post / reply-distance / taken-rate series and
+// the 30-day cross-group summary used to be computed here by scanning messages_groups and
+// chat_messages; once rippling scaled up they took 40-190s EACH on production, the gateway
+// 504'd (which the browser reports as a bogus CORS failure), and the client's retry piled more
+// of the same queries on top. Nothing read them - the dashboard that charted them was retired
+// in 6982b1ee3 and /rippling/analytics serves the equivalent KPIs from rippling_reach - so they
+// were removed rather than split behind their own (still-too-slow) endpoints.
+//
+// This guards that: those keys must not come back without the analytics-style rework, and the
+// sections the dashboard actually reads must still be there.
+func TestRipplingMetricsOmitsHeavyScanKPIs(t *testing.T) {
+	prefix := uniquePrefix("ripplefast")
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
@@ -55,16 +63,52 @@ func TestRipplingMetricsRepliesPerPost(t *testing.T) {
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
 
-	rpp, ok := result["replies_per_post"].([]interface{})
-	assert.True(t, ok, "replies_per_post field present in the response")
-	for _, row := range rpp {
-		m, ok := row.(map[string]interface{})
-		assert.True(t, ok, "each replies_per_post row is an object")
-		assert.Contains(t, m, "day")
-		assert.Contains(t, m, "mean_replies")
-		assert.Contains(t, m, "home_mean")
-		assert.Contains(t, m, "ripple_mean")
+	for _, key := range []string{"reply_rate_36h", "replies_per_post", "reply_distance_median",
+		"taken_rate", "cross_group_summary"} {
+		_, present := result[key]
+		assert.False(t, present, key+" is not computed here - it scanned messages_groups/chat_messages "+
+			"and blew the gateway timeout; /rippling/analytics serves the equivalent KPI")
 	}
+
+	// The sections ModSysAdminRipplingAnalytics.vue reads must still be served.
+	for _, key := range []string{"reply_source_split", "hotspots", "attribution_capture_from",
+		"held_reply_by_source"} {
+		_, present := result[key]
+		assert.True(t, present, key+" is read by the sysadmin analytics tab")
+	}
+
+	// Nothing should be hitting the endpoint's deadline on a healthy request.
+	degraded, ok := result["degraded"].([]interface{})
+	assert.True(t, ok, "degraded list present")
+	assert.Empty(t, degraded, "no section gave up")
+}
+
+// When a section's query does hit the deadline it comes back empty, which would read as
+// "nothing to show" - so the endpoint names it in `degraded` and the dashboard reports it as a
+// timeout rather than as no data. Proved by shrinking the deadline so every section trips it.
+func TestRipplingMetricsReportsDegradedSectionsOnDeadline(t *testing.T) {
+	prefix := uniquePrefix("rippledeadline")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	// Settle the graded-attribution schema check BEFORE shrinking the deadline. It caches its
+	// answer in a sync.Once for the life of the process, so letting it run first against the
+	// expired context would cache "legacy schema" and break every later test that expects the
+	// wide variant.
+	rippling.AttributionSchemaReady(database.DBConn)
+
+	restore := rippling.MetricsDeadline
+	rippling.MetricsDeadline = time.Nanosecond
+	defer func() { rippling.MetricsDeadline = restore }()
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+	// Still a 200 with a well-formed body: the sections that made it are worth showing.
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	degraded, _ := result["degraded"].([]interface{})
+	assert.NotEmpty(t, degraded, "sections that gave up are named, not served as empty results")
 }
 
 // A non-admin must be forbidden from the sysadmin metrics endpoint.
@@ -150,31 +194,6 @@ func TestRipplingMetricsSurfacesLiveMetrics(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "volume_posts_p50 live metric surfaced in response")
-}
-
-// The endpoint returns a cross_group_summary computed live from messages_groups.rippled_in,
-// answering §16.3: what fraction of post appearances were rippled-in by the engine.
-func TestRipplingMetricsCrossGroupSummary(t *testing.T) {
-	prefix := uniquePrefix("ripplecross")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-
-	// cross_group_summary must always be present (it queries messages_groups which always exists)
-	// and period_days must be 30.
-	cg, ok := result["cross_group_summary"].(map[string]interface{})
-	assert.True(t, ok, "cross_group_summary field present in response")
-	assert.Equal(t, float64(30), cg["period_days"], "period_days is 30")
-	// totals/pcts are numeric (we can't assert exact values against a shared test DB)
-	_, hasTotal := cg["total"]
-	_, hasPct := cg["cross_group_pct"]
-	assert.True(t, hasTotal, "total field present")
-	assert.True(t, hasPct, "cross_group_pct field present")
 }
 
 // The endpoint returns a capture_summary from rippling_algorithm_metrics (§16.4 timing /
@@ -277,10 +296,8 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 	assert.GreaterOrEqual(t, statusCounts["released"], float64(1), "at least 1 released row counted")
 }
 
-// The endpoint surfaces the three reply KPIs. reply_source_split is sourced from
-// rippling_reply_attribution (captured at reply time): a home row and a rippling row on the same
-// day must yield a 50% rippling share. reply_rate_36h and reply_distance_median are computed live
-// from messages/chat_messages and are always present arrays.
+// reply_source_split is sourced from rippling_reply_attribution (captured at reply time): a home
+// row and a rippling row on the same day must yield a 50% rippling share.
 func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	prefix := uniquePrefix("ripplereply")
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
@@ -304,12 +321,8 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
 
-	// All three reply-KPI keys are present (arrays), and the graded columns are flagged live.
-	_, hasRate := result["reply_rate_36h"].([]interface{})
-	_, hasDist := result["reply_distance_median"].([]interface{})
+	// The split is present (an array), and the graded columns are flagged live.
 	split, hasSplit := result["reply_source_split"].([]interface{})
-	assert.True(t, hasRate, "reply_rate_36h present")
-	assert.True(t, hasDist, "reply_distance_median present")
 	assert.True(t, hasSplit, "reply_source_split present")
 	assert.Equal(t, true, result["attribution_channels_available"],
 		"graded columns exist on the migrated test DB")
@@ -375,220 +388,6 @@ func TestRipplingMetricsDateRange(t *testing.T) {
 	json.Unmarshal(rsp(respDefault), &rd)
 	assert.NotEmpty(t, rd["start"], "start defaults when absent")
 	assert.NotEmpty(t, rd["end"], "end defaults when absent")
-}
-
-// Stage A guard: bounding the outcomes subquery to the window must still count an
-// in-window Taken outcome. Seeds one Offer 3 days ago, marks it Taken, and asserts the
-// taken_rate row for that day reports posts>=1 and taken>=1.
-func TestRipplingMetricsTakenInWindowCounted(t *testing.T) {
-	prefix := uniquePrefix("rippletaken")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	groupID := CreateTestGroup(t, prefix+"_grp")
-
-	db := database.DBConn
-	msgID := CreateTestMessage(t, posterID, groupID, prefix+" sofa", 51.5, -0.1)
-	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 3 DAY WHERE id = ?", msgID)
-	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ?", msgID)
-	db.Exec("INSERT INTO messages_outcomes (timestamp, msgid, outcome) VALUES (NOW() - INTERVAL 2 DAY, ?, 'Taken')", msgID)
-	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
-	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
-
-	var wantDay string
-	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 3 DAY, '%Y-%m-%d')").Scan(&wantDay)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-
-	taken, _ := result["taken_rate"].([]interface{})
-	found := false
-	for _, r := range taken {
-		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
-			found = true
-			assert.GreaterOrEqual(t, m["posts"].(float64), float64(1), "the seeded post is counted")
-			assert.GreaterOrEqual(t, m["taken"].(float64), float64(1), "the Taken outcome is counted within the window")
-		}
-	}
-	assert.True(t, found, "the seeded day appears in taken_rate")
-}
-
-// Cohort split on reply_rate_36h: a home-only Offer (no rippled_in=1 row) and a rippled-out Offer
-// (has a rippled_in=1 row) arriving the same day. The rippled one gets an Interested reply within
-// 36h; the home one does not. Asserts the counts partition (home+ripple=posts) and the rippled
-// cohort shows the reply.
-func TestRipplingMetricsReplyRateCohorts(t *testing.T) {
-	prefix := uniquePrefix("ripplerc")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	homeGrp := CreateTestGroup(t, prefix+"_home")
-	awayGrp := CreateTestGroup(t, prefix+"_away")
-
-	db := database.DBConn
-	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homechair", 51.5, -0.1)
-	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippchair", 51.5, -0.1)
-	for _, id := range []uint64{homeMsg, rippMsg} {
-		db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 5 DAY WHERE id = ?", id)
-		db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ?", id)
-	}
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in, autoreposts) "+
-		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
-	chatID := CreateTestChatRoom(t, replierID, &posterID, &homeGrp, "User2User")
-	cmID := CreateTestChatMessage(t, chatID, replierID, "I'd like it")
-	db.Exec("UPDATE chat_messages SET type = 'Interested', refmsgid = ?, date = NOW() - INTERVAL 5 DAY + INTERVAL 1 HOUR WHERE id = ?", rippMsg, cmID)
-
-	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM chat_messages WHERE id = ?", cmID)
-
-	var wantDay string
-	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-
-	rate, _ := result["reply_rate_36h"].([]interface{})
-	var row map[string]interface{}
-	for _, r := range rate {
-		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
-			row = m
-		}
-	}
-	assert.NotNil(t, row, "the seeded day appears in reply_rate_36h")
-	assert.Equal(t, row["posts"], row["home_posts"].(float64)+row["ripple_posts"].(float64), "post counts partition")
-	assert.GreaterOrEqual(t, row["ripple_posts"].(float64), float64(1), "the rippled-out post is in the ripple cohort")
-	assert.GreaterOrEqual(t, row["home_posts"].(float64), float64(1), "the home-only post is in the home cohort")
-	assert.GreaterOrEqual(t, row["ripple_replied"].(float64), float64(1), "the rippled-out post's reply is counted")
-	assert.Equal(t, float64(0), row["home_replied"], "the home-only post had no reply")
-}
-
-// Cohort split on taken_rate: a home-only Offer and a rippled-out Offer the same day; only the
-// rippled-out one is Taken. Asserts counts partition and the ripple cohort carries the take.
-func TestRipplingMetricsTakenRateCohorts(t *testing.T) {
-	prefix := uniquePrefix("rippletc")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	homeGrp := CreateTestGroup(t, prefix+"_home")
-	awayGrp := CreateTestGroup(t, prefix+"_away")
-
-	db := database.DBConn
-	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homedesk", 51.5, -0.1)
-	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippdesk", 51.5, -0.1)
-	for _, id := range []uint64{homeMsg, rippMsg} {
-		db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 5 DAY WHERE id = ?", id)
-		db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ?", id)
-	}
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in, autoreposts) "+
-		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
-	db.Exec("INSERT INTO messages_outcomes (timestamp, msgid, outcome) VALUES (NOW() - INTERVAL 4 DAY, ?, 'Taken')", rippMsg)
-
-	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid IN (?, ?)", homeMsg, rippMsg)
-
-	var wantDay string
-	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-
-	taken, _ := result["taken_rate"].([]interface{})
-	var row map[string]interface{}
-	for _, r := range taken {
-		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
-			row = m
-		}
-	}
-	assert.NotNil(t, row, "the seeded day appears in taken_rate")
-	assert.Equal(t, row["posts"], row["home_posts"].(float64)+row["ripple_posts"].(float64), "post counts partition")
-	assert.GreaterOrEqual(t, row["ripple_taken"].(float64), float64(1), "the rippled-out take is in the ripple cohort")
-	assert.Equal(t, float64(0), row["home_taken"], "the home-only post was not taken")
-}
-
-// Cohort medians on reply_distance_median: a home-only post whose replier is near the post
-// and a rippled-out post whose replier is far away, replying the same day. Asserts both cohort
-// medians are present and ripple_median_km > home_median_km.
-// Uses explicit locations inserted at known coordinates so the test does not depend on what
-// locations happen to exist in the test DB at runtime.
-func TestRipplingMetricsDistanceCohorts(t *testing.T) {
-	prefix := uniquePrefix("rippledc")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	nearReplier := CreateTestUser(t, prefix+"_near", "User")
-	farReplier := CreateTestUser(t, prefix+"_far", "User")
-	homeGrp := CreateTestGroup(t, prefix+"_home")
-	awayGrp := CreateTestGroup(t, prefix+"_away")
-
-	db := database.DBConn
-
-	// Insert explicit locations at known coordinates. Post location: London (51.5, -0.1).
-	// Near replier: same location as the post (~0 km away).
-	// Far replier: Edinburgh (55.95, -3.19) — ~535 km from London.
-	// Using name prefixed by uniquePrefix to avoid collisions.
-	// 'type' is required (NOT NULL); 'Point' is valid per the enum.
-	var postLocID, nearLocID, farLocID uint64
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 51.5, -0.1)", prefix+"_postloc")
-	db.Raw("SELECT id FROM locations WHERE name = ?", prefix+"_postloc").Scan(&postLocID)
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 51.5, -0.1)", prefix+"_nearloc")
-	db.Raw("SELECT id FROM locations WHERE name = ?", prefix+"_nearloc").Scan(&nearLocID)
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 55.95, -3.19)", prefix+"_farloc")
-	db.Raw("SELECT id FROM locations WHERE name = ?", prefix+"_farloc").Scan(&farLocID)
-
-	defer db.Exec("DELETE FROM locations WHERE name IN (?, ?, ?)", prefix+"_postloc", prefix+"_nearloc", prefix+"_farloc")
-
-	// Set replier home locations.
-	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", nearLocID, nearReplier)
-	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", farLocID, farReplier)
-	defer db.Exec("UPDATE users SET lastlocation = NULL WHERE id IN (?, ?)", nearReplier, farReplier)
-
-	homeMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" homebike", 51.5, -0.1)
-	rippMsg := CreateTestMessage(t, posterID, homeGrp, prefix+" rippbike", 51.5, -0.1)
-	// Override the locationid to the explicit post location we inserted.
-	db.Exec("UPDATE messages SET locationid = ? WHERE id IN (?, ?)", postLocID, homeMsg, rippMsg)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, rippled_in, autoreposts) "+
-		"VALUES (?, ?, NOW() - INTERVAL 5 DAY, 'Approved', 1, 0)", rippMsg, awayGrp)
-	hChat := CreateTestChatRoom(t, nearReplier, &posterID, &homeGrp, "User2User")
-	hCm := CreateTestChatMessage(t, hChat, nearReplier, "near")
-	db.Exec("UPDATE chat_messages SET type='Interested', refmsgid=?, date=NOW() - INTERVAL 5 DAY WHERE id=?", homeMsg, hCm)
-	rChat := CreateTestChatRoom(t, farReplier, &posterID, &homeGrp, "User2User")
-	rCm := CreateTestChatMessage(t, rChat, farReplier, "far")
-	db.Exec("UPDATE chat_messages SET type='Interested', refmsgid=?, date=NOW() - INTERVAL 5 DAY WHERE id=?", rippMsg, rCm)
-
-	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", homeMsg, rippMsg)
-	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?)", hCm, rCm)
-
-	var wantDay string
-	db.Raw("SELECT DATE_FORMAT(NOW() - INTERVAL 5 DAY, '%Y-%m-%d')").Scan(&wantDay)
-
-	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
-	assert.Equal(t, 200, resp.StatusCode)
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-
-	dist, _ := result["reply_distance_median"].([]interface{})
-	var row map[string]interface{}
-	for _, r := range dist {
-		if m, ok := r.(map[string]interface{}); ok && m["day"] == wantDay {
-			row = m
-		}
-	}
-	assert.NotNil(t, row, "the seeded day appears in reply_distance_median")
-	assert.GreaterOrEqual(t, row["home_replies"].(float64), float64(1), "home cohort has a reply")
-	assert.GreaterOrEqual(t, row["ripple_replies"].(float64), float64(1), "ripple cohort has a reply")
-	// Near replier is at the same spot as the post (~0 km); far replier is in Edinburgh (~535 km).
-	assert.Greater(t, row["ripple_median_km"].(float64), row["home_median_km"].(float64), "rippled replies are further away")
 }
 
 // The trial is over - rippling is fully live - so the trial scoping is retired: the endpoint
@@ -727,55 +526,4 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 		assert.GreaterOrEqual(t, wideRow.RippleNotified, 1, "NULL-attribution notified reply derived per row")
 		assert.GreaterOrEqual(t, wideRow.RippleGroup, 1, "NULL-attribution rippled-group reply derived per row")
 	}
-}
-
-// Anchor regression (Discourse #9808): a RIPPLED post's reply-rate day/window must key on its
-// FIRST-RIPPLE date (MIN rippled_in arrival) — when rippling actually started — not on
-// messages.arrival (frozen at first-ever post) nor even its home appearance. A home-only post
-// stays anchored on its appearance (origin messages_groups.arrival). This dates rippled posts by
-// when the treatment began, and keeps the rippled cohort empty before go-live.
-func TestRipplingMetricsAnchorsRippledCohortOnFirstRippleDate(t *testing.T) {
-	prefix := uniquePrefix("ripanchor")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
-	_, token := CreateTestSession(t, adminID)
-	db := database.DBConn
-
-	poster := CreateTestUser(t, prefix, "Poster")
-	group := CreateTestGroup(t, prefix)
-	other := CreateTestGroup(t, prefix+"b")
-	mid := CreateTestMessage(t, poster, group, "OFFER: anchor "+prefix, 51.5, -0.1)
-
-	// Three distinct dates: stale original post (30d ago), home appearance (3d ago), and the
-	// FIRST ripple (2d ago). The rippled cohort must be dated on the ripple date (2d ago).
-	db.Exec("UPDATE messages SET arrival = NOW() - INTERVAL 30 DAY WHERE id = ?", mid)
-	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 3 DAY WHERE msgid = ? AND rippled_in = 0", mid)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
-		"VALUES (?, ?, NOW() - INTERVAL 2 DAY, 'Approved', 0, 1)", mid, other)
-
-	start := time.Now().AddDate(0, 0, -5).Format("2006-01-02 15:04:05")
-	end := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s&start=%s&end=%s",
-		token, url.QueryEscape(start), url.QueryEscape(end)), nil)
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var result map[string]interface{}
-	json.Unmarshal(rsp(resp), &result)
-	rows, ok := result["reply_rate_36h"].([]interface{})
-	assert.True(t, ok, "reply_rate_36h present")
-
-	// The post's home appearance (3d ago) and stale original arrival (30d ago) both differ from
-	// its first-ripple date (2d ago); the rippled cohort must land on the first-ripple date.
-	rippleDay := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
-	foundOnRippleDay := false
-	for _, r := range rows {
-		m, _ := r.(map[string]interface{})
-		if m["day"] == rippleDay {
-			foundOnRippleDay = true
-			assert.GreaterOrEqual(t, m["ripple_posts"].(float64), float64(1),
-				"rippled post is in the rippled cohort on its first-ripple day")
-		}
-	}
-	assert.True(t, foundOnRippleDay,
-		"rippled post appears on its first-ripple day, proving the cohort anchors on the ripple date")
 }

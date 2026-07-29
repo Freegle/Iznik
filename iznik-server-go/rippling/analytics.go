@@ -12,6 +12,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // Package-level analytics endpoint for the sysadmin rippling tab. Everything here is computed
@@ -300,8 +301,7 @@ func bullseyeFromObs(obs []driveObs) []BullseyeBand {
 // stratum, tagging each reply rippled-out server-side. rippled-out = the replier reached the
 // post via rippling: not an established member of an ORIGIN group before arrival, on a post that
 // had a rippled_in copy by reply time. (The same durable signal the attribution ladder uses.)
-func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
-	db := database.DBConn
+func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) []samplePost {
 	type row struct {
 		Msgid   uint64
 		Plat    float64
@@ -408,7 +408,9 @@ func analyticsWindow(c *fiber.Ctx) (stratum, start, end, stratumSQL string) {
 }
 
 func Analytics(c *fiber.Ctx) error {
-	db := database.DBConn
+	// Bound to the request context so an abandoned request (the gateway giving up, the user
+	// switching window) stops its DB work rather than running on behind a response nobody reads.
+	db := database.DBConn.WithContext(c.Context())
 	stratum, start, end, stratumSQL := analyticsWindow(c)
 
 	// Section 1 counts - pure SQL, full set. Per-post nreplies/taken/freeglers, then aggregate.
@@ -480,13 +482,13 @@ func Analytics(c *fiber.Ctx) error {
 	// per arrival day. The sample-based drive-time trend is merged in client-side from the
 	// separate drive-time request.
 	trend := fiber.Map{
-		"kpis":       trendSeries(start, end, stratumSQL),
+		"kpis":       trendSeries(db, start, end, stratumSQL),
 		"drive_time": []DriveTrendPoint{},
 	}
 
 	// Section 3 - is rippling helping? Server-derived rippled-out shares, the rescue floor and
 	// contribution range, and the home-vs-rippled comparison. RippleDrive fills in separately.
-	s3 := rippledOutSection(start, end, stratumSQL)
+	s3 := rippledOutSection(db, start, end, stratumSQL)
 
 	return c.JSON(fiber.Map{
 		"stratum":       stratum,
@@ -530,7 +532,7 @@ func Analytics(c *fiber.Ctx) error {
 // Fast (one sampling query, no routing).
 func AnalyticsDriveTimes(c *fiber.Ctx) error {
 	stratum, start, end, stratumSQL := analyticsWindow(c)
-	posts := fetchDriveSample(start, end, stratumSQL, driveSampleSize())
+	posts := fetchDriveSample(database.DBConn.WithContext(c.Context()), start, end, stratumSQL, driveSampleSize())
 	wire := make([]samplePostWire, len(posts))
 	for i, p := range posts {
 		wire[i] = samplePostWire{Lat: p.lat, Lng: p.lng, Points: p.points, Rippled: p.rippled, Days: p.days, Takers: p.takers}
@@ -627,9 +629,9 @@ type TrendRow struct {
 }
 
 // trendSeries returns per-day KPI points (ascending) over the window + stratum. Pure SQL.
-func trendSeries(start, end, stratumSQL string) []TrendRow {
+func trendSeries(db *gorm.DB, start, end, stratumSQL string) []TrendRow {
 	rows := []TrendRow{}
-	database.DBConn.Raw(`
+	db.Raw(`
 		SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day,
 		       COUNT(*) AS posts,
 		       100 * SUM(nreplies > 0) / COUNT(*) AS replied_pct,
@@ -688,7 +690,7 @@ type Section3RippledOut struct {
 
 // rippledOutSection computes the server-derived rippled-out reply/taker shares (pure SQL) over
 // replies to rippled posts in the window + stratum.
-func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
+func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3RippledOut {
 	var raw struct {
 		Replies        int
 		RippledReplies int
@@ -696,7 +698,7 @@ func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
 		RippledTakers  int
 		ClientRippled  int
 	}
-	database.DBConn.Raw(`
+	db.Raw(`
 		SELECT COUNT(*) AS replies,
 		       SUM(rippled) AS rippled_replies,
 		       SUM(is_taker) AS takers,
@@ -722,7 +724,7 @@ func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
 	// Rescue floor: DISTINCT posts that were taken AND had at least one reply AND had NO reply
 	// from an established home-group member - so the take could only have come via rippling.
 	var rescued int
-	database.DBConn.Raw(`
+	db.Raw(`
 		SELECT COUNT(*) FROM (
 		    SELECT rr.msgid
 		    FROM rippling_reach rr

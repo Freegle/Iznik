@@ -90,3 +90,30 @@ func TestReplySourceSplitSQL_BothWideValuesProduceDifferentSQL(t *testing.T) {
 	wide := ReplySourceSplitSQL(true, "")
 	assert.NotEqual(t, narrow, wide)
 }
+
+// The live-capture boundary is cached for the life of the process because the query behind it
+// full-scans rippling_reply_attribution (it ORs three unindexed nullable columns). Caching is
+// only sound one way round: a found date is fixed for ever, but a blank means capture has not
+// written anything YET - remembering that would leave the attribution chart unmarked until the
+// next restart, long after the first captured reply arrived.
+func TestCaptureFromCacheKeepsAFoundDate(t *testing.T) {
+	captureFromCached = ""
+	defer func() { captureFromCached = "" }()
+
+	rememberCaptureFrom("2026-07-07")
+	assert.Equal(t, "2026-07-07", cachedCaptureFrom(),
+		"a found boundary is served from cache instead of re-running the scan")
+}
+
+func TestCaptureFromCacheDoesNotRememberBlank(t *testing.T) {
+	captureFromCached = ""
+	defer func() { captureFromCached = "" }()
+
+	rememberCaptureFrom("")
+	assert.Empty(t, cachedCaptureFrom(), "no boundary yet means keep looking, not 'there is none'")
+
+	rememberCaptureFrom("2026-07-07")
+	rememberCaptureFrom("")
+	assert.Equal(t, "2026-07-07", cachedCaptureFrom(),
+		"a blank must never wipe a boundary already found")
+}
