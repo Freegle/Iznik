@@ -545,6 +545,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				//
 				// Check that the reply isn't too long ago compared to the most recent post of it.  That can happen
 				// very occasionally if someone posts, an item for a long time, and there is a reply
+				//
+				// Gate rippling held replies: an email/TN reply from outside the post's current reach is
+				// held (rippling_held_replies, status <> 'released') so it doesn't reach the poster before
+				// the post ripples to the replier. Every delivery channel honours this - the in-app chat
+				// list/count and message fetch (chat/chatmessage.go), the poster-notification email and
+				// push, and the chat-list badge/snippet/roster (PR #927). This own-posts reply list feeds
+				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
+				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
+				// (no mod exemption), matching the #927 count-surface gates.
 				db.Raw("SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 					"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname "+
 					"FROM chat_messages "+
@@ -553,6 +562,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"INNER JOIN users ON users.id = chat_messages.userid "+
 					"WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 					"AND reviewrequired = 0 AND reviewrejected = 0 "+
+					"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
 					"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ? "+
 					"GROUP BY userid;", id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).Scan(&messageReply)
 
