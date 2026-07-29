@@ -60,7 +60,7 @@ Keep the single sync-date file. Each syncer runs in try/catch; if any throws, th
 ### A. Side-by-side / comparison
 - Correlation key: `messages.tnpostid` (populated by both paths).
 - Time alignment: TN API may not deliver a post the same minute the email arrives; comparison tooling needs a tolerance window.
-- Comparison tooling: TBD — new artisan command `tn:sync-compare` vs offline scripting.
+- Comparison tooling: `TNParityCheckCommand` (`tn:parity-check`) exists and runs both paths in rolled-back transactions. Its comparison logic needs the redesign in section Q — see below; the "no dedicated tool" note in Resolved decisions #2 predates this command and is now superseded.
 
 ### B. Idempotency / dedup
 - During parallel run, even though API path is dry-run, trace emitter should detect "row with this `tnpostid` already exists" and tag the trace line `would_be_duplicate: true`.
@@ -160,7 +160,30 @@ Follows on from the section 6 decision (`Location::groupsNear()` replacing TN's 
 - ✅ Storage added: `messages_groups.mod_messaging_allowed` (migration `2026_07_23_000001_add_mod_messaging_allowed_to_messages_groups`), boolean, defaults to `1` (allowed) at the schema level for non-TN rows.
 - ✅ `GroupPostIngestionService::ingest()`/`createMessage()` take `bool $modMessagingAllowed` and persist it on the `MessageGroup::create()` call. Deliberately **not** added to the shared `[WRITE] table=messages_groups` trace line, since `EmailApiParityTest` diffs that line byte-for-byte against the email path (which has no equivalent field) — logged separately via the existing `[POST-META]` tag instead.
 - ✅ Fixture/test coverage: `PostSyncerTest` covers absent field (disallowed), group in list (allowed), group not in list (disallowed); `GroupPostIngestionServiceTest` covers default persists true and explicit false persists.
-- ❌ **TODO — not started**: the actual gate in the mod-messaging feature (ModTools UI/API) that reads `mod_messaging_allowed` before allowing a moderator to contact the poster directly. Only the storage and ingestion wiring exist so far; no ModTools code reads this column yet.
+- ❌ **Deferred, not started**: the actual gate in a mod-messaging feature (ModTools UI/API) that reads `mod_messaging_allowed` before allowing a moderator to contact the poster directly. There is no existing "mod messages the poster directly" feature in ModTools to gate — the current mod chat UI is just the normal reply-to-poster thread, with no separate contact-poster action. Building the gate therefore means designing and building that feature from scratch (new endpoint + UI), which is out of scope until there's a concrete design/decision to build it. Only the storage and ingestion wiring exist so far.
+
+### Q. Parity check redesign — coverage-first, four-layer model (not yet implemented)
+
+`TNParityCheckCommand` (`tn:parity-check`) currently asserts the email path and API path produce **byte-identical** `TN-SYNC-TRACE` output — an exact line-for-line diff (`normalizeLines()` + `===` comparison). That model is wrong: the two paths are not supposed to be identical.
+
+- The API path is a **superset** — it should ingest every post the email path does, and may additionally ingest posts the email path never saw (e.g. TN posts with no corresponding email, or where the email never arrived).
+- The API path resolves its group **independently**, via `Location::groupsNear()` on the post's own coordinates (section P / Resolved decision #7), while the email path resolves its group from the recipient address. The two are expected to legitimately disagree on which group a post lands in.
+
+Byte-identical trace diffing can't express either of these — it fails the moment the API path processes one extra post or picks a different (correct) group. The replacement model is coverage-first, not equality-first, in four layers:
+
+**Layer 1 — coverage (hard fail).** Build the set of `post_id`s from the email path's `[POST-RESULT]` trace lines, and the set from the API path's `[POST-RESULT]` **and** `[POST-SKIP] reason=no-coordinates` / `reason=not-in-any-group-bounds` lines (the two API-only pre-checks in `PostSyncer::processPost()` that skip before `GroupPostIngestionService::ingest()` is ever called, and so never reach `[POST-RESULT]`). Assert email-set ⊆ API-set. Any `post_id` the email path handled that's entirely absent from the API path's combined set — including via those two API-only skip reasons — is a **regression in the number of posts ingested** and fails the check.
+
+**Layer 2 — extra posts (informational only).** `post_id`s present in the API set but not the email set are expected and desirable (that's the point of the API path) — report the count/list, never fail on them.
+
+**Layer 3 — same-group parity (hard fail).** For `post_id`s present in both paths where they *also* resolved to the same `groupid`: the post info must match exactly. Compare the content fields a poster/TN actually controls — `subject`, `textbody`, `type`, `lat`, `lng` (rounded/compared as the existing `[WRITE] table=messages` trace line already renders them) — and the routing outcome (`approved`/`pending`/`dropped`/skip-reason). Excluded from comparison: fields the two paths synthesize differently by design (`envelopefrom`, `fromip`, `sourceheader`, `messageid`, `message` (RFC822 blob) — see section C, "synthesized or null; decide per field"). A mismatch here is a genuine regression signal — same group means the same moderation-decision tree should fire and the same content should have been captured.
+
+**Layer 4 — different-group divergence (informational only).** For `post_id`s present in both paths where they resolved to *different* groups: don't compare outcome or content at all (a Pending on group A says nothing about what should happen on group B) — just report the count/list of these `post_id`s and their two groupids, for visibility.
+
+**Output**: plaintext summary counts per layer, plus lists of the failing `post_id`s (Layer 1 misses, Layer 3 mismatches) — not the full raw trace dump `TNParityCheckCommand` prints today.
+
+**Implementation notes**:
+- No changes needed in `PostSyncer`, `GroupPostIngestionService`, `IncomingMailService`, or `EmailReplaySyncer` — every trace line needed for all four layers is already emitted (`post_id`/`tnpostid`, `groupid` where present, `result=`, and the existing `[WRITE] table=messages` line carrying subject/textbody/type/lat/lng). This is purely a rewrite of `TNParityCheckCommand`'s comparison step (`captureTraceLogs` stays; `normalizeLines`/`printLineDiff`/the `===` check are replaced with parsing into per-`post_id` structs and the four-layer comparison above).
+- `tests/Feature/TrashNothing/EmailApiParityTest.php` currently does the same byte-identical diff (on a fixture deliberately crafted so every post routes to Pending and both paths land on the same 2 groups). It should be updated to the same four-layer model for consistency, though as a same-group-only fixture it may reduce to just Layer 3 in practice.
 
 ### M. NOT in scope
 - Modifying `IncomingMailService` in any way.
@@ -170,12 +193,12 @@ Follows on from the section 6 decision (`Location::groupsNear()` replacing TN's 
 
 ## Open items still to resolve
 
-- See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly — no UI/API code reads the column yet, only ingestion writes it.
-- Comparison tooling for the parallel-run period (section A) — still TBD.
+- See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly. Deliberately deferred — there's no existing contact-poster feature to gate, so this needs a concrete feature design before implementation, not just a wiring task.
+- See section Q: rewrite `TNParityCheckCommand`'s comparison logic from byte-identical trace diffing to the four-layer coverage-first model. Design agreed; not yet implemented. `EmailApiParityTest` should follow once the command is updated.
 
 ## Resolved decisions
 
-2. **Comparison tooling** — no dedicated tool. Same approach as the TNSync V1→iznik-batch port: run with `--dry-run` in parallel alongside the email path; TRACE logs are inspected manually (via Loki) against DB rows written by the email path, joined on `tnpostid`. No artisan compare command. ✅
+2. **Comparison tooling** — superseded by `TNParityCheckCommand` (`tn:parity-check`), see section Q. Originally decided as "no dedicated tool, manual Loki inspection only"; a dedicated artisan command was built after all, but its comparison model needed a redesign once it became clear the two paths are not expected to be byte-identical (see section Q). ⚠️ superseded
 3. **Trace log format** — key=value (`TN-SYNC-TRACE [WRITE] table=foo op=insert set=...`). Human-readable, consistent across all syncers. No JSON. ✅
 4. **Spam check on API path** — skipped entirely. The email path uses `shouldSkipSpamCheck()` to skip for TN emails with a valid secret; all API posts are from TN by definition, so the check is always skipped. Behavior is identical to the email path. ✅
 5. **Worry-words on API path** — applied. `GroupPostIngestionService::subjectContainsWorryWords()` is a direct duplicate of `IncomingMailService::containsWorryWords()` and runs unconditionally, matching the email path. ✅
