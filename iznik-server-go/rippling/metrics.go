@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // MetricsDeadline caps the DB work behind /rippling/metrics. Every section reads a small
@@ -183,6 +184,61 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 		) b
 		GROUP BY day
 		ORDER BY day DESC`
+}
+
+// captureFromCached holds the live-capture boundary once we have found it. Guarded by
+// captureFromMu; empty means "not found yet", never "known to be none".
+var captureFromMu sync.RWMutex
+var captureFromCached string
+
+// attributionCaptureFrom returns the first day (YYYY-MM-DD) carrying evidence that only the
+// reply-time capture writes - location containment or a client-reported surface, which the
+// backfill never sets. The dashboard draws it as a boundary on the attribution chart: before it
+// the location channels are structurally zero (those replies sit in unknown), after it the full
+// split applies. Deliberately unscoped by ?groupid= - it marks a deploy moment, not a per-group
+// property.
+//
+// Cached for the life of the process, because the query cannot use an index: it ORs three
+// nullable columns, so it full-scans rippling_reply_attribution - a table that grows with every
+// reply, and the next thing here that would have crept past the gateway timeout. Caching is safe
+// because the answer cannot change once found: it is a MIN over an append-only table whose new
+// rows are always later, and an existing row never gains capture evidence afterwards.
+//
+// An empty answer is NOT cached - it means capture has not written anything yet, so the boundary
+// is still to come and must be looked for again.
+func attributionCaptureFrom(db *gorm.DB) (string, error) {
+	if cached := cachedCaptureFrom(); cached != "" {
+		return cached, nil
+	}
+
+	var day string
+	err := db.Raw("SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') " +
+		"FROM rippling_reply_attribution " +
+		"WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL " +
+		"OR client_source IS NOT NULL").Scan(&day).Error
+	if err != nil {
+		return "", err
+	}
+	rememberCaptureFrom(day)
+	return day, nil
+}
+
+func cachedCaptureFrom() string {
+	captureFromMu.RLock()
+	defer captureFromMu.RUnlock()
+	return captureFromCached
+}
+
+// rememberCaptureFrom keeps a found boundary for the rest of the process. An empty day is
+// deliberately not remembered: it means capture has written nothing yet, so the boundary is still
+// to come and caching it would leave the chart unmarked until the next restart.
+func rememberCaptureFrom(day string) {
+	if day == "" {
+		return
+	}
+	captureFromMu.Lock()
+	defer captureFromMu.Unlock()
+	captureFromCached = day
 }
 
 // Metrics returns the rippling-out event counters plus the §15/§16 rollout-health metrics.
@@ -404,20 +460,15 @@ func Metrics(c *fiber.Ctx) error {
 			ORDER BY count DESC`, gargs()...).Scan(&clientSources).Error
 	})
 
-	// (1c) When did LIVE capture start? The first row carrying evidence only the reply-time
-	//      capture can write (location containment or a client-reported surface - the backfill
-	//      never sets those). The dashboard draws this as a boundary on the attribution chart:
-	//      before it the location channels are structurally zero (those replies sit in
-	//      unknown), after it the full split applies. Deliberately unscoped by ?groupid=
-	//      (it marks a deploy moment, not a per-group property).
+	// (1c) When did LIVE capture start? See attributionCaptureFrom - answered from cache after
+	//      the first time, because the query behind it cannot use an index.
 	section("attribution_capture_from", func() error {
 		if !attributionWide {
 			return nil
 		}
-		return db.Raw("SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') " +
-			"FROM rippling_reply_attribution " +
-			"WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL " +
-			"OR client_source IS NOT NULL").Scan(&captureFrom).Error
+		var err error
+		captureFrom, err = attributionCaptureFrom(db)
+		return err
 	})
 
 	// (2) Groups whose posts rippled inside the window - the ?groupid= filter options.

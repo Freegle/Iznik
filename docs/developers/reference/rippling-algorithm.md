@@ -348,7 +348,9 @@ timeout:
   section. Every query anchors on `rippling_reach` (one row per rippled post, bounded by
   `created_at`), which is what keeps it selective.
 - `/rippling/metrics` (`rippling/metrics.go`) - reply attribution channels, geographic hotspots,
-  held-reply friction. Small rippling-owned tables only.
+  held-reply friction. Small rippling-owned tables only, plus the live-capture boundary date,
+  which is cached per process because its query ORs three unindexed nullable columns and so
+  full-scans `rippling_reply_attribution`.
 - `/rippling/analytics/drivetime[/score|/aggregate]` - the sampled routing pass, driven from the
   client one chunk at a time.
 
