@@ -337,3 +337,36 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
+
+## 10. The sysadmin analytics tab
+
+One ModTools component (`modtools/components/ModSysAdminRipplingAnalytics.vue`) reads three
+apiv2 surfaces, deliberately split so no single request can exceed the production gateway's
+timeout:
+
+- `/rippling/analytics` (`rippling/analytics.go`) - the KPIs, trends and "is rippling helping?"
+  section. Every query anchors on `rippling_reach` (one row per rippled post, bounded by
+  `created_at`), which is what keeps it selective.
+- `/rippling/metrics` (`rippling/metrics.go`) - reply attribution channels, geographic hotspots,
+  held-reply friction. Small rippling-owned tables only.
+- `/rippling/analytics/drivetime[/score|/aggregate]` - the sampled routing pass, driven from the
+  client one chunk at a time.
+
+**A gateway timeout here does not look like a timeout.** The 504 carries no
+`Access-Control-Allow-Origin` header, so the browser reports a CORS policy error and the real
+cause (slow SQL) is invisible from the console. Two rules follow, both learned the hard way:
+
+1. Never add a query that scans `messages_groups` or `chat_messages` over the dashboard's window
+   to these endpoints. Rippling now writes 5-8k `rippled_in` rows a day, so ~75% of a 30-day
+   `messages_groups` slice is rippled-in rows: per-day reply-rate / taken-rate / distance KPIs
+   built that way measured 40-190s **each** on production. Anchor on `rippling_reach` instead, or
+   drive the work from the client in chunks.
+2. Bound the DB work with a deadline, not just the request context. fasthttp closes
+   `RequestCtx.Done()` only when the **server** shuts down - never on a client disconnect - so a
+   browser or gateway that gives up cancels nothing, and each retry stacks another full set of
+   queries on top of the ones still running. `/rippling/metrics` therefore wraps the request
+   context in a 20s `context.WithTimeout` and names any section that hits it in a `degraded`
+   array, so "we gave up" reaches the dashboard instead of rendering as "no data".
+
+The component loads the three surfaces independently: a failure or delay in one fills in its own
+panels late (or reports its own error there) rather than blanking the tab.
