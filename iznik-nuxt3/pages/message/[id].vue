@@ -124,7 +124,7 @@
               v-if="message && !showtaken"
               :msgid="id"
               variant="sidebar"
-              :max="3"
+              :max="6"
               class="mt-3"
             />
           </VisibleWhen>
