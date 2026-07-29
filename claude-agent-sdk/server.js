@@ -274,12 +274,35 @@ app.get('/api/device-summary', async (req, res) => {
     const currentVersion = currentMobileVersion()
     const devices = buildDeviceSummary(records, currentVersion)
 
+    // A member can be fully active with NO client telemetry at all: ad/tracker
+    // blockers eat the unauthenticated /clientlog POST, and app builds from
+    // before client logging never send it. Fall back to their newest api-source
+    // line (also a cheap indexed-label lookup) so "no sessions" can't read as
+    // "not active" when the member was on the site hours ago.
+    let lastApiActivity = null
+    if (!devices.length) {
+      try {
+        const apiRows = await lokiQuery({
+          query: `{app="freegle", source="api", user_id="${userId}"}`,
+          start: window,
+          limit: 1,
+        })
+        if (apiRows.length) {
+          lastApiActivity = new Date(Number(BigInt(apiRows[0].ts) / 1000000n)).toISOString()
+        }
+      } catch (e) {
+        console.error('[DeviceSummary] api-activity fallback failed:', e.message)
+      }
+    }
+
     res.json({
       userId,
       window,
       generatedAt: new Date().toISOString(),
-      // Newest device sighting doubles as "last active on a device".
-      lastaccess: devices[0]?.lastSeen || null,
+      // Newest device sighting doubles as "last active on a device"; if the
+      // device never reports, fall back to server-side API activity.
+      lastaccess: devices[0]?.lastSeen || lastApiActivity,
+      lastApiActivity,
       currentVersion,
       deviceCount: devices.length,
       devices,

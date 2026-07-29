@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-13
+last_reviewed: 2026-07-29
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -80,6 +80,18 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 The investigation playbook (held chat replies, duplicate conversations, purged accounts,
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
 `support-agent.js`.
+
+## Device summary panel
+
+`GET /api/device-summary?userId=` (`server.js`) is a deterministic, no-AI view shown as
+soon as a member is selected: their recent devices (browser/OS/viewport, freshness badge)
+built from client `session_start` telemetry in Loki (`device-summary.js`). Telemetry is
+**best-effort** — the `/clientlog` POST is an unauthenticated fire-and-forget fetch that
+ad/tracker blockers routinely eat, and app builds from before client logging never send
+it — so a member can be fully active with zero device sessions. When that happens the
+endpoint falls back to the member's newest `source="api"` Loki line (`lastApiActivity`)
+and the panel says so explicitly, rather than showing a bare "no sessions" that misreads
+as "not active".
 
 ## Security controls
 
