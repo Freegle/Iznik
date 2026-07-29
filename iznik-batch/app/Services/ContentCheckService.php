@@ -7,7 +7,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use LanguageDetection\Language;
+use Nitotm\Eld\LanguageDetector;
 
 class ContentCheckService
 {
@@ -1267,50 +1267,46 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Language detection — flag non-English/Welsh messages over 50 chars
-    // (V1 Spam.php parity using patrickschur/language-detection).
-    // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
-    // P(top language) — the same lax threshold V1 uses (Spam.php line 413).
-    // The optional $detector callable accepts the lowercased text and returns
-    // an array of language => probability; used in tests for deterministic results.
+    // Language detection — flag a message as non-English/Welsh ONLY when the
+    // detector is confident. Uses nitotm/efficient-language-detector (ELD): it
+    // picks the correct top language on short, list-style Freegle posts where the
+    // old trigram library (patrickschur) mis-ranked plain English as a Latinate
+    // language (Discourse #9919, #9481), and its isReliable() lets us leave
+    // genuinely ambiguous short text alone rather than false-flagging it.
+    // The optional $detector callable returns ['lang' => code, 'reliable' => bool];
+    // used in tests for deterministic results.
     // -------------------------------------------------------------------------
 
     public function checkLanguage(string $subject, string $textbody, ?callable $detector = null): ?array
     {
-        $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
+        $text = trim(str_ireplace('xxx', '', $textbody));
 
-        // Skip text too short for reliable language detection. The detector is a
-        // coin-flip below ~80 chars (it mis-ranks terse English replies like
-        // "Yes please can collect. … Possible collection times: Asap"), and such
-        // short replies carry little spam risk, so checking them only generates
-        // false "not English" flags (Discourse #9481). V1 used 50; raised to 80.
+        // Skip very short text — low spam risk and inherently ambiguous for any
+        // language detector, so checking it only generates false flags (#9481).
         if (strlen($text) <= 80) {
             return null;
         }
 
         try {
-            $detect = $detector ?? static fn(string $t) => (new Language(self::LANGUAGE_DETECT_SET))->detect($t)->close();
-            $lang   = $detect($text);
+            $detect = $detector ?? static function (string $t): array {
+                static $eld = null;
+                $eld ??= new LanguageDetector();
+                $res = $eld->detect($t);
 
-            if (empty($lang)) {
-                return null;
-            }
+                return ['lang' => $res->language, 'reliable' => $res->isReliable()];
+            };
+            $result   = $detect($text);
+            $lang     = $result['lang'] ?? '';
+            $reliable = (bool) ($result['reliable'] ?? false);
 
-            reset($lang);
-            $firstLang = key($lang);
-            $firstProb = $lang[$firstLang] ?? 0;
-            $enProb    = $lang['en'] ?? 0;
-            $cyProb    = $lang['cy'] ?? 0;
-            $ourProb   = max($enProb, $cyProb);
-
-            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.9 * $firstProb);
-
-            if (!$isAcceptable) {
+            // Flag only when the detector is confident the text is neither English
+            // nor Welsh. Ambiguous text (isReliable() === false) is never flagged.
+            if ($lang !== '' && $lang !== 'en' && $lang !== 'cy' && $reliable) {
                 return [
                     'check'    => self::CHECK_LANGUAGE,
                     'category' => null,
                     'action'   => 'flag',
-                    'detail'   => "Post appears to be in language '{$firstLang}' rather than English or Welsh",
+                    'detail'   => "Post appears to be in language '{$lang}' rather than English or Welsh",
                 ];
             }
         } catch (\Exception $e) {

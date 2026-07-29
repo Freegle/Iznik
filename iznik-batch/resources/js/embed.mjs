@@ -15,7 +15,11 @@ const BATCH_SIZE = 64;
 // Cache model files alongside the script
 env.cacheDir = process.env.HF_CACHE_DIR || '/tmp/hf-cache';
 
-// Load model once
+// Load model once.
+// `quantized` is a transformers.js v2 option that the v3 runtime ignores, so
+// this is the fp32 model. Keep it fp32: every stored embedding was generated
+// this way, and quantizing only one side of the comparison would put queries in
+// a different space from documents. Re-embed the corpus before changing it.
 const extractor = await pipeline(
   'feature-extraction',
   'nomic-ai/nomic-embed-text-v1.5',

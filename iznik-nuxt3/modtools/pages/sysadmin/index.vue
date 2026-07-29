@@ -37,55 +37,101 @@
           />
         </b-tab>
 
-        <!-- Outgoing Email Tab -->
-        <b-tab @click="onEmailStatsTab">
+        <!-- Mail Tab: outgoing + incoming email, grouped as sub-tabs. -->
+        <b-tab @click="onMailTab">
           <template #title>
             <h2 class="ms-2 me-2">
-              Outgoing Email
-              <b-badge v-if="supportOrAdmin && work?.emailout" variant="danger">
+              Mail
+              <b-badge
+                v-if="supportOrAdmin && (work?.emailout || work?.emailin)"
+                variant="danger"
+              >
                 !
               </b-badge>
             </h2>
           </template>
-          <ModSupportEmailStats
-            v-if="showEmailStats"
-            :key="'emailstats-' + emailStatsBump"
-          />
+          <b-tabs v-model="mailSubTab" content-class="mt-3" pills>
+            <b-tab @click="onEmailStatsTab">
+              <template #title>
+                <span class="subtab-label">
+                  Outgoing
+                  <b-badge
+                    v-if="supportOrAdmin && work?.emailout"
+                    variant="danger"
+                  >
+                    !
+                  </b-badge>
+                </span>
+              </template>
+              <ModSupportEmailStats
+                v-if="showEmailStats"
+                :key="'emailstats-' + emailStatsBump"
+              />
+            </b-tab>
+            <b-tab @click="onIncomingEmailTab">
+              <template #title>
+                <span class="subtab-label">
+                  Incoming
+                  <b-badge
+                    v-if="supportOrAdmin && work?.emailin"
+                    variant="danger"
+                  >
+                    !
+                  </b-badge>
+                </span>
+              </template>
+              <ModSupportIncomingEmail
+                v-if="showIncomingEmail"
+                :key="'incomingemail-' + incomingEmailBump"
+              />
+            </b-tab>
+          </b-tabs>
         </b-tab>
 
-        <!-- Scrolling Tab: how far people scroll/engage — digest click-through by
-             position, and browse-feed scroll depth. -->
-        <b-tab @click="onDigestClicksTab">
+        <!-- Behaviour Tab: scrolling, recommendations and reengagement
+             effectiveness, grouped as sub-tabs. -->
+        <b-tab @click="onBehaviourTab">
           <template #title>
-            <h2 class="ms-2 me-2">Scrolling</h2>
+            <h2 class="ms-2 me-2">Behaviour</h2>
           </template>
-          <template v-if="showDigestClicks">
-            <h3 class="ms-2 mt-2">Digest click-through by position</h3>
-            <ModSysAdminDigestClicks
-              :key="'digestclicks-' + digestClicksBump"
-            />
-            <hr class="my-4" />
-            <h3 class="ms-2 mt-2">Browse-feed scroll depth</h3>
-            <ModSysAdminBrowseScroll
-              :key="'browsescroll-' + digestClicksBump"
-            />
-          </template>
-        </b-tab>
-
-        <!-- Incoming Email Tab -->
-        <b-tab @click="onIncomingEmailTab">
-          <template #title>
-            <h2 class="ms-2 me-2">
-              Incoming Email
-              <b-badge v-if="supportOrAdmin && work?.emailin" variant="danger">
-                !
-              </b-badge>
-            </h2>
-          </template>
-          <ModSupportIncomingEmail
-            v-if="showIncomingEmail"
-            :key="'incomingemail-' + incomingEmailBump"
-          />
+          <b-tabs v-model="behaviourSubTab" content-class="mt-3" pills>
+            <!-- Scrolling: how far people scroll/engage — digest click-through by
+                 position, and browse-feed scroll depth. -->
+            <b-tab @click="onDigestClicksTab">
+              <template #title>
+                <span class="subtab-label">Scrolling</span>
+              </template>
+              <template v-if="showDigestClicks">
+                <h3 class="ms-2 mt-2">Digest click-through by position</h3>
+                <ModSysAdminDigestClicks
+                  :key="'digestclicks-' + digestClicksBump"
+                />
+                <hr class="my-4" />
+                <h3 class="ms-2 mt-2">Browse-feed scroll depth</h3>
+                <ModSysAdminBrowseScroll
+                  :key="'browsescroll-' + digestClicksBump"
+                />
+              </template>
+            </b-tab>
+            <b-tab @click="onRecommendationsTab">
+              <template #title>
+                <span class="subtab-label">Recommendations</span>
+              </template>
+              <ModSysAdminRecommendations
+                v-if="showRecommendations"
+                :key="'recommendations-' + recommendationsBump"
+              />
+            </b-tab>
+            <b-tab @click="onReengageTab">
+              <template #title>
+                <span class="subtab-label">Reengagement</span>
+              </template>
+              <ModSysAdminReengageEffectiveness
+                v-if="showReengage"
+                :key="'reengage-' + reengageBump"
+              />
+            </b-tab>
+          </b-tabs>
         </b-tab>
 
         <!-- Rippling Tab -->
@@ -96,17 +142,6 @@
           <ModSysAdminRipplingAnalytics
             v-if="showRippling"
             :key="'rippling-analytics-' + ripplingBump"
-          />
-        </b-tab>
-
-        <!-- Recommendations Tab -->
-        <b-tab @click="onRecommendationsTab">
-          <template #title>
-            <h2 class="ms-2 me-2">Recommendations</h2>
-          </template>
-          <ModSysAdminRecommendations
-            v-if="showRecommendations"
-            :key="'recommendations-' + recommendationsBump"
           />
         </b-tab>
       </b-tabs>
@@ -128,6 +163,9 @@ const work = computed(() => authStore.work)
 const route = useRoute()
 
 const activeTab = ref(0)
+const mailSubTab = ref(0)
+const behaviourSubTab = ref(0)
+
 const showHousekeeping = ref(false)
 const housekeepingBump = ref(0)
 const showCronJobs = ref(false)
@@ -142,15 +180,24 @@ const showRippling = ref(false)
 const ripplingBump = ref(0)
 const showRecommendations = ref(false)
 const recommendationsBump = ref(0)
+const showReengage = ref(false)
+const reengageBump = ref(0)
 
+// Top-level tab index per deep-link query param. Outgoing/incoming both open the
+// Mail tab; scrolling/recommendations/reengagement all open the Behaviour tab.
+// The old per-tab params are kept so existing bookmarks/links still land right.
 const topTabMap = {
   housekeeping: 0,
   cronjobs: 1,
+  mail: 2,
   outgoing: 2,
+  incoming: 2,
+  behaviour: 3,
   digest: 3,
-  incoming: 4,
-  rippling: 5,
-  recommendations: 6,
+  scrolling: 3,
+  recommendations: 3,
+  reengagement: 3,
+  rippling: 4,
 }
 
 function onHousekeepingTab() {
@@ -168,24 +215,44 @@ function onEmailStatsTab() {
   emailStatsBump.value = Date.now()
 }
 
-function onDigestClicksTab() {
-  showDigestClicks.value = true
-  digestClicksBump.value = Date.now()
-}
-
 function onIncomingEmailTab() {
   showIncomingEmail.value = true
   incomingEmailBump.value = Date.now()
 }
 
-function onRipplingTab() {
-  showRippling.value = true
-  ripplingBump.value = Date.now()
+// Opening the Mail tab shows whichever email sub-tab is active (Outgoing by
+// default), so the first render isn't blank before a sub-tab is clicked.
+function onMailTab() {
+  if (mailSubTab.value === 1) onIncomingEmailTab()
+  else onEmailStatsTab()
+}
+
+function onDigestClicksTab() {
+  showDigestClicks.value = true
+  digestClicksBump.value = Date.now()
 }
 
 function onRecommendationsTab() {
   showRecommendations.value = true
   recommendationsBump.value = Date.now()
+}
+
+function onReengageTab() {
+  showReengage.value = true
+  reengageBump.value = Date.now()
+}
+
+// Opening the Behaviour tab shows whichever sub-tab is active (Scrolling by
+// default).
+function onBehaviourTab() {
+  if (behaviourSubTab.value === 2) onReengageTab()
+  else if (behaviourSubTab.value === 1) onRecommendationsTab()
+  else onDigestClicksTab()
+}
+
+function onRipplingTab() {
+  showRippling.value = true
+  ripplingBump.value = Date.now()
 }
 
 onMounted(() => {
@@ -195,14 +262,63 @@ onMounted(() => {
 
     if (tab === 'housekeeping') onHousekeepingTab()
     else if (tab === 'cronjobs') onCronJobsTab()
-    else if (tab === 'outgoing') onEmailStatsTab()
-    else if (tab === 'digest') onDigestClicksTab()
-    else if (tab === 'incoming') onIncomingEmailTab()
-    else if (tab === 'rippling') onRipplingTab()
-    else if (tab === 'recommendations') onRecommendationsTab()
+    else if (tab === 'mail' || tab === 'outgoing') {
+      mailSubTab.value = 0
+      onEmailStatsTab()
+    } else if (tab === 'incoming') {
+      mailSubTab.value = 1
+      onIncomingEmailTab()
+    } else if (tab === 'behaviour' || tab === 'digest' || tab === 'scrolling') {
+      behaviourSubTab.value = 0
+      onDigestClicksTab()
+    } else if (tab === 'recommendations') {
+      behaviourSubTab.value = 1
+      onRecommendationsTab()
+    } else if (tab === 'reengagement') {
+      behaviourSubTab.value = 2
+      onReengageTab()
+    } else if (tab === 'rippling') onRipplingTab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()
   }
 })
 </script>
+
+<style scoped lang="scss">
+.subtab-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Sub-tab pill nav (Mail / Behaviour). The top-level tabs use the `card`
+   (.nav-tabs) variant, so scoping to .nav-pills targets only these sub-tabs. */
+:deep(.nav-pills) {
+  gap: 0.375rem;
+  border-bottom: 1px solid #e3e8ee;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+:deep(.nav-pills .nav-link) {
+  color: #5a6672;
+  padding: 0.4rem 1.1rem;
+  border-radius: 2rem;
+  border: 1px solid transparent;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+:deep(.nav-pills .nav-link:hover:not(.active)) {
+  color: #008000;
+  background-color: #eef6e6;
+}
+
+:deep(.nav-pills .nav-link.active) {
+  color: #fff;
+  background-color: #61ae24;
+  box-shadow: 0 2px 4px rgba(97, 174, 36, 0.35);
+}
+</style>

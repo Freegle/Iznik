@@ -119,18 +119,25 @@ describe('OurMessage', () => {
       expect(wrapper.find('#msg-1').exists()).toBe(true)
     })
 
-    it('renders schema.org Product markup', async () => {
+    /* Structured data moved out of here and into the JSON-LD block the message page
+    emits (composables/useMessageJsonLd.js). The microdata that used to live here
+    declared a schema.org/Product but carried no name, image or description, so
+    Google discarded it, and it sat in a d-none element, which their guidelines
+    don't allow for microdata. These assert it hasn't crept back. */
+    it('does not emit microdata item types', async () => {
       const wrapper = await createWrapper()
-      expect(
-        wrapper.find('[itemtype="http://schema.org/Product"]').exists()
-      ).toBe(true)
+      expect(wrapper.find('[itemtype]').exists()).toBe(false)
+      expect(wrapper.find('[itemscope]').exists()).toBe(false)
     })
 
-    it('renders schema.org Offer markup', async () => {
+    it('does not emit microdata properties', async () => {
       const wrapper = await createWrapper()
-      expect(
-        wrapper.find('[itemtype="http://schema.org/Offer"]').exists()
-      ).toBe(true)
+      expect(wrapper.find('[itemprop]').exists()).toBe(false)
+    })
+
+    it('does not emit the invalid "Instock" availability value', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Instock')
     })
 
     it('shows MessageSummary when not startExpanded', async () => {

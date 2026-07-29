@@ -124,6 +124,28 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// A hold on a membership is an exclusive claim, and was advisory only: ModTools
+	// shows "Held by X" but nothing stopped another mod acting from a stale screen.
+	// Refuse the actions that decide the membership, and refuse taking the hold off
+	// someone. Release/ReviewRelease are deliberately absent - they are the escape
+	// hatch when the holder is away.
+	switch req.Action {
+	case "Approve", "Reject", "Delete Approved Member", "Ban", "Hold", "ReviewHold", "ReviewIgnore":
+		var holder uint64
+		db.Raw("SELECT COALESCE(heldby, 0) FROM memberships WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid).Scan(&holder)
+		if holder != 0 && holder != myid {
+			var holderName string
+			db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&holderName)
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"ret":        1,
+				"status":     "Held by another moderator",
+				"heldby":     holder,
+				"heldbyname": holderName,
+			})
+		}
+	}
+
 	switch req.Action {
 	case "Hold":
 		if result := db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
@@ -241,7 +263,11 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	case "ReviewIgnore":
 		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
-		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
+		// Closing the review is terminal for THIS group, so drop our own hold with it -
+		// otherwise the row keeps a heldby that nothing clears, and the member shows as
+		// held again the next time they are flagged. Only this group's row is touched,
+		// so a hold on an adjacent community is left alone.
+		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
 			"WHERE userid = ? AND groupid = ?",
 			req.Userid, req.Groupid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -732,16 +758,16 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 
 // HappinessMember is the response struct for happiness/feedback items.
 type HappinessMember struct {
-	ID        uint64          `json:"id"`
-	Timestamp string          `json:"timestamp"`
-	Outcome   *string         `json:"outcome"`
-	Happiness *string         `json:"happiness"`
-	Comments  *string         `json:"comments"`
-	Reviewed  int             `json:"reviewed"`
-	Fromuser  uint64          `json:"fromuser"`
-	Groupid   uint64          `json:"groupid"`
-	User      HappinessUser   `json:"user"`
-	Message   HappinessMsg    `json:"message"`
+	ID        uint64        `json:"id"`
+	Timestamp string        `json:"timestamp"`
+	Outcome   *string       `json:"outcome"`
+	Happiness *string       `json:"happiness"`
+	Comments  *string       `json:"comments"`
+	Reviewed  int           `json:"reviewed"`
+	Fromuser  uint64        `json:"fromuser"`
+	Groupid   uint64        `json:"groupid"`
+	User      HappinessUser `json:"user"`
+	Message   HappinessMsg  `json:"message"`
 }
 
 // HappinessUser is the user info embedded in happiness results.
@@ -891,7 +917,11 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 		"SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
 			"m.fromuser, mg.groupid, m.subject "+
 			"FROM messages_outcomes mo "+
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) "+
+			// rippled_in = 0: only Feedback for posts that ORIGINATED on the
+			// group, not copies that rippled in from elsewhere (the badge count
+			// queries in groupWork.go / session.go apply the same filter, and it
+			// mirrors the Edit badge). Discourse 9808/633.
+			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) AND mg.rippled_in = 0 "+
 			"INNER JOIN messages m ON m.id = mo.msgid "+
 			"WHERE mo.timestamp > ?"+
 			"%s%s"+
@@ -1169,12 +1199,17 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		}
 	}
 
-	// Check if banned.
+	// Check if banned. V1 parity: User::addMembership returns FALSE for
+	// isBanned(), and the legacy partner handler reported that as ret=4
+	// "Failed - likely ban" - a genuine failure. Reporting a fake "Success"
+	// here instead (Discourse #9961) leaves no membership, memberships_history,
+	// or log row anywhere, so a banned member's join attempt vanishes with
+	// nothing for a moderator to find while the partner is told it worked.
 	var bannedCount int64
 	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
 		userid, groupid).Scan(&bannedCount)
 	if bannedCount > 0 {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
+		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
 	// Check if already a member.
@@ -1219,12 +1254,17 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
 	}
 
-	// Check if banned.
+	// Check if banned. V1 parity: User::addMembership returns FALSE for isBanned(),
+	// a genuine failure. Reporting a fake "Success" here (Discourse #9961) leaves no
+	// membership, memberships_history, or log row anywhere, so a banned member's join
+	// attempt vanishes with nothing for a moderator to find while the caller (a partner
+	// like TrashNothing, or a moderator using the Add button) is told it worked. Return
+	// a real failure so the join doesn't silently disappear.
 	var bannedCount int64
 	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
 		userid, groupid).Scan(&bannedCount)
 	if bannedCount > 0 {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
+		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
 	// Insert membership as approved member.

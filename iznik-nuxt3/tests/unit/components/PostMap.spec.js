@@ -730,6 +730,36 @@ describe('PostMap', () => {
       expect(mockMessageStore.search).toBeDefined()
     })
 
+    it('browse-scoped nearby search sends browse=1 and no map bounds (Discourse 9933)', async () => {
+      // On the Browse page a nearby search must scope to the member's reach feed
+      // server-side: a single search call with browse: 1 and NO viewport bounds,
+      // replacing the old fetch-feed + bounds-search + intersect flow which lost
+      // in-feed matches whenever the capped viewport search filled with
+      // out-of-feed posts.
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      await createWrapper({
+        showIsochrones: true,
+        search: 'sofa',
+        browseSearch: true,
+      })
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockMessageStore.search).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'sofa', browse: 1 })
+      )
+      const args = mockMessageStore.search.mock.calls.at(-1)[0]
+      expect(args.swlat).toBeUndefined()
+      expect(args.groupids).toBeUndefined()
+    })
+
     it('fetches authority messages when authorityid provided', async () => {
       await createWrapper({ authorityid: 456 })
       await flushPromises()

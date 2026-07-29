@@ -30,6 +30,10 @@
       v-else-if="notification.type === 'OpenPosts'"
       :id="id"
     />
+    <NotificationMatchedPost
+      v-else-if="notification.type === 'MatchedPost'"
+      :id="id"
+    />
     <span v-else-if="notification.type === 'TryFeed'" />
     <span v-else> Unknown notification {{ notification.type }} </span>
   </div>
@@ -62,6 +66,9 @@ const NotificationAboutMe = defineAsyncComponent(() =>
 )
 const NotificationOpenPosts = defineAsyncComponent(() =>
   import('~/components/NotificationOpenPosts')
+)
+const NotificationMatchedPost = defineAsyncComponent(() =>
+  import('~/components/NotificationMatchedPost')
 )
 
 const props = defineProps({

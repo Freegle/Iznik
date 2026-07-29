@@ -68,7 +68,7 @@ type User struct {
 	Emails             []UserEmail          `json:"emails" gorm:"-"`
 	Memberships        []Membership         `json:"memberships" gorm:"-"`
 	MessageHistory     []UserMessageHistory `json:"messagehistory,omitempty" gorm:"-"`
-	Systemrole         string               `json:"systemrole""`
+	Systemrole         string               `json:"systemrole"`
 	Settings           json.RawMessage      `json:"settings"` // This is JSON stored in the DB as a string.
 	Relevantallowed    bool                 `json:"relevantallowed"`
 	Newslettersallowed bool                 `json:"newslettersallowed"`
@@ -1194,6 +1194,16 @@ func reverseString(s string) string {
 func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	db := database.DBConn
 
+	// SECURITY: gate the two genuinely sensitive modtools-only fields - a user's posting history
+	// (including pending posts) and their precise/private location - on the caller being a platform
+	// moderator (system role) or the user themselves. `modtools` is a client-supplied query flag and
+	// myid may be 0 (anonymous), so without this an anonymous/ordinary caller could pass
+	// ?modtools=true and read anyone's posting history and precise location (this data is not shown
+	// on the public Freegle site, only in ModTools). Other modtools fields keep their own gates
+	// (giftaid = PERM_GIFTAID, modmails = the caller's mod-group filter, public location = public by
+	// design), so we do NOT disable modtools wholesale.
+	modDataAuthz := myid > 0 && (auth.IsSystemMod(myid) || myid == id)
+
 	var memberships []Membership
 	var emails []UserEmail
 	var messageHistory []UserMessageHistory
@@ -1222,7 +1232,8 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		}()
 	}
 
-	if modtools {
+	// Sensitive: posting history and precise/private location - mod (system role) or self only.
+	if modtools && modDataAuthz {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1234,7 +1245,10 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			defer wg.Done()
 			privatePos = GetLatLng(id)
 		}()
+	}
 
+	// Public location and the mod-group-filtered modmail count keep their own scoping.
+	if modtools {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

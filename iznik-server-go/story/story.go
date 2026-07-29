@@ -52,6 +52,16 @@ func Single(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
 	}
 
+	// SECURITY: an unreviewed or non-public story is only visible to its author, a
+	// moderator of a group the author belongs to, or admin/support. This mirrors the
+	// `reviewed = 1 AND public = 1` filter that List() and Group() already enforce;
+	// Single() previously returned any story by id to anonymous callers.
+	if !(s.Public && s.Reviewed) {
+		if !canModStory(user.WhoAmI(c), s.ID) {
+			return fiber.NewError(fiber.StatusNotFound, "Not found")
+		}
+	}
+
 	if s.Imageid > 0 {
 		if s.Imageuid != "" {
 			s.Image = &StoryImage{

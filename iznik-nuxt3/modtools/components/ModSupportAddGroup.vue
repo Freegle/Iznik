@@ -73,6 +73,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useGroupStore } from '~/stores/group'
+import { toNumberOrNull } from '~/composables/useNumericInput'
 
 const groupStore = useGroupStore()
 
@@ -144,8 +145,10 @@ async function add(callback) {
       namefull: namefull.value,
       cga: cga.value,
       dpa: dpa.value,
-      lat: lat.value,
-      lng: lng.value,
+      // Send real numbers, not the number-input strings: the API's lat/lng are float and a
+      // string there fails the request parse, so the new group's centre never got set (9932).
+      lat: toNumberOrNull(lat.value),
+      lng: toNumberOrNull(lng.value),
     })
 
     if (groupId) {

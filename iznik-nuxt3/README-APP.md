@@ -326,6 +326,12 @@ The mobile app requires specific Capacitor plugins and dependencies for native f
 }
 ```
 
+**Add to Calendar** (`components/AddToCalendar.vue`): uses `window.plugins.calendar`
+(cordova-plugin-calendar) to add a handover to the device calendar. If the plugin is not
+exposed in the WebView, or the native call errors, it falls back to downloading a `.ics`
+file (built by `composables/useCalendarEvent.js`) so the button is never a silent no-op — the
+symptom reported in Discourse 9927. On the web it always uses the `.ics`.
+
 </details>
 
 ---

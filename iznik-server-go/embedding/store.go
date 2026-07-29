@@ -258,6 +258,26 @@ func (s *Store) FindByMsgid(msgid uint64) (Entry, bool) {
 	return Entry{}, false
 }
 
+// Evict removes the entry for msgid from the in-memory store, if present, and
+// reports whether one was removed. Used when a message's embedding is invalidated
+// on edit: the DB row is deleted so the batch re-embeds the new content, but
+// Refresh() is presence-keyed (see its "Known limitation") and would otherwise keep
+// the STALE blob for a msgid it already holds if the delete+re-embed both land
+// between two refresh ticks. Evicting forces the next Refresh to treat the msgid as
+// new and reload the regenerated embedding, so vector search stops matching the old
+// wording (Discourse 9954).
+func (s *Store) Evict(msgid uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.entries {
+		if s.entries[i].Msgid == msgid {
+			s.entries = append(s.entries[:i], s.entries[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // VectorSearchResult from vector search. SubjectCos and BodyCos are the pure
 // per-field cosines; HasBody distinguishes "body exists but cosine is 0" from
 // "no body embedding" (BodyCos is 0 in both cases). The caller decides how to
@@ -281,8 +301,12 @@ type VectorSearchResult struct {
 // caller order subject-matches ahead of body-matches (what users expect:
 // a literal "table" in the subject should come before a message that only
 // mentions "table" in the body).
+// allowedIDs, when non-nil, restricts the scan to those msgids - used by browse-scoped
+// search to make the top-K selection happen WITHIN the member's feed universe rather than
+// filtering afterwards (which would let out-of-feed posts crowd feed posts out of the
+// candidate set). nil = no restriction.
 func (s *Store) Search(query []float32, limit int, msgtype string, groupids []uint64,
-	swlat, swlng, nelat, nelng float32) []VectorSearchResult {
+	allowedIDs map[uint64]bool, swlat, swlng, nelat, nelng float32) []VectorSearchResult {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -314,6 +338,9 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 			continue
 		}
 		if hasGroupFilter && !groupSet[e.Groupid] {
+			continue
+		}
+		if allowedIDs != nil && !allowedIDs[e.Msgid] {
 			continue
 		}
 		if hasBoxFilter {

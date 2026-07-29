@@ -22,7 +22,7 @@ class PostcodeRemapService
 {
     private string $spatialServerUrl;
 
-    public function __construct()
+    public function __construct(private SpatialAdminService $spatialAdmin)
     {
         $this->spatialServerUrl = config('freegle.spatial_server_url', 'http://localhost:8194');
     }
@@ -30,12 +30,24 @@ class PostcodeRemapService
     /**
      * Remap postcodes within a given WKT polygon to their nearest area.
      *
-     * @param int|null $locationId The location that was modified (unused, kept for interface compatibility).
+     * @param int|null $locationId The area whose geometry changed. When given, the
+     *   area is seeded into THIS process's spatial index before the KNN lookups
+     *   below, so a brand-new area is found immediately (see seedArea()).
      * @param string|null $polygon WKT polygon to scope the remap. NULL = remap all.
      * @return int Number of postcodes remapped.
      */
     public function remapPostcodes(?int $locationId = NULL, ?string $polygon = NULL): int
     {
+        // In production each container runs its own spatial-knn instance with an
+        // independent in-memory index (one per DB server, plus one on the batch
+        // container). The write-time upsert in the Go API seeds the API's instance,
+        // NOT the one this remap queries, so without seeding here findNearestArea()
+        // cannot see a just-drawn area until the 15-minute delta. The area then gets
+        // no postcodes and looks unsaved until the nightly full remap (Discourse #9950).
+        if ($locationId) {
+            $this->seedArea($locationId);
+        }
+
         $pcQuery = DB::table('locations_spatial')
             ->join('locations', 'locations_spatial.locationid', '=', 'locations.id')
             ->where('locations.type', 'Postcode')
@@ -92,6 +104,30 @@ class PostcodeRemapService
         Log::info("PostcodeRemapService: remapped {$updated}/{$count} postcodes");
 
         return $updated;
+    }
+
+    /**
+     * Seed one area's current geometry into the spatial index this process
+     * queries, so findNearestArea() can return it straight away instead of
+     * waiting for the next delta sync. Non-fatal: a failure just falls back to
+     * the delta and the nightly full remap.
+     */
+    private function seedArea(int $locationId): void
+    {
+        $row = DB::table('locations')
+            ->where('id', $locationId)
+            ->selectRaw('name, `type`, ST_AsText(COALESCE(ourgeometry, geometry)) AS wkt')
+            ->first();
+
+        if (!$row || empty($row->wkt)) {
+            return;
+        }
+
+        $this->spatialAdmin->upsertItems('locations', [[
+            'id'    => $locationId,
+            'wkt'   => $row->wkt,
+            'extra' => ['name' => $row->name, 'type' => $row->type],
+        ]]);
     }
 
     /**

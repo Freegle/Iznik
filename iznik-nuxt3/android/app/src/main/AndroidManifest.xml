@@ -29,11 +29,26 @@
         <data android:host=" " />
         <data android:pathPrefix="/" />
       </intent-filter>
+      <!-- Long-press app-icon quick actions -->
+      <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+      <!-- Share an image into Freegle from another app ("Share" -> Freegle) to
+           start an OFFER with the photo pre-attached. Handled natively in
+           MainActivity (ACTION_SEND / ACTION_SEND_MULTIPLE). -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
     </activity>
     <activity android:name="com.facebook.FacebookActivity"
         android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
         android:label="@string/app_name" />
-    
+
     <activity
         android:name="com.facebook.CustomTabActivity"
         android:exported="true">

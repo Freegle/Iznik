@@ -1482,8 +1482,10 @@ func TestPostMessageApproveMarksHam(t *testing.T) {
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
-	// Set spamtype on message to simulate it being flagged.
-	db.Exec("UPDATE messages SET spamtype = 'Spam' WHERE id = ?", msgID)
+	// Set spamtype on message to simulate it being flagged. Must be a value from
+	// the production ENUM - 'Spam' is not one of them, and only worked while the
+	// migrations declared this column as a varchar.
+	db.Exec("UPDATE messages SET spamtype = 'SpamAssassin' WHERE id = ?", msgID)
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -7581,6 +7583,112 @@ func TestPatchMessageEditReviewRequiredGroupModerated(t *testing.T) {
 	assert.Equal(t, 1, reviewRequired, "Group-moderated edit of approved message should set reviewrequired=1")
 }
 
+// TestPatchMessageTextEditResetsContentCheck: a message that has already passed the
+// automated content-check (contentcheck_checked_at stamped, e.g. because it was
+// approved) must be re-queued for a fresh check when the owner edits its textbody.
+// Without this, content added via an edit (worry words, phone numbers, banned
+// keywords, ...) is never scanned by ContentCheckService.processUnprocessed(),
+// which only picks up rows where contentcheck_checked_at IS NULL — so the automated
+// moderation filters silently skip edited content forever, and it can only be
+// caught by a mod noticing it manually.
+func TestPatchMessageTextEditResetsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_text")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW(), contentcheck_reasons = ? WHERE msgid = ? AND groupid = ?",
+		`[{"check":"Vague","detail":"stale reason from the original check"}]`, msgID, groupID)
+
+	var checkedAtSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtSet)
+	require.True(t, checkedAtSet, "test setup: message should start already content-checked")
+
+	body := map[string]interface{}{
+		"id":       msgID,
+		"textbody": prefix + " edited body with newly added content",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet bool
+	var reasons *string
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &reasons)
+	assert.False(t, checkedAtStillSet, "editing the textbody should clear contentcheck_checked_at so the batch job re-checks the new content")
+	assert.Nil(t, reasons, "stale contentcheck_reasons from the pre-edit check should be cleared too")
+}
+
+// TestPatchMessageSubjectEditResetsContentCheck mirrors the textbody case for the
+// subject field, which checkMessage() also scans (Vague/NotAnItem/SubjectRepeat).
+func TestPatchMessageSubjectEditResetsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_subj")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"subject": prefix + " edited subject",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtStillSet)
+	assert.False(t, checkedAtStillSet, "editing the subject should clear contentcheck_checked_at so the batch job re-checks the new content")
+}
+
+// TestPatchMessageNonContentEditKeepsContentCheck: editing a field that
+// ContentCheckService::checkMessage() never inspects (availablenow) must NOT
+// discard the existing content-check stamp — only subject/textbody/item edits
+// should trigger a re-check.
+func TestPatchMessageNonContentEditKeepsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_noop")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":           msgID,
+		"availablenow": 1,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtStillSet)
+	assert.True(t, checkedAtStillSet, "a non-content edit should not discard the existing content-check stamp")
+}
+
 // --- tnpostid and expiresat tests ---
 
 func TestGetMessageTnpostid(t *testing.T) {
@@ -7955,7 +8063,11 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
+	// tnuserid is UNIQUE in production. 77710 is not used by any other test -
+	// 77701-77704, 77801-77804 and 77901-77903 all are. Release it from any user
+	// left by an earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77710)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77710, ownerID)
 
 	// Create message at original lat/lng.
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -7970,7 +8082,7 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 		"lng": newLng,
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77701&email=%s@test.com", key, prefix)
+	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77710&email=%s@test.com", key, prefix)
 	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
@@ -9255,6 +9367,9 @@ func TestPostMessagePartnerAuthPromise(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77701)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -9281,6 +9396,9 @@ func TestPostMessagePartnerAuthByTnPostid(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77702)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77702, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10545,4 +10663,115 @@ func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode, "Partner Promise should fail if fromaddr not in partner domain")
+}
+
+// A moderator holding a message is only advisory in the UI, which hides the
+// Approve/Reject buttons - but the UI can be arbitrarily stale (Discourse #9946:
+// a mod rejected a post 27 minutes after another mod held it, off a list his
+// browser had fetched 90 minutes earlier). Enforce the hold server-side so it
+// means something regardless of what any client believes.
+func heldByOtherSetup(t *testing.T, prefix string) (uint64, uint64, uint64, string, string) {
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix+"_g")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modA := CreateTestUser(t, prefix+"_moda", "User")
+	modB := CreateTestUser(t, prefix+"_modb", "User")
+	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, modA, group, "Moderator")
+	CreateTestMembership(t, modB, group, "Moderator")
+	_, tokenA := CreateTestSession(t, modA)
+	_, tokenB := CreateTestSession(t, modB)
+
+	msgID := createPendingMessage(t, posterID, group, prefix)
+
+	// Mod A holds it.
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modA, msgID, group)
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modA, msgID)
+
+	return group, msgID, modA, tokenA, tokenB
+}
+
+func postMessageAction(t *testing.T, token string, body map[string]interface{}) int {
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestModerationBlockedWhenHeldByAnotherMod(t *testing.T) {
+	db := database.DBConn
+
+	// Every moderation action that changes moderation state must be refused.
+	for _, action := range []string{
+		"Approve", "Reject", "Delete", "Spam", "Hold",
+		"ApproveEdits", "RevertEdits", "BackToPending",
+	} {
+		t.Run(action, func(t *testing.T) {
+			group, msgID, _, _, tokenB := heldByOtherSetup(t, uniquePrefix("heldother"))
+
+			status := postMessageAction(t, tokenB, map[string]interface{}{
+				"id":      msgID,
+				"action":  action,
+				"groupid": group,
+			})
+			assert.Equal(t, 409, status, action+" by another mod must be refused while held")
+
+			// The hold and the collection must both be untouched.
+			var heldby *uint64
+			db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&heldby)
+			assert.NotNil(t, heldby, action+" must not clear another mod's hold")
+
+			var collection string
+			db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
+			assert.Equal(t, utils.COLLECTION_PENDING, collection, action+" must leave the message pending")
+
+			// Reject and Delete without a subject take a soft-delete branch that
+			// leaves the collection alone, so check deleted too or those two would
+			// pass whether or not the block worked.
+			var deleted int
+			db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&deleted)
+			assert.Equal(t, 0, deleted, action+" must not soft-delete the message")
+		})
+	}
+}
+
+func TestReleaseAllowedWhenHeldByAnotherMod(t *testing.T) {
+	db := database.DBConn
+	group, msgID, _, _, tokenB := heldByOtherSetup(t, uniquePrefix("heldrel"))
+
+	// Release is the designed escape hatch - it must stay available, otherwise a
+	// post is stranded when the holding mod goes away.
+	status := postMessageAction(t, tokenB, map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": group,
+	})
+	assert.Equal(t, 200, status, "Release must remain allowed against another mod's hold")
+
+	var heldby *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&heldby)
+	assert.Nil(t, heldby, "Release must clear the hold")
+}
+
+func TestModerationAllowedWhenHeldBySelf(t *testing.T) {
+	db := database.DBConn
+	group, msgID, _, tokenA, _ := heldByOtherSetup(t, uniquePrefix("heldself"))
+
+	// Holding then acting yourself is the normal flow and must not be blocked. Send
+	// a subject so this takes the reject-with-explanation branch (the no-subject
+	// branch is a soft delete, which leaves the collection alone).
+	status := postMessageAction(t, tokenA, map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": group,
+		"subject": "MODERATOR MESSAGE -: test",
+		"body":    "Please repost with more detail.",
+	})
+	assert.Equal(t, 200, status, "the holding mod must still be able to act")
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
+	assert.Equal(t, utils.COLLECTION_REJECTED, collection)
 }

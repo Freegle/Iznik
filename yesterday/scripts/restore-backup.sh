@@ -74,7 +74,7 @@ mkdir -p "$BACKUP_DIR"
 FORMATTED_DATE="${BACKUP_DATE:0:4}-${BACKUP_DATE:4:2}-${BACKUP_DATE:6:2}"
 
 echo "Finding backup for date ${FORMATTED_DATE}..."
-BACKUP_FILE=$(gsutil ls "$BACKUP_BUCKET/iznik-${FORMATTED_DATE}-*.xbstream" 2>/dev/null | head -1)
+BACKUP_FILE=$(gcloud storage ls "$BACKUP_BUCKET/iznik-${FORMATTED_DATE}-*.xbstream" 2>/dev/null | head -1)
 
 if [ -z "$BACKUP_FILE" ]; then
     echo "❌ Could not find backup for date ${FORMATTED_DATE}"
@@ -87,7 +87,19 @@ echo "Selected backup: $BACKUP_FILE"
 BACKUP_TIME=$(basename "$BACKUP_FILE" | grep -oP '\d{4}-\d{2}-\d{2}-\K\d{2}-\d{2}' | tr '-' ':')
 echo "Backup time: $BACKUP_TIME"
 
-BACKUP_SIZE=$(gsutil ls -l "$BACKUP_FILE" | grep -v TOTAL | awk '{print $1}')
+# Size comes from a single explicit field rather than a column of the long
+# listing: `gcloud storage` formats listings differently from gsutil, and this
+# value is not cosmetic. It feeds the disk-space estimate below and divides the
+# progress calculation, so an empty parse would silently disable the space check
+# and then divide by zero.
+BACKUP_SIZE=$(gcloud storage objects describe "$BACKUP_FILE" --format='value(size)' 2>/dev/null)
+
+if ! [[ "$BACKUP_SIZE" =~ ^[0-9]+$ ]] || [ "$BACKUP_SIZE" -eq 0 ]; then
+    echo "❌ Could not determine size of $BACKUP_FILE (got: '${BACKUP_SIZE}')"
+    echo "   Refusing to continue: the disk-space check and progress maths both depend on it."
+    exit 1
+fi
+
 BACKUP_SIZE_GB=$((BACKUP_SIZE / 1024 / 1024 / 1024))
 echo "Backup size: ${BACKUP_SIZE_GB}GB (compressed)"
 
@@ -165,7 +177,7 @@ update_status "extracting" "Downloading and extracting backup..."
 PROGRESS_PID=$!
 
 # Stream directly from GCS and extract to volume - no temp directory
-gsutil cat "$BACKUP_FILE" | xbstream -x -C "$VOLUME_PATH"
+gcloud storage cat "$BACKUP_FILE" | xbstream -x -C "$VOLUME_PATH"
 
 # Signal extraction is done
 touch "${VOLUME_PATH}/.extraction_done"
@@ -387,7 +399,7 @@ update_status "restoring_loki" "Restoring Loki logs..."
 # Find most recent Loki backup ON OR BEFORE the database backup date
 # This ensures log consistency - no logs for events after the DB snapshot
 echo "Looking for Loki backup on or before ${BACKUP_DATE}..."
-LOKI_BACKUP=$(gsutil ls "$BACKUP_BUCKET/loki/" 2>/dev/null | while read backup; do
+LOKI_BACKUP=$(gcloud storage ls "$BACKUP_BUCKET/loki/" 2>/dev/null | while read backup; do
     # Extract date from filename (loki-backup-YYYYMMDD_HHMMSS.tar.gz)
     loki_date=$(basename "$backup" | grep -oE '[0-9]{8}' | head -1)
     if [ -n "$loki_date" ] && [ "$loki_date" -le "$BACKUP_DATE" ]; then
@@ -398,7 +410,19 @@ done | sort -r | head -1)
 if [ -n "$LOKI_BACKUP" ]; then
     LOKI_BACKUP_DATE=$(basename "$LOKI_BACKUP" | grep -oE '[0-9]{8}' | head -1)
     echo "Found Loki backup: $LOKI_BACKUP (date: $LOKI_BACKUP_DATE)"
-    LOKI_SIZE=$(gsutil ls -l "$LOKI_BACKUP" | grep -v TOTAL | awk '{print $1}')
+    # As above, an explicit field rather than a listing column. LOKI_SIZE_GB
+    # gates the disk-space check further down, so an empty parse would make
+    # LOKI_NEEDED_GB zero and let that check pass without actually checking.
+    LOKI_SIZE=$(gcloud storage objects describe "$LOKI_BACKUP" --format='value(size)' 2>/dev/null)
+
+    if ! [[ "$LOKI_SIZE" =~ ^[0-9]+$ ]] || [ "$LOKI_SIZE" -eq 0 ]; then
+        echo "⚠️  Could not determine size of $LOKI_BACKUP (got: '${LOKI_SIZE}') - skipping Loki restore"
+        echo "   Loki will start with empty data. The database restore is unaffected."
+        LOKI_BACKUP=""
+    fi
+fi
+
+if [ -n "$LOKI_BACKUP" ]; then
     LOKI_SIZE_GB=$((LOKI_SIZE / 1024 / 1024 / 1024))
     echo "Loki backup size: ${LOKI_SIZE_GB}GB"
 
@@ -422,12 +446,12 @@ if [ -n "$LOKI_BACKUP" ]; then
         echo "   Loki will start with empty data. Free disk space and restore manually."
     else
         # Download Loki backup to local file first, then extract
-        # gsutil cp has built-in retries and resumable downloads, unlike gsutil cat which
+        # cp has built-in retries and resumable downloads, unlike cat which
         # streams through a single SSL connection that fails on large files (20GB+)
         LOKI_LOCAL="/tmp/loki-backup.tar.gz"
         echo "Downloading Loki backup to local file..."
         rm -f "$LOKI_LOCAL"
-        gsutil -o 'GSUtil:resumable_threshold=1048576' cp "$LOKI_BACKUP" "$LOKI_LOCAL"
+        gcloud storage cp "$LOKI_BACKUP" "$LOKI_LOCAL"
         echo "Extracting Loki backup to volume..."
         tar -xzf "$LOKI_LOCAL" -C "${LOKI_VOLUME_PATH}" --strip-components=1
         rm -f "$LOKI_LOCAL"

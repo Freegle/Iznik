@@ -32,9 +32,21 @@
       </div>
     </div>
 
-    <div v-if="loading" class="text-center py-5">
-      <b-spinner />
-      <p class="text-muted small mt-2 mb-0">Computing live KPIs…</p>
+    <div v-if="loading" class="rip-loading text-center py-5">
+      <div class="d-flex align-items-center justify-content-center mb-2">
+        <b-spinner small class="me-2" />
+        <span class="fw-bold">Computing live rippling KPIs…</span>
+      </div>
+      <p class="text-muted small mb-2">
+        The full picture runs a lot of database work, so a wide window can take
+        up to a minute — this is still working, not stuck.
+      </p>
+      <div class="rip-progress mx-auto">
+        <div class="rip-progress-bar" :style="{ width: loadPct + '%' }" />
+      </div>
+      <p class="text-muted small mt-2 mb-0">
+        {{ loadPct }}% · {{ Math.round(loadElapsed) }}s
+      </p>
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else-if="s1">
@@ -442,6 +454,13 @@ const strata = [
 
 const loading = ref(true)
 const error = ref(null)
+// Time-based progress for the initial KPI + metrics fetch. The backend runs it as
+// one request with no progress feed, so we ease a bar toward ~95% over the
+// expected duration (real completion snaps it to 100%) to show a wide, slow
+// window is working rather than frozen.
+const loadPct = ref(0)
+const loadElapsed = ref(0)
+let loadTimer = null
 const startDate = ref('')
 const endDate = ref('')
 const stratum = ref('all')
@@ -699,9 +718,33 @@ const bullseyeAria = computed(() => {
   )} in the ${outer.min_lo}-${outer.min_hi} minute ring.`
 })
 
+// Eases the loading bar toward ~95% over ~40s of elapsed time so a slow, wide
+// window reads as "working", then stopLoadProgress snaps it to 100 on completion.
+function startLoadProgress() {
+  loadElapsed.value = 0
+  loadPct.value = 0
+  clearInterval(loadTimer)
+  loadTimer = setInterval(() => {
+    loadElapsed.value += 0.5
+    loadPct.value = Math.min(
+      95,
+      Math.round(95 * (1 - Math.exp(-loadElapsed.value / 12)))
+    )
+  }, 500)
+}
+
+function stopLoadProgress() {
+  clearInterval(loadTimer)
+  loadTimer = null
+  loadPct.value = 100
+}
+
+onBeforeUnmount(() => clearInterval(loadTimer))
+
 async function fetchAnalytics() {
   loading.value = true
   error.value = null
+  startLoadProgress()
   try {
     const [result, metrics] = await Promise.all([
       apiInstance.rippling.fetchAnalytics(
@@ -722,6 +765,7 @@ async function fetchAnalytics() {
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
+    stopLoadProgress()
     loading.value = false
   }
   // Drive-time metrics are a slow sampled routing pass (~250 isochrone calls). Load them AFTER the
@@ -816,6 +860,19 @@ $line: #e4e8e3;
   height: 100%;
   background: $green;
   transition: width 0.3s ease;
+}
+
+.rip-progress {
+  max-width: 340px;
+  height: 8px;
+  background: $line;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rip-progress-bar {
+  height: 100%;
+  background: $green;
+  transition: width 0.4s ease;
 }
 
 .rip-analytics {

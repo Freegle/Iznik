@@ -1,188 +1,93 @@
 <template>
   <div class="log-analysis-container">
-    <!-- Privacy Notice Modal -->
+    <!-- Privacy notice. Unlike the old pseudonymising version, this helper works
+         on real, de-anonymised member data, so the notice explains the legal basis
+         (DPIA) and the responsibilities rather than any anonymisation measures. -->
     <b-modal
       v-model="showPrivacyModal"
-      title="Privacy Notice"
+      title="Privacy notice"
       ok-only
-      ok-title="I Understand"
+      ok-title="I understand"
       centered
     >
       <p>
-        This tool uses AI to help investigate user issues by analyzing logs.
+        This tool uses AI to help you investigate support issues. It shows, and
+        sends to the AI (Claude),
+        <strong>real, non-anonymised member data</strong>
+        - names, email addresses and chat content. There is no pseudonymisation:
+        the AI sees the real values.
       </p>
-      <p><strong>Privacy protection measures:</strong></p>
-      <ul>
+      <ul class="mb-2">
         <li>
-          <strong>All PII is pseudonymized</strong> before reaching the AI
-          service.
+          Access is restricted to <strong>Support and Admin</strong> volunteers.
         </li>
         <li>
-          <strong>Email addresses, IPs, phone numbers</strong> are replaced with
-          random tokens (e.g., user_abc123@gmail.com).
+          This de-anonymised processing is covered by Freegle's
+          <strong>Data Protection Impact Assessment (DPIA)</strong>.
         </li>
         <li>
-          <strong>You see real values</strong> - tokens are replaced back to
-          real values in your browser only.
-        </li>
-        <li>
-          <strong>Claude/Anthropic never sees</strong> the real email, IP, or
-          other PII - only meaningless tokens.
+          Use it only for genuine support, look at the minimum you need, and
+          don't share what you see outside the support team.
         </li>
       </ul>
-      <p class="small text-muted mt-2">
-        This system complies with ICO guidance on pseudonymization - the tokens
-        are meaningless without the key, which never leaves Freegle's servers.
-      </p>
     </b-modal>
-
-    <!-- PII Warning Modal -->
-    <b-modal
-      v-model="showPiiWarning"
-      title="Personal Data Detected"
-      centered
-      @ok="confirmPiiQuery"
-      @cancel="cancelPiiQuery"
-    >
-      <p>The following personal data was detected in your query:</p>
-      <ul>
-        <li v-for="(pii, idx) in detectedPii" :key="idx">
-          <strong>{{ pii.type }}:</strong> {{ pii.value }}
-          <span v-if="pii.source === 'selected_user'" class="text-muted">
-            (selected user)
-          </span>
-        </li>
-      </ul>
-      <p>
-        This data will be <strong>pseudonymized</strong> before processing. The
-        AI service will only see random tokens, not the actual values.
-      </p>
-      <p>Do you want to proceed?</p>
-    </b-modal>
-
-    <!-- Privacy Review Modal (shown when privacyReviewMode is enabled) -->
-    <b-modal
-      v-model="showPrivacyReview"
-      title="Privacy Review"
-      size="lg"
-      centered
-      ok-title="Approve & Send to AI"
-      cancel-title="Cancel"
-      @ok="approvePrivacyReview"
-      @cancel="cancelPrivacyReview"
-    >
-      <p class="text-info">
-        <strong>Privacy Review Mode:</strong> Please verify that all personal
-        data has been properly pseudonymized before sending to the AI.
-      </p>
-
-      <div class="privacy-review-section mb-3">
-        <h6>Your Original Query:</h6>
-        <div class="privacy-review-box original">
-          {{ pendingPrivacyReview?.originalQuery }}
-        </div>
-      </div>
-
-      <div class="privacy-review-section mb-3">
-        <h6>Pseudonymized Query (what the AI will see):</h6>
-        <div class="privacy-review-box pseudonymized">
-          {{ pendingPrivacyReview?.pseudonymizedQuery }}
-        </div>
-      </div>
-
-      <div
-        v-if="
-          pendingPrivacyReview?.mapping &&
-          Object.keys(pendingPrivacyReview.mapping).length > 0
-        "
-        class="privacy-review-section mb-3"
-      >
-        <h6>Pseudonymized Values:</h6>
-        <table class="table table-sm table-bordered">
-          <thead>
-            <tr>
-              <th>Real Value (kept private)</th>
-              <th>Pseudonymized (sent to AI)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(value, token) in pendingPrivacyReview.mapping"
-              :key="token"
-            >
-              <td>{{ value }}</td>
-              <td>
-                <code class="text-danger">{{ token }}</code>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="alert alert-warning">
-        <strong>Check:</strong> Does the pseudonymized query contain any real
-        email addresses, names, phone numbers, or other personal data? If so,
-        click Cancel and report the issue.
-      </div>
-    </b-modal>
-
-    <!-- MCP queries run server-side via Agent SDK — no client approval needed -->
 
     <!-- Header -->
     <div class="log-analysis-header">
-      <div class="d-flex align-items-center justify-content-between">
-        <div>
+      <div
+        class="d-flex align-items-center justify-content-between flex-wrap gap-2"
+      >
+        <div class="d-flex align-items-center flex-wrap">
           <strong>AI Support Helper</strong>
-          <span v-if="!sanitizerAvailable" class="text-danger ms-2">
-            (Service unavailable)
-          </span>
           <span v-if="totalCost > 0" class="session-cost ms-2">
             Session: ${{ totalCost.toFixed(4) }}
+            <template
+              v-if="totalTokens.inputTokens || totalTokens.outputTokens"
+            >
+              &middot; {{ formatTokenCounts(totalTokens) }}
+            </template>
           </span>
+          <div
+            v-if="selectedUser"
+            class="selected-user-chip d-flex align-items-center ms-3"
+          >
+            <span class="d-inline-flex align-items-baseline flex-wrap">
+              <strong>{{ selectedUser.displayname || 'User' }}</strong>
+              <small class="text-muted ms-1">(ID: {{ selectedUser.id }})</small>
+              <span class="text-muted ms-1">{{ selectedUser.email }}</span>
+            </span>
+            <b-button
+              variant="outline-secondary"
+              size="sm"
+              class="ms-2"
+              @click="changeUser"
+            >
+              Change
+            </b-button>
+          </div>
         </div>
-        <div class="d-flex align-items-center gap-2">
-          <b-form-checkbox
-            v-model="privacyReviewMode"
-            switch
-            size="sm"
-            class="me-3"
-          >
-            <small>Privacy Review</small>
-          </b-form-checkbox>
-          <b-form-checkbox
-            v-model="showAnonymisedData"
-            switch
-            size="sm"
-            class="me-3"
-          >
-            <small>{{
-              showAnonymisedData ? 'Show PII' : 'Show Anonymised'
-            }}</small>
-          </b-form-checkbox>
-          <b-form-checkbox v-model="debugMode" switch size="sm" class="me-3">
+        <div class="d-flex align-items-center">
+          <b-form-checkbox v-model="debugMode" switch size="sm" class="me-2">
             <small>Debug</small>
           </b-form-checkbox>
           <b-button
             variant="link"
             size="sm"
-            class="p-0"
+            class="p-0 text-info"
             @click="showPrivacyModal = true"
           >
-            <span class="text-info">&#9432;</span> Privacy
+            <span aria-hidden="true">&#9432;</span> Privacy
           </b-button>
         </div>
       </div>
     </div>
 
-    <!-- Step 1: User Selection -->
-    <div
-      v-if="!selectedUser && !skippedUserSelection"
-      class="log-analysis-step p-3"
-    >
-      <h6>Step 1: Select a user to investigate</h6>
+    <!-- Member selection (mandatory) -->
+    <div v-if="!selectedUser" class="log-analysis-step p-3">
+      <h6>Select a member to investigate</h6>
       <p class="text-muted small mb-2">
-        Focus on a specific user for better results, or skip for general
-        queries.
+        Choose the member you want to investigate. The chat is unlocked once a
+        member is selected.
       </p>
       <b-input-group class="mb-2">
         <b-form-input
@@ -200,13 +105,6 @@
         >
           <v-icon v-if="searchingUser" icon="sync" class="fa-spin" />
           <v-icon v-else icon="search" /> Search
-        </b-button>
-        <b-button
-          variant="secondary"
-          :disabled="searchingUser"
-          @click="skipUserSelection"
-        >
-          Skip
         </b-button>
       </b-input-group>
 
@@ -239,25 +137,125 @@
       </NoticeMessage>
     </div>
 
-    <!-- User selected or skipped: show either initial query or chat -->
+    <!-- Chat area (only once a member has been selected) -->
     <template v-else>
-      <!-- User banner (always visible when user selected) -->
-      <div class="selected-user-banner p-2 bg-light d-flex align-items-center">
-        <div v-if="selectedUser" class="flex-grow-1">
-          <strong>{{ selectedUser.displayname || 'User' }}</strong>
-          <span class="text-muted ms-2">{{ selectedUser.email }}</span>
-          <small class="text-muted ms-2">(ID: {{ selectedUser.id }})</small>
-          <span v-if="selectedUser.lastaccess" class="text-muted ms-2">
-            | Last active: {{ formatDate(selectedUser.lastaccess) }}
-          </span>
+      <!-- Debug Panel -->
+      <div v-if="debugMode && debugLog.length > 0" class="debug-panel p-3">
+        <h6 class="d-flex align-items-center justify-content-between">
+          <span>Debug: Data Flow</span>
+          <b-button variant="link" size="sm" @click="debugLog = []"
+            >Clear</b-button
+          >
+        </h6>
+        <div class="debug-entries">
+          <div
+            v-for="(entry, idx) in debugLog"
+            :key="idx"
+            class="debug-entry mb-2 p-2"
+            :class="'debug-' + entry.type"
+          >
+            <div class="debug-header d-flex justify-content-between">
+              <strong>{{ entry.label }}</strong>
+              <small class="text-muted">{{ entry.timestamp }}</small>
+            </div>
+            <pre v-if="entry.data" class="debug-data mt-1 mb-0">{{
+              formatDebugData(entry.data)
+            }}</pre>
+          </div>
         </div>
-        <div v-else class="flex-grow-1">
-          <strong class="text-secondary">General Query</strong>
-          <span class="text-muted ms-2">(no specific user selected)</span>
+      </div>
+
+      <!-- Device summary (recent devices) — kept visible during the whole
+           conversation as reference context, not just before it starts. -->
+      <div
+        v-if="deviceSummary || loadingDevices || deviceError"
+        class="device-summary log-analysis-step p-3"
+      >
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h6 class="mb-0">
+            Recent devices
+            <small class="text-muted fw-normal">(last 7 days)</small>
+          </h6>
+          <small v-if="deviceSummary?.lastaccess" class="text-muted">
+            Last active: {{ formatLastSeen(deviceSummary.lastaccess) }}
+          </small>
         </div>
-        <b-button variant="outline-primary" size="sm" @click="newChat">
-          New Chat
-        </b-button>
+
+        <div v-if="loadingDevices" class="text-muted small">
+          <b-spinner small class="me-1" /> Loading devices&hellip;
+        </div>
+        <NoticeMessage
+          v-else-if="deviceError"
+          variant="warning"
+          class="mb-0 small"
+        >
+          {{ deviceError }}
+        </NoticeMessage>
+        <div
+          v-else-if="!deviceSummary?.devices?.length"
+          class="text-muted small"
+        >
+          No device sessions found in the last 7 days.
+        </div>
+        <div v-else class="device-cards d-flex flex-wrap gap-2">
+          <div
+            v-for="(dev, i) in deviceSummary.devices"
+            :key="i"
+            class="device-card p-2"
+          >
+            <!-- Identity: browser/app + version, then OS, then up-to-date badge. -->
+            <div class="d-flex align-items-center flex-wrap gap-1 mb-1">
+              <v-icon
+                v-if="!dev.isApp && dev.browserIcon"
+                :icon="['fab', dev.browserIcon]"
+                class="device-browser-icon"
+                :title="dev.browser"
+              />
+              <v-icon
+                :icon="dev.formIcon"
+                class="text-secondary"
+                :title="dev.isApp ? dev.formFactor + ' app' : dev.formFactor"
+              />
+              <!-- Keep the name and OS on a shared text baseline (they differ in
+                   size), so the OS doesn't sit off-line from the browser name. -->
+              <span class="d-inline-flex align-items-baseline gap-1 ms-1">
+                <strong>{{ primaryLabel(dev) }}</strong>
+                <span class="text-muted small">{{ dev.os }}</span>
+              </span>
+              <b-badge
+                v-if="freshnessBadge(dev)"
+                :variant="freshnessBadge(dev).variant"
+                class="ms-1"
+                :title="freshnessBadge(dev).title"
+              >
+                {{ freshnessBadge(dev).text }}
+              </b-badge>
+            </div>
+            <!-- Window sizes used, on the (fixed) screen size. -->
+            <div
+              v-if="dev.windows?.length"
+              class="device-pills d-flex flex-wrap align-items-center gap-1 mb-1"
+            >
+              <span
+                v-for="(win, wi) in dev.windows"
+                :key="wi"
+                class="device-pill"
+                :title="windowTitle(win)"
+              >
+                {{ win.w }}&times;{{ win.h }}
+              </span>
+              <span v-if="dev.screen" class="text-muted small ms-1">
+                on {{ dev.screen.w }}&times;{{ dev.screen.h }}
+              </span>
+            </div>
+            <div class="device-meta text-muted">
+              {{ dev.sessions }} session{{ dev.sessions === 1 ? '' : 's' }}
+              <span v-if="dev.lastSeen">
+                &middot; seen {{ formatLastSeen(dev.lastSeen) }}</span
+              >
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Initial query (before conversation starts) -->
@@ -290,44 +288,6 @@
 
       <!-- Chat interface (after conversation starts) -->
       <template v-else>
-        <!-- Debug Panel -->
-        <div v-if="debugMode && debugLog.length > 0" class="debug-panel p-3">
-          <h6 class="d-flex align-items-center justify-content-between">
-            <span>Debug: Data Flow</span>
-            <b-button variant="link" size="sm" @click="debugLog = []"
-              >Clear</b-button
-            >
-          </h6>
-          <div class="debug-entries">
-            <div
-              v-for="(entry, idx) in debugLog"
-              :key="idx"
-              class="debug-entry mb-2 p-2"
-              :class="'debug-' + entry.type"
-            >
-              <div class="debug-header d-flex justify-content-between">
-                <strong>{{ entry.label }}</strong>
-                <small class="text-muted">{{ entry.timestamp }}</small>
-              </div>
-              <div v-if="entry.tokenMapping" class="token-mapping mt-1">
-                <small class="text-muted">Tokens created:</small>
-                <div
-                  v-for="(value, token) in entry.tokenMapping"
-                  :key="token"
-                  class="token-item"
-                >
-                  <code class="token">{{ token }}</code>
-                  <span class="mx-1">&rarr;</span>
-                  <span class="real-value">{{ value }}</span>
-                </div>
-              </div>
-              <pre v-if="entry.data" class="debug-data mt-1 mb-0">{{
-                formatDebugData(entry.data)
-              }}</pre>
-            </div>
-          </div>
-        </div>
-
         <!-- Chat messages -->
         <div ref="messagesContainer" class="log-analysis-messages p-3">
           <div
@@ -344,27 +304,46 @@
             </div>
             <div class="message-content" v-html="formatMessageContent(msg)" />
             <div
-              v-if="msg.role === 'assistant' && msg.costUsd"
+              v-if="msg.role === 'assistant' && (msg.costUsd || msg.usage)"
               class="message-cost"
             >
-              Cost: ${{ msg.costUsd.toFixed(4) }}
+              <span v-if="msg.costUsd">
+                Cost: ${{ msg.costUsd.toFixed(4) }}
+              </span>
+              <span
+                v-if="
+                  msg.usage && (msg.usage.inputTokens || msg.usage.outputTokens)
+                "
+                class="ms-2"
+              >
+                {{ formatTokenCounts(msg.usage) }}
+              </span>
             </div>
           </div>
 
-          <!-- Processing indicator -->
+          <!-- Processing transcript -->
           <div v-if="isProcessing" class="message-item message-assistant mb-3">
-            <div class="message-header small text-muted mb-1">AI Assistant</div>
+            <div
+              class="message-header small text-muted mb-1 d-flex align-items-center"
+            >
+              <b-spinner small class="me-2" />
+              <span>AI Assistant</span>
+            </div>
             <div class="message-content">
-              <div class="d-flex align-items-center">
-                <b-spinner small class="me-2" />
-                <span>{{ processingStatus }}</span>
-              </div>
-              <b-button
-                variant="outline-danger"
-                size="sm"
-                class="mt-2"
-                @click="cancelQuery"
-              >
+              <ol v-if="transcript.length > 0" class="transcript-list mb-2">
+                <li
+                  v-for="(step, stepIdx) in transcript"
+                  :key="stepIdx"
+                  class="transcript-step"
+                  :class="'transcript-' + step.type"
+                >
+                  {{ step.text }}
+                </li>
+              </ol>
+              <p v-else class="text-muted mb-2">
+                Starting investigation&hellip;
+              </p>
+              <b-button variant="outline-danger" size="sm" @click="cancelQuery">
                 Cancel
               </b-button>
             </div>
@@ -397,26 +376,45 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'isomorphic-dompurify'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
 
-// Query sanitizer service - frontend talks to this for PII handling
-const SANITIZER_URL = 'http://mcp-sanitizer.localhost'
+// AI support helper for Claude integration. Talks directly to the log
+// analysis endpoint - the backend has its own moderator/admin auth and
+// runs with real (non-anonymised) data since it is only reachable by
+// authenticated support/mod staff.
+// Local dev reaches the helper via traefik at ai-support-helper.localhost; a
+// deployed build sets config AI_SUPPORT_URL to the public HTTPS URL.
+const AI_SUPPORT_URL =
+  useRuntimeConfig()?.public?.AI_SUPPORT_URL ||
+  'http://ai-support-helper.localhost'
 
-// AI support helper for Claude integration (same as existing AI assistant)
-const AI_SUPPORT_URL = 'http://ai-support-helper.localhost'
+// A *.localhost helper is only reachable when the page itself is on localhost.
+// From a public (https) page the browser blocks it as a private-network request
+// ("trying to access other services"), so treat the tool as unavailable rather
+// than firing a request that will fail. A deployed build must point
+// AI_SUPPORT_URL at a real public endpoint to enable it.
+function aiHelperReachable() {
+  if (!AI_SUPPORT_URL) return false
+  if (typeof window === 'undefined') return false
+  try {
+    const host = new URL(AI_SUPPORT_URL, window.location.href).hostname
+    const helperIsLocal = host === 'localhost' || host.endsWith('.localhost')
+    const pageIsLocal =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname.endsWith('.localhost')
+    return !(helperIsLocal && !pageIsLocal)
+  } catch (e) {
+    return false
+  }
+}
 
 // UI state
-const showPrivacyModal = ref(false)
-const showPiiWarning = ref(false)
-const showPrivacyReview = ref(false)
-const sanitizerAvailable = ref(true)
-const showAnonymisedData = ref(false)
 const debugMode = ref(false)
-const privacyReviewMode = ref(true) // Default on for privacy verification
-const pendingPrivacyReview = ref(null)
+const showPrivacyModal = ref(false)
 
 // User search
 const userSearch = ref('')
@@ -424,21 +422,21 @@ const searchingUser = ref(false)
 const searchResults = ref([])
 const noResults = ref(false)
 const selectedUser = ref(null)
-const skippedUserSelection = ref(false)
+
+// Device summary (recent devices for the selected member)
+const deviceSummary = ref(null)
+const loadingDevices = ref(false)
+const deviceError = ref('')
 
 // Query input
 const query = ref('')
-const detectedPii = ref([])
-const pendingQuery = ref(null)
 
 // Processing
 const isProcessing = ref(false)
-const processingStatus = ref('Analyzing...')
-const currentSessionId = ref(null)
 const claudeSessionId = ref(null) // For Claude Code conversation continuity
-const localMapping = ref({})
+const transcript = ref([]) // Running transcript of thinking/tool/status steps
 
-// Conversation with raw data for debug
+// Conversation
 const messages = ref([])
 const debugLog = ref([])
 
@@ -451,18 +449,18 @@ const totalCost = computed(() => {
     .reduce((sum, m) => sum + m.costUsd, 0)
 })
 
-onMounted(async () => {
-  await checkSanitizerAvailability()
+const totalTokens = computed(() => {
+  return messages.value
+    .filter((m) => m.role === 'assistant' && m.usage)
+    .reduce(
+      (acc, m) => {
+        acc.inputTokens += m.usage.inputTokens || 0
+        acc.outputTokens += m.usage.outputTokens || 0
+        return acc
+      },
+      { inputTokens: 0, outputTokens: 0 }
+    )
 })
-
-async function checkSanitizerAvailability() {
-  try {
-    const response = await fetch(`${SANITIZER_URL}/health`)
-    sanitizerAvailable.value = response.ok
-  } catch {
-    sanitizerAvailable.value = false
-  }
-}
 
 async function searchUsers() {
   if (!userSearch.value.trim()) return
@@ -505,6 +503,8 @@ function selectUser(user) {
   selectedUser.value = user
   searchResults.value = []
   userSearch.value = ''
+  // Fetch the device summary up front so support sees what the member is on.
+  loadDeviceSummary(user.id)
   // Focus the query input after Vue updates the DOM
   nextTick(() => {
     const textarea = document.querySelector('.log-analysis-container textarea')
@@ -514,18 +514,125 @@ function selectUser(user) {
   })
 }
 
-function newChat() {
-  // Start a fresh conversation - clears user and all state
+function changeUser() {
+  // Go back to member selection - clears the selected member, the
+  // conversation, and any session/debug state tied to it.
   selectedUser.value = null
-  skippedUserSelection.value = false
   messages.value = []
   query.value = ''
-  currentSessionId.value = null
   claudeSessionId.value = null
-  localMapping.value = {}
+  transcript.value = []
   debugLog.value = []
   searchResults.value = []
   userSearch.value = ''
+  deviceSummary.value = null
+  deviceError.value = ''
+}
+
+// Fetch the recent-device summary for a member from the AI support helper.
+// This is a deterministic (no-AI) endpoint, so it runs on select without cost.
+async function loadDeviceSummary(userId) {
+  deviceSummary.value = null
+  deviceError.value = ''
+  if (!userId) return
+  if (!aiHelperReachable()) {
+    deviceError.value =
+      'The AI support helper is not available on this site (no reachable backend configured).'
+    return
+  }
+  loadingDevices.value = true
+  try {
+    const authStore = useAuthStore()
+    const jwt = authStore.auth?.jwt
+    const res = await fetch(
+      `${AI_SUPPORT_URL}/api/device-summary?userId=${encodeURIComponent(
+        userId
+      )}`,
+      { headers: { ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) } }
+    )
+    if (!res.ok) {
+      deviceError.value =
+        res.status === 403
+          ? 'Not authorised to view device data.'
+          : `Could not load devices (${res.status}).`
+      return
+    }
+    deviceSummary.value = await res.json()
+  } catch (e) {
+    deviceError.value = 'Device summary service is not available.'
+  } finally {
+    loadingDevices.value = false
+  }
+}
+
+// "Chrome 150" / "Safari 17" — browser name with its major version when known.
+function browserLabel(dev) {
+  return dev.browserVersion
+    ? `${dev.browser} ${dev.browserVersion}`
+    : dev.browser
+}
+
+// The bold identity: a web browser shows "Chrome 150"; the app shows
+// "App 3.2.28" (or just "App" until the app reports its version), so the app
+// reads the same way as a browser — the thing, then its version, then the OS.
+function primaryLabel(dev) {
+  if (!dev.isApp) return browserLabel(dev)
+  return dev.appVersion ? `App ${dev.appVersion}` : 'App'
+}
+
+// Tooltip for a window-size pill.
+function windowTitle(win) {
+  const s = `${win.sessions} session${win.sessions === 1 ? '' : 's'}`
+  return `Window ${win.w}×${win.h} — ${s}`
+}
+
+// "Are they up to date?" badge, or null to show nothing. We can only judge the
+// APP by version (needs an old app updating), WEB by build-date age (needs a
+// refresh). `dev.freshness` is computed server-side; 'unknown' shows nothing
+// rather than a misleading badge (e.g. before the frontend logs version/build).
+function freshnessBadge(dev) {
+  if (dev.freshness === 'current') {
+    return {
+      variant: 'success',
+      text: 'up to date',
+      title: dev.isApp
+        ? 'Running the current app version.'
+        : 'Loaded a recent web build.',
+    }
+  }
+  if (dev.freshness === 'stale') {
+    if (dev.isApp) {
+      const cur = deviceSummary.value?.currentVersion
+      return {
+        variant: 'warning',
+        text: 'update the app',
+        title: `On v${dev.appVersion || '?'}${
+          cur ? `; current is v${cur}` : ''
+        } — they need to update the app.`,
+      }
+    }
+    return {
+      variant: 'warning',
+      text: 'out of date',
+      title: 'Running an old web build — a page refresh will update them.',
+    }
+  }
+  return null
+}
+
+// Human "x ago" for an ISO timestamp (session_start ts or DB lastaccess).
+function formatLastSeen(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  const mins = Math.round((Date.now() - d.getTime()) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.round(hrs / 24)
+  if (days < 7) return `${days}d ago`
+  return d.toLocaleDateString()
 }
 
 function scrollToBottom() {
@@ -537,263 +644,68 @@ function scrollToBottom() {
   })
 }
 
-function skipUserSelection() {
-  skippedUserSelection.value = true
-  searchResults.value = []
-  userSearch.value = ''
-  // Focus the query input after Vue updates the DOM
-  nextTick(() => {
-    const textarea = document.querySelector('.log-analysis-container textarea')
-    if (textarea) {
-      textarea.focus()
-    }
-  })
-}
-
-function addDebugEntry(type, label, data, tokenMapping = null) {
+function addDebugEntry(type, label, data) {
   if (debugMode.value) {
     debugLog.value.push({
       type,
       label,
       data,
-      tokenMapping,
       timestamp: new Date().toLocaleTimeString(),
     })
   }
 }
 
 async function submitQuery() {
-  if (!query.value.trim() || isProcessing.value) return
-  if (!selectedUser.value && !skippedUserSelection.value) return
+  if (!query.value.trim() || isProcessing.value || !selectedUser.value) return
 
-  // First, scan for PII
-  try {
-    const scanPayload = {
-      query: query.value,
-      knownPii: selectedUser.value
-        ? {
-            email: selectedUser.value.email,
-            displayname: selectedUser.value.displayname,
-            userid: selectedUser.value.id,
-          }
-        : {},
-    }
-
-    addDebugEntry('request', 'PII Scan Request', scanPayload)
-
-    const response = await fetch(`${SANITIZER_URL}/scan`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(scanPayload),
-    })
-
-    if (response.ok) {
-      const scanResult = await response.json()
-      addDebugEntry('response', 'PII Scan Response', scanResult)
-
-      if (scanResult.containsEmailTrail) {
-        alert(
-          'Your query appears to contain copy-pasted email content. Please describe the issue in your own words to protect user privacy.'
-        )
-        return
-      }
-
-      if (scanResult.detectedPii && scanResult.detectedPii.length > 0) {
-        detectedPii.value = scanResult.detectedPii
-        pendingQuery.value = query.value
-        showPiiWarning.value = true
-        return
-      }
-    }
-  } catch (error) {
-    console.error('PII scan error:', error)
-    addDebugEntry('error', 'PII Scan Error', {
-      message: error.message,
-    })
-  }
-
-  await executeQuery(query.value)
-}
-
-function confirmPiiQuery() {
-  if (pendingQuery.value) {
-    executeQuery(pendingQuery.value)
-    pendingQuery.value = null
-  }
-  showPiiWarning.value = false
-}
-
-function cancelPiiQuery() {
-  pendingQuery.value = null
-  showPiiWarning.value = false
-}
-
-async function approvePrivacyReview() {
-  if (pendingPrivacyReview.value) {
-    const { originalQuery, pseudonymizedQuery } = pendingPrivacyReview.value
-    pendingPrivacyReview.value = null
-    showPrivacyReview.value = false
-    await proceedWithQuery(originalQuery, pseudonymizedQuery)
-  }
-}
-
-function cancelPrivacyReview() {
-  pendingPrivacyReview.value = null
-  showPrivacyReview.value = false
+  const queryText = query.value
   query.value = ''
-}
 
-async function executeQuery(queryText) {
+  messages.value.push({
+    role: 'user',
+    content: queryText,
+  })
+  scrollToBottom()
+
   isProcessing.value = true
-  processingStatus.value = 'Sanitizing query...'
+  transcript.value = []
 
   try {
-    // Step 1: Sanitize the query
-    const sanitizePayload = {
-      query: queryText,
-      knownPii: selectedUser.value
-        ? {
-            email: selectedUser.value.email,
-            displayname: selectedUser.value.displayname,
-            userid: selectedUser.value.id,
-            postcode: selectedUser.value.postcode,
-            location: selectedUser.value.location,
-          }
-        : {},
-      userId: selectedUser.value?.id || 0,
-    }
+    const result = await queryLogsForUser(queryText)
 
-    addDebugEntry('request', 'Sanitize Request', sanitizePayload)
-
-    const sanitizeResponse = await fetch(`${SANITIZER_URL}/sanitize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sanitizePayload),
+    messages.value.push({
+      role: 'assistant',
+      content: result.analysis,
+      costUsd: result.costUsd,
+      usage: result.usage,
     })
-
-    if (!sanitizeResponse.ok) {
-      const error = await sanitizeResponse.json()
-      throw new Error(error.message || 'Failed to sanitize query')
-    }
-
-    const sanitizeResult = await sanitizeResponse.json()
-    const {
-      pseudonymizedQuery,
-      sessionId,
-      localMapping: newMapping,
-    } = sanitizeResult
-
-    addDebugEntry(
-      'response',
-      'Sanitize Response',
-      { pseudonymizedQuery, sessionId },
-      newMapping
-    )
-
-    currentSessionId.value = sessionId
-    localMapping.value = { ...localMapping.value, ...newMapping }
-
-    // If privacy review mode is enabled, show review modal and wait for approval
-    if (privacyReviewMode.value) {
-      pendingPrivacyReview.value = {
-        originalQuery: queryText,
-        pseudonymizedQuery,
-        mapping: newMapping,
-        sessionId,
-      }
-      isProcessing.value = false
-      showPrivacyReview.value = true
-      return
-    }
-
-    // Otherwise proceed directly
-    await proceedWithQuery(queryText, pseudonymizedQuery)
+    scrollToBottom()
   } catch (error) {
     console.error('Query error:', error)
     addDebugEntry('error', 'Query Error', { message: error.message })
     messages.value.push({
       role: 'assistant',
       content: `Error: ${error.message}`,
-      rawContent: `Error: ${error.message}`,
     })
     scrollToBottom()
   } finally {
     isProcessing.value = false
-  }
-}
-
-async function proceedWithQuery(queryText, pseudonymizedQuery) {
-  isProcessing.value = true
-
-  try {
-    // Add user message to conversation (store both raw and display versions)
-    messages.value.push({
-      role: 'user',
-      content: queryText,
-      rawContent: queryText,
-    })
-    scrollToBottom()
-
-    processingStatus.value = 'Analyzing...'
-
-    // Send pseudonymized query to Claude Code for log analysis
-    const logResult = await queryLogsForUser(pseudonymizedQuery)
-
-    addDebugEntry('response', 'Log Analysis Response (raw)', {
-      analysis:
-        logResult.analysis.substring(0, 500) +
-        (logResult.analysis.length > 500 ? '...' : ''),
-      costUsd: logResult.costUsd,
-    })
-
-    // Step 3: Store both raw and de-tokenized versions with cost
-    const deTokenizedResponse = deTokenize(logResult.analysis)
-
-    messages.value.push({
-      role: 'assistant',
-      content: deTokenizedResponse,
-      rawContent: logResult.analysis,
-      mapping: { ...localMapping.value },
-      costUsd: logResult.costUsd,
-      usage: logResult.usage,
-    })
-    scrollToBottom()
-
-    query.value = ''
-  } catch (error) {
-    console.error('Query error:', error)
-    addDebugEntry('error', 'Query Error', { message: error.message })
-    messages.value.push({
-      role: 'assistant',
-      content: `Error: ${error.message}`,
-      rawContent: `Error: ${error.message}`,
-    })
-    scrollToBottom()
-  } finally {
-    isProcessing.value = false
+    transcript.value = []
   }
 }
 
 async function queryLogsForUser(userQuery) {
-  try {
-    // If a user is selected, ensure their USER token is in the query so Claude
-    // knows who to investigate — even if the mod just wrote "What have they done?"
-    let enrichedQuery = userQuery
-    if (selectedUser.value?.id && localMapping.value) {
-      // Find the USER token for the selected user's ID
-      const userToken = Object.entries(localMapping.value).find(
-        ([token, val]) =>
-          token.startsWith('USER_') && val === selectedUser.value.id.toString()
-      )
-      if (userToken && !userQuery.includes(userToken[0])) {
-        enrichedQuery = `[Investigating user ${userToken[0]}] ${userQuery}`
-      }
+  if (!aiHelperReachable()) {
+    return {
+      analysis:
+        '**AI Support Helper unavailable**\n\nThis tool has no reachable backend on this site. It runs against a support backend that is only wired up in the internal/dev environment.',
+      costUsd: 0,
     }
-
+  }
+  try {
     const requestBody = {
-      query: enrichedQuery,
+      query: userQuery,
       userId: selectedUser.value?.id || 0,
-      sanitizerSessionId: currentSessionId.value,
     }
 
     // Include Claude session ID for conversation continuity
@@ -801,7 +713,7 @@ async function queryLogsForUser(userQuery) {
       requestBody.claudeSessionId = claudeSessionId.value
     }
 
-    addDebugEntry('request', 'Claude Code Request', requestBody)
+    addDebugEntry('request', 'Log Analysis Request', requestBody)
 
     // Forward the moderator's JWT so the helper can verify they are an
     // authenticated mod/support before running any log analysis.
@@ -859,12 +771,18 @@ async function queryLogsForUser(userQuery) {
             const event = JSON.parse(line.slice(6))
             if (event.type === 'result') {
               resultData = event
+              // The transcript is only for "while we're working" - once we
+              // have the final answer it's replaced by the assistant message.
+              transcript.value = []
             } else if (event.type === 'error') {
               throw new Error(event.message)
-            } else if (event.type === 'tool') {
-              processingStatus.value = event.message
-            } else if (event.type === 'status') {
-              processingStatus.value = event.message
+            } else if (
+              event.type === 'thinking' ||
+              event.type === 'tool' ||
+              event.type === 'status'
+            ) {
+              transcript.value.push({ type: event.type, text: event.message })
+              scrollToBottom()
             }
           } catch (e) {
             if (e.message !== 'Unexpected end of JSON input') {
@@ -885,14 +803,15 @@ async function queryLogsForUser(userQuery) {
     // Save Claude session ID for conversation continuity
     if (resultData.claudeSessionId) {
       claudeSessionId.value = resultData.claudeSessionId
-      addDebugEntry('response', 'Claude Code Response', {
-        claudeSessionId: resultData.claudeSessionId,
-        isNewSession: resultData.isNewSession,
-        analysisLength: resultData.analysis?.length || 0,
-        costUsd: resultData.costUsd,
-        usage: resultData.usage,
-      })
     }
+
+    addDebugEntry('response', 'Log Analysis Response', {
+      analysisLength: resultData.analysis?.length || 0,
+      costUsd: resultData.costUsd,
+      usage: resultData.usage,
+      claudeSessionId: resultData.claudeSessionId,
+      isNewSession: resultData.isNewSession,
+    })
 
     return {
       analysis: resultData.analysis || 'No analysis available.',
@@ -916,30 +835,23 @@ async function queryLogsForUser(userQuery) {
   }
 }
 
-function deTokenize(text) {
-  if (!text || !localMapping.value) return text
-
-  let result = text
-  for (const [token, realValue] of Object.entries(localMapping.value)) {
-    result = result.split(token).join(realValue)
-  }
-  return result
-}
-
 function formatMessageContent(msg) {
   if (!msg.content) return ''
+  // The answer is Claude's markdown, but it can quote member-supplied data
+  // (chat text, display names, post bodies) verbatim. Sanitise the rendered
+  // HTML so a member cannot plant <script>/<img onerror> to run in a support
+  // volunteer's browser and steal their JWT.
+  return DOMPurify.sanitize(marked(msg.content))
+}
 
-  // Simple approach: render markdown, then show raw content.
-  // The privacy guarantee comes from the pseudonymizer (Claude never sees real PII),
-  // not from frontend rendering tricks. The "Show Anonymised" toggle controls whether
-  // we display the de-tokenized content or the raw pseudonymized content.
-  const content = showAnonymisedData.value
-    ? msg.rawContent || msg.content
-    : msg.content
-
-  const html = marked(content)
-
-  return html
+function formatTokenCounts(usage) {
+  if (!usage) return ''
+  const input = usage.inputTokens || 0
+  const output = usage.outputTokens || 0
+  if (!input && !output) return ''
+  return `${input.toLocaleString('en-US')} in / ${output.toLocaleString(
+    'en-US'
+  )} out tokens`
 }
 
 function formatDebugData(data) {
@@ -949,7 +861,7 @@ function formatDebugData(data) {
 
 function cancelQuery() {
   isProcessing.value = false
-  processingStatus.value = ''
+  transcript.value = []
 }
 
 function formatDate(dateStr) {
@@ -957,8 +869,6 @@ function formatDate(dateStr) {
   const date = new Date(dateStr)
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
 }
-
-// MCP Query Approval Methods
 </script>
 
 <style scoped lang="scss">
@@ -979,6 +889,17 @@ function formatDate(dateStr) {
   font-weight: normal;
 }
 
+.session-tokens {
+  color: #9e9e9e;
+}
+
+.selected-user-chip {
+  font-size: 0.85rem;
+  padding: 0.15rem 0.5rem;
+  background: #e9ecef;
+  border-radius: 1rem;
+}
+
 .log-analysis-step {
   background: #ffffff;
   border-bottom: 1px solid #dee2e6;
@@ -997,10 +918,6 @@ function formatDate(dateStr) {
   &:hover {
     background-color: #e9ecef;
   }
-}
-
-.selected-user-banner {
-  border-bottom: 1px solid #dee2e6;
 }
 
 .log-analysis-messages {
@@ -1069,15 +986,32 @@ function formatDate(dateStr) {
     padding: 0.1rem 0.3rem;
     font-size: 0.85em;
   }
+}
 
-  /* PII highlighting - always red to show what was anonymised */
-  :deep(.pii-highlight) {
-    background-color: #ffebee;
-    color: #c62828;
-    padding: 0.1rem 0.3rem;
-    border-radius: 3px;
-    border-bottom: 2px solid #ef5350;
-  }
+/* Running transcript ("thinking" steps while processing) */
+.transcript-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.85em;
+  color: #495057;
+}
+
+.transcript-step {
+  padding: 0.1rem 0;
+}
+
+.transcript-step.transcript-tool {
+  color: #6f42c1;
+  font-family: monospace;
+}
+
+.transcript-step.transcript-thinking {
+  color: #495057;
+  font-style: italic;
+}
+
+.transcript-step.transcript-status {
+  color: #6c757d;
 }
 
 /* Debug panel styles */
@@ -1133,124 +1067,58 @@ function formatDate(dateStr) {
   color: #b0bec5;
 }
 
-.token-mapping {
-  .token-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.2rem 0;
+/* Device summary panel */
+.device-summary h6 {
+  font-size: 0.95rem;
+}
 
-    .token {
-      background: #ffcdd2;
-      color: #c62828;
-      padding: 0.1rem 0.4rem;
-      border-radius: 3px;
-    }
+.device-card {
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  min-width: 210px;
+  font-size: 0.85rem;
+}
 
-    .real-value {
-      color: #ffcc80;
-    }
-  }
+.device-browser-icon {
+  font-size: 1.05rem;
+  color: #495057;
+}
+
+.device-screen {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.device-pill {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 1rem;
+  background: #e7f1ff;
+  color: #0d6efd;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.device-meta {
+  font-size: 0.75rem;
+}
+
+.device-unavailable {
+  border-top: 1px dashed #dee2e6;
+  padding-top: 0.4rem;
+}
+
+.gap-1 {
+  gap: 0.25rem;
 }
 
 .gap-2 {
   gap: 0.5rem;
 }
 
-/* Privacy Review Modal styles */
-.privacy-review-box {
-  padding: 1rem;
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 0.9em;
-  white-space: pre-wrap;
-  word-break: break-word;
-
-  &.original {
-    background: #fff3e0;
-    border: 1px solid #ffcc80;
-  }
-
-  &.pseudonymized {
-    background: #e8f5e9;
-    border: 1px solid #81c784;
-  }
-}
-
-.privacy-review-section h6 {
-  margin-bottom: 0.5rem;
-  color: #616161;
-}
-
-/* MCP Results Preview styles */
-.mcp-results-preview {
-  max-height: 400px;
-  overflow-y: auto;
-  background: #263238;
-  border-radius: 4px;
-  padding: 0.75rem;
-  font-family: monospace;
-  font-size: 0.85em;
-}
-
-.result-stream {
-  border-bottom: 1px solid #37474f;
-  padding-bottom: 0.5rem;
-
-  &:last-child {
-    border-bottom: none;
-  }
-}
-
-.stream-labels {
-  color: #80cbc4;
-  margin-bottom: 0.25rem;
-}
-
-.log-entry {
-  color: #eceff1;
-  padding: 0.1rem 0;
-  display: flex;
-  gap: 0.5rem;
-
-  .timestamp {
-    color: #78909c;
-    flex-shrink: 0;
-  }
-
-  .log-line {
-    word-break: break-word;
-  }
-}
-
 .gap-3 {
   gap: 1rem;
-}
-
-/* DB Results Preview styles */
-.db-results-preview {
-  max-height: 400px;
-  overflow: auto;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
-
-  .table {
-    margin-bottom: 0;
-    font-size: 0.85em;
-
-    th {
-      position: sticky;
-      top: 0;
-      background: #f8f9fa;
-      z-index: 1;
-    }
-
-    td {
-      max-width: 200px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
 }
 </style>

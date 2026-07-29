@@ -5,7 +5,9 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -135,6 +137,17 @@ func PostShortlink(c *fiber.Ctx) error {
 
 	if req.Name == "" || req.Groupid == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Invalid parameters"})
+	}
+
+	// SECURITY: shortlinks are a per-group moderator tool; creation was previously
+	// unauthenticated. Require the caller to be a mod/owner of the target group
+	// (admin/support included via IsModOfGroup).
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+	}
+	if !auth.IsModOfGroup(myid, req.Groupid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Not a moderator of this group"})
 	}
 
 	// Check if name already exists.

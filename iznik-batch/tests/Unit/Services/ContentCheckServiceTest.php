@@ -548,11 +548,32 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_language_flagged_for_non_english(): void
     {
-        // Clear Spanish — well over 50 chars, will be detected as non-English
+        // Clear Spanish, well over 80 chars — ELD is confident, so it must flag.
         $text = 'Tengo un sofá que ya no necesito. Está en buenas condiciones y se puede recoger en cualquier momento del día. Contacta conmigo si estás interesado.';
         $result = $this->service->checkLanguage('', $text);
-        // Language detection may or may not flag this; we assert the return type is correct
-        $this->assertTrue($result === null || $result['check'] === ContentCheckService::CHECK_LANGUAGE);
+        $this->assertNotNull($result, 'Confident Spanish must be flagged');
+        $this->assertSame(ContentCheckService::CHECK_LANGUAGE, $result['check']);
+    }
+
+    public function test_check_language_terse_list_style_english_not_flagged(): void
+    {
+        // Regression (Discourse #9919): a plainly-English offer that is all English
+        // words, numbers and standard abbreviations. The old trigram library ranked
+        // this as a Latinate language and false-flagged it; ELD picks English. Real detector.
+        $text = 'Fridge freezer Beko W60 H180 good working order free to collect only from HA8 mon to fri evenings please, first to reply gets it.';
+        $this->assertGreaterThan(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'All-English-words offer must not be flagged as foreign (#9919)');
+    }
+
+    public function test_check_language_french_offer_flagged(): void
+    {
+        // A genuinely French offer that the old 0.8 ratio let through as a false
+        // negative — ELD detects it confidently. Real detector.
+        $text = 'Bonjour, je donne un canapé en bon état, à récupérer rapidement chez moi cette semaine, merci beaucoup et bonne journée à tous.';
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNotNull($result, 'Confident French must be flagged');
+        $this->assertSame(ContentCheckService::CHECK_LANGUAGE, $result['check']);
     }
 
     public function test_check_language_text_below_80_chars_skipped(): void
@@ -570,9 +591,8 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
     {
-        // A message where the top language is far above the English probability
-        // (ratio 0.3, well below both 0.8 and 0.9) must still be flagged.
-        $nonEnglishDetector = static fn(string $text) => ['fr' => 0.70, 'en' => 0.21];
+        // A message the detector confidently identifies as French must still be flagged.
+        $nonEnglishDetector = static fn(string $text) => ['lang' => 'fr', 'reliable' => true];
         $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
         $result = $this->service->checkLanguage('', $text, $nonEnglishDetector);
         $this->assertNotNull($result);

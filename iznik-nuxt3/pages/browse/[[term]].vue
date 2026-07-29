@@ -43,11 +43,7 @@
                 further away.
               </div>
             </NoticeMessage>
-            <NoticeMessage
-              v-if="placeSuggestion"
-              variant="info"
-              class="mb-2"
-            >
+            <NoticeMessage v-if="placeSuggestion" variant="info" class="mb-2">
               <p class="mb-2">
                 <strong>{{ searchTerm }}</strong> looks like a place. Would you
                 like to see items being given away near
@@ -88,6 +84,7 @@
               group-info
               :show-many="false"
               can-hide
+              browse-search
             />
           </div>
           <about-me-modal

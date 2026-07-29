@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
@@ -38,21 +39,29 @@ export const useMemberStore = defineStore({
       })
     },
     async approve(params) {
-      await api(this.config).memberships.approveMember(
-        params.id,
-        params.groupid,
-        params.subject,
-        params.stdmsgid,
-        params.body
+      await runHoldAware(
+        () =>
+          api(this.config).memberships.approveMember(
+            params.id,
+            params.groupid,
+            params.subject,
+            params.stdmsgid,
+            params.body
+          ),
+        () => this.fetch({ userid: params.id, groupid: params.groupid })
       )
     },
     async reject(params) {
-      await api(this.config).memberships.rejectMember(
-        params.id,
-        params.groupid,
-        params.subject,
-        params.stdmsgid,
-        params.body
+      await runHoldAware(
+        () =>
+          api(this.config).memberships.rejectMember(
+            params.id,
+            params.groupid,
+            params.subject,
+            params.stdmsgid,
+            params.body
+          ),
+        () => this.fetch({ userid: params.id, groupid: params.groupid })
       )
     },
     async reply(params) {
@@ -65,12 +74,16 @@ export const useMemberStore = defineStore({
       )
     },
     async delete(params) {
-      await api(this.config).memberships.delete(
-        params.id,
-        params.groupid,
-        params.subject,
-        params.stdmsgid,
-        params.body
+      await runHoldAware(
+        () =>
+          api(this.config).memberships.delete(
+            params.id,
+            params.groupid,
+            params.subject,
+            params.stdmsgid,
+            params.body
+          ),
+        () => this.fetch({ userid: params.id, groupid: params.groupid })
       )
       let foundid = false
       for (const membership of Object.values(this.list)) {

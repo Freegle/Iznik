@@ -86,8 +86,10 @@ func TestCronJobCommandsUnique(t *testing.T) {
 }
 
 func TestCronJobKnownInactiveJobs(t *testing.T) {
-	// These two jobs are known to be intentionally disabled.
-	knownInactive := []string{"deploy:watch", "users:cleanup"}
+	// deploy:watch is intentionally disabled: it detects code updates via
+	// version.txt, which isn't how the Docker environment deploys.
+	// users:cleanup was re-enabled once the V1 cutover left it unscheduled.
+	knownInactive := []string{"deploy:watch"}
 	for _, cmd := range knownInactive {
 		found := false
 		for _, j := range cronJobs {

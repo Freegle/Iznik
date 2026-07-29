@@ -578,3 +578,22 @@ svg[data-icon="hashtag"] {
     order: 8 !important;
   }
 }
+
+/* Flashes a setting that's just been jumped to from settings search, so it's
+   obvious which control on a crowded panel was the one being looked for. */
+.setting-found {
+  animation: setting-found-flash 3s ease-out;
+  scroll-margin-top: 5rem;
+}
+
+@keyframes setting-found-flash {
+  0%,
+  60% {
+    background-color: #fff3cd;
+    box-shadow: 0 0 0 0.5rem #fff3cd;
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0.5rem transparent;
+  }
+}

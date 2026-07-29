@@ -8,6 +8,10 @@
 //   messages     - array of feed summary objects
 //   selectedSort - 'Unseen' | 'Nearby' | anything else (treated as Newest-first)
 //
+// Whatever the sort, a paid pinned clearance (m.pinned) leads the feed and then the viewer's
+// own recent posts (m.mine, flagged by the server) come next, newest-first, so members can
+// always find their own posts instead of losing them in the reach order (Discourse 9933).
+//
 // Returns a NEW array; the input is not mutated (matches the old messages.slice()).
 export function sortBrowseMessages(messages, selectedSort) {
   const list = messages || []
@@ -40,10 +44,13 @@ export function sortBrowseMessages(messages, selectedSort) {
     return new Date(m.arrival).getTime()
   }
 
+  // The viewer's own posts pin to the top (below), newest-first, so compute their timestamp
+  // even in 'Unseen' mode (which otherwise skips recency) - otherwise own posts would tie and
+  // fall back to arbitrary DB order rather than most-recent-first.
   const decorated = list.map((m) => ({
     m,
     dist: isNearby && Number.isFinite(m.distance) ? m.distance : Infinity,
-    ts: needsRecency ? recencyTs(m) : 0,
+    ts: needsRecency || m.mine ? recencyTs(m) : 0,
   }))
 
   decorated.sort((a, b) => {
@@ -54,6 +61,18 @@ export function sortBrowseMessages(messages, selectedSort) {
     const bpin = b.m.pinned ? 1 : 0
     if (apin !== bpin) {
       return bpin - apin
+    }
+    // The viewer's own recent posts pin to the top of EVERY sort order (New to you / Newest /
+    // Closest), just below any paid pinned clearance - members otherwise lose track of their
+    // own posts in the reach-ordered feed and assume they aren't showing (Discourse 9933). The
+    // server flags them via `mine`. Among the member's own posts, show the most recent first.
+    const amine = a.m.mine ? 1 : 0
+    const bmine = b.m.mine ? 1 : 0
+    if (amine !== bmine) {
+      return bmine - amine
+    }
+    if (amine && bmine) {
+      return b.ts - a.ts
     }
     if (selectedSort === 'Unseen') {
       // Unseen first, then by descending rippling relevance score. Successful posts are

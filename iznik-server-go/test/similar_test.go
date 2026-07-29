@@ -14,6 +14,80 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSimilarImpressionLoggingDoesNotAffectResults covers the impression
+// logging added so MinSimilarScore can be tuned on click-through per score band.
+//
+// It asserts the endpoint's output is unchanged with Loki enabled, not that a
+// line was written: misc.GetLoki() is a sync.Once singleton, so whichever test
+// runs first fixes its enabled/disabled state for the whole process and a
+// file-content assertion would pass or fail on test ordering. What matters here
+// is that instrumentation on the serving path cannot change or break what the
+// strip returns.
+func TestSimilarImpressionLoggingDoesNotAffectResults(t *testing.T) {
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_JSON_PATH", t.TempDir())
+
+	base := makeTestVec(0.5)
+	strong := makeVecWithCosine(base, 0.93)
+	const srcID, okID = 813001, 813002
+	const u1, u2 = uint64(96001), uint64(96002)
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Dining table", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: okID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Dining table and chairs", Arrival: time.Now(), SubjectVec: strong},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/813001/similar", nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	require.Len(t, results, 1, "logging must not drop or duplicate served candidates")
+	assert.Equal(t, uint64(okID), results[0].Msgid)
+	assert.GreaterOrEqual(t, results[0].Score, float32(message.MinSimilarScore))
+}
+
+// TestSimilarThresholdExcludesWeakBand pins the strip's floor at the measured
+// 0.80 rather than the original 0.60.
+//
+// The band between them is where the strip used to embarrass itself: on 150
+// hand-judged live samples, top suggestions scoring 0.75-0.80 were useful only
+// 43% of the time and below 0.75 only 17%, producing pairings that shared a word
+// and nothing else (Crocosmia -> "Crockery", Motherboard -> "Headboard"). A 0.70
+// candidate clears the old floor comfortably and must still be dropped; without
+// this, lowering the constant back to 0.60 stays green.
+func TestSimilarThresholdExcludesWeakBand(t *testing.T) {
+	base := makeTestVec(0.5)
+	const srcID, weakID, strongID = 812001, 812002, 812003
+	const u1, u2 = uint64(95001), uint64(95002)
+
+	weak := makeVecWithCosine(base, 0.70)   // above old 0.60, below new 0.80
+	strong := makeVecWithCosine(base, 0.92) // clears the new floor
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: srcID, Fromuser: u1, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crocosmia", Arrival: time.Now(), SubjectVec: base},
+		{Msgid: weakID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crockery", Arrival: time.Now(), SubjectVec: weak},
+		{Msgid: strongID, Fromuser: u2, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: "Crocosmia bulbs", Arrival: time.Now(), SubjectVec: strong},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/812001/similar", nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SimilarResult
+	json.NewDecoder(resp.Body).Decode(&results)
+
+	got := map[uint64]bool{}
+	for _, r := range results {
+		got[r.Msgid] = true
+		assert.GreaterOrEqual(t, r.Score, float32(message.MinSimilarScore))
+	}
+	assert.True(t, got[uint64(strongID)], "0.92 similarity is shown")
+	assert.False(t, got[uint64(weakID)], "0.70 similarity clears the old 0.60 floor but must not be shown")
+}
+
 // TestSimilarReturnsNearMatchesSameType: given a source Offer, /similar returns
 // only open posts that are the same type, above MinSimilarScore, by a DIFFERENT
 // author, and not the source itself.

@@ -103,26 +103,6 @@
       <!-- eslint-disable-next-line -->
       <ExternalLink v-if="group.groupemail" :href="'mailto:' + group.groupemail">{{ group.groupemail }}</ExternalLink>
       <br />
-      <div v-if="!group.facebook || !group.facebook.length">Facebook: none</div>
-      <div v-else>
-        <div
-          v-for="facebook in group.facebook"
-          :key="'facebook-' + facebook.id"
-        >
-          <div v-if="facebook.type === 'Page'">
-            <ModClipboard
-              class="me-3 mb-1"
-              :value="'https://facebook.com/pg/' + facebook.id"
-            />
-            Facebook:
-            <ExternalLink :href="'https://facebook.com/pg/' + facebook.id">
-              {{ facebook.name }}
-            </ExternalLink>
-            <span v-if="!facebook.valid" class="text-danger"> Invalid </span>
-          </div>
-        </div>
-      </div>
-      <br />
       Affiliation last confirmed: {{ dateonly(group.affiliationconfirmed) }} by
       <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
         group.affiliationconfirmedby
@@ -166,6 +146,9 @@
         class="mt-2"
         @handle="saveCentres"
       />
+      <p v-if="centreError" class="text-danger">
+        {{ centreError }}
+      </p>
       <h4 class="mt-2">CGA</h4>
       <b-form-textarea v-model="group.cga" rows="4" class="mb-2" />
       <p v-if="CGAerror" class="text-danger">
@@ -212,6 +195,7 @@
 import { ref, computed, watch } from 'vue'
 import { useMemberStore } from '~/stores/member'
 import { useModGroupStore } from '@/stores/modgroup'
+import { toNumberOrNull } from '~/composables/useNumericInput'
 
 const modGroupStore = useModGroupStore()
 const memberStore = useMemberStore()
@@ -221,6 +205,7 @@ const searchgroup = ref(null)
 const fetchingVolunteers = ref(false)
 const CGAerror = ref(null)
 const DPAerror = ref(null)
+const centreError = ref(null)
 
 const groups = computed(() => {
   return Object.values(modGroupStore.allGroups)
@@ -397,14 +382,22 @@ function saveNames(callback) {
   callback()
 }
 
-function saveCentres(callback) {
-  modGroupStore.updateMT({
-    id: groupid.value,
-    lat: group.value.lat,
-    lng: group.value.lng,
-    altlat: group.value.altlat,
-    altlng: group.value.altlng,
-  })
+async function saveCentres(callback) {
+  centreError.value = null
+  // Coerce the number-input strings to real numbers (or null when blank). The API's lat/lng
+  // fields are float; a string there fails the request body parse and the whole save is
+  // rejected, which is why the centre point never stuck (Discourse 9932).
+  try {
+    await modGroupStore.updateMT({
+      id: groupid.value,
+      lat: toNumberOrNull(group.value.lat),
+      lng: toNumberOrNull(group.value.lng),
+      altlat: toNumberOrNull(group.value.altlat),
+      altlng: toNumberOrNull(group.value.altlng),
+    })
+  } catch (e) {
+    centreError.value = e.message
+  }
   callback()
 }
 

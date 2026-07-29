@@ -23,6 +23,7 @@ const mockVisibleMessages = ref([])
 const mockWork = computed(() => 0)
 const mockNextAfterRemoved = ref(null)
 const mockGetMessages = vi.fn()
+const mockListingIds = ref(new Set())
 
 vi.mock('~/composables/useModMessages', () => ({
   setupModMessages: () => ({
@@ -43,6 +44,7 @@ vi.mock('~/composables/useModMessages', () => ({
     visibleMessages: mockVisibleMessages,
     work: mockWork,
     nextAfterRemoved: mockNextAfterRemoved,
+    listingIds: mockListingIds,
     getMessages: mockGetMessages,
   }),
 }))
@@ -210,6 +212,9 @@ describe('PendingPage', () => {
     mockModGroupStore.list = {}
     mockMiscStore.get.mockReturnValue(null)
     mockAuthStore.user = { settings: { lastaimsshow: null } }
+    mockListingIds.value = new Set()
+    mockMessageStore.list = {}
+    mockMessageStore.context = null
   })
 
   describe('rendering', () => {
@@ -322,6 +327,24 @@ describe('PendingPage', () => {
       await wrapper.vm.loadMore(mockState)
 
       expect(mockMessageStore.fetchMessagesMT).toHaveBeenCalled()
+    })
+
+    it('keeps scrolling when a page returns real messages that are already cached from another group (rippled/cross-posted posts)', async () => {
+      // Regression (Discourse 9954/5): see the sibling test in
+      // approved.spec.js - the same broken completion check (comparing
+      // Object.keys(messageStore.list) before/after a fetch) lived here too.
+      mockMessageStore.list = { 555: { id: 555 } }
+      mockMessages.value = [{ id: 555 }]
+      mockShow.value = 1
+      mockMessageStore.fetchMessagesMT.mockResolvedValue([555])
+      mockMessageStore.context = { date: 123, id: 555 }
+      const wrapper = mountComponent()
+      const mockState = { loaded: vi.fn(), complete: vi.fn() }
+
+      await wrapper.vm.loadMore(mockState)
+
+      expect(mockState.complete).not.toHaveBeenCalled()
+      expect(mockState.loaded).toHaveBeenCalled()
     })
   })
 

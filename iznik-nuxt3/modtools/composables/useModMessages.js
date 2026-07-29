@@ -309,9 +309,19 @@ export function setupModMessages(reset) {
     // already handled): keep the existing suppression so the list does not
     // reload under the user's feet.
     if (miscStore.deferGetMessages) return
-    if (!aModalIsOpen()) {
-      getMessages(newVal)
+    if (aModalIsOpen()) {
+      // Park it, exactly as the total-increased branch above does. Do NOT drop
+      // it: another moderator holding a message moves it from `pending` to
+      // `pendingother` (see groupWork.go), so the total never changes and this
+      // branch is the ONLY one that can surface a hold. Dropping it lost the
+      // hold permanently — the watcher's oldVal advances, so every later tick
+      // compares equal and early-returns — leaving the other moderator looking
+      // at a card with no "Held" banner until they manually reloaded. They
+      // moderated the post out from under the holding mod (Discourse #9946).
+      pendingWorkRefresh.value = newVal
+      return
     }
+    getMessages(newVal)
   })
 
   // Apply a refresh that was deferred because a modal was open, as soon as the

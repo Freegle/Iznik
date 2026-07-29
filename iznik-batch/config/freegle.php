@@ -33,6 +33,35 @@ return [
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
     ],
 
+    // Matched-posts email (matches:notify): emails a member the opposite-type
+    // posts near them that match their own open Offer/Wanted, resurrected with
+    // vector matching. Killswitch FREEGLE_MATCHED_ENABLED=false stops all sends
+    // without a deploy (apiv2 has its own FEATURE_MATCHED_POSTS killswitch for
+    // the vector endpoint).
+    'matched' => [
+        'enabled' => env('FREEGLE_MATCHED_ENABLED', true),
+        // How far back to treat a post as "fresh" each run. Wider than the 10-min
+        // schedule so a post embedded a few minutes after arrival is still caught;
+        // the per-(msgid,userid) ledger stops the overlap re-mailing anything.
+        'fresh_window_minutes' => env('FREEGLE_MATCHED_FRESH_WINDOW_MINUTES', 20),
+        // Matches requested from apiv2 per fresh post.
+        'match_limit_per_post' => env('FREEGLE_MATCHED_LIMIT_PER_POST', 10),
+        // Max matched posts shown in one email (rest wait for a later run / the site).
+        'max_items_per_email' => env('FREEGLE_MATCHED_MAX_ITEMS', 10),
+        // Minimum apiv2 vector-similarity score for a match to be shown. apiv2
+        // returns the nearest neighbours regardless of similarity, and the scores
+        // are only weakly discriminative (a relevant "bicycle inner tube" ~0.668
+        // barely beats an irrelevant "pot pourri" ~0.656 for "bicycle pump"), so
+        // this is a coarse tail-trim, not a quality guarantee — tune per corpus,
+        // and treat the underlying embedding quality as the real lever.
+        'match_min_score' => (float) env('FREEGLE_MATCHED_MIN_SCORE', 0.66),
+        // Don't email the same member more often than this (hours). Uses
+        // users.lastrelevantcheck, on top of the never-mail-the-same-post ledger.
+        'cooldown_hours' => env('FREEGLE_MATCHED_COOLDOWN_HOURS', 4),
+        // Don't email members who haven't visited in this many days.
+        'min_lastaccess_days' => env('FREEGLE_MATCHED_MIN_LASTACCESS_DAYS', 90),
+    ],
+
     'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
 
     'donations' => [
@@ -156,6 +185,53 @@ return [
     // Doogal UK postcode dataset (V1 cli/doogal.php + cron/doogal wrapper).
     'doogal' => [
         'zip_url' => env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
+    ],
+
+    // First-week ONBOARDING tip sequence (mail:reengage). One short tip a day
+    // for a new member's first five days, after the welcome mail. Kept under the
+    // "reengage" key/table/dashboard name; the trigger and content are onboarding.
+    'reengage' => [
+        // Dark-ship gate (mirrors FREEGLE_DIGEST_DAILY_ALLOWLIST):
+        //   ''            → send to nobody (default — feature is dark)
+        //   '*'           → send to everyone eligible
+        //   'a@x,b@y'     → only these recipient addresses (rollout pilot)
+        'allowlist' => env('FREEGLE_REENGAGE_ALLOWLIST', ''),
+        // Day the FIRST tip lands (account age in days). 1 leaves day 0 for the
+        // welcome mail, so tip 1 arrives the day after joining.
+        'start_day' => (int) env('FREEGLE_ONBOARD_START_DAY', 1),
+        // Gap between tips — one a day. Tip N lands on day start_day+(N-1)*gap,
+        // i.e. days 1..5 with the defaults.
+        'stage_gap_days' => (int) env('FREEGLE_ONBOARD_STAGE_GAP_DAYS', 1),
+        // Never START the sequence for an account already older than this. Stops
+        // a first enable from back-blasting everyone who joined recently; a member
+        // mid-sequence keeps getting the rest regardless.
+        'max_start_days' => (int) env('FREEGLE_ONBOARD_MAX_START_DAYS', 7),
+
+        // A/B experiment layer. Stays inert by default: rollout_pct=0 means
+        // nobody is in the experiment, everyone eligible falls through to the
+        // single current 'a' template with NO control holdout — i.e. exactly the
+        // pre-experiment behaviour. Ramp with FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT
+        // (0 → 10 → 50 → 100) *on top of* the allowlist gate above, so two
+        // independent knobs must both be opened.
+        'experiment' => [
+            // Salts the deterministic per-user bucket; bump to reshuffle arms
+            // for a brand-new experiment (do NOT bump mid-experiment).
+            'name' => env('FREEGLE_REENGAGE_EXPERIMENT', 'reengage-v1'),
+            // Fraction of eligible users pulled into the experiment (0-100).
+            // Those outside it get the default 'a' arm with no holdout.
+            'rollout_pct' => (int) env('FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT', 0),
+            // Arm split over the 0-99 bucket space (inclusive, must tile 0-99).
+            // 'control' is a REAL holdout: recorded but never mailed, so lift is
+            // measurable. 'a' = current copy, 'b' = alternate copy variant.
+            'arms' => [
+                'control' => ['from' => 0, 'to' => 19],   // 20% holdout
+                'a' => ['from' => 20, 'to' => 59],        // 40% current copy
+                'b' => ['from' => 60, 'to' => 99],        // 40% alternate copy
+            ],
+            // Window (days after a send) in which a login/reply/post counts as
+            // re-engagement caused by the mail, written by mail:reengage-outcomes.
+            'outcome_window_days' => (int) env('FREEGLE_REENGAGE_OUTCOME_WINDOW_DAYS', 14),
+        ],
     ],
 
     'digest' => [

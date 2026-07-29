@@ -27,6 +27,7 @@ import {
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
+import { groundingActions } from '../grounding.js'
 
 const exec = promisify(execFile)
 
@@ -64,7 +65,7 @@ const CLAUDE_BIN = resolveClaudeBin()
 function redactSecrets(s: string): string {
   if (!s) return s
   return s
-    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\S+/g, '$1=<redacted>')
+    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY|LIVE_DB_RO_PASSWORD|LIVE_DB_PASSWORD|MYSQL_PWD)=\S+/g, '$1=<redacted>')
     .replace(/(Authorization:\s*(?:bearer|token)\s+)\S+/gi, '$1<redacted>')
     .replace(/(-u\s+[^:\s]+:)\S+/g, '$1<redacted>')
     .replace(/\bCCIPAT_[A-Za-z0-9_-]+/g, 'CCIPAT_<redacted>')
@@ -161,6 +162,238 @@ export function buildFailedReviewCloseComment(
   ].join('\n')
 }
 
+// Blocker categories a follow-up commit on the SAME branch can resolve, rather than
+// throwing the PR away. Keyed by substring so the classifier tolerates the reviewer's
+// free-text category names (e.g. "partial-implementation", "Partial implementation",
+// "incomplete diff"). These are the findings where the fix is on the right track but
+// doesn't go far enough - exactly the case that used to churn: close -> re-dispatch ->
+// same partial fix -> close again. Expanding the existing fix breaks that loop.
+const COMPLETABLE_BLOCKER_PATTERNS = [
+  'partial',            // partial implementation - symptom fixed, root cause / other branches left
+  'incomplete',         // incomplete diff - claims to fix X but misses part of the path
+  'other call site',    // sibling handler / adjacent file has the same bug
+  'call sites',
+  'sibling',
+  'missing test',       // no reproduction test, or test proves nothing
+  'test proves nothing',
+  'no reproduction',
+  'coverage',           // test doesn't cover the trigger path
+  'regression',         // removed/weakened a passing test - restore it
+]
+
+// Blocker categories where completing the SAME diff is the wrong move - the approach
+// itself is unsafe or misdirected, so a corrective commit can't be trusted to fix it.
+// These still close (the human should look). Security issues are here because silently
+// bolting on more code to an unsafe change is riskier than parking it.
+const TERMINAL_BLOCKER_PATTERNS = [
+  'security',
+  'sql injection',
+  'auth bypass',
+  'path traversal',
+  'wrong', // "wrong approach", "fixes the wrong thing"
+]
+
+/**
+ * Classify a review's blocker findings into ones a follow-up commit on the same branch
+ * can resolve ("completable") and ones that mean the approach is unsound ("terminal").
+ * A blocker matching a terminal pattern is terminal even if it also matches a completable
+ * one (safety-first). Unknown categories are treated as completable, since the default
+ * response to "the fix doesn't go far enough" is to expand it, not discard it.
+ */
+export function classifyReviewBlockers(
+  blockers: Array<{ category?: string; description?: string }>,
+): { completable: typeof blockers; terminal: typeof blockers; allCompletable: boolean } {
+  const completable: typeof blockers = []
+  const terminal: typeof blockers = []
+  for (const b of blockers ?? []) {
+    const hay = `${b?.category ?? ''} ${b?.description ?? ''}`.toLowerCase()
+    if (TERMINAL_BLOCKER_PATTERNS.some((p) => hay.includes(p))) {
+      terminal.push(b)
+    } else {
+      completable.push(b)
+    }
+  }
+  return { completable, terminal, allCompletable: terminal.length === 0 && completable.length > 0 }
+}
+
+/**
+ * Decide what a failed adversarial review should DO, encoding the "expand fixes, don't
+ * close them" policy. A review that passed → 'pass'. A review that failed only on
+ * completable blockers, and hasn't already been expanded too many times → 'expand'
+ * (dispatch a follow-up commit on the same branch). Otherwise → 'close' (terminal
+ * blocker, or the expansion budget is exhausted, so hand it back for retry/human triage).
+ */
+export function decideReviewAction(
+  args: { passed: boolean; blockers: Array<{ category?: string; description?: string }>; expansionAttempts?: number; maxExpansions?: number },
+): { action: 'pass' | 'expand' | 'close'; reason: string } {
+  const { passed, blockers, expansionAttempts = 0, maxExpansions = 1 } = args
+  if (passed) return { action: 'pass', reason: 'review passed' }
+  const { terminal, allCompletable } = classifyReviewBlockers(blockers)
+  if (terminal.length > 0) {
+    return { action: 'close', reason: `terminal blocker(s): ${terminal.map((b) => b.category ?? 'issue').join(', ')}` }
+  }
+  if (!allCompletable) {
+    return { action: 'close', reason: 'no completable blockers to expand' }
+  }
+  if (expansionAttempts >= maxExpansions) {
+    return { action: 'close', reason: `expansion budget exhausted (${expansionAttempts}/${maxExpansions})` }
+  }
+  return { action: 'expand', reason: 'completable blockers — expand the fix on the same branch' }
+}
+
+/**
+ * Build the coder brief for expanding an existing fix to clear the adversarial review's
+ * completable blockers. Exported for testing. The delegate must push to the SAME branch
+ * (this is a follow-up commit, not a new PR) and emit COMMIT_PUSHED so the caller can
+ * verify the branch advanced before re-reviewing.
+ */
+export function buildFixExpansionBrief(
+  prNumber: number,
+  branch: string,
+  blockers: Array<{ category?: string; description?: string }>,
+): string {
+  const findings = (blockers ?? []).length
+    ? blockers.map((b) => `- ${b.category ?? 'issue'}: ${(b.description ?? '').slice(0, 400)}`).join('\n')
+    : '- (no specific findings recorded)'
+  return [
+    `An adversarial review of PR #${prNumber} found the fix is on the right track but does not go far enough. COMPLETE it - do not start over, do not open a new PR.`,
+    '',
+    `Check out the existing branch and push a follow-up commit that resolves EVERY finding below:`,
+    `  gh pr checkout ${prNumber} -R Freegle/Iznik   (or: git fetch origin && git checkout ${branch})`,
+    '',
+    'Findings to resolve:',
+    findings,
+    '',
+    'Rules:',
+    '- Fix the ROOT cause and EVERY sibling/other-call-site the review names, not just the one already patched.',
+    '- Keep the existing fix and tests; add to them. If a finding is about a missing or weak reproduction test, add one that fails before the fix and passes after.',
+    `- Push to the SAME branch (${branch}); do NOT open a new PR.`,
+    '- Keep the change minimal and in the style of the surrounding code.',
+  ].join('\n')
+}
+
+/**
+ * Expand an existing fix PR to clear completable review blockers by dispatching ONE
+ * headless coder delegate that pushes a follow-up commit to the SAME branch. Returns
+ * whether the branch advanced (a new commit landed on origin/<branch>). Self-contained
+ * so it doesn't perturb delegate_parallel_tasks (the hot path). Best-effort and bounded:
+ * a hung delegate is killed by the silence/hard-cap timers, and the caller only re-reviews
+ * when this reports pushed=true.
+ */
+export async function runFixExpansion(
+  prNumber: number,
+  branch: string,
+  blockers: Array<{ category?: string; description?: string }>,
+  repo = 'Freegle/Iznik',
+  repoCwd = '/home/edward/FreegleDockerWSL',
+): Promise<{ pushed: boolean; sha?: string; timedOut: boolean }> {
+  const { execFileSync, spawn } = await import('node:child_process')
+  const delegateModel = process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+  const SILENCE_TOOL_MS = 1_800_000
+  const SILENCE_IDLE_MS = 180_000
+  const HARD_CAP_MS = 1_800_000
+
+  // Record where origin/<branch> is now, so we can confirm the delegate actually advanced it.
+  let baseSha = ''
+  try {
+    const { stdout } = await exec('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: repoCwd, timeout: 20_000 })
+    baseSha = (stdout || '').trim().split(/\s+/)[0] ?? ''
+  } catch { /* best effort */ }
+
+  const worktreeDir = `/tmp/monitor-fsm-expand-${process.pid}-${Date.now()}`
+  let worktreeCreated = false
+  for (const base of ['master', 'HEAD']) {
+    try {
+      execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], { cwd: repoCwd, stdio: 'pipe' })
+      worktreeCreated = true
+      break
+    } catch { /* try next base */ }
+  }
+  const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
+  const fullPrompt = `${buildFixExpansionBrief(prNumber, branch, blockers)}
+
+==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. Complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
+STAGING RULES: never \`git add -A\`. Always stage explicit paths.
+Before emitting the marker, verify the push landed: \`git log origin/${branch} -1 --format=%H\`.
+OUTPUT MARKER — emit exactly one on its own line at the very end:
+  - Pushed the follow-up commit: COMMIT_PUSHED=<sha>
+  - Could not complete:          DELEGATE_FAILED=<one-line-reason>
+`
+
+  type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
+  const result = await new Promise<{ textStream: string; stderr: string; code: number; killReason: KillReason }>((resolve) => {
+    const child = spawn(
+      CLAUDE_BIN,
+      ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+        '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+        '--model', delegateModel],
+      { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+    )
+    let stderr = '', textStream = '', lineBuffer = ''
+    let lastEventAt = Date.now()
+    let currentTool: string | null = null
+    let killReason: KillReason = null
+    const processLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed) return
+      let ev: any
+      try { ev = JSON.parse(trimmed) } catch { return }
+      const content = ev?.message?.content ?? ev?.content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text' && typeof block.text === 'string') textStream += block.text
+          else if (block.type === 'tool_use') currentTool = block.name
+          else if (block.type === 'tool_result') currentTool = null
+        }
+      } else if (typeof content === 'string') textStream += content
+      if (ev?.type === 'result' && typeof ev.result === 'string') textStream += ev.result
+    }
+    child.stdout.on('data', (d) => {
+      lastEventAt = Date.now()
+      lineBuffer += String(d)
+      const lines = lineBuffer.split('\n'); lineBuffer = lines.pop() ?? ''
+      for (const l of lines) processLine(l)
+    })
+    child.stderr.on('data', (d) => { stderr += String(d); lastEventAt = Date.now() })
+    const silenceTick = setInterval(() => {
+      const silence = Date.now() - lastEventAt
+      if (silence > (currentTool ? SILENCE_TOOL_MS : SILENCE_IDLE_MS)) {
+        killReason = currentTool ? 'tool-silence' : 'idle-silence'
+        child.kill('SIGTERM')
+      }
+    }, 30_000)
+    const hardCap = setTimeout(() => { killReason = 'hardCap'; child.kill('SIGTERM') }, HARD_CAP_MS)
+    child.on('close', (code) => {
+      clearInterval(silenceTick); clearTimeout(hardCap)
+      if (lineBuffer) processLine(lineBuffer)
+      resolve({ textStream, stderr, code: code ?? 1, killReason })
+    })
+    child.stdin.write(fullPrompt)
+    child.stdin.end()
+  })
+
+  if (worktreeCreated) {
+    try { execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repoCwd, stdio: 'pipe' }) } catch { /* best effort */ }
+  }
+
+  const timedOut = result.killReason !== null || result.code === 143
+
+  // Trust the remote, not the delegate's self-report: confirm origin/<branch> actually moved.
+  let headSha = ''
+  try {
+    const { stdout } = await exec('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: repoCwd, timeout: 20_000 })
+    headSha = (stdout || '').trim().split(/\s+/)[0] ?? ''
+  } catch { /* best effort */ }
+  const pushed = headSha !== '' && headSha !== baseSha
+  if (pushed) out(`runFixExpansion: PR #${prNumber} branch ${branch} advanced ${baseSha.slice(0, 9)} → ${headSha.slice(0, 9)}`)
+  else out(`runFixExpansion: PR #${prNumber} not advanced (${timedOut ? 'delegate timed out' : 'no new commit'})`)
+
+  return { pushed, sha: pushed ? headSha : undefined, timedOut }
+}
+
 /**
  * Did a human leave a "this is not an actionable bug" signal on a (closed) PR?
  * Scans non-bot comments for a WONTFIX_CLOSE_PATTERN. Returns the matched comment
@@ -218,8 +451,7 @@ export async function postDiscourseReply(
       const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
         method: 'POST',
         headers: {
-          'User-Api-Key': apiKey,
-          'Api-Username': 'Edward_Hibbert',
+          'Api-Key': apiKey,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -244,6 +476,79 @@ export async function postDiscourseReply(
     }
   }
   return { ok: false, error: lastError }
+}
+
+/**
+ * Fetch the reporter's ACTUAL words for a post so an auto-reply quotes what they
+ * wrote — not our paraphrased `excerpt`/summary. Quoting the stored summary
+ * produced replies that quoted a third-person paraphrase back at the reporter as
+ * if they'd said it (e.g. a `[quote="Derek"]` containing "Derek confirms two
+ * bugs are now fixed"). Returns a short verbatim excerpt (HTML + any nested
+ * quotes stripped), or '' when it can't be fetched so callers fall back to the
+ * stored excerpt/title.
+ */
+export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
+  let apiKey: string | null = null
+  try {
+    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+      auth_pairs?: Array<{ user_api_key?: string }>
+    }
+    apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
+  } catch { /* no profile / unreadable */ }
+  if (!apiKey) return ''
+  try {
+    const resp = await fetch(`${DISCOURSE_BASE}/t/${topicId}.json`, { headers: { 'Api-Key': apiKey } })
+    if (!resp.ok) return ''
+    const j = (await resp.json()) as {
+      posts_count?: number
+      highest_post_number?: number
+      post_stream?: { posts?: Array<{ post_number: number; cooked?: string }>; stream?: number[] }
+    }
+    let cooked = j.post_stream?.posts?.find((p) => p.post_number === postNumber)?.cooked
+    if (!cooked) {
+      // The reporting post isn't on the topic's first page (~20 posts). Resolve
+      // its id from the stream (anchored from the end so mid-thread deletions
+      // don't shift the index) and fetch that specific post, rather than silently
+      // falling back to our summary.
+      const stream = j.post_stream?.stream ?? []
+      const highest = j.highest_post_number ?? j.posts_count ?? stream.length
+      const idx = stream.length - 1 - (highest - postNumber)
+      const postId = idx >= 0 && idx < stream.length ? stream[idx] : undefined
+      if (postId) {
+        const r2 = await fetch(`${DISCOURSE_BASE}/posts/${postId}.json`, { headers: { 'Api-Key': apiKey } })
+        if (r2.ok) cooked = ((await r2.json()) as { cooked?: string }).cooked
+      }
+    }
+    if (!cooked) return ''
+    let text = cooked
+      .replace(/<aside[\s\S]*?<\/aside>/gi, ' ') // drop nested quote blocks — never quote a quote
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (text.length > maxLen) text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…'
+    return text
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * A "retest" post can either CONFIRM a fix works ("showing now, thanks") or
+ * report it is STILL BROKEN. Only the latter, against an already-fixed bug, is a
+ * regression; a positive confirmation is success feedback. Misreading a
+ * confirmation as a regression creates a bogus bug that then draws a nonsensical
+ * "please retest" auto-reply on the very post that confirmed the fix (topic
+ * 9932/8). "still broken" wins if both are present ("thanks but still not
+ * working").
+ */
+export function retestConfirmsFix(text: string): boolean {
+  const t = (text || '').toLowerCase()
+  const stillBroken = /\b(still|not working|does ?n'?t work|no better|same (problem|issue|thing)|not fixed|worse|broken|spoke too soon|back again|happening again)\b/.test(t)
+  if (stillBroken) return false
+  return /\b(works? now|working now|now works?|fixed|resolved|sorted|all good|thank(s| you)|great|perfect|now (showing|shows|working)|takes me to|no longer|can now)\b/.test(t)
 }
 
 /**
@@ -465,7 +770,14 @@ export function matchDirectMasterFixCommits(
       const key = `${m[1]}/${m[2]}`
       if (!tpRefs.has(key)) tpRefs.set(key, { sha: c.sha, subj: c.subj })
     }
-    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b/gi)) {
+    // Topic-only ref, used by the single-unfixed-bug fallback below. A topic
+    // number that is immediately followed by a post reference ("(9808 #585)")
+    // is SCOPED to that post, not the whole topic — registering it as a
+    // topic-only ref let a reach-slider commit that mentioned "(9808 #585/#600)"
+    // get matched to an unrelated open bug (9808/633) via the fallback, marking
+    // it fixed and posting a bogus retest (Neville, 2026-07-22). The negative
+    // lookahead keeps scoped references out of topicRefs.
+    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b(?!\s*[/#]\s*\d)/gi)) {
       const t = Number(m[1])
       if (!topicRefs.has(t)) topicRefs.set(t, { sha: c.sha, subj: c.subj })
     }
@@ -540,6 +852,76 @@ export function selectExtraPrsToClose(
   })
 }
 
+/**
+ * Read a balanced JSON array out of `s` starting at the `[` at index `open`,
+ * respecting string literals (so `]` inside a string value does not close the
+ * array). Returns the array substring, or null if the brackets never balance.
+ */
+function readBalancedArray(s: string, open: number): string | null {
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = open; i < s.length; i++) {
+    const c = s[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (c === '\\') esc = true
+      else if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') inStr = true
+    else if (c === '[') depth++
+    else if (c === ']') {
+      depth--
+      if (depth === 0) return s.slice(open, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * Extract a single-line JSON-array marker (CLASSIFICATIONS=[...] /
+ * SENTRY_ISSUES=[...]) from the FULL delegate output stream.
+ *
+ * Why this exists: the driver used to leave these markers for the collate brain
+ * to scrape out of `stdoutTail` — only the last ~1500 chars of the stream. A
+ * verbose delegate (heavy grounding output, then a prose summary) pushes the
+ * marker out of that window, so its bugs were silently dropped while the topic
+ * cursor still advanced inside the delegate — making the loss unrecoverable.
+ * Topic 9808 posts 622 & 633 were lost exactly this way on 2026-07-22. Parsing
+ * from the whole stream here (like ANALYSIS_COMPLETE already is) removes the
+ * dependence on where the marker happens to land.
+ *
+ * Returns the parsed array, the LAST valid occurrence if emitted more than once
+ * (retries echo the marker), or null when the marker is absent or unparseable.
+ * A null return lets callers fall back to an empty list / the stdoutTail scrape.
+ */
+export function extractJsonArrayMarker(combined: string, marker: string): unknown[] | null {
+  const token = `${marker}=`
+  let searchFrom = 0
+  let last: unknown[] | null = null
+  for (;;) {
+    const at = combined.indexOf(token, searchFrom)
+    if (at === -1) break
+    const open = combined.indexOf('[', at + token.length)
+    // Only accept a '[' that immediately follows '=' (whitespace allowed) — do
+    // not grab a stray bracket from prose after a non-array emission.
+    if (open === -1 || combined.slice(at + token.length, open).trim() !== '') {
+      searchFrom = at + token.length
+      continue
+    }
+    const arr = readBalancedArray(combined, open)
+    if (arr !== null) {
+      try {
+        const parsed = JSON.parse(arr)
+        if (Array.isArray(parsed)) last = parsed
+      } catch { /* malformed — keep any earlier valid value, try next occurrence */ }
+    }
+    searchFrom = at + token.length
+  }
+  return last
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -602,7 +984,7 @@ import json, urllib.request, re, sys, time
 
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
+headers = {'Api-Key': api_key}
 
 CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
@@ -985,10 +1367,11 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const APP_CAVEAT = ' (but app releases may take up to one week)'
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (affectsApp ? APP_CAVEAT : '')
-        // Fallback chain so there is ALWAYS quoted text: the reporting post's excerpt,
-        // else the topic title (a topic always has one). If both were somehow empty the
-        // posting guard would refuse to post rather than post a context-less reply.
-        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        // Quote the reporter's ACTUAL words (fetched verbatim) so the reply quotes
+        // what they wrote, not our paraphrased summary. Fall back to the stored
+        // excerpt/title only if the live fetch yields nothing; the posting guard
+        // still refuses a context-less reply.
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         const username = bug.reporter ?? 'there'
 
         // Auto-post (explicitly approved): post the verbatim reply threaded under
@@ -1077,7 +1460,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         const existing = db.prepare(`SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`).get(bug.topic, bug.post)
         if (existing) { skipped.push(`${tag} (reply already exists)`); continue }
 
-        const quote = (bug.excerpt || bug.topic_title || '').trim()
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         if (!quote) { skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
@@ -1126,7 +1509,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 import json, urllib.request, re, html, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key}
+headers = {'Api-Key': api_key}
 
 tracked_cursors = json.loads('''${cursorsJson.replace(/'/g, "\\'")}''')
 
@@ -1193,6 +1576,13 @@ for i, tid in enumerate(sorted(topic_ids)):
     for post in posts:
         pn = post.get('post_number', 0)
         if pn <= effective_cursor:
+            continue
+        # Skip the monitor's OWN account (AI_Edward). Its posts are our diagnostic /
+        # "possible fix, please retest" replies, not member bug reports; classifying them
+        # re-opens bugs we just fixed and dispatches duplicate fix delegates (the feedback
+        # loop that produced duplicate PRs #1165/#1166 for topic 9954). The cursor still
+        # advances past them (latestPostNumber above), so they are marked seen.
+        if post.get('username', '') == 'AI_Edward':
             continue
         cooked = post.get('cooked', '')
         text = re.sub(r'<[^>]+>', '', cooked)
@@ -1336,7 +1726,7 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
 import json, urllib.request, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key}
+headers = {'Api-Key': api_key}
 
 def fetch(url, retries=4):
     """GET a Discourse URL with rate-limit backoff for 429."""
@@ -2034,7 +2424,7 @@ FORBIDDEN:
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
-  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+  git log origin/<branch> -1 --format=%H   (from your worktree)
 If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
 If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
@@ -2205,6 +2595,9 @@ If you omit the marker, your work is considered failed regardless of what actual
       const directPushSha = directMatch ? directMatch[1] : undefined
       const commitPushedSha = commitMatch ? commitMatch[1] : undefined
       const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+      // See extractJsonArrayMarker: parse from the full stream, not stdoutTail.
+      const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
+      const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -2237,6 +2630,8 @@ If you omit the marker, your work is considered failed regardless of what actual
           lastTool,
           stdoutTail: redactSecrets(textStream.slice(-2000)),
           stderrTail: redactSecrets(stderr.slice(-2000)),
+          classifications,
+          sentryIssues,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -2320,7 +2715,7 @@ STAGING RULES: never \`git add -A\`. Always stage explicit paths.
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
-  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+  git log origin/<branch> -1 --format=%H   (from your worktree)
 If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
 If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
@@ -2404,6 +2799,13 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         const directPushSha = directMatch ? directMatch[1] : undefined
         const commitPushedSha = commitMatch ? commitMatch[1] : undefined
         const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+        // Parse the machine-readable markers from the FULL stream, not the
+        // truncated stdoutTail the collate brain sees — a verbose delegate
+        // buries them beyond the tail window (topic 9808/622+633 loss). Attach
+        // structurally so COLLATE_RESULTS reads result.classifications /
+        // result.sentryIssues instead of scraping stdoutTail.
+        const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
+        const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -2455,6 +2857,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           commitPushedSha,
           pushed,
           analysisComplete,
+          classifications,
+          sentryIssues,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
@@ -2797,7 +3201,24 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             skipped++
             continue
           }
-          // No existing open bug → treat as potential regression, fall through to persist as 'open'
+          // No OPEN bug in the topic. If there is an already-FIXED bug here and
+          // this retest is a positive confirmation ("works now"), it is success
+          // feedback, NOT a regression. Record it against the fixed bug and skip —
+          // otherwise it becomes a bogus regression bug that draws a "please
+          // retest" auto-reply on the post that just confirmed the fix (9932/8).
+          const priorFixedBug = db.prepare(
+            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND state = 'fixed' ORDER BY fixed_at DESC LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number } | undefined
+          const retestText = `${c.summary ?? ''} ${c.originalPostText ?? ''}`
+          if (priorFixedBug && retestConfirmsFix(retestText)) {
+            db.prepare(`UPDATE discourse_bug SET last_seen_at = datetime('now') WHERE topic = ? AND post = ?`)
+              .run(priorFixedBug.topic, priorFixedBug.post)
+            out(`persist_classifications: ${c.topic}/${post} confirms fix of ${priorFixedBug.topic}/${priorFixedBug.post} — success feedback, skipping new entry`)
+            skipped++
+            continue
+          }
+          // No existing open bug and not a positive confirmation → treat as a
+          // potential regression, fall through to persist as 'open'.
         }
         // Parse tags from classification output (TRIAGE emits symptom_tags + code_area)
         const symptomTags: string[] = Array.isArray(c.symptom_tags)
@@ -3177,6 +3598,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
     handler: async (params, context) => {
       const { prNumber, repo = 'Freegle/Iznik' } = params as any
       try {
+        // Review the current PR diff. Wrapped in a closure so the identical logic runs
+        // for the initial review AND the post-expansion re-review. Returns null when the
+        // diff can't be fetched (a hard fail that must never trigger expansion).
+        const reviewOnce = async (): Promise<{ passed: boolean; issues: any[]; blockers: any[]; summary: string } | null> => {
         // Fetch PR diff
         const { stdout: diff } = await exec('gh', [
           'pr', 'diff', String(prNumber),
@@ -3184,11 +3609,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         ], { maxBuffer: 50 * 1024 * 1024, timeout: 30 * 1000 })
 
         if (!diff || diff.trim().length === 0) {
-          return {
-            passed: false,
-            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
-            summary: 'Failed to fetch PR diff',
-          }
+          return null
         }
 
         // Review with Opus
@@ -3257,44 +3678,77 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
         }
 
         const passed = review.passed !== false && (!Array.isArray(review.blockers) || review.blockers.length === 0)
+        const blockers = Array.isArray(review.blockers) ? review.blockers : []
         const issues = [
-          ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
+          ...blockers.map((b: any) => ({ ...b, severity: 'error' })),
           ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
           ...(Array.isArray(review.info) ? review.info.map((i: any) => ({ ...i, severity: 'info' })) : []),
         ]
+        return { passed, issues, blockers, summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues') }
+        } // end reviewOnce
 
-        // A failed review must NOT leave a bad PR open for the human to find (that's
-        // how #661/#662/#663/#668/#670 reached the operator). Auto-close the PR; the
-        // bug then re-enters the reopen→retry→escalate path via sync_pr_states. Only
-        // touch FSM-authored fix branches (fix/ or fix-), never a human PR, and never
-        // a passing one. The close comment carries FSM_AUTOCLOSE_MARKER so it is not
-        // mistaken for a human wontfix (which would park instead of retry).
+        let r = await reviewOnce()
+        if (!r) {
+          return {
+            passed: false,
+            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
+            summary: 'Failed to fetch PR diff',
+          }
+        }
+
+        // "Expand fixes, don't close them" (operator directive). A failed review whose
+        // blockers are all COMPLETABLE (partial implementation, sibling call sites, a
+        // missing/weak reproduction test, ...) gets ONE follow-up commit on the SAME branch
+        // to finish the fix, then a re-review — instead of the old
+        // close→re-dispatch→same-partial-fix churn (#1164/#1167/#1171 each hit this).
+        // We still auto-close on a TERMINAL blocker (security / wrong-approach) or when the
+        // expansion fails to land or fails to clear the blockers, so a bad PR never reaches
+        // the operator (the failure mode behind #661/#662/#663/#668/#670). Only ever touch
+        // FSM fix branches (fix/ or fix-) that are still OPEN; the close comment carries
+        // FSM_AUTOCLOSE_MARKER so it isn't mistaken for a human wontfix (which parks instead).
         let autoClosed = false
-        if (!passed) {
-          try {
-            const { stdout: branchOut } = await exec(
-              'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
-              { timeout: 20 * 1000 },
-            )
-            const [branch, state] = (branchOut || '').trim().split(' ')
-            if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+        let expanded = false
+        if (!r.passed) {
+          const { stdout: branchOut } = await exec(
+            'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+            { timeout: 20 * 1000 },
+          ).catch(() => ({ stdout: '' }))
+          const [branch, state] = (branchOut || '').trim().split(' ')
+          const closePr = async (reason: string) => {
+            try {
               await exec(
-                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, issues)],
+                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, r!.issues)],
                 { timeout: 30 * 1000 },
               )
               autoClosed = true
-              out(`adversarial_review_pr: auto-closed PR #${prNumber} (failed review: ${issues.filter((i: any) => i.severity === 'error').map((i: any) => i.category).join(', ') || 'blockers'})`)
+              out(`adversarial_review_pr: auto-closed PR #${prNumber} (${reason})`)
+            } catch (e: any) {
+              outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
             }
-          } catch (e: any) {
-            outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
+          }
+          if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+            const decision = decideReviewAction({ passed: r.passed, blockers: r.blockers })
+            if (decision.action === 'expand') {
+              out(`adversarial_review_pr: PR #${prNumber} — ${decision.reason}; expanding on ${branch}`)
+              const exp = await runFixExpansion(prNumber, branch, r.blockers, repo)
+              if (exp.pushed) {
+                expanded = true
+                const r2 = await reviewOnce()
+                if (r2) r = r2
+              }
+              if (!r.passed) await closePr(exp.pushed ? 'expansion did not clear blockers' : 'expansion did not land')
+            } else {
+              await closePr(decision.reason)
+            }
           }
         }
 
         return {
-          passed,
+          passed: r.passed,
           autoClosed,
-          issues,
-          summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
+          expanded,
+          issues: r.issues,
+          summary: r.summary,
         }
       } catch (err: any) {
         outWarn(`[adversarial-review] error: ${err.message}`)
@@ -3330,4 +3784,7 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
       return { scheduled: true, delaySeconds, reason }
     },
   },
+
+  // Ground-truth read actions (prod DB over tunnel, prod Loki) — see grounding.ts.
+  ...groundingActions,
 ]

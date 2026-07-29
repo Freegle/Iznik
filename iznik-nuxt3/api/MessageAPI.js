@@ -1,6 +1,8 @@
 import BaseAPI from '@/api/BaseAPI'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
+import { notAHeldConflict } from '~/api/heldConflict'
+
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
     return this.$getv2('/message/' + id, {}, logError)
@@ -188,14 +190,18 @@ export default class MessageAPI extends BaseAPI {
   }
 
   approve(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/message', {
-      action: 'Approve',
-      id,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Approve',
+        id,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   reply(id, groupid, subject = null, stdmsgid = null, body = null) {
@@ -210,41 +216,57 @@ export default class MessageAPI extends BaseAPI {
   }
 
   reject(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/message', {
-      action: 'Reject',
-      id,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Reject',
+        id,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   delete(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/message', {
-      action: 'Delete',
-      id,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Delete',
+        id,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   spam(id, groupid) {
-    return this.$postv2('/message', {
-      action: 'Spam',
-      id,
-      groupid,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Spam',
+        id,
+        groupid,
+      },
+      notAHeldConflict
+    )
   }
 
   hold(id, groupid) {
-    return this.$postv2('/message', {
-      action: 'Hold',
-      id,
-      groupid,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Hold',
+        id,
+        groupid,
+      },
+      notAHeldConflict
+    )
   }
 
   release(id, groupid) {

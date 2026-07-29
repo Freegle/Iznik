@@ -128,7 +128,6 @@ describe('ModSettingsGroup', () => {
       newsletter: true,
       engagement: true,
       maxagetoshow: 30,
-      nearbygroups: 5,
       showjoin: 0,
       widerchatreview: false,
     },
@@ -185,6 +184,13 @@ describe('ModSettingsGroup', () => {
           'b-collapse': {
             template: '<div class="collapse"><slot /></div>',
             props: ['id', 'accordion', 'role'],
+          },
+          // Renders the title and body unconditionally; whether a section is
+          // expanded is ModSettingsSection's own concern, tested separately.
+          ModSettingsSection: {
+            template:
+              '<div class="settings-section"><button class="btn">{{ title }}</button><slot name="prebody" /><div class="card-body"><slot /></div></div>',
+            props: ['id', 'title'],
           },
           'b-button': {
             template:
@@ -283,10 +289,6 @@ describe('ModSettingsGroup', () => {
             template: '<div class="shortlink" :data-id="shortlinkid"></div>',
             props: ['shortlinkid'],
           },
-          ModGroupPostVisibility: {
-            template: '<div class="post-visibility"></div>',
-            props: ['groupid'],
-          },
           'v-icon': {
             template: '<span class="v-icon" :data-icon="icon"></span>',
             props: ['icon', 'scale'],
@@ -337,7 +339,6 @@ describe('ModSettingsGroup', () => {
       'Spam Detection',
       'Duplicate Detection',
       'Mapping',
-      'Social Media',
       'Status',
     ])('renders %s accordion', (accordionName) => {
       const wrapper = mountComponent()
@@ -472,46 +473,6 @@ describe('ModSettingsGroup', () => {
       }
       wrapper = mountComponent()
       expect(wrapper.findAll('.shortlink').length).toBe(2)
-    })
-  })
-
-  describe('Facebook section', () => {
-    it('handles Facebook connection states', () => {
-      // No Facebook linked shows warning
-      let wrapper = mountComponent({}, { facebook: [] })
-      expect(wrapper.text()).toContain('not linked to Facebook')
-
-      // Valid Facebook connection does not show "not linked" warning
-      wrapper = mountComponent(
-        {},
-        {
-          facebook: [
-            {
-              id: '123',
-              name: 'Test Page',
-              valid: true,
-              authdate: '2024-01-01',
-            },
-          ],
-        }
-      )
-      expect(wrapper.text()).not.toContain('not linked to Facebook')
-
-      // Invalid Facebook connection shows error
-      wrapper = mountComponent(
-        {},
-        {
-          facebook: [
-            {
-              id: '123',
-              name: 'Test Page',
-              valid: false,
-              lasterror: 'Token expired',
-            },
-          ],
-        }
-      )
-      expect(wrapper.text()).toContain('error')
     })
   })
 
@@ -798,7 +759,7 @@ describe('ModSettingsGroup', () => {
       // fetchIfNeedBeMT skips groups already in the store (from batch fetch),
       // so tnkey was never fetched on first load. The fix uses fetchGroupMT,
       // which always fetches including tnkey, so the link renders on first load.
-      const wrapper = mountComponent({ initialGroup: 123 })
+      mountComponent({ initialGroup: 123 })
       await flushPromises()
       expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalledWith(123)
     })

@@ -21,27 +21,11 @@ import (
 // already governs", so the fast, unfiltered count/feed path is used.
 const BrowseDistanceUnlimited = 9007199254740991 // Number.MAX_SAFE_INTEGER
 
-// authorReachCapWhere is the OUTBOUND half of the distance preference: a post is only visible to
-// viewers within the POST AUTHOR's own settings.browseMaxDistance of it ("how far away can people
-// see your posts"), mirroring the inbound recipient-side cap in the Laravel digest. Applied in SQL
-// (not Go) so the feed and its unread-count badge stay in lock-step - both queries add this same
-// clause. Absent settings / missing key / <= 0 / the sentinel all DISABLE the cap (the common
-// case). Distance is real great-circle from the viewer to the post point (like the ST_Contains
-// reach gate), not the blurred distance the viewer-side slider uses. Placeholders, in order:
-// sentinel, viewerLng, viewerLat. Requires `au` (users, joined on messages.fromuser) and `ms`
-// (messages_spatial, for the post point) to be in scope.
-// Distance is an inline great-circle (Haversine, 3959-mile earth radius matching the Laravel
-// filter) over ST_X/ST_Y of ms.point as plain lng/lat degrees, NOT ST_Distance_Sphere - the latter
-// errors on the SRID-3857-tagged points Freegle stores (its degrees carry a projected SRID that
-// ST_Distance_Sphere rejects). LEAST(1.0, ...) guards ACOS against float overshoot at ~0 distance.
-const authorReachCapWhere = "AND (au.settings IS NULL " +
-	"OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL " +
-	"OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 " +
-	"OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? " +
-	"OR (3959 * ACOS(LEAST(1.0, " +
-	"COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) " +
-	"+ SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) " +
-	"<= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+// authorReachCapWhere is the OUTBOUND half of the distance preference - see
+// utils.AuthorReachCapWhere for the full story. It lives in utils so that every reader of the
+// reach universe (this feed, its unread-count badge, and browse-scoped message search) shares
+// the one clause and cannot drift apart.
+const authorReachCapWhere = utils.AuthorReachCapWhere
 
 // reachCandidateRow is the intermediate scan target for both the reach arm
 // and the viewer's-own-posts arm of Messages: a post's identity/visibility
@@ -57,6 +41,10 @@ type reachCandidateRow struct {
 	Promised   bool    `gorm:"column:promised"`
 	Groupid    uint64  `gorm:"column:groupid"`
 	Type       string  `gorm:"column:type"`
+	// Fromuser is the post's author (messages.fromuser). When it equals the viewer, the
+	// post is flagged as theirs (MessageSummary.Mine) so the client can pin the viewer's
+	// own recent posts to the top of every browse sort order (Discourse 9933).
+	Fromuser uint64 `gorm:"column:fromuser"`
 	// Arrival is the messages_spatial arrival, which the reach engine bumps
 	// forward each time the post ripples into a new group — so it tracks "when
 	// did this most recently expand", NOT the original post time. It feeds the
@@ -105,7 +93,7 @@ func (r reachCandidateRow) blurredDistanceMiles(viewerLat, viewerLng float64) (b
 // blurred lat/lng already allow. distanceMiles (Distance) and the metres
 // figure fed into Score are the same underlying measurement, just converted,
 // so the client's distance slider and the server's ordering agree.
-func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeights, env ScoreEnv) message.MessageSummary {
+func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeights, env ScoreEnv, myid uint64) message.MessageSummary {
 	blurLat, blurLng, distanceMiles := r.blurredDistanceMiles(viewerLat, viewerLng)
 	distanceMetres := distanceMiles * milesToMetres
 
@@ -134,6 +122,7 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 		Unseen:     r.Unseen,
 		Distance:   distanceMiles,
 		Score:      comps.Total,
+		Mine:       r.Fromuser != 0 && r.Fromuser == myid,
 	}
 }
 
@@ -171,7 +160,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	db.Raw(
 		"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
-			"ms.msgtype AS type, ms.arrival, m.arrival AS posted, "+
+			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
 			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -280,9 +269,20 @@ func Messages(c *fiber.Ctx) error {
 		// The feed wants every in-reach post (seen or not — the client buckets on
 		// `unseen`), so unseenOnly is false; nearbyCount uses the same helper with
 		// unseenOnly=true so the two can never disagree on what "in reach" means.
-		for _, cand := range fetchReachCandidates(db, myid, latlng, false) {
-			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env))
+		reachCands := fetchReachCandidates(db, myid, latlng, false)
+		for _, cand := range reachCands {
+			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
 		}
+
+		// Pre-warm the browse-search reach cache with the membership we just computed:
+		// the search's reach arm is this same predicate, and members search moments
+		// after loading the feed, so this makes their FIRST search fast instead of
+		// re-running the containment (see message.PrimeReachUniverse).
+		reachIDs := make([]uint64, 0, len(reachCands))
+		for _, cand := range reachCands {
+			reachIDs = append(reachIDs, cand.ID)
+		}
+		message.PrimeReachUniverse(myid, viewerLat, viewerLng, reachIDs)
 
 		// Include the viewer's own recent open posts regardless of reach, so a poster still
 		// sees their own post immediately — including while it is awaiting approval, so it is
@@ -296,7 +296,7 @@ func Messages(c *fiber.Ctx) error {
 			"SELECT m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 				"ANY_VALUE(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-				"ANY_VALUE(mg.groupid) AS groupid, m.type, "+
+				"ANY_VALUE(mg.groupid) AS groupid, m.type, m.fromuser AS fromuser, "+
 				"MAX(mg.arrival) AS arrival, m.arrival AS posted, "+
 				"ANY_VALUE(CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END) AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
@@ -337,7 +337,7 @@ func Messages(c *fiber.Ctx) error {
 		// own candidates to summaries, then drop the expired ones.
 		ownSummaries := make([]message.MessageSummary, 0, len(ownCandidates))
 		for _, cand := range ownCandidates {
-			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env))
+			ownSummaries = append(ownSummaries, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
 		}
 		activeOwn := message.FilterExpiredSummaries(db, ownSummaries)
 
@@ -494,7 +494,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		db.Raw(fmt.Sprintf(
 			"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
-				"ms.msgtype AS type, ms.arrival, m.arrival AS posted, "+
+				"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
 				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -515,7 +515,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			weights := LoadScoreWeights()
 			env := LoadScoreEnv()
 			for _, cand := range candidates {
-				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env))
+				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
 			}
 			// Rippling relevance order (score desc, arrival tie-break), mirroring the nearby
 			// arm, so the client's "New to you" sort has a meaningful score to rank on.
@@ -542,6 +542,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 					Lat:        blurLat,
 					Lng:        blurLng,
 					Unseen:     cand.Unseen,
+					Mine:       cand.Fromuser != 0 && cand.Fromuser == myid,
 				})
 			}
 		}

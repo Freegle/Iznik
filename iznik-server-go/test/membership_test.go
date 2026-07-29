@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -117,7 +118,9 @@ func TestPutMembershipsGoBannedCannotRejoin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	// Discourse #9961: a banned join must be a real failure, not a fake "Success"
+	// that silently drops the request with nothing for a moderator to find.
+	assert.Equal(t, 403, resp.StatusCode, "Banned member rejoin should fail, not fake-succeed")
 
 	// Verify user is NOT added to Approved membership.
 	var approvedCount int64
@@ -159,7 +162,8 @@ func TestPutMembershipsV1BannedCannotRejoin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	// Discourse #9961: banned rejoin is a real failure, not a fake "Success".
+	assert.Equal(t, 403, resp.StatusCode, "V1-banned member rejoin should fail, not fake-succeed")
 
 	// Verify user is NOT added to Approved membership.
 	var approvedCount int64
@@ -2211,6 +2215,65 @@ func TestGetHappinessBasic(t *testing.T) {
 	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
 }
 
+// A post that rippled INTO a group must NOT appear in that group's Feedback
+// (Happiness) list — only the group where it ORIGINATED should show it. The
+// rippled-in copy has an Approved messages_groups row with rippled_in = 1, and
+// getHappinessMembers filters those out. Discourse 9808/633 (Neville).
+func TestGetHappinessExcludesRippledInCopies(t *testing.T) {
+	prefix := uniquePrefix("happy_ripple")
+	db := database.DBConn
+
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, originGroup, "Member")
+
+	// Native post on originGroup (origin messages_groups row, rippled_in = 0).
+	msgID := CreateTestMessage(t, posterID, originGroup, prefix+" offer item", 55.95, -3.19)
+	outcomeID := createHappinessOutcome(t, msgID, "Happy", "Great experience!")
+
+	// The SAME post ripples INTO rippledGroup: an Approved copy, rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", msgID, rippledGroup)
+
+	// A moderator of the RIPPLED-INTO group must NOT see the item in Feedback.
+	rippledModID := CreateTestUser(t, prefix+"_rmod", "User")
+	CreateTestMembership(t, rippledModID, rippledGroup, "Moderator")
+	_, rippledToken := CreateTestSession(t, rippledModID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", rippledGroup, rippledToken), nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	rippledResults, _ := parseHappinessResponse(t, resp)
+	for _, r := range rippledResults {
+		assert.NotEqual(t, float64(outcomeID), r["id"], "rippled-in item must not show in the rippled-into group's Feedback")
+	}
+
+	// The ORIGIN group's moderator still sees it.
+	originModID := CreateTestUser(t, prefix+"_omod", "User")
+	CreateTestMembership(t, originModID, originGroup, "Moderator")
+	_, originToken := CreateTestSession(t, originModID)
+
+	resp2, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", originGroup, originToken), nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+	originResults, _ := parseHappinessResponse(t, resp2)
+	foundInOrigin := false
+	for _, r := range originResults {
+		if uint64(r["id"].(float64)) == outcomeID {
+			foundInOrigin = true
+			break
+		}
+	}
+	assert.True(t, foundInOrigin, "origin group's Feedback should still include the item")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
+}
+
 func TestGetHappinessFilterHappy(t *testing.T) {
 	prefix := uniquePrefix("happy_filt")
 	db := database.DBConn
@@ -3685,7 +3748,9 @@ func TestPutMembershipsPartnerSubscribe(t *testing.T) {
 	email := prefix + "@test.com"
 	userID := CreateTestUser(t, prefix+"_user", "User")
 
-	// Set tnuserid on the user.
+	// Set tnuserid on the user. It is UNIQUE in production, so release it from
+	// any user left by an earlier run first.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12345)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 12345, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
@@ -3717,7 +3782,12 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	email := prefix + "-gtest@test.com"
 
-	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=99999&email=%s&groupid=%d", key, email, groupID)
+	// tnuserid is UNIQUE in production. 99998 keeps this distinct from
+	// apple_login_test, which claims 99999. Release it from any user left by an
+	// earlier run so the auto-create below can take it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99998)
+
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=99998&email=%s&groupid=%d", key, email, groupID)
 	req := httptest.NewRequest("PUT", url, nil)
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
@@ -3732,7 +3802,7 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	// Verify user was created with tnuserid.
 	var tnuserid uint64
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", uint64(fduserid.(float64))).Scan(&tnuserid)
-	assert.Equal(t, uint64(99999), tnuserid)
+	assert.Equal(t, uint64(99998), tnuserid)
 
 	// Verify membership.
 	var count int64
@@ -3773,6 +3843,61 @@ func TestPutMembershipsPartnerInvalidKey(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+// Discourse #9961: TrashNothing reported a member's join request as stuck
+// "pending" because it never reached a Freegle moderator. V1 parity check
+// (User::addMembership/isBanned via the legacy PHP partner handler) shows the
+// original behaviour: a banned member's partner join returned ret=4 "Failed -
+// likely ban", a genuine failure the partner could act on. The V2 Go port
+// (putMembershipsPartner) dropped that and unconditionally returns ret=0
+// "Success" for a banned member instead - no membership row, no
+// memberships_history row, no log entry, nothing anywhere for a moderator to
+// find, while telling the partner the join worked. Production data confirms
+// this path is reachable: thousands of TN-linked (userid, groupid) pairs are
+// currently banned with no corresponding membership row.
+func TestPutMembershipsPartnerBannedNotFakeSuccess(t *testing.T) {
+	prefix := uniquePrefix("mem_partbanned")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	email := prefix + "@test.com"
+	tnuserid := uint64(7654322)
+
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+
+	key := insertTestPartnerKey(t, prefix, "test.com")
+
+	// First request auto-creates the TN-linked user via the normal partner join.
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
+	req := httptest.NewRequest("PUT", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var userID uint64
+	db.Raw("SELECT id FROM users WHERE tnuserid = ?", tnuserid).Scan(&userID)
+	assert.NotZero(t, userID)
+
+	// Simulate a member who was previously banned from this group (e.g. by a
+	// moderator, independently of TN) then has TN retry the join on their
+	// behalf - TN has no visibility into Freegle-side bans.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", userID, groupID, userID)
+
+	req2 := httptest.NewRequest("PUT", url, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+
+	// Inverted (correct) assertion: a banned member's join attempt must be
+	// reported as a failure, not a fake Success, so the partner and the member
+	// both know it did not happen.
+	assert.Equal(t, fiber.StatusForbidden, resp2.StatusCode,
+		"a banned member's join attempt must not be reported as Success to the partner")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&count)
+	assert.Equal(t, int64(0), count, "a banned member must not gain a membership row via the partner path")
+}
+
 func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	prefix := uniquePrefix("mem_partunsub")
 	db := database.DBConn
@@ -3780,12 +3905,19 @@ func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 54321, userID)
+
+	// tnuserid is UNIQUE in production. Release it from any user left by an
+	// earlier run before claiming it here (same pattern as
+	// TestPutMembershipsPartnerSubscribe/AutoCreate) - without this, a stale row
+	// left by a prior run of this test collides on this fixed value.
+	tnuserid := 54321
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	email := prefix + "_user@test.com"
 
-	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=54321&email=%s&groupid=%d", key, email, groupID)
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
 	req := httptest.NewRequest("DELETE", url, nil)
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	neturl "net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -1336,8 +1337,28 @@ func isValidRedirectURL(url string) bool {
 	// Allow freegle.in for Freegle PayPal short links (e.g. donate CTA)
 	allowedDomains = append(allowedDomains, "freegle.in")
 
+	// Same-origin relative paths (e.g. "/mypost/123") are safe to redirect to.
+	if strings.HasPrefix(url, "/") && !strings.HasPrefix(url, "//") {
+		return true
+	}
+
+	// Match on the exact host, not a naive substring: strings.Contains(url, domain) would
+	// accept "https://evil.com/modtools.org" and "https://modtools.org.evil.com" as valid.
+	parsed, err := neturl.Parse(url)
+	if err != nil {
+		return false
+	}
+	// Only http(s) redirects (blocks javascript:, data:, etc.).
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return false
+	}
 	for _, domain := range allowedDomains {
-		if strings.Contains(url, domain) {
+		d := strings.ToLower(domain)
+		if host == d || strings.HasSuffix(host, "."+d) {
 			return true
 		}
 	}
@@ -1551,6 +1572,211 @@ func DigestClickPositions(c *fiber.Ctx) error {
 			"start": startDate,
 			"end":   endDate,
 			"type":  emailType,
+		},
+	})
+}
+
+// ReengageFunnel represents overall funnel counts for the localised
+// re-engagement email sequence within the requested period.
+type ReengageFunnel struct {
+	Sent      int64 `json:"sent"`
+	Opened    int64 `json:"opened"`
+	Clicked   int64 `json:"clicked"`
+	Reengaged int64 `json:"reengaged"`
+}
+
+// ReengageStageStat represents funnel counts for a single stage (day 1-5) of
+// the re-engagement sequence.
+type ReengageStageStat struct {
+	Stage     uint8 `json:"stage"`
+	Sent      int64 `json:"sent"`
+	Opened    int64 `json:"opened"`
+	Clicked   int64 `json:"clicked"`
+	Reengaged int64 `json:"reengaged"`
+}
+
+// ReengageArmStat represents funnel counts for a single experiment arm
+// ('control', 'a', 'b', ...). The control arm is a holdout that receives
+// no mail at all, so its opened/clicked counts are always zero - it still
+// has a sent count and a reengaged count, which together form the baseline
+// used to compute lift for the mailed arms.
+type ReengageArmStat struct {
+	Arm       string `json:"arm"`
+	Sent      int64  `json:"sent"`
+	Opened    int64  `json:"opened"`
+	Clicked   int64  `json:"clicked"`
+	Reengaged int64  `json:"reengaged"`
+}
+
+// ReengageSegmentStat represents send/reengagement counts for a single
+// user-journey segment ('offer', 'wanted', 'replier', 'other') captured at
+// send time.
+type ReengageSegmentStat struct {
+	Segment   string `json:"segment"`
+	Sent      int64  `json:"sent"`
+	Reengaged int64  `json:"reengaged"`
+}
+
+// ReengageSourceStat breaks sends down by how the sign-off volunteer's community
+// was resolved: 'home' (the member's catchment contains where they live - what we
+// want), 'nearest' (no catchment matched, so nearest centre was used), 'unknown'
+// (no location to test) or 'none' (no eligible volunteer; plain Freegle voice).
+// It answers "are we actually signing off from the member's own community?" and
+// whether a genuine local sign-off engages better. Opens/clicks are joined, so
+// this needs email_tracking.
+type ReengageSourceStat struct {
+	Source    string `json:"source"`
+	Sent      int64  `json:"sent"`
+	Opened    int64  `json:"opened"`
+	Clicked   int64  `json:"clicked"`
+	Reengaged int64  `json:"reengaged"`
+}
+
+// ReengageEffectiveness returns funnel/effectiveness statistics for the
+// localised re-engagement email sequence (requires authentication).
+//
+// Sends live in the `reengage` table (one row per stage sent to a user).
+// Opens/clicks come from a LEFT JOIN to email_tracking via
+// reengage.email_tracking_id, which is NULL for the experiment's control
+// arm (a holdout that receives no mail) - the LEFT JOIN keeps those rows
+// counted towards "sent" while their opened/clicked always resolve to
+// zero. Actual re-engagement is reengage.reengaged_at IS NOT NULL, written
+// separately from the mutable email open/click signals by the
+// mail:reengage-outcomes batch job.
+//
+// @Router /modtools/email/stats/reengage [get]
+// @Summary Get re-engagement email effectiveness
+// @Description Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment (Support/Admin only)
+// @Tags emailtracking
+// @Produce json
+// @Security BearerAuth
+// @Param start query string false "Start date (YYYY-MM-DD)"
+// @Param end query string false "End date (YYYY-MM-DD)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} fiber.Error "Unauthorized"
+// @Failure 403 {object} fiber.Error "Forbidden"
+func ReengageEffectiveness(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Check if user has support/admin role
+	if !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Support or Admin role required")
+	}
+
+	startDate := c.Query("start", "")
+	endDate := c.Query("end", "")
+
+	// Default to the last 90 days when no range is supplied.
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		endDate = now.Format("2006-01-02")
+		startDate = now.AddDate(0, 0, -90).Format("2006-01-02")
+	}
+
+	// If endDate doesn't include a time component, extend it to end of day.
+	endDateTime := endDate
+	if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
+		endDateTime = endDate + " 23:59:59"
+	}
+
+	// Overall funnel. LEFT JOIN so control-arm rows (email_tracking_id IS
+	// NULL, since no mail was sent) still count towards "sent" - they just
+	// never contribute to opened/clicked.
+	var funnel ReengageFunnel
+	db.Raw(`
+		SELECT
+			COUNT(*) AS sent,
+			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
+		FROM reengage r
+		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
+		WHERE r.sentat BETWEEN ? AND ?
+	`, startDate, endDateTime).Scan(&funnel)
+
+	// Funnel broken down by stage (day 1-5).
+	byStage := make([]ReengageStageStat, 0)
+	db.Raw(`
+		SELECT
+			r.stage AS stage,
+			COUNT(*) AS sent,
+			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
+		FROM reengage r
+		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
+		WHERE r.sentat BETWEEN ? AND ?
+		GROUP BY r.stage
+		ORDER BY r.stage ASC
+	`, startDate, endDateTime).Scan(&byStage)
+
+	// Funnel broken down by experiment arm. Rows predating the experiment
+	// (or sent outside of one) have arm = NULL and are excluded here - they
+	// are still reflected in the overall funnel above.
+	byArm := make([]ReengageArmStat, 0)
+	db.Raw(`
+		SELECT
+			r.arm AS arm,
+			COUNT(*) AS sent,
+			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
+		FROM reengage r
+		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
+		WHERE r.sentat BETWEEN ? AND ? AND r.arm IS NOT NULL
+		GROUP BY r.arm
+		ORDER BY r.arm ASC
+	`, startDate, endDateTime).Scan(&byArm)
+
+	// Sent/reengaged broken down by the user-journey segment captured at
+	// send time. Segment has no bearing on opens/clicks so it isn't joined
+	// to email_tracking.
+	bySegment := make([]ReengageSegmentStat, 0)
+	db.Raw(`
+		SELECT
+			r.segment AS segment,
+			COUNT(*) AS sent,
+			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
+		FROM reengage r
+		WHERE r.sentat BETWEEN ? AND ? AND r.segment IS NOT NULL
+		GROUP BY r.segment
+		ORDER BY r.segment ASC
+	`, startDate, endDateTime).Scan(&bySegment)
+
+	// Sends broken down by how the sign-off community was resolved. Rows
+	// predating this instrumentation have volunteer_source = NULL and are
+	// excluded here (still counted in the overall funnel). Opens/clicks are
+	// joined so a genuine home-group sign-off can be compared against nearest
+	// or no sign-off.
+	bySource := make([]ReengageSourceStat, 0)
+	db.Raw(`
+		SELECT
+			r.volunteer_source AS source,
+			COUNT(*) AS sent,
+			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
+		FROM reengage r
+		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
+		WHERE r.sentat BETWEEN ? AND ? AND r.volunteer_source IS NOT NULL
+		GROUP BY r.volunteer_source
+		ORDER BY r.volunteer_source ASC
+	`, startDate, endDateTime).Scan(&bySource)
+
+	return c.JSON(fiber.Map{
+		"funnel":    funnel,
+		"byStage":   byStage,
+		"byArm":     byArm,
+		"bySegment": bySegment,
+		"bySource":  bySource,
+		"period": fiber.Map{
+			"start": startDate,
+			"end":   endDate,
 		},
 	})
 }

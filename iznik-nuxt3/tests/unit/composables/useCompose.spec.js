@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
-import { postcodeSelect, makeCanSubmit } from '~/composables/useCompose.js'
+import {
+  postcodeSelect,
+  makeCanSubmit,
+  loadOwnActivePosts,
+} from '~/composables/useCompose.js'
 
 let mockGroup = null
 let mockPostcode = null
@@ -230,5 +234,36 @@ describe('makeCanSubmit', () => {
     expect(canSubmit.value).toBe(false)
     messageValid.value = true
     expect(canSubmit.value).toBe(true)
+  })
+})
+
+describe('loadOwnActivePosts', () => {
+  it('pulls each active post into list as a full message so duplicate detection has item names', async () => {
+    const messageStore = {
+      fetchByUser: vi.fn().mockResolvedValue([{ id: 10 }, { id: 11 }]),
+      fetch: vi.fn(),
+    }
+    await loadOwnActivePosts(messageStore, 123)
+    // active=true so the query returns the member's still-open posts...
+    expect(messageStore.fetchByUser).toHaveBeenCalledWith(123, true)
+    // ...and each is fetched in full (the summary lacks item.name, list has it).
+    expect(messageStore.fetch).toHaveBeenCalledWith(10)
+    expect(messageStore.fetch).toHaveBeenCalledWith(11)
+  })
+
+  it('does nothing when logged out', async () => {
+    const messageStore = { fetchByUser: vi.fn(), fetch: vi.fn() }
+    await loadOwnActivePosts(messageStore, undefined)
+    expect(messageStore.fetchByUser).not.toHaveBeenCalled()
+    expect(messageStore.fetch).not.toHaveBeenCalled()
+  })
+
+  it('tolerates a null result from fetchByUser', async () => {
+    const messageStore = {
+      fetchByUser: vi.fn().mockResolvedValue(null),
+      fetch: vi.fn(),
+    }
+    await loadOwnActivePosts(messageStore, 123)
+    expect(messageStore.fetch).not.toHaveBeenCalled()
   })
 })

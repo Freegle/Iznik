@@ -1,12 +1,14 @@
 package spatial
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,50 @@ func baseURL() string {
 		return u
 	}
 	return "http://localhost:8194"
+}
+
+// adminBaseURL returns the spatial server's admin API, which listens on its own
+// port (SPATIAL_ADMIN_PORT, default 8195) alongside the query API on 8194.
+func adminBaseURL() string {
+	if u := os.Getenv("SPATIAL_ADMIN_URL"); u != "" {
+		return u
+	}
+	return strings.Replace(baseURL(), ":8194", ":8195", 1)
+}
+
+// UpsertLocation inserts or replaces one location in the spatial index straight
+// away, rather than waiting for the next delta sync.
+//
+// This matters because postcode remapping asks the spatial index which area is
+// nearest. The index only picks up MySQL changes on a 15-minute delta, but the
+// remap for a newly drawn area is queued immediately, so without this the remap
+// runs against an index that has never heard of the area, keeps every postcode
+// pointing where it already pointed, and leaves the area with no postcodes. The
+// ModTools map only draws areas that have at least one postcode pointing at
+// them, so the area then appears not to have saved at all (Discourse #9950).
+func UpsertLocation(id uint64, wkt, name, locType string) error {
+	body, err := json.Marshal(map[string]any{
+		"items": []map[string]any{{
+			"id":    id,
+			"wkt":   wkt,
+			"extra": map[string]any{"name": name, "type": locType},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("spatial upsert marshal: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/v1/locations/upsert", adminBaseURL())
+	resp, err := httpClient.Post(reqURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("spatial upsert: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("spatial upsert: HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // QueryResult mirrors the JSON shape returned by /v1/:dataset/knn.

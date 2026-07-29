@@ -55,8 +55,6 @@
       class="mb-2"
     />
     <ModMissingRules />
-    <!-- Disabled as Facebook sharing isn't working and will probably be retired.-->
-    <!--ModMissingFacebook /-->
     <ModMissingProfile class="mt-1" />
     <div class="d-flex mb-2 mt-2 flex-wrap">
       <div class="borderit d-flex flex-column">

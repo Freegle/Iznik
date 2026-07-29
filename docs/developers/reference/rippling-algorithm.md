@@ -223,6 +223,14 @@ retracted, so re-approval restores the copy without re-rippling.
   distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
   the digest's `DistancePreferenceFilter::passesBothPreferences`).
 
+  **The viewer's own posts always come first.** A member's own open posts are included in the
+  feed regardless of reach (`isochrone/message.go` own-posts arm) and flagged with `mine`
+  (`MessageSummary.Mine`, set when `messages.fromuser` = the viewer). The client
+  (`composables/useMessageSort.js`) floats `mine` posts to the top of *every* sort order (New
+  to you / Newest / Closest), newest-first, just below any paid pinned clearance. Without this,
+  members lost their own posts among the reach-ordered feed and assumed they were not showing
+  (Discourse 9933).
+
   The containment test itself is served through **sandwich bounds**
   (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
   isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
@@ -271,6 +279,42 @@ retracted, so re-approval restores the copy without re-rippling.
 - **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
 - **Rippling Explorer (ModTools `/rippling`):** draws the exact polygon and tints groups from
   the per-tick `reachable_group_ids`.
+
+### 7a. Relevance ranking (browse feed AND digest - same engine)
+
+The browse/Nearby feed is **not** reverse-chronological. Both it and the unified digest order
+posts by a **rippling relevance score**, computed by one shared function
+(`isochrone/score.go` `Score()`; the Laravel `DigestPostScorer` mirrors it for mass mail and is
+unit-tested against the Go reference values).
+
+**Score** (per post, all terms in `[0,1]`):
+
+    Total = W_close·close + W_fresh·fresh + W_budget·budget + W_anchor·anchor
+
+- `close = 1 − distance/reachRadius` (clamped ≥0) - closeness. Uses the **blurred** great-circle
+  distance, the *same* figure the card's distance badge and the unread-count distance filter use,
+  so the viewer's slider and the server's ordering can't disagree. (Digest approximates drive-time
+  as haversine÷reach because a per-recipient isochrone on mass mail is infeasible; the `/rippling`
+  "Digest preview" uses real drive-time.)
+- `fresh = 1 − ageHours/windowHours` (clamped ≥0).
+- `budget = exp(−engagement / (budgetDecay/12))`, where `engagement = (views + 3·replies)/max(ageH,1)`
+  - an **engagement-decay** term: the more a post has already been seen/replied to, the lower it
+  ranks, spreading attention across posts.
+- `anchor = 1` for a home-group post, else 0.
+
+**Final browse order** (`isochrone/message.go`, `sort.SliceStable`): **pinned first** (a
+`messages_pinned` row - paid bulk-offer clearances floated to the top), **then Score descending**,
+**then arrival (newest)** as the tiebreak. The score is exposed as `MessageSummary.Score` and the
+`nearby` store preserves that server order.
+
+**Weights are per-consumer and env-tunable without a deploy** (defaults `close=1, fresh=0,
+budget=1, anchor=0` for both today - closeness × engagement-decay):
+- Browse: `RIPPLE_BROWSE_W_{CLOSE,FRESH,BUDGET,ANCHOR}`, `RIPPLE_BROWSE_WINDOW_HOURS`
+  (`isochrone/score.go` `LoadScoreWeights`).
+- Digest: `ripple.score.weights.*` / `RIPPLE_DIGEST_W_*`, `RIPPLE_DIGEST_WINDOW_HOURS`
+  (`config/freegle.php`).
+
+Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-design.md`.
 
 ## 8. Kill switches and key config (`config/freegle.php` `ripple.*`)
 

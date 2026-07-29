@@ -2,6 +2,25 @@
 
 An FSM-driven automated bug monitor for Freegle. Each iteration: watches Discourse for reported bugs, classifies them, fixes them via a TDD pipeline (failing test → fix → PR), verifies CI, and posts a "please retest" reply to the reporter once the fix is live. The FSM enforces structural invariants that the LLM cannot reason its way around.
 
+## Grounding (live DB + prod Loki)
+
+Wrong-diagnosis post-mortems (#1103, #1104, #581/582/585) shared one structural cause: the
+diagnose loop's only evidence was source code plus a test written FROM its own hypothesis, so
+when the real cause lived in production data or runtime behaviour, the FSM shipped the most
+plausible code-visible story instead. Two read-only actions (`src/grounding.ts`) now give the
+brain ground truth, and the `DIAGNOSE_BUG` / `FIX_SENTRY_ISSUE` prompts require reports to be
+grounded before theorising (with a falsification check, and a defer-to-human gate when the
+tunnels are down and a data-dependent diagnosis cannot be grounded):
+
+- `query_live_db` - single SELECT/SHOW against the production DB over the local tunnel, using a
+  dedicated `iznik_ro` grant (SELECT, SHOW VIEW on iznik.* only; credentials in `../.env` as
+  `LIVE_DB_RO_USER` / `LIVE_DB_RO_PASSWORD`, tunnel port `LIVE_DB_PORT`).
+- `query_loki` - LogQL against production Loki via the Windows tunnel (WSL gateway:3102, or
+  `LOKI_PROD_URL`); falls back to the local dev Loki clearly labelled `local-dev`, which is
+  never evidence about production.
+
+Both degrade gracefully to `{available: false}` when a tunnel is down.
+
 ## How it works
 
 ### The engine
