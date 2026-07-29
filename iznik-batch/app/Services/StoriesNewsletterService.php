@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -93,7 +94,7 @@ class StoriesNewsletterService
                 }
             }
 
-            $userRecord = DB::table('users')->where('id', $story->userid)->first();
+            $userRecord = User::find($story->userid);
             $userName = null;
             if ($userRecord) {
                 $userName = $userRecord->fullname
@@ -101,19 +102,10 @@ class StoriesNewsletterService
                     ?: null;
             }
 
-            $profileImg = DB::table('users_images')
-                ->where('userid', $story->userid)
-                ->orderByDesc('default')
-                ->orderBy('id')
-                ->first(['id', 'url']);
-            $profileUrl = null;
-            if ($profileImg) {
-                if (!empty($profileImg->url) && !str_contains($profileImg->url, 'defaultprofile.png')) {
-                    $profileUrl = $profileImg->url;
-                } elseif (empty($profileImg->url)) {
-                    $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-                    $profileUrl = "{$imagesDomain}/tuimg_{$profileImg->id}.jpg";
-                }
+            // getProfileImageUrl respects the user's useprofile (anonymous) setting.
+            $profileUrl = $userRecord?->getProfileImageUrl();
+            if ($profileUrl && str_contains($profileUrl, 'defaultprofile.png')) {
+                $profileUrl = null;
             }
 
             $storyData[] = [

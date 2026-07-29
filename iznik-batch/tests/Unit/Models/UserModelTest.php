@@ -5,6 +5,7 @@ namespace Tests\Unit\Models;
 use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Models\UserImage;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -468,6 +469,64 @@ class UserModelTest extends TestCase
         $result = $user->getProfileImageUrl();
 
         $this->assertNull($result);
+    }
+
+    public function test_get_profile_image_url_returns_image_by_default(): void
+    {
+        $user = $this->createTestUser();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertEquals('https://example.com/harvested.jpg', $user->getProfileImageUrl());
+    }
+
+    public function test_get_profile_image_url_returns_image_when_useprofile_true(): void
+    {
+        $user = $this->createTestUser();
+        $user->settings = ['useprofile' => true];
+        $user->save();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertEquals('https://example.com/harvested.jpg', $user->getProfileImageUrl());
+    }
+
+    public function test_get_profile_image_url_null_when_useprofile_false(): void
+    {
+        // Matches iznik-server-go GetProfileRecord: a user who has turned off
+        // "use profile picture" (an anonymous profile on the website) must not
+        // have their image used in emails either.
+        $user = $this->createTestUser();
+        $user->settings = ['useprofile' => false];
+        $user->save();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertNull($user->getProfileImageUrl());
+    }
+
+    public function test_get_profile_image_url_null_when_user_deleted(): void
+    {
+        // Matches iznik-server-go: deleted users' profiles are suppressed.
+        $user = $this->createTestUser();
+        $user->deleted = now();
+        $user->save();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertNull($user->getProfileImageUrl());
     }
 
     public function test_get_user_key_creates_new_key(): void

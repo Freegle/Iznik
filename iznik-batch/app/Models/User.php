@@ -891,6 +891,16 @@ class User extends Model implements Auditable
      */
     public function getProfileImageUrl(bool $thumbnail = TRUE): ?string
     {
+        // Users can turn off "use profile picture" (settings.useprofile), which the
+        // website honours by showing a generated avatar instead.  Emails must honour
+        // it too — the stored image is often harvested from their Google/Gravatar
+        // account, which an anonymous user never chose to publish.  Deleted users'
+        // profiles are suppressed as well, matching iznik-server-go.
+        $settings = $this->settings ?? [];
+        if (!($settings['useprofile'] ?? TRUE) || $this->deleted) {
+            return NULL;
+        }
+
         // Find the user's profile image, preferring the default one.
         $profileImage = UserImage::where('userid', $this->id)
             ->orderByDesc('default')
