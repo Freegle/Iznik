@@ -59,6 +59,21 @@ func TestMessageReachAsMod(t *testing.T) {
 	assert.Equal(t, true, result["rippling"], "post has a reach row")
 	assert.Equal(t, float64(3), result["tick"], "actual tick surfaced")
 	assert.Equal(t, float64(9), result["totalticks"], "total ticks surfaced")
+
+	// The ACTUAL stored reach outline crosses as GeoJSON, so the reach modal can overlay it
+	// against its client-side projection (held/clipped/capped reaches diverge from projected).
+	polyStr, ok := result["polygon"].(string)
+	assert.True(t, ok, "polygon returned as a GeoJSON string")
+	var geo struct {
+		Type        string         `json:"type"`
+		Coordinates [][][2]float64 `json:"coordinates"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(polyStr), &geo), "polygon parses as GeoJSON")
+	assert.Equal(t, "Polygon", geo.Type)
+	assert.NotEmpty(t, geo.Coordinates, "polygon has at least one ring")
+	// Coordinates are [lng, lat] in degrees, matching how the reach geometry is stored.
+	assert.InDelta(t, -0.2, geo.Coordinates[0][0][0], 0.001)
+	assert.InDelta(t, 51.4, geo.Coordinates[0][0][1], 0.001)
 }
 
 // A non-moderator is forbidden.

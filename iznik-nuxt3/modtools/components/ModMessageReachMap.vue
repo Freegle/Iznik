@@ -13,6 +13,21 @@
           This post has no location, so its rippling reach can't be shown.
         </div>
         <div v-else style="height: 100%">
+          <div
+            v-if="reachHeld"
+            class="alert alert-warning py-1 px-2 mb-0 small text-center"
+          >
+            This post's reach is <strong>frozen (held)</strong> — usually
+            because the origin copy went back to Pending. The dashed blue
+            outline is where it actually stopped.
+          </div>
+          <div
+            v-else-if="reach?.polygon"
+            class="text-muted small text-center py-1"
+          >
+            Dashed blue outline = the engine's actual reach right now; the red
+            area is the projected schedule.
+          </div>
           <RipplingExplorer
             v-if="rendered"
             minimal
@@ -21,6 +36,7 @@
             :initial-lng="lng"
             :initial-elapsed-hours="elapsedHours"
             :actual-elapsed-hours="actualElapsedHours"
+            :actual-reach="reach?.polygon || null"
             :spatial-url="spatialUrl"
             :jwt="jwt"
           />
@@ -61,6 +77,10 @@ const spatialUrl = computed(
   () => runtimeConfig.public.SPATIAL_SERVER_URL || 'http://localhost:8196'
 )
 const hasLocation = computed(() => props.lat != null && props.lng != null)
+
+// A held reach is frozen (e.g. the origin copy was pulled back to Pending), so the
+// projected schedule overstates it — flag that above the map.
+const reachHeld = computed(() => reach.value?.status === 'held')
 
 // How long the post has already been live: the EXPECTED point (where reach SHOULD be).
 // The map + scrubber open here; this is the "up to" marker.

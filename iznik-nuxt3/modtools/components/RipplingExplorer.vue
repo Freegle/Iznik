@@ -493,6 +493,10 @@ const props = defineProps({
   // The ACTUAL reach point (elapsed-hours equivalent), shown as a "now" marker ONLY when
   // the engine is behind the expected point. Null = up to date -> show just "up to".
   actualElapsedHours: { type: Number, default: null },
+  // The ACTUAL stored reach outline (GeoJSON Polygon string or object, from the mod-only
+  // /message/{id}/reach endpoint), drawn as an overlay so held/clipped/capped reaches are
+  // visible against the projection. Arrives after mount (fetched separately), so it's watched.
+  actualReach: { type: [String, Object], default: null },
 })
 
 let cleanup = null

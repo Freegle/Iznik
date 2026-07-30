@@ -73,6 +73,15 @@ type ReachResponse struct {
 	Status          string  `json:"status"`
 	Arrival         *string `json:"arrival"`
 	NextExpansionAt *string `json:"nextexpansionat"`
+	// Polygon is the ACTUAL stored reach (rippling_reach.polygon) as GeoJSON, so the reach
+	// modal can overlay the real outline against its client-side projection - the two diverge
+	// when a reach is held, clipped where members left a group, or capped by the poster's
+	// distance preference, none of which the projection knows about. This is the ONE place the
+	// stored polygon crosses the API: mod-of-group-only, one post per request, so the payload
+	// (~300KB typical / ~850KB worst on prod at 5 decimal places, well-compressed on the wire
+	// - the grid-fill polygons are highly repetitive) is a deliberate exception to the "never
+	// ship reach polygons" rule that governs the member-facing feed.
+	Polygon string `json:"polygon,omitempty"`
 }
 
 type reachRow struct {
@@ -81,6 +90,7 @@ type reachRow struct {
 	Status          string
 	Arrival         *string
 	NextExpansionAt *string
+	Polygon         *string
 }
 
 // Reach returns a post's current ACTUAL rippling-out progress (the hazard-schedule tick it has
@@ -129,8 +139,13 @@ func Reach(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this post's group")
 	}
 
+	// 5 decimal places ≈ 1m - plenty for a map overlay, and it keeps the grid-fill polygons
+	// (~11k vertices) to a fraction of their full-precision WKT size. The stored geometry's
+	// coordinates are lng/lat degrees (the SRID label notwithstanding), which is exactly
+	// GeoJSON's [lng, lat] order, so no transform is needed.
 	var row reachRow
-	found := db.Raw("SELECT tick, total_ticks, status, arrival, next_expansion_at "+
+	found := db.Raw("SELECT tick, total_ticks, status, arrival, next_expansion_at, "+
+		"ST_AsGeoJSON(polygon, 5) AS polygon "+
 		"FROM rippling_reach WHERE msgid = ?", id).Scan(&row)
 
 	if found.RowsAffected == 0 {
@@ -149,6 +164,10 @@ func Reach(c *fiber.Ctx) error {
 		return c.JSON(ReachResponse{Rippling: false, Reason: reason, Msgid: id})
 	}
 
+	polygon := ""
+	if row.Polygon != nil {
+		polygon = *row.Polygon
+	}
 	return c.JSON(ReachResponse{
 		Rippling:        true,
 		Msgid:           id,
@@ -157,5 +176,6 @@ func Reach(c *fiber.Ctx) error {
 		Status:          row.Status,
 		Arrival:         row.Arrival,
 		NextExpansionAt: row.NextExpansionAt,
+		Polygon:         polygon,
 	})
 }

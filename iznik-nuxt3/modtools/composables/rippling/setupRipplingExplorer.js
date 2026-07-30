@@ -11,6 +11,7 @@
 //   props        — { spatialUrl, jwt } from the host component
 //   digestModal  — ref to <RipplingDigestModal>; modal opening is delegated
 //   legendMode   — ref ('outbound' | 'inbound') flipped by view-toggle
+import { watch } from 'vue'
 import {
   chaikinSmooth,
   geoToLeaflet,
@@ -66,6 +67,49 @@ export async function setupRipplingExplorer({
       maxZoom: 19,
     }
   ).addTo(map)
+
+  // The ACTUAL stored reach outline (per-post reach modal only). The projection animates what
+  // the schedule SAYS the reach should be; this overlay is what the engine actually holds -
+  // the two diverge when a reach is held, clipped where members left a group, or capped by
+  // the poster's distance preference. The host modal fetches it separately, so it arrives
+  // after mount: watch, and redraw on change.
+  let actualReachLayer = null
+  function drawActualReach(raw) {
+    if (actualReachLayer) {
+      if (map && map.hasLayer(actualReachLayer)) {
+        map.removeLayer(actualReachLayer)
+      }
+      actualReachLayer = null
+    }
+    if (!raw || !map) return
+    let geom = raw
+    if (typeof geom === 'string') {
+      try {
+        geom = JSON.parse(geom)
+      } catch (e) {
+        return
+      }
+    }
+    if (!geom || !geom.coordinates) return
+    const polys =
+      geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates]
+    // GeoJSON rings are [lng, lat]; Leaflet wants [lat, lng].
+    const latlngs = polys.map((rings) =>
+      rings.map((ring) => ring.map(([lng, lat]) => [lat, lng]))
+    )
+    // Dashed outline, no fill, so it reads against the filled red projection.
+    actualReachLayer = L.polygon(latlngs, {
+      color: '#0055cc',
+      weight: 2,
+      dashArray: '6 4',
+      fill: false,
+    })
+      .bindTooltip('Actual reach right now (from the engine)', { sticky: true })
+      .addTo(map)
+  }
+  cleanupFns.push(
+    watch(() => props.actualReach, drawActualReach, { immediate: true })
+  )
 
   let currentLat = null
   let currentLng = null

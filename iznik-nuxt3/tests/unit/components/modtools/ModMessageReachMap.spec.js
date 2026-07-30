@@ -38,11 +38,12 @@ const ExplorerStub = {
     initialView: { default: null },
     initialElapsedHours: { default: null },
     actualElapsedHours: { default: null },
+    actualReach: { default: null },
     spatialUrl: { default: null },
     jwt: { default: null },
   },
   template:
-    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" :data-actual="actualElapsedHours" />',
+    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" :data-actual="actualElapsedHours" :data-reach="actualReach" />',
 }
 
 // arrival N hours ago, as an ISO string.
@@ -140,6 +141,52 @@ describe('ModMessageReachMap', () => {
     await flushPromises()
     const a = wrapper.find('.explorer-stub').attributes('data-actual')
     expect(a === undefined || a === '').toBe(true)
+  })
+
+  // The mod-only reach endpoint now returns the ACTUAL stored outline as GeoJSON; the modal
+  // hands it to the explorer to overlay against the projection, and explains the overlay.
+  it('passes the actual stored reach outline through to the explorer', async () => {
+    const POLY =
+      '{"type":"Polygon","coordinates":[[[-0.2,51.4],[0,51.4],[0,51.6],[-0.2,51.4]]]}'
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: true,
+      tick: 4,
+      totalticks: 9,
+      status: 'expanding',
+      polygon: POLY,
+    })
+    const wrapper = mountComponent({
+      messageid: 42,
+      lat: 55.95,
+      lng: -3.19,
+      arrival: hoursAgo(14),
+    })
+    await wrapper.vm.show()
+    await flushPromises()
+    expect(wrapper.find('.explorer-stub').attributes('data-reach')).toBe(POLY)
+    expect(wrapper.text()).toContain('actual reach right now')
+  })
+
+  // A held reach is frozen, so the projection overstates it - the modal must say so
+  // rather than letting the animated schedule read as reality.
+  it('flags a held (frozen) reach above the map', async () => {
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: true,
+      tick: 3,
+      totalticks: 9,
+      status: 'held',
+      polygon:
+        '{"type":"Polygon","coordinates":[[[-0.2,51.4],[0,51.4],[0,51.6],[-0.2,51.4]]]}',
+    })
+    const wrapper = mountComponent({
+      messageid: 42,
+      lat: 55.95,
+      lng: -3.19,
+      arrival: hoursAgo(14),
+    })
+    await wrapper.vm.show()
+    await flushPromises()
+    expect(wrapper.text()).toContain('frozen (held)')
   })
 
   it('shows a no-location message instead of the map when the post has no location', async () => {
