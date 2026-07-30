@@ -21,9 +21,18 @@ export function fetchRetry(fetch) {
   }
 
   const retryOn = async function (attempt, error, response) {
-    // No point retrying until we know we are back online.
-    const miscStore = useMiscStore()
-    await miscStore.waitForOnline()
+    let miscStore = null
+
+    if (import.meta.client) {
+      // No point retrying until we know we are back online. Client-only:
+      // this callback runs on a later tick, where server-side (especially
+      // Netlify prerender) there is no active pinia instance any more, so
+      // useMiscStore() itself throws — the wrapper promise then never
+      // settles and the throw surfaces as an unhandledRejection instead of
+      // a fetch error. "Online" is also meaningless on the server.
+      miscStore = useMiscStore()
+      await miscStore.waitForOnline()
+    }
 
     if (attempt >= 10) {
       return [false, false, null, new Error('Too many retries, give up')]
