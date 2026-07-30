@@ -319,7 +319,10 @@ export default defineNuxtConfig({
     ['@bootstrap-vue-next/nuxt', { css: false }],
     'nuxt-vitalizer',
 
-    process.env.GTM_ID ? '@zadigetvoltaire/nuxt-gtm' : null,
+    // GTM is loaded by plugins/gtm.client.ts (reading runtimeConfig.public.gtm
+    // below). The old @zadigetvoltaire/nuxt-gtm module hardcodes
+    // compatibility: { nuxt: '^3.0.0' }, which makes @nuxt/kit silently skip
+    // its setup on Nuxt 4 — gtm.js would never load in production.
     // @nuxt/test-utils/module is added automatically by vitest config
     // We are using Playwire so we don't load AdSense ourselves.
     // [
