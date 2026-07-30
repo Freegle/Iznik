@@ -76,7 +76,11 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
       'text=Choose OFFER/WANTED frequency:'
     )
 
-    if (await emailFrequencySection.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (
+      await emailFrequencySection
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
+    ) {
       // Get the current email frequency setting
       const frequencySelect = page
         .locator('select')
@@ -85,7 +89,9 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
         })
         .first()
 
-      if (await frequencySelect.isVisible({ timeout: 5000 }).catch(() => false)) {
+      if (
+        await frequencySelect.isVisible({ timeout: 5000 }).catch(() => false)
+      ) {
         const currentFrequency = await frequencySelect.inputValue()
         console.log(
           `Current email frequency in advanced settings: ${currentFrequency}`

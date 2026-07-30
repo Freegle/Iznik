@@ -52,9 +52,15 @@ vi.mock('~/components/InfiniteLoading', () => ({
     emits: ['infinite'],
   },
 }))
-vi.mock('~/components/SidebarRight', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ChatMobileNavbar.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ExternalDa.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('~/components/SidebarRight', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ChatMobileNavbar.vue', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ExternalDa.vue', () => ({
+  default: { template: '<div />' },
+}))
 vi.mock('~/components/ChatListEntry.vue', () => ({
   default: {
     template: '<div class="chat-list-entry" data-testid="chat-list-entry" />',
@@ -197,57 +203,54 @@ describe('bug #9690 — chat list blanks when closed chat has deleted user', () 
    * After the fix (`chat.name?.toLowerCase()` or equivalent guard) the page
    * renders without error and `.chatlist` is present → test PASSES.
    */
-  it(
-    'renders the chat list without blanking when a hidden chat has a deleted user (name null)',
-    async () => {
-      /* Simulate a search term being active — this is what triggers the null
-       * dereference: scanChats executes `chat.name.toLowerCase()` inside the
-       * search-filter branch. */
-      mockRouteQuery.value = { search: 'hello' }
+  it('renders the chat list without blanking when a hidden chat has a deleted user (name null)', async () => {
+    /* Simulate a search term being active — this is what triggers the null
+     * dereference: scanChats executes `chat.name.toLowerCase()` inside the
+     * search-filter branch. */
+    mockRouteQuery.value = { search: 'hello' }
 
-      /* Two chats: one normal Active chat and one Closed chat whose other
-       * party is a deleted user (name: null, the field the server omits). */
-      mockChatStore.list = [
-        {
-          id: 1,
-          status: 'Active',
-          lastmsg: 5,
-          lastdate: '2026-01-01T00:00:00Z',
-          name: 'Normal User',
-          snippet: 'hello there',
-          unseen: 0,
-        },
-        {
-          id: 2,
-          status: 'Closed',
-          lastmsg: 3,
-          lastdate: '2026-01-01T00:00:00Z',
-          name: null, /* deleted user — server returns null */
-          snippet: '',
-          unseen: 0,
-        },
-      ]
-      /* The user has clicked "Show hidden/blocked chats" */
-      mockChatStore.showClosed = true
+    /* Two chats: one normal Active chat and one Closed chat whose other
+     * party is a deleted user (name: null, the field the server omits). */
+    mockChatStore.list = [
+      {
+        id: 1,
+        status: 'Active',
+        lastmsg: 5,
+        lastdate: '2026-01-01T00:00:00Z',
+        name: 'Normal User',
+        snippet: 'hello there',
+        unseen: 0,
+      },
+      {
+        id: 2,
+        status: 'Closed',
+        lastmsg: 3,
+        lastdate: '2026-01-01T00:00:00Z',
+        name: null /* deleted user — server returns null */,
+        snippet: '',
+        unseen: 0,
+      },
+    ]
+    /* The user has clicked "Show hidden/blocked chats" */
+    mockChatStore.showClosed = true
 
-      /* Suppress console output so the test output is clean.
-       * Vue's render-error path calls both console.error and console.warn
-       * (the warn triggers the test-setup throw, creating an unhandled
-       * rejection that obscures the assertion failure — mock it here). */
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    /* Suppress console output so the test output is clean.
+     * Vue's render-error path calls both console.error and console.warn
+     * (the warn triggers the test-setup throw, creating an unhandled
+     * rejection that obscures the assertion failure — mock it here). */
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-      const wrapper = mountComponent()
-      await flushPromises()
-      await nextTick()
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
 
-      /* After the fix the page renders correctly — .chatlist is in the DOM
-       * and no render error was logged. */
-      expect(wrapper.find('.chatlist').exists()).toBe(true)
-      expect(errorSpy).not.toHaveBeenCalled()
+    /* After the fix the page renders correctly — .chatlist is in the DOM
+     * and no render error was logged. */
+    expect(wrapper.find('.chatlist').exists()).toBe(true)
+    expect(errorSpy).not.toHaveBeenCalled()
 
-      errorSpy.mockRestore()
-      warnSpy.mockRestore()
-    }
-  )
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
 })

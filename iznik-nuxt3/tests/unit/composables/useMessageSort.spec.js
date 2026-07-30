@@ -262,7 +262,13 @@ describe('sortBrowseMessages', () => {
     it('floats the viewer own post to the top under Unseen, ahead of an unseen higher score', () => {
       const msgs = [
         { id: 1, unseen: true, score: 9 },
-        { id: 2, unseen: false, score: 0, mine: true, posted: '2024-05-01T00:00:00Z' },
+        {
+          id: 2,
+          unseen: false,
+          score: 0,
+          mine: true,
+          posted: '2024-05-01T00:00:00Z',
+        },
       ]
       // Own post leads even though it is seen and scores 0.
       expect(order(msgs, 'Unseen')).toEqual([2, 1])
@@ -279,15 +285,32 @@ describe('sortBrowseMessages', () => {
     it('keeps the viewer own post first under Nearby, ahead of a nearer non-own post', () => {
       const msgs = [
         { id: 'near', distance: 0.5 },
-        { id: 'mineFar', distance: 50, mine: true, posted: '2024-01-01T00:00:00Z' },
+        {
+          id: 'mineFar',
+          distance: 50,
+          mine: true,
+          posted: '2024-01-01T00:00:00Z',
+        },
       ]
       expect(order(msgs, 'Nearby')).toEqual(['mineFar', 'near'])
     })
 
     it('orders multiple own posts newest-first among themselves, ignoring score', () => {
       const msgs = [
-        { id: 'mineOld', mine: true, posted: '2024-01-01T00:00:00Z', unseen: true, score: 9 },
-        { id: 'mineNew', mine: true, posted: '2024-06-01T00:00:00Z', unseen: true, score: 1 },
+        {
+          id: 'mineOld',
+          mine: true,
+          posted: '2024-01-01T00:00:00Z',
+          unseen: true,
+          score: 9,
+        },
+        {
+          id: 'mineNew',
+          mine: true,
+          posted: '2024-06-01T00:00:00Z',
+          unseen: true,
+          score: 1,
+        },
         { id: 'other', unseen: true, score: 5 },
       ]
       expect(order(msgs, 'Unseen')).toEqual(['mineNew', 'mineOld', 'other'])

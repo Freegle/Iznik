@@ -1,7 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('../../e2e/config.js', () => ({
-  timeouts: { ui: { appearance: 1000, interaction: 1000 }, navigation: { initial: 5000 } },
+  timeouts: {
+    ui: { appearance: 1000, interaction: 1000 },
+    navigation: { initial: 5000 },
+  },
   DEFAULT_TEST_PASSWORD: 'x',
   SCREENSHOTS_DIR: '/tmp',
 }))

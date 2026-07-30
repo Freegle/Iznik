@@ -59,7 +59,7 @@ describe('stats store', () => {
   })
 
   describe('clear', () => {
-    it('resets store to initial state', async () => {
+    it('resets store to initial state', () => {
       const store = useStatsStore()
       store.init({ public: {} })
       store.heatmap = { points: [1, 2, 3] }

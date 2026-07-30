@@ -50,7 +50,9 @@ test.describe('Repost Group Change', () => {
         },
         headers: { Authorization: modJwt },
       })
-      console.log(`Set user MODERATED on group ${gid}: ${moderateResp.status()}`)
+      console.log(
+        `Set user MODERATED on group ${gid}: ${moderateResp.status()}`
+      )
       expect(moderateResp.ok()).toBeTruthy()
     }
 
@@ -79,9 +81,12 @@ test.describe('Repost Group Change', () => {
     await expect
       .poll(
         async () => {
-          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
-            headers: { Authorization: modJwt },
-          })
+          const resp = await page.request.get(
+            `${API_V2}/message/${posted.id}`,
+            {
+              headers: { Authorization: modJwt },
+            }
+          )
           msgData = await resp.json()
           return msgData?.groups?.length > 0
         },

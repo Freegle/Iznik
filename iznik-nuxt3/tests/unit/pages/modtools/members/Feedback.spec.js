@@ -391,9 +391,15 @@ describe('Feedback Page', () => {
       wrapper.vm.filter = ''
       wrapper.vm.showExpired = true
 
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Expired' })).toBe(true)
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Withdrawn' })).toBe(true)
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: null })).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Expired' })
+      ).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Withdrawn' })
+      ).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: null })
+      ).toBe(true)
     })
 
     it('showExpired=false excludes posts where outcome is not Taken or Received', () => {
@@ -402,12 +408,20 @@ describe('Feedback Page', () => {
       wrapper.vm.showExpired = false
 
       // Successful outcomes should still show
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Taken' })).toBe(true)
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Received' })).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Taken' })
+      ).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Received' })
+      ).toBe(true)
 
       // Non-successful outcomes should be hidden
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Expired' })).toBe(false)
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Withdrawn' })).toBe(false)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Expired' })
+      ).toBe(false)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Withdrawn' })
+      ).toBe(false)
     })
 
     it('showExpired=false still shows posts with null outcome', () => {
@@ -416,8 +430,12 @@ describe('Feedback Page', () => {
       wrapper.vm.filter = ''
       wrapper.vm.showExpired = false
 
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: null })).toBe(true)
-      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: undefined })).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: null })
+      ).toBe(true)
+      expect(
+        wrapper.vm.filterMatch({ happiness: 'Happy', outcome: undefined })
+      ).toBe(true)
     })
 
     it('sortedItems excludes expired posts when showExpired=false', async () => {

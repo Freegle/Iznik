@@ -297,10 +297,15 @@ describe('analyzeBrightness', () => {
       }
 
       set src(_v) {
+        this._src = _v
         // Trigger onload asynchronously, simulating a loaded image
         setTimeout(() => {
           if (this.onload) this.onload()
         }, 0)
+      }
+
+      get src() {
+        return this._src
       }
     }
 

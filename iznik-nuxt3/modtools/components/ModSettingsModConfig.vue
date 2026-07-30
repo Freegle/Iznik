@@ -39,7 +39,11 @@
     </div>
     <Spinner v-if="loading" :size="50" class="d-block mt-2" />
     <div v-else-if="configid && config">
-      <NoticeMessage v-if="config.protected && config.createdby" variant="info" class="mb-2">
+      <NoticeMessage
+        v-if="config.protected && config.createdby"
+        variant="info"
+        class="mb-2"
+      >
         <v-icon icon="lock" />
         <span v-if="parseInt(config.createdby) === myid">
           You have locked this. Other people can use, view or copy it, but can't
@@ -51,8 +55,8 @@
             lockerUser?.displayname ||
             lockerUser?.fullname ||
             '#' + config.createdby
-          }}</strong>. You can use, view or copy
-          it, but you can't change or delete it.
+          }}</strong
+          >. You can use, view or copy it, but you can't change or delete it.
         </span>
       </NoticeMessage>
       <NoticeMessage v-if="config.using && config.using.length">

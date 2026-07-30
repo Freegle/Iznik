@@ -48,8 +48,8 @@ describe('search store', () => {
 
       let resolveFirst
       mockFetch.mockReturnValueOnce(
-        new Promise((r) => {
-          resolveFirst = r
+        new Promise((resolve) => {
+          resolveFirst = resolve
         })
       )
 

@@ -245,13 +245,24 @@ describe('MessageList', () => {
       // not auto-join them to a non-member group (Discourse 9733 / 9729).
       const myGroupIdSet = new Set([10])
       const store = {
-        1: { id: 1, fromuser: 5, subject: 'OFFER: Sofa', groups: [{ groupid: 20 }] },
-        2: { id: 2, fromuser: 5, subject: 'OFFER: Sofa', groups: [{ groupid: 10 }] },
+        1: {
+          id: 1,
+          fromuser: 5,
+          subject: 'OFFER: Sofa',
+          groups: [{ groupid: 20 }],
+        },
+        2: {
+          id: 2,
+          fromuser: 5,
+          subject: 'OFFER: Sofa',
+          groups: [{ groupid: 10 }],
+        },
       }
       const isOnMyGroup = (m) =>
-        !!m?.groups && m.groups.some((g) => myGroupIdSet.has(parseInt(g.groupid)))
+        !!m?.groups &&
+        m.groups.some((g) => myGroupIdSet.has(parseInt(g.groupid)))
 
-      let ret = []
+      const ret = []
       const dups = []
       ;[{ id: 1 }, { id: 2 }].forEach((m) => {
         const message = store[m.id]
@@ -279,13 +290,25 @@ describe('MessageList', () => {
       // The fix strips trailing (location) before building the dedup key so that
       // "OFFER: bike (Bethnal Green)" and "OFFER: bike (Bethel)" collapse to one.
       const store = {
-        1: { id: 1, fromuser: 5, type: 'Offer', subject: 'OFFER: bike (Bethnal Green)', groups: [{ groupid: 20 }] },
-        2: { id: 2, fromuser: 5, type: 'Offer', subject: 'OFFER: bike (Bethel)', groups: [{ groupid: 10 }] },
+        1: {
+          id: 1,
+          fromuser: 5,
+          type: 'Offer',
+          subject: 'OFFER: bike (Bethnal Green)',
+          groups: [{ groupid: 20 }],
+        },
+        2: {
+          id: 2,
+          fromuser: 5,
+          type: 'Offer',
+          subject: 'OFFER: bike (Bethel)',
+          groups: [{ groupid: 10 }],
+        },
       }
 
       const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
 
-      let ret = []
+      const ret = []
       const dups = []
       ;[{ id: 1 }, { id: 2 }].forEach((m) => {
         const message = store[m.id]

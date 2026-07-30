@@ -295,7 +295,11 @@
       <div v-else>
         <ChatButton
           :groupid="group.id"
-          :title="'Contact ' + contactLabel.charAt(0).toUpperCase() + contactLabel.slice(1)"
+          :title="
+            'Contact ' +
+            contactLabel.charAt(0).toUpperCase() +
+            contactLabel.slice(1)
+          "
           chattype="User2Mod"
           variant="white"
         />

@@ -57,13 +57,11 @@ import { useRoute, useRouter } from '#imports'
 import { setupModMessages } from '~/composables/useModMessages'
 import { useAuthStore } from '@/stores/auth'
 import { useMessageStore } from '@/stores/message'
-import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
 
 const authStore = useAuthStore()
 const messageStore = useMessageStore()
-const miscStore = useMiscStore()
 const modGroupStore = useModGroupStore()
 const route = useRoute()
 
@@ -215,7 +213,10 @@ onMounted(async () => {
   const user = authStore.user
   const lastaimsshow = user?.settings?.lastaimsshow
 
-  if (user && (!lastaimsshow || dayjs().diff(dayjs(lastaimsshow), 'days') > 365)) {
+  if (
+    user &&
+    (!lastaimsshow || dayjs().diff(dayjs(lastaimsshow), 'days') > 365)
+  ) {
     showAimsModal.value = true
 
     const settings = user.settings

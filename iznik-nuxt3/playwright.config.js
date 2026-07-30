@@ -35,7 +35,9 @@ module.exports = defineConfig({
   // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
   workers: process.env.PW_WORKERS
     ? Number(process.env.PW_WORKERS)
-    : process.env.SELF_HOSTED_RUNNER === 'true' ? 11 : 6,
+    : process.env.SELF_HOSTED_RUNNER === 'true'
+    ? 11
+    : 6,
   maxFailures: 0,
   reporter: [
     ['list'],

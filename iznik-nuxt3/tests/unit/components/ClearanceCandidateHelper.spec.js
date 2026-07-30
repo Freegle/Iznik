@@ -1,32 +1,44 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
+import ClearanceCandidate from '~/components/ClearanceCandidate.vue'
+
 const h = vi.hoisted(() => ({
   bulkInterestState: vi.fn().mockResolvedValue({}),
   bulkInterest: vi.fn().mockResolvedValue({}),
 }))
 
 vi.mock('~/stores/message', () => ({
-  useMessageStore: () => ({ bulkInterestState: h.bulkInterestState, bulkInterest: h.bulkInterest }),
+  useMessageStore: () => ({
+    bulkInterestState: h.bulkInterestState,
+    bulkInterest: h.bulkInterest,
+  }),
 }))
 vi.mock('~/stores/user', () => ({
   useUserStore: () => ({ byId: () => ({ displayname: 'Sam' }) }),
 }))
-
-import ClearanceCandidate from '~/components/ClearanceCandidate.vue'
 
 const mountRow = (props) =>
   mount(ClearanceCandidate, {
     props: {
       messageId: 1,
       bulkitemid: 10,
-      interest: { userid: 7, quantity: 2, state: 'Interested', cancollect: 'Tue', chatid: 55 },
+      interest: {
+        userid: 7,
+        quantity: 2,
+        state: 'Interested',
+        cancollect: 'Tue',
+        chatid: 55,
+      },
       ...props,
     },
     global: {
       stubs: {
         // Forwarding stub so @click + data-testid reach a real element.
-        'b-button': { template: '<button v-bind="$attrs"><slot /></button>', inheritAttrs: false },
+        'b-button': {
+          template: '<button v-bind="$attrs"><slot /></button>',
+          inheritAttrs: false,
+        },
         'b-form-input': true,
         'b-badge': { template: '<span class="badge-stub"><slot /></span>' },
         ClearanceChatModal: true,
@@ -68,15 +80,30 @@ describe('ClearanceCandidate — Helper overlay', () => {
   })
 
   it('uses "Exclude" wording and shows a "not told yet" note when excluded', () => {
-    const w = mountRow({ interest: { userid: 7, quantity: 2, state: 'Interested', cancollect: 'Tue' } })
-    expect(w.vm.actions.find((a) => a.state === 'Rejected').label).toBe('Exclude')
-    const excluded = mountRow({ interest: { userid: 7, quantity: 0, state: 'Rejected' } })
+    const w = mountRow({
+      interest: {
+        userid: 7,
+        quantity: 2,
+        state: 'Interested',
+        cancollect: 'Tue',
+      },
+    })
+    expect(w.vm.actions.find((a) => a.state === 'Rejected').label).toBe(
+      'Exclude'
+    )
+    const excluded = mountRow({
+      interest: { userid: 7, quantity: 0, state: 'Rejected' },
+    })
     expect(excluded.find('[data-testid="excluded-note"]').exists()).toBe(true)
   })
 
   it('shows the AI badge only when the Helper has messaged them', () => {
-    expect(mountRow({ aiSent: true }).find('[data-testid="ai-badge"]').exists()).toBe(true)
-    expect(mountRow({ aiSent: false }).find('[data-testid="ai-badge"]').exists()).toBe(false)
+    expect(
+      mountRow({ aiSent: true }).find('[data-testid="ai-badge"]').exists()
+    ).toBe(true)
+    expect(
+      mountRow({ aiSent: false }).find('[data-testid="ai-badge"]').exists()
+    ).toBe(false)
   })
 
   it('opens the chat in a modal (stays on the page) rather than navigating', async () => {
@@ -92,7 +119,9 @@ describe('ClearanceCandidate — Helper overlay', () => {
   it('surfaces the escalation reason for a Needs-you candidate', () => {
     const w = mountRow({ helperState: 'ESCALATED', note: 'Asked for photos' })
     expect(w.vm.needsYou).toBe(true)
-    expect(w.find('[data-testid="escalation-note"]').text()).toContain('Asked for photos')
+    expect(w.find('[data-testid="escalation-note"]').text()).toContain(
+      'Asked for photos'
+    )
   })
 
   it('hides Helper extras when no Helper data is supplied', () => {

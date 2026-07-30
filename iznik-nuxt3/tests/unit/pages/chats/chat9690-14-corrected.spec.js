@@ -47,9 +47,15 @@ vi.mock('~/components/InfiniteLoading', () => ({
     emits: ['infinite'],
   },
 }))
-vi.mock('~/components/SidebarRight', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ChatMobileNavbar.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('~/components/ExternalDa.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('~/components/SidebarRight', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ChatMobileNavbar.vue', () => ({
+  default: { template: '<div />' },
+}))
+vi.mock('~/components/ExternalDa.vue', () => ({
+  default: { template: '<div />' },
+}))
 vi.mock('~/components/ChatListEntry.vue', () => ({
   default: {
     template: '<div class="chat-list-entry" />',
@@ -194,55 +200,52 @@ describe('bug #9690/14 corrected — hideAll must skip User2Mod chats', () => {
    * After the fix (filter out chattype === 'User2Mod' before hiding) only the
    * two User2User chats are hidden → PASSES.
    */
-  it(
-    'does not hide User2Mod (volunteer) chats when Hide All is triggered',
-    async () => {
-      mockChatStore.list = [
-        {
-          id: 1,
-          chattype: 'User2User',
-          status: 'Active',
-          latestmessage: 5,
-          lastdate: '2026-01-01',
-          name: 'Alice',
-          unseen: 0,
-        },
-        {
-          id: 2,
-          chattype: 'User2User',
-          status: 'Active',
-          latestmessage: 4,
-          lastdate: '2026-01-01',
-          name: 'Bob',
-          unseen: 0,
-        },
-        {
-          id: 3,
-          chattype: 'User2Mod',
-          status: 'Active',
-          latestmessage: 3,
-          lastdate: '2026-01-01',
-          name: 'Edinburgh Freegle volunteers',
-          unseen: 0,
-        },
-      ]
+  it('does not hide User2Mod (volunteer) chats when Hide All is triggered', async () => {
+    mockChatStore.list = [
+      {
+        id: 1,
+        chattype: 'User2User',
+        status: 'Active',
+        latestmessage: 5,
+        lastdate: '2026-01-01',
+        name: 'Alice',
+        unseen: 0,
+      },
+      {
+        id: 2,
+        chattype: 'User2User',
+        status: 'Active',
+        latestmessage: 4,
+        lastdate: '2026-01-01',
+        name: 'Bob',
+        unseen: 0,
+      },
+      {
+        id: 3,
+        chattype: 'User2Mod',
+        status: 'Active',
+        latestmessage: 3,
+        lastdate: '2026-01-01',
+        name: 'Edinburgh Freegle volunteers',
+        unseen: 0,
+      },
+    ]
 
-      const wrapper = mountComponent()
-      await flushPromises()
-      await nextTick()
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
 
-      const page = wrapper.findComponent(ChatsPage)
+    const page = wrapper.findComponent(ChatsPage)
 
-      await page.vm.hideAll()
+    await page.vm.hideAll()
 
-      // Only the 2 User2User chats should be hidden
-      expect(mockChatStore.hide).toHaveBeenCalledTimes(2)
-      const hiddenIds = mockChatStore.hide.mock.calls.map((c) => c[0])
-      expect(hiddenIds).toContain(1)
-      expect(hiddenIds).toContain(2)
-      expect(hiddenIds).not.toContain(3)
-    }
-  )
+    // Only the 2 User2User chats should be hidden
+    expect(mockChatStore.hide).toHaveBeenCalledTimes(2)
+    const hiddenIds = mockChatStore.hide.mock.calls.map((c) => c[0])
+    expect(hiddenIds).toContain(1)
+    expect(hiddenIds).toContain(2)
+    expect(hiddenIds).not.toContain(3)
+  })
 
   /**
    * (d) Return-link wording: when showClosed is true (user is on the hidden list),
@@ -254,33 +257,30 @@ describe('bug #9690/14 corrected — hideAll must skip User2Mod chats', () => {
    *
    * After the wording fix the button text contains the correct return phrase → PASSES.
    */
-  it(
-    'shows "Return to chats that are not hidden" as the toggle link when on the hidden-chats list',
-    async () => {
-      mockChatStore.list = [
-        {
-          id: 1,
-          chattype: 'User2User',
-          status: 'Closed',
-          lastmsg: 3,
-          latestmessage: 3,
-          lastdate: '2026-01-01',
-          name: 'Hidden User',
-          unseen: 0,
-        },
-      ]
-      // Simulate being on the hidden-chats view
-      mockChatStore.showClosed = true
+  it('shows "Return to chats that are not hidden" as the toggle link when on the hidden-chats list', async () => {
+    mockChatStore.list = [
+      {
+        id: 1,
+        chattype: 'User2User',
+        status: 'Closed',
+        lastmsg: 3,
+        latestmessage: 3,
+        lastdate: '2026-01-01',
+        name: 'Hidden User',
+        unseen: 0,
+      },
+    ]
+    // Simulate being on the hidden-chats view
+    mockChatStore.showClosed = true
 
-      const wrapper = mountComponent()
-      await flushPromises()
-      await nextTick()
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
 
-      // The toggle button should say "Return to chats that are not hidden"
-      // (not the old confusing "Hide X hidden/blocked chats")
-      const text = wrapper.text()
-      expect(text).toContain('Return to chats that are not hidden')
-      expect(text).not.toMatch(/^Hide \d+ hidden/)
-    }
-  )
+    // The toggle button should say "Return to chats that are not hidden"
+    // (not the old confusing "Hide X hidden/blocked chats")
+    const text = wrapper.text()
+    expect(text).toContain('Return to chats that are not hidden')
+    expect(text).not.toMatch(/^Hide \d+ hidden/)
+  })
 })

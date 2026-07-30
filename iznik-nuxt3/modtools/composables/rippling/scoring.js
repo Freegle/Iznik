@@ -77,7 +77,10 @@ export function swingometerDisplay(pct, localBaseline, baselineReady) {
 // ranked array (available → came-and-went). Inputs are not otherwise modified.
 // `promised` is still surfaced as a slice for the side pie only.
 export function partitionInboxData(data) {
-  const available = [].concat(data.top_picks || data.selected || [], data.deferred || [])
+  const available = [].concat(
+    data.top_picks || data.selected || [],
+    data.deferred || []
+  )
   const completed = [].concat(data.came_and_went || [])
   const promised = available.filter((p) => p.promised)
   const active = available.filter((p) => !p.promised)

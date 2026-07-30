@@ -139,8 +139,8 @@
       <p class="text-muted small mb-2">
         Each headline number over time, by the day the post entered rippling.
         Figures use fixed windows (replies within 36h, taken within 14 days) so
-        every day is measured the same way — a dashed tail marks days too
-        recent for the window to have finished, not a real decline.
+        every day is measured the same way — a dashed tail marks days too recent
+        for the window to have finished, not a real decline.
       </p>
       <div class="kpi-grid trends">
         <div v-for="t in trendCharts" :key="t.title" class="panel">

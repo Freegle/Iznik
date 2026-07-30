@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed } from 'vue'
 import PendingPage from '~/modtools/pages/messages/pending/[[id]]/[[term]].vue'
@@ -347,5 +347,4 @@ describe('PendingPage', () => {
       expect(mockState.loaded).toHaveBeenCalled()
     })
   })
-
 })

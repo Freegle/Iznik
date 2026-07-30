@@ -23,7 +23,10 @@ async function createMessage(
   console.log(`Creating new ${type} message: "${title}"`)
 
   // Navigate to compose page
-  await page.gotoAndVerify('/post', { timeout: timeouts.navigation.default, maxRetries: 1 })
+  await page.gotoAndVerify('/post', {
+    timeout: timeouts.navigation.default,
+    maxRetries: 1,
+  })
 
   // Select message type (OFFER/WANTED)
   if (type === 'OFFER') {
@@ -115,9 +118,15 @@ async function searchMessages(page, { query, type, location }) {
 
   // Navigate to search page
   if (type === 'OFFER') {
-    await page.gotoAndVerify('/give', { timeout: timeouts.navigation.default, maxRetries: 1 })
+    await page.gotoAndVerify('/give', {
+      timeout: timeouts.navigation.default,
+      maxRetries: 1,
+    })
   } else if (type === 'WANTED') {
-    await page.gotoAndVerify('/find', { timeout: timeouts.navigation.default, maxRetries: 1 })
+    await page.gotoAndVerify('/find', {
+      timeout: timeouts.navigation.default,
+      maxRetries: 1,
+    })
   } else {
     // General search page
     await page.gotoAndVerify('/search', {

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
+import ClearanceManageItem from '~/components/ClearanceManageItem.vue'
+
 vi.mock('~/components/ClearanceCandidate', () => ({
   default: {
     name: 'ClearanceCandidate',
@@ -16,8 +18,6 @@ vi.mock('~/components/ClearanceCandidate', () => ({
     ],
   },
 }))
-
-import ClearanceManageItem from '~/components/ClearanceManageItem.vue'
 
 const message = {
   id: 1,
@@ -63,7 +63,13 @@ const sentUsers = new Set([3])
 
 const mountItem = () =>
   mount(ClearanceManageItem, {
-    props: { message, item: message.bulkitems[0], index: 0, helperByUser, sentUsers },
+    props: {
+      message,
+      item: message.bulkitems[0],
+      index: 0,
+      helperByUser,
+      sentUsers,
+    },
     global: {
       stubs: {
         'b-badge': { template: '<span class="badge-stub"><slot /></span>' },
@@ -104,7 +110,13 @@ describe('ClearanceManageItem — Helper overlay', () => {
             },
           ],
         },
-        item: { id: 10, name: 'Chairs', quantity: 10, attachments: [], interest: [{ userid: 8, quantity: 1, state: 'Interested' }] },
+        item: {
+          id: 10,
+          name: 'Chairs',
+          quantity: 10,
+          attachments: [],
+          interest: [{ userid: 8, quantity: 1, state: 'Interested' }],
+        },
         index: 0,
         helperByUser: { 8: esc },
         sentUsers: new Set(),

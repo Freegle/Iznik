@@ -121,28 +121,48 @@ describe('useTimeFormat', () => {
     })
 
     it('singularises 1 min and pluralises others', () => {
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 60 * 1000))).toBe('1 min')
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 5 * 60 * 1000))).toBe('5 mins')
+      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 60 * 1000))).toBe(
+        '1 min'
+      )
+      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 5 * 60 * 1000))).toBe(
+        '5 mins'
+      )
     })
 
     it('singularises 1 hour and pluralises others', () => {
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 60 * 60 * 1000))).toBe('1 hour')
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 3 * 60 * 60 * 1000))).toBe('3 hours')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 60 * 60 * 1000))
+      ).toBe('1 hour')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 3 * 60 * 60 * 1000))
+      ).toBe('3 hours')
     })
 
     it('singularises 1 day and pluralises others', () => {
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 24 * 60 * 60 * 1000))).toBe('1 day')
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 3 * 24 * 60 * 60 * 1000))).toBe('3 days')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 24 * 60 * 60 * 1000))
+      ).toBe('1 day')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 3 * 24 * 60 * 60 * 1000))
+      ).toBe('3 days')
     })
 
     it('singularises 1 week and pluralises others', () => {
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 7 * 24 * 60 * 60 * 1000))).toBe('1 week')
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 14 * 24 * 60 * 60 * 1000))).toBe('2 weeks')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 7 * 24 * 60 * 60 * 1000))
+      ).toBe('1 week')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 14 * 24 * 60 * 60 * 1000))
+      ).toBe('2 weeks')
     })
 
     it('falls back to months past 5 weeks', () => {
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 35 * 24 * 60 * 60 * 1000))).toBe('1 month')
-      expect(timeagoMedium(new Date(FIXED_NOW.getTime() - 120 * 24 * 60 * 60 * 1000))).toBe('3 months')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 35 * 24 * 60 * 60 * 1000))
+      ).toBe('1 month')
+      expect(
+        timeagoMedium(new Date(FIXED_NOW.getTime() - 120 * 24 * 60 * 60 * 1000))
+      ).toBe('3 months')
     })
   })
 
@@ -177,7 +197,9 @@ describe('useTimeFormat', () => {
 
     it('different year → D MMM YYYY HH:mm', () => {
       const t = new Date('2024-11-10T09:15:00Z')
-      expect(timeadaptChat(t)).toMatch(/^\d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/)
+      expect(timeadaptChat(t)).toMatch(
+        /^\d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}$/
+      )
     })
   })
 
@@ -189,7 +211,9 @@ describe('useTimeFormat', () => {
     })
 
     it('datetime — full month, year, HH:mm:ss', () => {
-      expect(datetime(d)).toMatch(/17(st|nd|rd|th) April, 2026 \d{2}:\d{2}:\d{2}/)
+      expect(datetime(d)).toMatch(
+        /17(st|nd|rd|th) April, 2026 \d{2}:\d{2}:\d{2}/
+      )
     })
 
     it('datetimeshort — short month, year, HH:mm', () => {
@@ -212,7 +236,9 @@ describe('useTimeFormat', () => {
 
     it('weekdayshort — weekday with ordinal and time', () => {
       // 2026-04-17 is a Friday
-      expect(weekdayshort(d)).toMatch(/^Friday 17(st|nd|rd|th) \d{2}:\d{2} (am|pm)$/)
+      expect(weekdayshort(d)).toMatch(
+        /^Friday 17(st|nd|rd|th) \d{2}:\d{2} (am|pm)$/
+      )
     })
   })
 })

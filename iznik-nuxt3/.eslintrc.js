@@ -61,6 +61,12 @@ module.exports = {
   ignorePatterns: ['android/*', 'ios/*', 'capacitor.config.ts'],
   overrides: [
     {
+      // TypeScript files (test setup etc.) need a TS-aware parser; espree
+      // chokes on `as` casts. Base rules only — no @typescript-eslint rules.
+      files: ['*.ts', '**/*.ts'],
+      parser: '@typescript-eslint/parser',
+    },
+    {
       files: [
         'layouts/*.vue',
         'pages/**/*.vue',

@@ -47,9 +47,7 @@ describe('nearby store', () => {
     })
 
     it('fetches messages', async () => {
-      mockFetchMessages.mockResolvedValue([
-        { id: 1, subject: 'Offering sofa' },
-      ])
+      mockFetchMessages.mockResolvedValue([{ id: 1, subject: 'Offering sofa' }])
 
       const result = await store.fetchMessages()
       expect(result).toHaveLength(1)
@@ -74,8 +72,8 @@ describe('nearby store', () => {
 
     it('deduplicates concurrent fetches', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchMessages.mockReturnValueOnce(firstPromise)
 

@@ -734,9 +734,9 @@ describe('ModMember', () => {
       // stripped by JSON.stringify) so JSON_MERGE_PATCH changes it.
       const sentNotifications =
         mockUserStore.edit.mock.calls[0][0].settings.notifications
-      expect(Object.prototype.hasOwnProperty.call(sentNotifications, 'email')).toBe(
-        true
-      )
+      expect(
+        Object.prototype.hasOwnProperty.call(sentNotifications, 'email')
+      ).toBe(true)
       expect(sentNotifications.email).toBe(false)
       // Must NOT send mod-specific fields like modnotifs/backupmodnotifs.
       const sentSettings = mockUserStore.edit.mock.calls[0][0].settings

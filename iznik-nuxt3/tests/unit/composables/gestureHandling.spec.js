@@ -219,7 +219,9 @@ describe('registerGestureHandling', () => {
     })
 
     it('removes all touch/click listeners from container', () => {
-      const calls = map._container.removeEventListener.mock.calls.map((c) => c[0])
+      const calls = map._container.removeEventListener.mock.calls.map(
+        (c) => c[0]
+      )
       expect(calls).toContain('touchstart')
       expect(calls).toContain('touchmove')
       expect(calls).toContain('touchend')
@@ -262,8 +264,6 @@ describe('registerGestureHandling', () => {
   // ---------- _setupPluginOptions ----------
 
   describe('_setupPluginOptions', () => {
-    let GH, map, handler
-
     function makeHandlerWithOptions(extraOpts) {
       const G = registerGestureHandling(L)
       const m = makeMap(extraOpts)
@@ -339,35 +339,42 @@ describe('registerGestureHandling', () => {
       },
     ]
 
-    it.each(table)('$label', ({ languages, platform, expectTouch, expectScrollKey }) => {
-      stubNavigator({ languages, language: languages[0], platform })
+    it.each(table)(
+      '$label',
+      ({ languages, platform, expectTouch, expectScrollKey }) => {
+        stubNavigator({ languages, language: languages[0], platform })
 
-      const GH = registerGestureHandling(L)
-      const map = makeMap()
-      const handler = new GH(map)
-      handler._setupPluginOptions()
-      handler._setLanguageContent()
+        const GH = registerGestureHandling(L)
+        const map = makeMap()
+        const handler = new GH(map)
+        handler._setupPluginOptions()
+        handler._setLanguageContent()
 
-      const touchCalls = map._container.setAttribute.mock.calls.filter(
-        (c) => c[0] === 'data-gesture-handling-touch-content'
-      )
-      const scrollCalls = map._container.setAttribute.mock.calls.filter(
-        (c) => c[0] === 'data-gesture-handling-scroll-content'
-      )
+        const touchCalls = map._container.setAttribute.mock.calls.filter(
+          (c) => c[0] === 'data-gesture-handling-touch-content'
+        )
+        const scrollCalls = map._container.setAttribute.mock.calls.filter(
+          (c) => c[0] === 'data-gesture-handling-scroll-content'
+        )
 
-      expect(touchCalls.length).toBe(1)
-      expect(scrollCalls.length).toBe(1)
-      expect(touchCalls[0][1]).toContain(expectTouch)
-      expect(scrollCalls[0][1]).toContain(expectScrollKey)
+        expect(touchCalls.length).toBe(1)
+        expect(scrollCalls.length).toBe(1)
+        expect(touchCalls[0][1]).toContain(expectTouch)
+        expect(scrollCalls[0][1]).toContain(expectScrollKey)
 
-      map._container.setAttribute.mockClear()
-    })
+        map._container.setAttribute.mockClear()
+      }
+    )
 
     it('uses custom text when all three keys are provided', () => {
       stubNavigator({ languages: ['en'], platform: 'Win32' })
 
       const GH = registerGestureHandling(L)
-      const customText = { touch: 'CUSTOM TOUCH', scroll: 'CUSTOM SCROLL', scrollMac: 'CUSTOM MAC' }
+      const customText = {
+        touch: 'CUSTOM TOUCH',
+        scroll: 'CUSTOM SCROLL',
+        scrollMac: 'CUSTOM MAC',
+      }
       const map = makeMap({ gestureHandlingText: customText })
       const handler = new GH(map)
       handler._setupPluginOptions()
@@ -386,7 +393,12 @@ describe('registerGestureHandling', () => {
     })
 
     it('falls back to en when navigator.languages is empty and navigator.language is not set', () => {
-      stubNavigator({ languages: [], language: undefined, userLanguage: undefined, platform: 'Win32' })
+      stubNavigator({
+        languages: [],
+        language: undefined,
+        userLanguage: undefined,
+        platform: 'Win32',
+      })
 
       const GH = registerGestureHandling(L)
       const map = makeMap()
@@ -401,7 +413,12 @@ describe('registerGestureHandling', () => {
 
     it('uses navigator.language when navigator.languages is null/undefined', () => {
       // Covers the ternary false-branch on line 150
-      stubNavigator({ languages: null, language: 'de', userLanguage: undefined, platform: 'Win32' })
+      stubNavigator({
+        languages: null,
+        language: 'de',
+        userLanguage: undefined,
+        platform: 'Win32',
+      })
 
       const GH = registerGestureHandling(L)
       const map = makeMap()
@@ -415,7 +432,12 @@ describe('registerGestureHandling', () => {
     })
 
     it('uses navigator.userLanguage when both navigator.languages and navigator.language are absent', () => {
-      stubNavigator({ languages: null, language: undefined, userLanguage: 'cy', platform: 'Win32' })
+      stubNavigator({
+        languages: null,
+        language: undefined,
+        userLanguage: 'cy',
+        platform: 'Win32',
+      })
 
       const GH = registerGestureHandling(L)
       const map = makeMap()
@@ -684,8 +706,12 @@ describe('registerGestureHandling', () => {
     })
 
     it('no modifier → sets a timeout that removes all scroll warnings', () => {
-      const fakeWarning = { _classes: new Set(['leaflet-gesture-handling-scroll-warning']) }
-      const mockGetByClassName = vi.spyOn(document, 'getElementsByClassName').mockReturnValue([fakeWarning])
+      const fakeWarning = {
+        _classes: new Set(['leaflet-gesture-handling-scroll-warning']),
+      }
+      const mockGetByClassName = vi
+        .spyOn(document, 'getElementsByClassName')
+        .mockReturnValue([fakeWarning])
 
       const event = { ctrlKey: false, metaKey: false, preventDefault: vi.fn() }
       handler._handleScroll(event)
@@ -693,7 +719,9 @@ describe('registerGestureHandling', () => {
       // Advance timers to trigger the timeout callback
       vi.advanceTimersByTime(1000)
 
-      expect(mockGetByClassName).toHaveBeenCalledWith('leaflet-gesture-handling-scroll-warning')
+      expect(mockGetByClassName).toHaveBeenCalledWith(
+        'leaflet-gesture-handling-scroll-warning'
+      )
       expect(L.DomUtil.removeClass).toHaveBeenCalledWith(
         fakeWarning,
         'leaflet-gesture-handling-scroll-warning'

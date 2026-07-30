@@ -14,8 +14,12 @@
 
 <script setup>
 import { ref } from 'vue'
-import { classifyPost, thumbUrlFor, formatTimeAgo, escapeHTML }
-  from '~/composables/rippling/scoring.js'
+import {
+  classifyPost,
+  thumbUrlFor,
+  formatTimeAgo,
+  escapeHTML,
+} from '~/composables/rippling/scoring.js'
 import { crowFliesKm } from '~/composables/rippling/geometry.js'
 
 const visible = ref(false)
@@ -76,17 +80,21 @@ function buildDigestRow(p, rank, memberLat, memberLng) {
       `<div style="font-size:9px;color:#666;line-height:1.2;display:flex;align-items:center;gap:3px">` +
       `<span style="width:38px;flex-shrink:0">${label}</span>` +
       `<span style="flex:1;background:#eee;height:5px;border-radius:2px;position:relative;overflow:hidden">` +
-      `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct.toFixed(0)}%;background:${color}"></span>` +
+      `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct.toFixed(
+        0
+      )}%;background:${color}"></span>` +
       `</span></div>`
     )
   }
   const scoreCol =
     `<div style="width:100px;flex-shrink:0;padding:0 4px;display:flex;flex-direction:column;justify-content:center;gap:2px">` +
     `<div style="font-size:11px;font-weight:700;color:#333;text-align:center;line-height:1">` +
-    `${fmt(p.score)}<div style="font-size:8px;font-weight:400;color:#888;margin-top:1px">score</div></div>` +
-    bar('close',  p.score_close,  '#3498db') +
+    `${fmt(
+      p.score
+    )}<div style="font-size:8px;font-weight:400;color:#888;margin-top:1px">score</div></div>` +
+    bar('close', p.score_close, '#3498db') +
     bar('budget', p.score_budget, '#e67e22') +
-    bar('home',   p.score_anchor, '#27ae60') +
+    bar('home', p.score_anchor, '#27ae60') +
     `</div>`
   return (
     `<div class="rpl-digest-row">` +
@@ -140,7 +148,9 @@ function openDigest(data, memberLat, memberLng) {
     `<em>… and ${n} more on the website.  Amazed you've scrolled this far.</em></div>`
   const sectionHeader = (title, sub) =>
     `<div style="padding:8px 12px;background:#f6f9f1;border-top:1px solid #ececec;border-bottom:1px solid #ececec;font-weight:600;color:#555;font-size:11px">${title}` +
-    (sub ? `<div style="font-weight:400;color:#888;font-size:10.5px;margin-top:2px">${sub}</div>` : '') +
+    (sub
+      ? `<div style="font-weight:400;color:#888;font-size:10.5px;margin-top:2px">${sub}</div>`
+      : '') +
     `</div>`
 
   // deduped_count is the FULL Top-picks total (before the 65 display cap);
@@ -154,7 +164,9 @@ function openDigest(data, memberLat, memberLng) {
       ? data.deferred_count
       : Math.max(0, dedupedCount - topPicks.length)
   const cameCount =
-    data.came_and_went_count != null ? data.came_and_went_count : cameAndWent.length
+    data.came_and_went_count != null
+      ? data.came_and_went_count
+      : cameAndWent.length
 
   let html = intro
   let rank = 0
@@ -188,7 +200,9 @@ function openCluster(posts, memberLat, memberLng) {
     `<strong>${posts.length} posts at this exact location.</strong> ` +
     `Common with TrashNothing cross-posts that use a group centroid.` +
     `</div>`
-  posts.forEach((p) => (html += buildDigestRow(p, p._rank, memberLat, memberLng)))
+  posts.forEach(
+    (p) => (html += buildDigestRow(p, p._rank, memberLat, memberLng))
+  )
   bodyHTML.value = html
   headerText.value = `📍 ${posts.length} posts here`
   visible.value = true
@@ -197,7 +211,8 @@ function openCluster(posts, memberLat, memberLng) {
 // Show the deep-dive panel for a single post.
 function openPost(p, rank, memberLat, memberLng) {
   const cls = classifyPost(p)
-  const groupName = p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
+  const groupName =
+    p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
   const fmt = (n) => (n || 0).toFixed(2)
   // The subject already carries an "OFFER:/WANTED:" prefix; we render the type
   // separately ("Offer:/Wanted:"), so strip it to avoid "Wanted: WANTED: …"
@@ -216,24 +231,42 @@ function openPost(p, rank, memberLat, memberLng) {
       : null
   const distStr =
     kmStraight !== null
-      ? `${(kmStraight * 0.621371).toFixed(1)} miles as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
+      ? `${(kmStraight * 0.621371).toFixed(
+          1
+        )} miles as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
       : `${p.drive_min.toFixed(0)} min in reach`
   bodyHTML.value = `
     <div style="padding:16px;font-size:13px;line-height:1.5">
       <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px">
-        <div class="rpl-digest-rank" style="background:${cls.color};width:32px;height:32px;font-size:13px;flex-shrink:0">${rank + 1}</div>
+        <div class="rpl-digest-rank" style="background:${
+          cls.color
+        };width:32px;height:32px;font-size:13px;flex-shrink:0">${rank + 1}</div>
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:14px;color:#333;word-break:break-word">${msgtype}: ${subject}</div>
-          <div style="font-size:11px;color:#888;margin-top:2px">${formatTimeAgo(p.arrival)}</div>
+          <div style="font-size:11px;color:#888;margin-top:2px">${formatTimeAgo(
+            p.arrival
+          )}</div>
         </div>
         ${thumbHTML}
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <tr><td style="color:#888;padding:4px 6px;width:130px">Status</td><td style="padding:4px 6px"><span style="color:${cls.color};font-weight:600">${cls.label}</span></td></tr>
-        <tr><td style="color:#888;padding:4px 6px">Group</td><td style="padding:4px 6px">${escapeHTML(groupName)}</td></tr>
+        <tr><td style="color:#888;padding:4px 6px;width:130px">Status</td><td style="padding:4px 6px"><span style="color:${
+          cls.color
+        };font-weight:600">${cls.label}</span></td></tr>
+        <tr><td style="color:#888;padding:4px 6px">Group</td><td style="padding:4px 6px">${escapeHTML(
+          groupName
+        )}</td></tr>
         <tr><td style="color:#888;padding:4px 6px">Distance</td><td style="padding:4px 6px">${distStr}</td></tr>
-        <tr><td style="color:#888;padding:4px 6px">Eyeballs so far</td><td style="padding:4px 6px">${p.views} view${p.views===1?'':'s'} · ${p.replies} ${p.replies===1?'reply':'replies'}</td></tr>
-        <tr><td style="color:#888;padding:4px 6px">Score</td><td style="padding:4px 6px"><strong>${fmt(p.score)}</strong> = close ${fmt(p.score_close)} + budget ${fmt(p.score_budget)} + anchor ${fmt(p.score_anchor)}</td></tr>
+        <tr><td style="color:#888;padding:4px 6px">Eyeballs so far</td><td style="padding:4px 6px">${
+          p.views
+        } view${p.views === 1 ? '' : 's'} · ${p.replies} ${
+    p.replies === 1 ? 'reply' : 'replies'
+  }</td></tr>
+        <tr><td style="color:#888;padding:4px 6px">Score</td><td style="padding:4px 6px"><strong>${fmt(
+          p.score
+        )}</strong> = close ${fmt(p.score_close)} + budget ${fmt(
+    p.score_budget
+  )} + anchor ${fmt(p.score_anchor)}</td></tr>
       </table>
     </div>`
   headerText.value = `Post #${rank + 1}`

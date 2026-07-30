@@ -64,13 +64,13 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
     }))
 
     mockFetchMembers
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(() => {
         firstBatch.forEach((m) => {
           mockListRef[m.id] = m
         })
         mockStoreContext.value = 101
       })
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(() => {
         secondBatch.forEach((m) => {
           mockListRef[m.id] = m
         })
@@ -116,7 +116,7 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
       added: '2026-01-01',
     }))
 
-    mockFetchMembers.mockImplementationOnce(async () => {
+    mockFetchMembers.mockImplementationOnce(() => {
       batch.forEach((m) => {
         mockListRef[m.id] = m
       })
@@ -126,8 +126,7 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
     const { setupModMembers } = await import(
       '~/modtools/composables/useModMembers'
     )
-    const { loadMore, groupid, collection, show, members } =
-      setupModMembers(true)
+    const { loadMore, groupid, collection, show } = setupModMembers(true)
 
     groupid.value = 1
     collection.value = 'Approved'
@@ -155,7 +154,7 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
       added: '2026-01-01',
     }))
 
-    mockFetchMembers.mockImplementationOnce(async () => {
+    mockFetchMembers.mockImplementationOnce(() => {
       batch.forEach((m) => {
         mockListRef[m.id] = m
       })

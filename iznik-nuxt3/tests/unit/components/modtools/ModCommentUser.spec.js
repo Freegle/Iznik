@@ -131,9 +131,7 @@ describe('ModCommentUser', () => {
     it('renders member name as a link to the member profile page', () => {
       const wrapper = mountComponent()
       // The nuxt-link stub renders as <a href="/members/approved/<groupid>/<userid>">
-      const link = wrapper.find(
-        'a[href="/members/approved/456/123"]'
-      )
+      const link = wrapper.find('a[href="/members/approved/456/123"]')
       expect(link.exists()).toBe(true)
       expect(link.text()).toContain('Test User')
     })

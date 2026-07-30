@@ -67,7 +67,12 @@ describe('systemconfig store', () => {
       const store = useSystemConfigStore()
       store.init({})
       const keywords = [
-        { id: 1, keyword: 'knife', category: 'substance_regulated', scope: 'global' },
+        {
+          id: 1,
+          keyword: 'knife',
+          category: 'substance_regulated',
+          scope: 'global',
+        },
       ]
       mockFetchConcernKeywordsv2.mockResolvedValue(keywords)
       await store.fetchConcernKeywords()

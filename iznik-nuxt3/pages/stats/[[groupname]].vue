@@ -29,7 +29,9 @@
                 </h5>
                 <div v-if="dateRangeDescription" class="mt-1">
                   <small class="text-muted">
-                    <strong>Showing data for: {{ dateRangeDescription }}</strong>
+                    <strong
+                      >Showing data for: {{ dateRangeDescription }}</strong
+                    >
                   </small>
                 </div>
               </div>

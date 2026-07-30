@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 
+import BulkInterestEditor from '~/components/BulkInterestEditor.vue'
+
 // Mutable myid so we can mount as the offerer, the replier, or a bystander.
 const h = vi.hoisted(() => ({
   myid: 99,
@@ -53,8 +55,6 @@ vi.mock('~/composables/useMe', () => ({
     },
   }),
 }))
-
-import BulkInterestEditor from '~/components/BulkInterestEditor.vue'
 
 const mountOpts = {
   global: {

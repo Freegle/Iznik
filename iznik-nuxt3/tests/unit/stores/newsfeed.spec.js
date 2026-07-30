@@ -421,8 +421,8 @@ describe('newsfeed store', () => {
 
     it('deduplicates concurrent fetches for same id', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchNews.mockReturnValueOnce(firstPromise)
 
@@ -732,7 +732,10 @@ describe('newsfeed store', () => {
       store.init({ public: {} })
       mockSend.mockResolvedValue(999)
       // Thread refetch returns WITHOUT the new reply (replica lag).
-      mockFetchNews.mockResolvedValue({ id: 1, replies: [{ id: 2, replies: [] }] })
+      mockFetchNews.mockResolvedValue({
+        id: 1,
+        replies: [{ id: 2, replies: [] }],
+      })
 
       await store.send('hello there', 1, 1, null)
 
@@ -764,7 +767,10 @@ describe('newsfeed store', () => {
       store.init({ public: {} })
       mockSend.mockResolvedValue(1000)
       // Replying to reply 2 within thread 1; refetch misses it.
-      mockFetchNews.mockResolvedValue({ id: 1, replies: [{ id: 2, replies: [] }] })
+      mockFetchNews.mockResolvedValue({
+        id: 1,
+        replies: [{ id: 2, replies: [] }],
+      })
 
       await store.send('nested reply', 2, 1, null)
 

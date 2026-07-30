@@ -338,7 +338,7 @@ describe('misc store', () => {
   })
 
   describe('startOnlineCheck', () => {
-    it('starts online check when no timer exists', async () => {
+    it('starts online check when no timer exists', () => {
       vi.useFakeTimers()
       const store = useMiscStore()
       store.init({ public: { APIv2: 'http://test' } })

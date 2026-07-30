@@ -21,7 +21,11 @@
         </b-form-group>
 
         <div class="qr-stage my-3">
-          <div ref="qrTarget" class="qr-target" :class="{ 'd-none': !hasCode }" />
+          <div
+            ref="qrTarget"
+            class="qr-target"
+            :class="{ 'd-none': !hasCode }"
+          />
           <p v-if="!url" class="text-muted mb-0">
             Enter a link above to see your QR code.
           </p>

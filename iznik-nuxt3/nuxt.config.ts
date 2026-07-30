@@ -1,5 +1,6 @@
 import eslintPlugin from 'vite-plugin-eslint2'
 import { VitePWA } from 'vite-plugin-pwa'
+// eslint-disable-next-line import/named -- the export exists (verified at runtime); eslint-plugin-import can't read @sentry/vite-plugin v5's exports map
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
 import { branding } from './branding.config'

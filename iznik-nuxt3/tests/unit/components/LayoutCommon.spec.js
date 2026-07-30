@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ref } from 'vue'
 
 const mockMiscStore = {
   stickyAdRendered: false,

@@ -327,13 +327,11 @@
                 class="submit-btn"
                 @click="submitForm"
               >
-                <v-icon
-                  v-if="submitting"
-                  icon="sync"
-                  class="me-1 fa-spin"
-                />
+                <v-icon v-if="submitting" icon="sync" class="me-1 fa-spin" />
                 <v-icon v-else icon="heart" class="me-1" />
-                {{ submitting ? 'Submitting...' : 'Register your organisation' }}
+                {{
+                  submitting ? 'Submitting...' : 'Register your organisation'
+                }}
               </b-button>
               <div v-if="submitted" class="submit-success">
                 <v-icon icon="check-circle" class="me-1" />
@@ -363,7 +361,7 @@
 
 <script setup>
 import { reactive, ref, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 import api from '~/api'
 import CharityBadge from '~/components/CharityBadge.vue'
