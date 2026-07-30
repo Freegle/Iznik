@@ -27,7 +27,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property int|null $reviewedby User id of volunteer who reviewed it
  * @property bool $reviewrejected
  * @property int|null $spamscore SpamAssassin score for mail replies
- * @property string|null $facebookid
  * @property int|null $scheduleid
  * @property bool|null $replyexpected
  * @property bool $replyreceived
