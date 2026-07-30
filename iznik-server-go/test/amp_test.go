@@ -41,8 +41,11 @@ func buildAMPURL(path string, userID uint64, chatID uint64, exp int64, token str
 func CreateTestEmailTracking(t *testing.T, userID uint64) uint64 {
 	db := database.DBConn
 
-	// Generate unique tracking ID
-	trackingUUID := fmt.Sprintf("test_%d_%d", userID, time.Now().UnixNano())
+	// Generate unique tracking ID. tracking_id is VARCHAR(32); base36-encode
+	// so it stays short even as test userIDs and nanosecond timestamps grow.
+	trackingUUID := fmt.Sprintf("t%s%s",
+		strconv.FormatUint(userID, 36),
+		strconv.FormatInt(time.Now().UnixNano(), 36))
 
 	result := db.Exec(`
 		INSERT INTO email_tracking (tracking_id, userid, email_type, recipient_email, sent_at)
