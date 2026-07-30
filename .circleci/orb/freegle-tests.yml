@@ -4800,7 +4800,7 @@ jobs:
           name: Install Node.js Dependencies
           command: |
             npm ci
-            npm update @freegle/capacitor-push-notifications-cap7
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -4982,7 +4982,7 @@ jobs:
           command: |
             npm ci
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
-            npm update @freegle/capacitor-push-notifications-cap7
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:

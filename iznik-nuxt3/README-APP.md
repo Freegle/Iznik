@@ -53,6 +53,10 @@ The app uses Capacitor 8 to bridge web code with native functionality:
 - **App Name**: Freegle
 - **Config File**: `capacitor.config.ts`
 - **Web Directory**: `.output/public` (from Nuxt static build)
+- **Minimum OS**: Android 8.0 (minSdk 26, `android/variables.gradle`); iOS 15.0
+  (`ios/App/Podfile` + pbxproj) — the iOS floor moved from 14.0 with Capacitor 8,
+  which requires iOS 15; existing installs on iOS 14 keep the last compatible
+  build but stop receiving updates
 
 ### Android Native Files
 
