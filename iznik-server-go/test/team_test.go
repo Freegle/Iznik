@@ -132,6 +132,34 @@ func TestPatchTeamAddMember(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+func TestPatchTeamAddMemberStringUserid(t *testing.T) {
+	// ModTools teams.vue binds the "Add member by ID" field to a
+	// <b-form-input type="number"> via v-model, which yields a JS string
+	// (e.g. "123"), not a number. $patchv2 JSON-encodes that straight into
+	// the request body, so the API must accept userid as a JSON string.
+	prefix := uniquePrefix("TeamPatchStr")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, token := CreateTestSession(t, adminID)
+
+	teamID := createTestTeam(t, prefix+"_team")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+
+	body := fmt.Sprintf(`{"id":"%d","action":"Add","userid":"%d"}`, teamID, memberID)
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/team?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM teams_members WHERE teamid = ? AND userid = ?", teamID, memberID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+}
+
 func TestPatchTeamRemoveMember(t *testing.T) {
 	prefix := uniquePrefix("TeamRemove")
 	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
