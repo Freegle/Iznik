@@ -32,10 +32,7 @@ export function quintileOfFreegler(fLng, fLat, data) {
     )
       return q
     for (const isl of qr.islands || []) {
-      if (
-        hasRing(isl) &&
-        pointInRing(fLng, fLat, isl.geometry.coordinates[0])
-      )
+      if (hasRing(isl) && pointInRing(fLng, fLat, isl.geometry.coordinates[0]))
         return q
     }
   }
@@ -133,12 +130,7 @@ export function ringsOverlap(ring1, ring2) {
     if (y < r2minY) r2minY = y
     if (y > r2maxY) r2maxY = y
   }
-  if (
-    r1maxX < r2minX ||
-    r2maxX < r1minX ||
-    r1maxY < r2minY ||
-    r2maxY < r1minY
-  )
+  if (r1maxX < r2minX || r2maxX < r1minX || r1maxY < r2minY || r2maxY < r1minY)
     return false
   for (const [lng, lat] of ring1) {
     if (pointInRing(lng, lat, ring2)) return true

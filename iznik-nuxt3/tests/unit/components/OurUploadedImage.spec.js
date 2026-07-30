@@ -9,7 +9,9 @@ import OurUploadedImage from '~/components/OurUploadedImage.vue'
 // end up checking a different fn than the one the component actually
 // called — giving a confusing "Number of calls: 0" on a spy that was
 // genuinely invoked.
-const { mockCaptureMessage } = vi.hoisted(() => ({ mockCaptureMessage: vi.fn() }))
+const { mockCaptureMessage } = vi.hoisted(() => ({
+  mockCaptureMessage: vi.fn(),
+}))
 
 vi.mock('@sentry/browser', () => ({
   captureMessage: mockCaptureMessage,
@@ -223,7 +225,7 @@ describe('OurUploadedImage', () => {
       expect(mockCaptureMessage).not.toHaveBeenCalled()
     })
 
-    it('does not report when component is unmounting', async () => {
+    it('does not report when component is unmounting', () => {
       const wrapper = createWrapper({ src: 'freegletusd-abc123' })
       const brokenImage = wrapper.vm.brokenImage
       wrapper.unmount()

@@ -52,7 +52,15 @@ describe('rippling/polygon', () => {
 
     it('returns false for a degenerate ring with under 4 vertices', () => {
       // pointInRing needs ≥4 verts (triangle + close).
-      expect(hasRing(poly([[0, 0], [1, 0], [0, 0]]))).toBe(false)
+      expect(
+        hasRing(
+          poly([
+            [0, 0],
+            [1, 0],
+            [0, 0],
+          ])
+        )
+      ).toBe(false)
     })
   })
 
@@ -110,7 +118,13 @@ describe('rippling/polygon', () => {
     it('prefers the lower-numbered quintile when polygons overlap', () => {
       // Both Q1 and Q3 contain (3, 3) here.
       const overlap = {
-        standard: poly([[-5, -5], [5, -5], [5, 5], [-5, 5], [-5, -5]]),
+        standard: poly([
+          [-5, -5],
+          [5, -5],
+          [5, 5],
+          [-5, 5],
+          [-5, -5],
+        ]),
         quintiles: {
           1: {
             polygon: poly([
@@ -301,7 +315,12 @@ describe('rippling/polygon', () => {
       expect(homeGroupOverlapFraction(null, groupRing)).toBe(0)
       expect(homeGroupOverlapFraction(groupRing, null)).toBe(0)
       expect(homeGroupOverlapFraction([], groupRing)).toBe(0)
-      expect(homeGroupOverlapFraction(groupRing, [[0, 0], [1, 0]])).toBe(0)
+      expect(
+        homeGroupOverlapFraction(groupRing, [
+          [0, 0],
+          [1, 0],
+        ])
+      ).toBe(0)
     })
 
     it('exceeds the 0.9 engine threshold when 95% covered', () => {

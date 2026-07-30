@@ -608,7 +608,9 @@ describe('ModChatReview', () => {
         touserid: 200,
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       // First = From:, gets sender's group (groupidfrom)
       expect(reviewUsers[0].props('groupid')).toBe(555)
       // Second = To:, gets recipient's group (groupid)
@@ -624,7 +626,9 @@ describe('ModChatReview', () => {
         touserid: 200,
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       reviewUsers.forEach((u) => {
         expect(u.props('groupid')).toBe(555)
       })
@@ -650,7 +654,9 @@ describe('ModChatReview', () => {
         touser: null,
       })
       // No ModChatReviewUser for To: (userid=0 is not a real user)
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       expect(reviewUsers.length).toBe(1) // only From:
       // But the chatroom name should appear as the To: label
       expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(true)
@@ -671,7 +677,9 @@ describe('ModChatReview', () => {
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
       expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(false)
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       expect(reviewUsers.length).toBe(2) // From: and To:
     })
 
@@ -702,17 +710,17 @@ describe('ModChatReview', () => {
 
     it('does not show the rippling held notice when heldbyrippling is false', () => {
       const wrapper = mountComponent({ heldbyrippling: false })
-      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
-        false
-      )
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
     })
 
     it('does not show the rippling held notice when heldbyrippling is absent', () => {
       const wrapper = mountComponent({})
       // defaultMessage has no heldbyrippling key → should not render the notice
-      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
-        false
-      )
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
     })
 
     it('can show both manual hold notice and rippling held notice together', () => {

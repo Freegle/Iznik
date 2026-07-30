@@ -24,7 +24,9 @@
           :class="{ 'clearance-item__name--gone': !isAvailable }"
           >{{ item.name }}</span
         >
-        <b-badge v-if="!isAvailable" variant="danger">No longer available</b-badge>
+        <b-badge v-if="!isAvailable" variant="danger"
+          >No longer available</b-badge
+        >
         <b-badge v-else variant="light">{{ item.quantity }} available</b-badge>
         <b-badge
           v-if="item.condition && item.condition !== 'Unknown'"
@@ -60,16 +62,29 @@
     <!-- Allocated recipients (Reserved / Collected). -->
     <div v-if="allocatedRows.length" class="clearance-item__group">
       <h6 class="clearance-item__grouphead">Allocated to</h6>
-      <ClearanceCandidate v-for="row in allocatedRows" :key="row.userid" v-bind="candProps(row)" />
+      <ClearanceCandidate
+        v-for="row in allocatedRows"
+        :key="row.userid"
+        v-bind="candProps(row)"
+      />
     </div>
 
     <!-- Needs you: the AI couldn't handle these chats. Always shown (never
          collapsed) — these are the ones to deal with. -->
-    <div v-if="needsYouRows.length" class="clearance-item__group clearance-item__group--needsyou">
+    <div
+      v-if="needsYouRows.length"
+      class="clearance-item__group clearance-item__group--needsyou"
+    >
       <h6 class="clearance-item__grouphead">
-        <v-icon icon="circle-exclamation" class="me-1" />Needs you ({{ needsYouRows.length }})
+        <v-icon icon="circle-exclamation" class="me-1" />Needs you ({{
+          needsYouRows.length
+        }})
       </h6>
-      <ClearanceCandidate v-for="row in needsYouRows" :key="row.userid" v-bind="candProps(row)" />
+      <ClearanceCandidate
+        v-for="row in needsYouRows"
+        :key="row.userid"
+        v-bind="candProps(row)"
+      />
     </div>
 
     <!-- Everyone ready for a decision (Helper QUALIFIED, or no Helper running).
@@ -79,7 +94,11 @@
       <h6 class="clearance-item__grouphead">
         {{ allocatedRows.length ? 'Fallback recipients' : 'Ready to decide' }}
       </h6>
-      <ClearanceCandidate v-for="row in decisionRows" :key="row.userid" v-bind="candProps(row)" />
+      <ClearanceCandidate
+        v-for="row in decisionRows"
+        :key="row.userid"
+        v-bind="candProps(row)"
+      />
     </div>
 
     <!-- Outreach: people the Helper is still gathering from. Listed but collapsed
@@ -96,7 +115,11 @@
         being contacted by Helper
       </b-button>
       <template v-if="showOutreach">
-        <ClearanceCandidate v-for="row in outreachRows" :key="row.userid" v-bind="candProps(row)" />
+        <ClearanceCandidate
+          v-for="row in outreachRows"
+          :key="row.userid"
+          v-bind="candProps(row)"
+        />
       </template>
     </div>
 
@@ -117,7 +140,11 @@
         excluded/withdrawn
       </b-button>
       <template v-if="showInactive">
-        <ClearanceCandidate v-for="row in inactiveRows" :key="row.userid" v-bind="candProps(row)" />
+        <ClearanceCandidate
+          v-for="row in inactiveRows"
+          :key="row.userid"
+          v-bind="candProps(row)"
+        />
       </template>
     </div>
 
@@ -135,10 +162,6 @@
 import { ref, computed, defineAsyncComponent } from 'vue'
 import ClearanceCandidate from '~/components/ClearanceCandidate'
 import HelperItemSummary from '~/components/HelperItemSummary'
-
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
-)
 import {
   isAllocatedState,
   isPoolState,
@@ -147,6 +170,10 @@ import {
   isOutreachState,
   isNeedsYouState,
 } from '~/composables/useClearance'
+
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('~/components/MessagePhotosModal')
+)
 
 const props = defineProps({
   // The whole bulk offer (so we can look across items for single-visit hints).

@@ -372,8 +372,8 @@
               </NoticeMessage>
             </div>
             <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
-              We couldn't work out where this post is (often an emailed post whose
-              subject has no recognised place name). Please click
+              We couldn't work out where this post is (often an emailed post
+              whose subject has no recognised place name). Please click
               <strong>Edit</strong> and add a postcode (it doesn't have to be
               exactly right - do your best) so members can find it.
             </NoticeMessage>
@@ -1119,7 +1119,9 @@ const isRippledInToContextGroup = computed(() =>
 // (both fields non-null) when the routing server said quicker=true at ripple-in time.
 const rippleProximity = computed(() => {
   const gid = currentGroupid.value
-  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  const g = (message.value?.groups || []).find(
+    (row) => parseInt(row.groupid) === gid
+  )
   if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
     return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
   }

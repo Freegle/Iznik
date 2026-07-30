@@ -23,7 +23,10 @@ describe('useFavoritePage', () => {
     useFavoritePage('myposts')
 
     expect(mockGet).toHaveBeenCalledWith('lasthomepage')
-    expect(mockSet).toHaveBeenCalledWith({ key: 'lasthomepage', value: 'myposts' })
+    expect(mockSet).toHaveBeenCalledWith({
+      key: 'lasthomepage',
+      value: 'myposts',
+    })
   })
 
   it('does not set lasthomepage when it already matches pageName', () => {
@@ -40,7 +43,10 @@ describe('useFavoritePage', () => {
 
     useFavoritePage('browse')
 
-    expect(mockSet).toHaveBeenCalledWith({ key: 'lasthomepage', value: 'browse' })
+    expect(mockSet).toHaveBeenCalledWith({
+      key: 'lasthomepage',
+      value: 'browse',
+    })
   })
 
   it('sets lasthomepage when existingHomepage is undefined', () => {
@@ -48,6 +54,9 @@ describe('useFavoritePage', () => {
 
     useFavoritePage('myposts')
 
-    expect(mockSet).toHaveBeenCalledWith({ key: 'lasthomepage', value: 'myposts' })
+    expect(mockSet).toHaveBeenCalledWith({
+      key: 'lasthomepage',
+      value: 'myposts',
+    })
   })
 })

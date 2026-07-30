@@ -11,28 +11,44 @@ import {
 describe('rippling/scoring', () => {
   describe('classifyPost', () => {
     it('marks successful posts as completed (grey)', () => {
-      const r = classifyPost({ successful: true, promised: false, home_group: true })
+      const r = classifyPost({
+        successful: true,
+        promised: false,
+        home_group: true,
+      })
       expect(r.color).toBe('#888')
       expect(r.label).toBe('completed')
       expect(r.section).toBe('completed')
     })
 
     it('marks promised posts as in-flight (amber)', () => {
-      const r = classifyPost({ successful: false, promised: true, home_group: true })
+      const r = classifyPost({
+        successful: false,
+        promised: true,
+        home_group: true,
+      })
       expect(r.color).toBe('#f39c12')
       expect(r.label).toBe('promised')
       expect(r.section).toBe('promised')
     })
 
     it('marks active home-group posts green', () => {
-      const r = classifyPost({ successful: false, promised: false, home_group: true })
+      const r = classifyPost({
+        successful: false,
+        promised: false,
+        home_group: true,
+      })
       expect(r.color).toBe('#27ae60')
       expect(r.label).toBe('home group')
       expect(r.section).toBe('active')
     })
 
     it('marks active cross-group posts blue', () => {
-      const r = classifyPost({ successful: false, promised: false, home_group: false })
+      const r = classifyPost({
+        successful: false,
+        promised: false,
+        home_group: false,
+      })
       expect(r.color).toBe('#1f77b4')
       expect(r.label).toBe('rippled in')
       expect(r.section).toBe('active')
@@ -40,7 +56,11 @@ describe('rippling/scoring', () => {
 
     it('treats successful-and-promised as completed (successful wins)', () => {
       // Belt and braces — if both flags are set the post is gone.
-      const r = classifyPost({ successful: true, promised: true, home_group: false })
+      const r = classifyPost({
+        successful: true,
+        promised: true,
+        home_group: false,
+      })
       expect(r.section).toBe('completed')
     })
   })
@@ -62,7 +82,10 @@ describe('rippling/scoring', () => {
     })
 
     it('prefers Uploadcare over the legacy attachment when both are present', () => {
-      const url = thumbUrlFor({ thumb_externaluid: 'abc', thumb_attachment_id: 42 })
+      const url = thumbUrlFor({
+        thumb_externaluid: 'abc',
+        thumb_attachment_id: 42,
+      })
       expect(url).toContain('ucarecdn.com')
       expect(url).not.toContain('tmimg_')
     })
@@ -205,7 +228,7 @@ describe('rippling/scoring', () => {
     })
 
     it('leaves safe ASCII untouched', () => {
-      expect(escapeHTML("plain old text 123")).toBe('plain old text 123')
+      expect(escapeHTML('plain old text 123')).toBe('plain old text 123')
     })
   })
 

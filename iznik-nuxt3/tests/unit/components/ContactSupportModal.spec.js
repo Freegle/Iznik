@@ -1,13 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
+
+import ContactSupportModal from '~/components/ContactSupportModal.vue'
 
 const mockUnsubscribe = vi.fn()
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({ unsubscribe: mockUnsubscribe }),
 }))
-
-import ContactSupportModal from '~/components/ContactSupportModal.vue'
 
 function createWrapper(props = {}) {
   return mount(ContactSupportModal, {

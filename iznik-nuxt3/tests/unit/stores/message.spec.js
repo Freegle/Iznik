@@ -481,7 +481,10 @@ describe('message store - markSeen()', () => {
 
   it('refreshes the count for the member browse view and distance, not the default', async () => {
     useAuthStore.mockReturnValue({
-      user: { id: 1, settings: { browseView: 'mygroups', browseMaxDistance: 10 } },
+      user: {
+        id: 1,
+        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+      },
     })
     const store = useMessageStore()
     store.init({})
@@ -595,9 +598,10 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
   it('treats Spam and PendingOther as still in the review queue', async () => {
     const store = useMessageStore()
     store.list[500] = { id: 500 }
-    store.fetchMT = vi
-      .fn()
-      .mockResolvedValue({ id: 500, groups: [{ groupid: 1, collection: 'Spam' }] })
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [{ groupid: 1, collection: 'Spam' }],
+    })
 
     await store.refreshOrRemoveFromMTList(500)
 

@@ -29,63 +29,70 @@ const CANNED = {
 // .query('microphone') reports 'prompt' - the test browser is launched with fake
 // media that auto-grants, which would otherwise skip the explainer.
 async function stubMicAndRecorder(page, { forcePrompt = false } = {}) {
-  await page.addInitScript((opts) => {
-    const fakeStream = { getTracks: () => [{ stop() {} }] }
-    if (!navigator.mediaDevices) {
-      Object.defineProperty(navigator, 'mediaDevices', {
-        value: {},
-        configurable: true,
-      })
-    }
-    navigator.mediaDevices.getUserMedia = async () => fakeStream
-
-    if (opts.forcePrompt && navigator.permissions) {
-      try {
-        const proto = Object.getPrototypeOf(navigator.permissions)
-        Object.defineProperty(proto, 'query', {
+  await page.addInitScript(
+    (opts) => {
+      const fakeStream = { getTracks: () => [{ stop() {} }] }
+      if (!navigator.mediaDevices) {
+        Object.defineProperty(navigator, 'mediaDevices', {
+          value: {},
           configurable: true,
-          writable: true,
-          value: async (desc) => ({
-            state: desc && desc.name === 'microphone' ? 'prompt' : 'granted',
-            onchange: null,
-          }),
         })
-      } catch (e) {
-        /* leave native query in place */
       }
-    }
+      navigator.mediaDevices.getUserMedia = () => fakeStream
 
-    class FakeMediaRecorder {
-      constructor(stream, mrOpts) {
-        this.state = 'inactive'
-        this.mimeType = (mrOpts && mrOpts.mimeType) || 'audio/webm'
-        this.ondataavailable = null
-        this.onstop = null
-      }
-
-      static isTypeSupported() {
-        return true
-      }
-
-      start() {
-        this.state = 'recording'
-        setTimeout(() => {
-          if (this.ondataavailable) {
-            this.ondataavailable({ data: new Blob(['a'], { type: this.mimeType }) })
-          }
-        }, 30)
-      }
-
-      stop() {
-        this.state = 'inactive'
-        if (this.ondataavailable) {
-          this.ondataavailable({ data: new Blob(['b'], { type: this.mimeType }) })
+      if (opts.forcePrompt && navigator.permissions) {
+        try {
+          const proto = Object.getPrototypeOf(navigator.permissions)
+          Object.defineProperty(proto, 'query', {
+            configurable: true,
+            writable: true,
+            value: (desc) => ({
+              state: desc && desc.name === 'microphone' ? 'prompt' : 'granted',
+              onchange: null,
+            }),
+          })
+        } catch (e) {
+          /* leave native query in place */
         }
-        if (this.onstop) this.onstop()
       }
-    }
-    window.MediaRecorder = FakeMediaRecorder
-  }, { forcePrompt })
+
+      class FakeMediaRecorder {
+        constructor(stream, mrOpts) {
+          this.state = 'inactive'
+          this.mimeType = (mrOpts && mrOpts.mimeType) || 'audio/webm'
+          this.ondataavailable = null
+          this.onstop = null
+        }
+
+        static isTypeSupported() {
+          return true
+        }
+
+        start() {
+          this.state = 'recording'
+          setTimeout(() => {
+            if (this.ondataavailable) {
+              this.ondataavailable({
+                data: new Blob(['a'], { type: this.mimeType }),
+              })
+            }
+          }, 30)
+        }
+
+        stop() {
+          this.state = 'inactive'
+          if (this.ondataavailable) {
+            this.ondataavailable({
+              data: new Blob(['b'], { type: this.mimeType }),
+            })
+          }
+          if (this.onstop) this.onstop()
+        }
+      }
+      window.MediaRecorder = FakeMediaRecorder
+    },
+    { forcePrompt }
+  )
 }
 
 // Open /voicepost, skip the photo and choose the voice branch. The skip click is
@@ -95,7 +102,9 @@ async function goToVoiceChoice(page) {
   await page.goto('/voicepost')
   await expect(async () => {
     await page.locator('.skip-link-btn').click()
-    await expect(page.locator('.choice-btn--voice')).toBeVisible({ timeout: 2500 })
+    await expect(page.locator('.choice-btn--voice')).toBeVisible({
+      timeout: 2500,
+    })
   }).toPass({ timeout: 30000 })
   await page.locator('.choice-btn--voice').click()
   await expect(page.locator('.mic-btn')).toBeVisible()

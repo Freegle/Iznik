@@ -5,8 +5,8 @@
       {{ items.length }} items in this offer
     </h4>
     <p v-if="!isOwner && !message.successful" class="bulkitems__prompt">
-      Tap <strong>Yes please</strong> on each item you want — pick as many as you
-      like, and choose how many of each.
+      Tap <strong>Yes please</strong> on each item you want — pick as many as
+      you like, and choose how many of each.
     </p>
 
     <ul class="bulkitems__list">
@@ -59,7 +59,9 @@
             <b-badge v-if="item.available === false" variant="secondary"
               >No longer available</b-badge
             >
-            <b-badge v-else variant="light">{{ item.quantity }} available</b-badge>
+            <b-badge v-else variant="light"
+              >{{ item.quantity }} available</b-badge
+            >
           </span>
           <span class="bitem__cond">
             <b-badge
@@ -158,10 +160,7 @@
         />
       </b-form-group>
 
-      <b-form-group
-        label="Add a message for the giver (optional)"
-        class="mb-2"
-      >
+      <b-form-group label="Add a message for the giver (optional)" class="mb-2">
         <b-form-textarea
           v-model="comment"
           rows="2"
@@ -187,7 +186,6 @@
 import { ref, reactive, computed, watch, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
-import NoticeMessage from '~/components/NoticeMessage'
 
 const MessagePhotosModal = defineAsyncComponent(() =>
   import('~/components/MessagePhotosModal')
@@ -248,7 +246,12 @@ function seedPicks() {
         checked: !!yi && yi.state !== 'Withdrawn',
         quantity: yi && yi.quantity > 0 ? yi.quantity : 1,
       }
-      if (yi && yi.cancollect && !cancollect.value && !cancollectTimes.value.length) {
+      if (
+        yi &&
+        yi.cancollect &&
+        !cancollect.value &&
+        !cancollectTimes.value.length
+      ) {
         cancollect.value = yi.cancollect
         // Pre-tick the fixed windows the user already chose (stored joined).
         if (slots.value.length) {

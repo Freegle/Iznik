@@ -25,7 +25,10 @@ function mountComponent() {
     global: {
       stubs: {
         NoticeMessage: { template: '<div class="notice"><slot /></div>' },
-        'b-tabs': { template: '<div class="tabs"><slot /></div>', props: ['modelValue'] },
+        'b-tabs': {
+          template: '<div class="tabs"><slot /></div>',
+          props: ['modelValue'],
+        },
         'b-tab': {
           template:
             '<div class="tab" @click="$emit(\'click\')"><slot name="title" /><slot /></div>',
@@ -55,7 +58,13 @@ describe('sysadmin page tab grouping', () => {
     const wrapper = mountComponent()
     await flushPromises()
     const text = wrapper.text()
-    for (const label of ['Housekeeping', 'Cron Jobs', 'Mail', 'Behaviour', 'Rippling']) {
+    for (const label of [
+      'Housekeeping',
+      'Cron Jobs',
+      'Mail',
+      'Behaviour',
+      'Rippling',
+    ]) {
       expect(text).toContain(label)
     }
   })

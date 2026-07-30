@@ -1,4 +1,19 @@
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from 'vitest'
+
+import {
+  navBarHidden,
+  clearNavBarTimeout,
+  setNavBarHidden,
+  updateScrollTime,
+} from '~/composables/useNavbar'
 
 // Mock all store dependencies before importing the composable.
 // useMiscStore is the only store used by the module-level functions.
@@ -11,17 +26,12 @@ vi.mock('~/stores/misc', () => ({
 vi.mock('~/stores/newsfeed', () => ({ useNewsfeedStore: () => ({}) }))
 vi.mock('~/stores/message', () => ({ useMessageStore: () => ({}) }))
 vi.mock('~/stores/notification', () => ({ useNotificationStore: () => ({}) }))
-vi.mock('~/stores/communityevent', () => ({ useCommunityEventStore: () => ({}) }))
+vi.mock('~/stores/communityevent', () => ({
+  useCommunityEventStore: () => ({}),
+}))
 vi.mock('~/stores/volunteering', () => ({ useVolunteeringStore: () => ({}) }))
 vi.mock('~/stores/mobile', () => ({ useMobileStore: () => ({ isApp: false }) }))
 vi.mock('~/composables/useMe', () => ({ fetchMe: vi.fn() }))
-
-import {
-  navBarHidden,
-  clearNavBarTimeout,
-  setNavBarHidden,
-  updateScrollTime,
-} from '~/composables/useNavbar'
 
 // TYPING_TIME_INVERVAL is 10000ms (from constants.js)
 const TYPING_TIME_INVERVAL = 10000
@@ -342,7 +352,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
   // Use a closure variable so the doMock factory picks up per-test values.
   let mockNotificationCount = 1
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.resetModules()
     mockSetBadgeCount = vi.fn()
     mockNotificationCount = 1 // default: 1 stuck notification
@@ -417,7 +427,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
     // Accessing the computed triggers setBadgeCount.
     // BUGGY: setBadgeCount(0) — only chatStore.unreadCount (0).
     // FIXED: setBadgeCount(1) — 0 chats + 1 notification.
-    void chatCount.value
+    expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
   })
@@ -430,7 +440,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
 
     const { useNavbar } = await import('~/composables/useNavbar')
     const { chatCount } = useNavbar()
-    void chatCount.value
+    expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(0)
   })
@@ -452,7 +462,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
 
     const { useNavbar } = await import('~/composables/useNavbar')
     const { chatCount } = useNavbar()
-    void chatCount.value
+    expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(99)
   })

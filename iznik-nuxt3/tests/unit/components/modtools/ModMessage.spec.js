@@ -452,7 +452,11 @@ describe('ModMessage', () => {
         {
           spamreason: 'Flagged as spam',
           groups: [
-            { groupid: 789, collection: 'Pending', spamreason: 'Flagged as spam' },
+            {
+              groupid: 789,
+              collection: 'Pending',
+              spamreason: 'Flagged as spam',
+            },
           ],
         }
       )
@@ -569,7 +573,11 @@ describe('ModMessage', () => {
       // (0,0) and its blurred form are unresolved locations, not foreign ones -
       // they must NOT trip the scam warning (Discourse #9865).
       ['null island (0,0) is not outside UK', { lat: 0, lng: 0 }, false],
-      ['blurred null island (0.004,0) is not outside UK', { lat: 0.004, lng: 0 }, false],
+      [
+        'blurred null island (0.004,0) is not outside UK',
+        { lat: 0.004, lng: 0 },
+        false,
+      ],
     ])('%s returns %s', (_desc, location, expected) => {
       const wrapper = mountComponent({}, { location })
       expect(wrapper.vm.outsideUK).toBe(expected)
@@ -579,7 +587,11 @@ describe('ModMessage', () => {
   describe('Computed: noLocation', () => {
     it.each([
       ['real UK location', { lat: 51.5, lng: -0.1 }, false],
-      ['genuinely foreign location (New York)', { lat: 40.7, lng: -74.0 }, false],
+      [
+        'genuinely foreign location (New York)',
+        { lat: 40.7, lng: -74.0 },
+        false,
+      ],
       ['null island (0,0)', { lat: 0, lng: 0 }, true],
       ['blurred null island (0.004,0)', { lat: 0.004, lng: 0 }, true],
     ])('%s -> %s', (_desc, location, expected) => {
@@ -588,7 +600,10 @@ describe('ModMessage', () => {
     })
 
     it('is true when there is no position at all', () => {
-      const wrapper = mountComponent({}, { location: null, lat: null, lng: null })
+      const wrapper = mountComponent(
+        {},
+        { location: null, lat: null, lng: null }
+      )
       expect(wrapper.vm.noLocation).toBe(true)
     })
   })
@@ -1429,7 +1444,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1454,7 +1474,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1467,9 +1492,9 @@ describe('ModMessage', () => {
         }
       )
       expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
-      expect(
-        wrapper.find('[data-test="ripple-proximity-note"]').exists()
-      ).toBe(false)
+      expect(wrapper.find('[data-test="ripple-proximity-note"]').exists()).toBe(
+        false
+      )
     })
 
     it('does not warn when the post has not rippled in', () => {

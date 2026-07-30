@@ -147,8 +147,8 @@ describe('communityevent store', () => {
 
     it('deduplicates concurrent fetches', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchEvent.mockReturnValueOnce(firstPromise)
 

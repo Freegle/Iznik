@@ -331,7 +331,9 @@ const refmsg = computed(() => {
 // which items are wanted right from the chat.
 const isBulk = computed(() => {
   const m = refmsg.value
-  return !!m && ((m.bulkcount || 0) > 0 || (m.bulkitems && m.bulkitems.length > 0))
+  return (
+    !!m && ((m.bulkcount || 0) > 0 || (m.bulkitems && m.bulkitems.length > 0))
+  )
 })
 
 // The replier's own free-text note is appended to the interest chat body after

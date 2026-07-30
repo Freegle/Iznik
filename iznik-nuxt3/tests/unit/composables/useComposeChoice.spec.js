@@ -172,20 +172,28 @@ describe('useComposeChoice conversion tracking', () => {
   })
 
   it('records the pending variant as a conversion (control)', () => {
-    const { markConversionPending, recordConversionIfPending } = useComposeChoice()
+    const { markConversionPending, recordConversionIfPending } =
+      useComposeChoice()
     markConversionPending('control')
     recordConversionIfPending()
     expect(mockBandit.chosen).toHaveBeenCalledWith(
-      expect.objectContaining({ uid: 'mobile-compose-variant', variant: 'control' })
+      expect.objectContaining({
+        uid: 'mobile-compose-variant',
+        variant: 'control',
+      })
     )
   })
 
   it('records voice the same way, at the same point', () => {
-    const { markConversionPending, recordConversionIfPending } = useComposeChoice()
+    const { markConversionPending, recordConversionIfPending } =
+      useComposeChoice()
     markConversionPending('voice')
     recordConversionIfPending()
     expect(mockBandit.chosen).toHaveBeenCalledWith(
-      expect.objectContaining({ uid: 'mobile-compose-variant', variant: 'voice' })
+      expect.objectContaining({
+        uid: 'mobile-compose-variant',
+        variant: 'voice',
+      })
     )
   })
 
@@ -196,7 +204,8 @@ describe('useComposeChoice conversion tracking', () => {
   })
 
   it('records a conversion at most once (marker cleared after recording)', () => {
-    const { markConversionPending, recordConversionIfPending } = useComposeChoice()
+    const { markConversionPending, recordConversionIfPending } =
+      useComposeChoice()
     markConversionPending('control')
     recordConversionIfPending()
     recordConversionIfPending()

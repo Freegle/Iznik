@@ -2,36 +2,38 @@
   <div>
     <h1>AI Images</h1>
     <p class="text-muted">
-      Images flagged by volunteers as needing regeneration. Review and replace where needed.
+      Images flagged by volunteers as needing regeneration. Review and replace
+      where needed.
     </p>
 
     <b-alert variant="info" dismissible class="mb-3">
       <strong>Tips for better AI images</strong>
       <ul class="mb-0 mt-1">
         <li>
-          The AI is trained on US English. Common British terms are translated automatically
-          ("cot" → "baby crib", "nappy" → "diaper", "pushchair" → "stroller", "hoover" →
-          "vacuum cleaner") but for other British terms, type the US English equivalent in the
-          description box if the image looks wrong.
+          The AI is trained on US English. Common British terms are translated
+          automatically ("cot" → "baby crib", "nappy" → "diaper", "pushchair" →
+          "stroller", "hoover" → "vacuum cleaner") but for other British terms,
+          type the US English equivalent in the description box if the image
+          looks wrong.
         </li>
         <li>
-          Two-word names like "pressure washer" or "steam mop" sometimes confuse the AI — a
-          more descriptive override usually fixes it.
+          Two-word names like "pressure washer" or "steam mop" sometimes confuse
+          the AI — a more descriptive override usually fixes it.
         </li>
         <li>
-          The image is generated from the item title only, not the post body. Post descriptions
-          often contain collection arrangements and other text that would confuse the AI. If the
-          title alone is too vague, add a clearer description below (e.g. "child's blue bicycle
-          with stabilisers").
+          The image is generated from the item title only, not the post body.
+          Post descriptions often contain collection arrangements and other text
+          that would confuse the AI. If the title alone is too vague, add a
+          clearer description below (e.g. "child's blue bicycle with
+          stabilisers").
         </li>
+        <li>If you don't know what the item is or looks like, skip it.</li>
         <li>
-          If you don't know what the item is or looks like, skip it.
-        </li>
-        <li>
-          Some items genuinely can't have a good AI image — if every attempt is wrong, it is fine
-          to leave the current image and move on with "Keep Current". If an item should never have
-          an AI image at all (e.g. cash, a lift, a voucher), use "Don't use AI for this item" and
-          we won't generate one for it again.
+          Some items genuinely can't have a good AI image — if every attempt is
+          wrong, it is fine to leave the current image and move on with "Keep
+          Current". If an item should never have an AI image at all (e.g. cash,
+          a lift, a voucher), use "Don't use AI for this item" and we won't
+          generate one for it again.
         </li>
       </ul>
     </b-alert>
@@ -60,7 +62,12 @@
                 v-if="img.image_url"
                 :src="img.image_url"
                 class="ai-image-duotone"
-                style="width: 160px; height: 160px; object-fit: cover; border: 2px solid #dc3545"
+                style="
+                  width: 160px;
+                  height: 160px;
+                  object-fit: cover;
+                  border: 2px solid #dc3545;
+                "
                 :alt="img.name"
               />
               <div
@@ -78,7 +85,12 @@
               <b-img
                 :src="previewFor(img)"
                 class="ai-image-duotone"
-                style="width: 160px; height: 160px; object-fit: cover; border: 2px solid #28a745"
+                style="
+                  width: 160px;
+                  height: 160px;
+                  object-fit: cover;
+                  border: 2px solid #28a745;
+                "
                 :alt="'Preview for ' + img.name"
               />
             </div>
@@ -101,24 +113,32 @@
 
             <!-- Vote summary -->
             <div class="mb-2">
-              <b-badge variant="danger" class="me-1">{{ img.reject_count }} Reject</b-badge>
-              <b-badge variant="success">{{ img.approve_count }} Approve</b-badge>
+              <b-badge variant="danger" class="me-1"
+                >{{ img.reject_count }} Reject</b-badge
+              >
+              <b-badge variant="success"
+                >{{ img.approve_count }} Approve</b-badge
+              >
             </div>
 
             <!-- Voter list -->
             <div v-if="img.votes && img.votes.length" class="mb-2">
               <div class="text-muted small fw-bold">Votes:</div>
               <ul class="list-unstyled mb-0">
-                <li
-                  v-for="vote in img.votes"
-                  :key="vote.userid"
-                  class="small"
-                >
-                  <span :class="vote.result === 'Reject' ? 'text-danger' : 'text-success'">
+                <li v-for="vote in img.votes" :key="vote.userid" class="small">
+                  <span
+                    :class="
+                      vote.result === 'Reject' ? 'text-danger' : 'text-success'
+                    "
+                  >
                     {{ vote.result }}
                   </span>
                   — {{ vote.displayname }}
-                  <span v-if="vote.containspeople === 1" class="text-warning ms-1">(contains people)</span>
+                  <span
+                    v-if="vote.containspeople === 1"
+                    class="text-warning ms-1"
+                    >(contains people)</span
+                  >
                 </li>
               </ul>
             </div>
@@ -132,7 +152,9 @@
             />
 
             <!-- Action buttons: Regenerate left, Keep/Accept far right -->
-            <div class="w-100 d-flex justify-content-between align-items-center">
+            <div
+              class="w-100 d-flex justify-content-between align-items-center"
+            >
               <div class="d-flex gap-2 align-items-center">
                 <b-button
                   data-testid="regenerate-btn"

@@ -35,10 +35,16 @@
           alt="Your item"
         />
         <h1 class="voicepost__title">How do you want to describe it?</h1>
-        <p class="voicepost__lead">Talk to us, or type it in - whatever's easier.</p>
+        <p class="voicepost__lead">
+          Talk to us, or type it in - whatever's easier.
+        </p>
         <div class="choice-grid">
           <button class="choice-btn choice-btn--voice" @click="chooseVoice">
-            <svg viewBox="0 0 24 24" class="choice-btn__icon" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              class="choice-btn__icon"
+              aria-hidden="true"
+            >
               <path
                 fill="currentColor"
                 d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"
@@ -52,7 +58,11 @@
             <span class="choice-btn__sub">Describe it out loud</span>
           </button>
           <button class="choice-btn choice-btn--type" @click="chooseType">
-            <svg viewBox="0 0 24 24" class="choice-btn__icon" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              class="choice-btn__icon"
+              aria-hidden="true"
+            >
               <path
                 fill="currentColor"
                 d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm1 3v2h2V8H5Zm4 0v2h2V8H9Zm4 0v2h2V8h-2Zm4 0v2h2V8h-2ZM5 11v2h2v-2H5Zm4 0v2h2v-2H9Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2ZM7 14v2h10v-2H7Z"
@@ -94,7 +104,9 @@
             />
           </svg>
         </button>
-        <p class="voicepost__hint">Press to start &middot; press again to stop</p>
+        <p class="voicepost__hint">
+          Press to start &middot; press again to stop
+        </p>
       </div>
 
       <!-- RECORDING: no live transcript - we transcribe once you stop -->
@@ -183,7 +195,12 @@
       <!-- ERROR -->
       <div v-else-if="phase === 'error'" class="voicepost__stage">
         <p class="voicepost__lead voicepost__error">{{ errorMessage }}</p>
-        <b-button variant="primary" size="lg" class="w-100" @click="chooseVoice">
+        <b-button
+          variant="primary"
+          size="lg"
+          class="w-100"
+          @click="chooseVoice"
+        >
           Try again
         </b-button>
       </div>
@@ -200,8 +217,8 @@
       @ok="confirmMicAndRecord"
     >
       <p class="mb-2">
-        To hear your description, your browser will now ask for permission to use
-        your microphone.
+        To hear your description, your browser will now ask for permission to
+        use your microphone.
       </p>
       <p class="mb-0">
         We only use it while you're recording a post like this - never in the
@@ -393,7 +410,9 @@ async function beginRecording() {
     typeof MediaRecorder === 'undefined'
   ) {
     logVpEvent('voicepost_record_error', { reason: 'unsupported' })
-    fail("Your browser can't record audio. Try a recent Chrome, Edge or Safari.")
+    fail(
+      "Your browser can't record audio. Try a recent Chrome, Edge or Safari."
+    )
     return
   }
 
@@ -542,7 +561,8 @@ function postIt() {
     desc_edited: descEdited,
     title_chars: title.value.length,
     desc_chars: description.value.length,
-    desc_char_delta: description.value.length - originalDescription.value.length,
+    desc_char_delta:
+      description.value.length - originalDescription.value.length,
     had_photo: hasPhotos.value,
     played_back: played,
     rerecord_count: rerecordCount,

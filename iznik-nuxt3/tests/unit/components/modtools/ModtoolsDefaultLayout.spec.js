@@ -256,7 +256,15 @@ describe('modtools default layout — pending badge includes spam', () => {
     const capturedItems = []
     const CapturingModMenuItemLeft = {
       template: '<div />',
-      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant', 'directcount'],
+      props: [
+        'link',
+        'name',
+        'count',
+        'othercount',
+        'indent',
+        'countVariant',
+        'directcount',
+      ],
       setup(props) {
         capturedItems.push({
           link: props.link,
@@ -266,11 +274,13 @@ describe('modtools default layout — pending badge includes spam', () => {
       },
     }
 
-    const wrapper = mountLayout({ ModMenuItemLeft: CapturingModMenuItemLeft })
+    mountLayout({ ModMenuItemLeft: CapturingModMenuItemLeft })
     await flushPromises()
     await nextTick()
 
-    const pendingItem = capturedItems.find((item) => item.link === '/messages/pending')
+    const pendingItem = capturedItems.find(
+      (item) => item.link === '/messages/pending'
+    )
     expect(pendingItem, 'Pending menu item must be rendered').toBeDefined()
 
     // Fails on buggy code (count=['pending'], spam not present).

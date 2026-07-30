@@ -156,9 +156,7 @@ describe('useModMessages sorting with getContextArrival', () => {
     const msgB = {
       id: 2,
       arrival: '2026-01-03',
-      groups: [
-        { groupid: 10, arrival: '2026-01-03', collection: 'Pending' },
-      ],
+      groups: [{ groupid: 10, arrival: '2026-01-03', collection: 'Pending' }],
     }
 
     mockGetByGroup.mockReturnValue([msgA, msgB])
@@ -168,7 +166,7 @@ describe('useModMessages sorting with getContextArrival', () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
-    const { getMessages, collection, groupid, messages, show } =
+    const { getMessages, collection, groupid, messages } =
       setupModMessages(true)
     collection.value = 'Pending'
     groupid.value = 10
@@ -198,8 +196,7 @@ describe('useModMessages sorting with getContextArrival', () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
-    const { getMessages, collection, messages, show } =
-      setupModMessages(true)
+    const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
     // No groupid set — should use groups[0].arrival
     await getMessages()
@@ -310,7 +307,7 @@ describe('useModMessages visibleMessages computed', () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
-    const { collection, show, visibleMessages } = setupModMessages(true)
+    const { collection, visibleMessages } = setupModMessages(true)
     collection.value = 'Pending'
     // show defaults to 0 after reset — do NOT call getMessages()
     expect(visibleMessages.value).toEqual([])
@@ -450,7 +447,9 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     const msgPendingOther = {
       id: 2,
       arrival: '2026-01-04',
-      groups: [{ groupid: 10, arrival: '2026-01-04', collection: 'PendingOther' }],
+      groups: [
+        { groupid: 10, arrival: '2026-01-04', collection: 'PendingOther' },
+      ],
     }
 
     mockAll.value = [msgPending, msgPendingOther]
@@ -486,7 +485,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
-    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    const { getMessages, collection, groupid, messages } =
+      setupModMessages(true)
     collection.value = 'Pending'
     groupid.value = 10
     await getMessages()
@@ -499,9 +499,7 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     const msg = {
       id: 1,
       arrival: '2026-01-05',
-      groups: [
-        { groupid: 10, arrival: '2026-01-05', collection: 'Approved' },
-      ],
+      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Approved' }],
     }
 
     mockGetByGroup.mockReturnValue([msg])
@@ -511,7 +509,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
-    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    const { getMessages, collection, groupid, messages } =
+      setupModMessages(true)
     collection.value = 'Pending'
     groupid.value = 10
     await getMessages()
@@ -527,9 +526,7 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     const msg = {
       id: 1,
       arrival: '2026-01-05',
-      groups: [
-        { groupid: 10, arrival: '2026-01-05', collection: 'Approved' },
-      ],
+      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Approved' }],
     }
 
     mockGetByGroup.mockReturnValue([msg])
@@ -539,7 +536,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     const { setupModMessages } = await import(
       '~/modtools/composables/useModMessages'
     )
-    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    const { getMessages, collection, groupid, messages } =
+      setupModMessages(true)
     collection.value = 'Edit'
     groupid.value = 10
     await getMessages()

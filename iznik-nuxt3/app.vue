@@ -110,6 +110,7 @@
   </div>
 </template>
 <script setup>
+import { useNavbarVisibility } from './composables/useNavbarVisibility'
 import { useNoticeboardStore } from './stores/noticeboard'
 import { useAuthStore } from './stores/auth'
 import { useGroupStore } from './stores/group'

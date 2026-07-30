@@ -1,6 +1,9 @@
 <template>
   <div class="scrollinplace">
-    <b-form-group label="Your visible name" data-setting-id="personal-your-visible-name">
+    <b-form-group
+      label="Your visible name"
+      data-setting-id="personal-your-visible-name"
+    >
       <b-form-text class="mb-2">
         This is your name as displayed publicly to other users, including in the
         <em>$myname</em> substitution string.
@@ -17,7 +20,10 @@
         </slot>
       </b-input-group>
     </b-form-group>
-    <b-form-group label="Your email address" data-setting-id="personal-your-email-address">
+    <b-form-group
+      label="Your email address"
+      data-setting-id="personal-your-email-address"
+    >
       <EmailConfirmModal
         v-if="showEmailConfirmModal"
         @hidden="showEmailConfirmModal = false"
@@ -42,7 +48,10 @@
         </slot>
       </b-input-group>
     </b-form-group>
-    <b-form-group label="Moderation Notifications (Active)" data-setting-id="personal-moderation-notifications-active">
+    <b-form-group
+      label="Moderation Notifications (Active)"
+      data-setting-id="personal-moderation-notifications-active"
+    >
       <b-form-text class="mb-2">
         For groups that you're an active mod on, we will mail you when there is
         moderation work to do which has been outstanding for more than a certain
@@ -55,7 +64,10 @@
         class="mb-2 fw-bold"
       />
     </b-form-group>
-    <b-form-group label="Moderation Notifications (Backup)" data-setting-id="personal-moderation-notifications-backup">
+    <b-form-group
+      label="Moderation Notifications (Backup)"
+      data-setting-id="personal-moderation-notifications-backup"
+    >
       <b-form-text class="mb-2">
         This is for groups where you're a backup mod. You'd usually set this to
         a higher value than the previous setting so that the active mods will
@@ -82,7 +94,10 @@
         variant="modgreen"
       />
     </b-form-group>
-    <b-form-group label="Show me as a volunteer?" data-setting-id="personal-show-me-as-a-volunteer">
+    <b-form-group
+      label="Show me as a volunteer?"
+      data-setting-id="personal-show-me-as-a-volunteer"
+    >
       <b-form-text class="mb-2">
         We can show members who the volunteers on a group are, to make it seem
         more friendly. You can choose whether we show you.
@@ -98,7 +113,10 @@
         variant="modgreen"
       />
     </b-form-group>
-    <b-form-group label="Email me about ChitChat?" data-setting-id="personal-email-me-about-chitchat">
+    <b-form-group
+      label="Email me about ChitChat?"
+      data-setting-id="personal-email-me-about-chitchat"
+    >
       <b-form-text class="mb-2">
         Your members may post in the ChitChat, perhaps to introduce themselves,
         or perhaps because they have problems. Replying to these posts helps
@@ -116,7 +134,10 @@
         variant="modgreen"
       />
     </b-form-group>
-    <b-form-group label="Enter send vs newline" data-setting-id="personal-enter-send-vs-newline">
+    <b-form-group
+      label="Enter send vs newline"
+      data-setting-id="personal-enter-send-vs-newline"
+    >
       <b-form-text class="mb-2">
         On ModTools, normally enter/return adds a new line. This the opposite
         way round from on the Freegle site, where sending the message is the

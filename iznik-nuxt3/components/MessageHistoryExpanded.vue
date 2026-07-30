@@ -75,7 +75,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, defineAsyncComponent } from 'vue'
+import { ref, computed } from 'vue'
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
 import { useUserStore } from '~/stores/user'

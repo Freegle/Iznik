@@ -137,7 +137,6 @@ import SupporterInfo from '~/components/SupporterInfo'
 const UserRatings = defineAsyncComponent(() =>
   import('~/components/UserRatings')
 )
-const PromiseModal = defineAsyncComponent(() => import('./PromiseModal'))
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
 const props = defineProps({
   message: {

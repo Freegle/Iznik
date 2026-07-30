@@ -43,14 +43,22 @@
       "
     >
       <div style="font-size: 1.2rem">Spatial server warming up…</div>
-      <div style="font-size: 0.85rem; color: #999">This takes about 2–3 minutes on first start</div>
+      <div style="font-size: 0.85rem; color: #999">
+        This takes about 2–3 minutes on first start
+      </div>
     </div>
     <RipplingExplorer v-else :spatial-url="spatialUrl" :jwt="jwtToken" />
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted, useRuntimeConfig } from '#imports'
+import {
+  computed,
+  ref,
+  onMounted,
+  onUnmounted,
+  useRuntimeConfig,
+} from '#imports'
 import { useMe } from '~/composables/useMe'
 import RipplingExplorer from '~/modtools/components/RipplingExplorer.vue'
 

@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
+import { describe, it, expect } from 'vitest'
 
 /**
  * Verifies that critical polyfills are listed in nuxt.config.ts modernPolyfills.

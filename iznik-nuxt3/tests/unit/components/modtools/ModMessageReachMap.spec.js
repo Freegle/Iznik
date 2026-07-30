@@ -99,7 +99,11 @@ describe('ModMessageReachMap', () => {
 
   it('passes a "now" (actual) point only when the engine is behind expected', async () => {
     // Post ~14h old -> expected tick 4 (12h band). Actual tick 2 (3h) = behind.
-    mockFetchReach.mockResolvedValueOnce({ rippling: true, tick: 2, totalticks: 9 })
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: true,
+      tick: 2,
+      totalticks: 9,
+    })
     const wrapper = mountComponent({
       messageid: 42,
       lat: 55.95,
@@ -115,7 +119,11 @@ describe('ModMessageReachMap', () => {
 
   it('does NOT pass a "now" point when the engine is up to date', async () => {
     // Post ~14h old -> expected tick 4. Actual tick 4 = caught up.
-    mockFetchReach.mockResolvedValueOnce({ rippling: true, tick: 4, totalticks: 9 })
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: true,
+      tick: 4,
+      totalticks: 9,
+    })
     const wrapper = mountComponent({
       messageid: 42,
       lat: 55.95,
@@ -129,7 +137,10 @@ describe('ModMessageReachMap', () => {
   })
 
   it('does NOT pass a "now" point when the post is not rippling (dark)', async () => {
-    mockFetchReach.mockResolvedValueOnce({ rippling: false, reason: 'disabled' })
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: false,
+      reason: 'disabled',
+    })
     const wrapper = mountComponent({
       messageid: 42,
       lat: 55.95,
@@ -147,7 +158,7 @@ describe('ModMessageReachMap', () => {
     await wrapper.vm.show()
     await flushPromises()
 
-    expect(wrapper.text()).toContain("no location")
+    expect(wrapper.text()).toContain('no location')
     expect(wrapper.find('.explorer-stub').exists()).toBe(false)
   })
 })

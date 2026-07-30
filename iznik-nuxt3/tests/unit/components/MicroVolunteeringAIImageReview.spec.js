@@ -267,7 +267,9 @@ describe('MicroVolunteeringAIImageReview', () => {
     it('does not render Previous/Next carousel controls', () => {
       const wrapper = createWrapper()
       const buttons = wrapper.findAll('button')
-      expect(buttons.find((b) => /previous|undo/i.test(b.text()))).toBeUndefined()
+      expect(
+        buttons.find((b) => /previous|undo/i.test(b.text()))
+      ).toBeUndefined()
       expect(buttons.find((b) => /^next$/i.test(b.text()))).toBeUndefined()
     })
   })

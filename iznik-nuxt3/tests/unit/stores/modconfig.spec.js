@@ -39,7 +39,10 @@ describe('modconfig store', () => {
   it('fetch stores configs list', async () => {
     const store = useModConfigStore()
     store.init({})
-    const configs = [{ id: 1, name: 'Config A' }, { id: 2, name: 'Config B' }]
+    const configs = [
+      { id: 1, name: 'Config A' },
+      { id: 2, name: 'Config B' },
+    ]
     mockListConfigs.mockResolvedValue(configs)
 
     await store.fetch({ all: true })

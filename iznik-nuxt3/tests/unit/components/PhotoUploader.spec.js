@@ -1641,7 +1641,7 @@ describe('PhotoUploader', () => {
       )
     })
 
-    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', async () => {
+    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', () => {
       mockMobileStore.isApp = false
       const consoleError = vi
         .spyOn(console, 'error')
@@ -1674,7 +1674,7 @@ describe('PhotoUploader', () => {
       consoleError.mockRestore()
     })
 
-    it('counts retries so upload_failed reports the attempt number', async () => {
+    it('counts retries so upload_failed reports the attempt number', () => {
       mockMobileStore.isApp = false
       const consoleError = vi
         .spyOn(console, 'error')

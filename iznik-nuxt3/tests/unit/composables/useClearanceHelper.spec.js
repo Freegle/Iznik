@@ -17,9 +17,13 @@ describe('useClearance — Freegle Helper FSM helpers', () => {
       expect(typeof helperStateLabel(state)).toBe('string')
       expect(helperStateLabel(state).length).toBeGreaterThan(0)
       expect(typeof helperStateVariant(state)).toBe('string')
-      expect(['allocated', 'pool', 'needsyou', 'outreach', 'inactive']).toContain(
-        helperStateGroup(state)
-      )
+      expect([
+        'allocated',
+        'pool',
+        'needsyou',
+        'outreach',
+        'inactive',
+      ]).toContain(helperStateGroup(state))
     }
   })
 
@@ -48,12 +52,22 @@ describe('useClearance — Freegle Helper FSM helpers', () => {
 
   it('candidateStatus merges interest + helper state into one chip', () => {
     // Allocation outcome wins over the helper FSM state.
-    expect(candidateStatus('Reserved', 'QUALIFIED')).toMatchObject({ label: 'Allocated' })
-    expect(candidateStatus('Collected', 'ALLOCATED')).toMatchObject({ label: 'Collected' })
-    expect(candidateStatus('Rejected', 'QUALIFIED')).toMatchObject({ label: 'Excluded' })
+    expect(candidateStatus('Reserved', 'QUALIFIED')).toMatchObject({
+      label: 'Allocated',
+    })
+    expect(candidateStatus('Collected', 'ALLOCATED')).toMatchObject({
+      label: 'Collected',
+    })
+    expect(candidateStatus('Rejected', 'QUALIFIED')).toMatchObject({
+      label: 'Excluded',
+    })
     // Otherwise the helper FSM state shows.
-    expect(candidateStatus('Interested', 'QUALIFIED')).toMatchObject({ label: 'Ready to decide' })
-    expect(candidateStatus('Interested', 'ESCALATED')).toMatchObject({ label: 'Needs you' })
+    expect(candidateStatus('Interested', 'QUALIFIED')).toMatchObject({
+      label: 'Ready to decide',
+    })
+    expect(candidateStatus('Interested', 'ESCALATED')).toMatchObject({
+      label: 'Needs you',
+    })
     // Nothing redundant when there's no helper state and they just "want it".
     expect(candidateStatus('Interested', null)).toBeNull()
   })

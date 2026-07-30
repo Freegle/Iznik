@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref, computed } from 'vue'
 
 import PhotosPage from '~/pages/give/mobile/photos.vue'
 
@@ -79,7 +78,11 @@ function mountPage() {
     global: {
       stubs: {
         PhotoUploader: PhotoUploaderStub,
-        'b-button': { template: '<button class="b-btn" @click="$emit(\'click\')"><slot /></button>', emits: ['click'] },
+        'b-button': {
+          template:
+            '<button class="b-btn" @click="$emit(\'click\')"><slot /></button>',
+          emits: ['click'],
+        },
         'v-icon': { template: '<i />' },
       },
     },
@@ -111,9 +114,7 @@ describe('pages/give/mobile/photos.vue', () => {
   })
 
   it('reuses an existing Offer message from the compose store', () => {
-    mockComposeAll = [
-      { id: 99, type: 'Offer', savedBy: 1 },
-    ]
+    mockComposeAll = [{ id: 99, type: 'Offer', savedBy: 1 }]
     mockComposeMessages = { 99: { id: 99 } }
     mountPage()
     expect(mockComposeAdd).not.toHaveBeenCalled()
@@ -128,7 +129,9 @@ describe('pages/give/mobile/photos.vue', () => {
   it('applies has-sticky-ad class when stickyAdRendered is true', () => {
     mockStickyAdRendered = true
     const wrapper = mountPage()
-    expect(wrapper.find('.app-give-photos').classes()).toContain('has-sticky-ad')
+    expect(wrapper.find('.app-give-photos').classes()).toContain(
+      'has-sticky-ad'
+    )
   })
 
   it('goNext() navigates to /give/mobile/details', async () => {

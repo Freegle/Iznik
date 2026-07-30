@@ -39,11 +39,14 @@ function mountComponent(props = {}) {
     global: {
       stubs: {
         ModSupportChat: {
-          template: '<div class="support-chat" :data-chat-id="chatid">Chat {{ chatid }}</div>',
+          template:
+            '<div class="support-chat" :data-chat-id="chatid">Chat {{ chatid }}</div>',
           props: ['chatid', 'pov'],
         },
         'infinite-loading': InfiniteLoadingStub,
-        'notice-message': { template: '<div class="notice-message"><slot /></div>' },
+        'notice-message': {
+          template: '<div class="notice-message"><slot /></div>',
+        },
       },
     },
   })
@@ -158,7 +161,13 @@ describe('ModSupportChatList', () => {
 
     it('fetches user1 when pov matches user2', async () => {
       const chats = [
-        { id: 1, chattype: 'User2User', user1: 50, user2: 100, lastdate: '2026-01-01T10:00:00Z' },
+        {
+          id: 1,
+          chattype: 'User2User',
+          user1: 50,
+          user2: 100,
+          lastdate: '2026-01-01T10:00:00Z',
+        },
       ]
       mountComponent({ chats, pov: 100 })
       await flushPromises()
@@ -168,7 +177,13 @@ describe('ModSupportChatList', () => {
 
     it('fetches user2 when pov matches user1', async () => {
       const chats = [
-        { id: 1, chattype: 'User2User', user1: 100, user2: 50, lastdate: '2026-01-01T10:00:00Z' },
+        {
+          id: 1,
+          chattype: 'User2User',
+          user1: 100,
+          user2: 50,
+          lastdate: '2026-01-01T10:00:00Z',
+        },
       ]
       mountComponent({ chats, pov: 100 })
       await flushPromises()
@@ -178,8 +193,20 @@ describe('ModSupportChatList', () => {
 
     it('deduplicates user ids when the same user appears in multiple chats', async () => {
       const chats = [
-        { id: 1, chattype: 'User2User', user1: 100, user2: 50, lastdate: '2026-01-01T10:00:00Z' },
-        { id: 2, chattype: 'User2User', user1: 100, user2: 50, lastdate: '2026-01-01T10:00:00Z' },
+        {
+          id: 1,
+          chattype: 'User2User',
+          user1: 100,
+          user2: 50,
+          lastdate: '2026-01-01T10:00:00Z',
+        },
+        {
+          id: 2,
+          chattype: 'User2User',
+          user1: 100,
+          user2: 50,
+          lastdate: '2026-01-01T10:00:00Z',
+        },
       ]
       mountComponent({ chats, pov: 100 })
       await flushPromises()
@@ -209,7 +236,13 @@ describe('ModSupportChatList', () => {
     it('populates the store when chats prop changes', async () => {
       const wrapper = mountComponent({ chats: makeChats(2) })
       await flushPromises()
-      const newChat = { id: 99, chattype: 'User2Mod', lastdate: '2026-01-01T10:00:00Z', user1: 1, user2: 0 }
+      const newChat = {
+        id: 99,
+        chattype: 'User2Mod',
+        lastdate: '2026-01-01T10:00:00Z',
+        user1: 1,
+        user2: 0,
+      }
       await wrapper.setProps({ chats: [...makeChats(2), newChat] })
       expect(globalThis.__mockChatStore.listByChatId[99]).toEqual(newChat)
     })

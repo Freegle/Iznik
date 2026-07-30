@@ -196,10 +196,11 @@
           class="text-muted small"
         >
           <template v-if="deviceSummary?.lastApiActivity">
-            Active on the server side {{ formatLastSeen(deviceSummary.lastApiActivity) }},
-            but their device sends no telemetry &mdash; usually an ad/tracker
-            blocker, or an app from before client logging. Device details
-            aren't available for this member.
+            Active on the server side
+            {{ formatLastSeen(deviceSummary.lastApiActivity) }}, but their
+            device sends no telemetry &mdash; usually an ad/tracker blocker, or
+            an app from before client logging. Device details aren't available
+            for this member.
           </template>
           <template v-else>
             No device sessions found in the last 7 days.

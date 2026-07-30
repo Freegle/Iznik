@@ -61,9 +61,9 @@
           style="display: none"
         >
           Pick a group. The map shows the group's own area (blue outline) and —
-          outside it — the catchment: the area from which posts could in theory ripple
-          IN to that group, heat-shaded by how quickly a post there would arrive by
-          road (see the key, bottom-left).
+          outside it — the catchment: the area from which posts could in theory
+          ripple IN to that group, heat-shaded by how quickly a post there would
+          arrive by road (see the key, bottom-left).
         </div>
         <div
           id="rippling-catchment-panel"
@@ -170,9 +170,9 @@
           >
             <span>Short</span><span>Long</span>
           </div>
-          <div class="rpl-slider-help" id="rippling-time-help">
-            The default setting is the reach we actually use in production now. Raise
-            it only to explore a larger, hypothetical reach.
+          <div id="rippling-time-help" class="rpl-slider-help">
+            The default setting is the reach we actually use in production now.
+            Raise it only to explore a larger, hypothetical reach.
           </div>
         </div>
 
@@ -394,8 +394,8 @@
               Groups</label
             >
             <label class="rpl-layer-toggle"
-              ><input id="rippling-tog-audience" type="checkbox" />
-              Proposed: audience-based reach</label
+              ><input id="rippling-tog-audience" type="checkbox" /> Proposed:
+              audience-based reach</label
             >
           </div>
           <div

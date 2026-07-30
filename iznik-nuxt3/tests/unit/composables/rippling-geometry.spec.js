@@ -36,7 +36,9 @@ describe('rippling/geometry', () => {
 
   describe('reachedIdSet', () => {
     it("prefers a frame's per-tick ids when present", () => {
-      expect([...reachedIdSet([1, 2], [9])].sort((a, b) => a - b)).toEqual([1, 2])
+      expect([...reachedIdSet([1, 2], [9])].sort((a, b) => a - b)).toEqual([
+        1, 2,
+      ])
     })
 
     it('treats an empty frame array as an answer (tick reached nothing yet)', () => {
@@ -44,7 +46,9 @@ describe('rippling/geometry', () => {
     })
 
     it('falls back to the max-extent gate ids when no frame ids', () => {
-      expect([...reachedIdSet(undefined, [9, 10])].sort((a, b) => a - b)).toEqual([9, 10])
+      expect(
+        [...reachedIdSet(undefined, [9, 10])].sort((a, b) => a - b)
+      ).toEqual([9, 10])
     })
 
     it('tints nothing when neither source has answered - never geometry', () => {

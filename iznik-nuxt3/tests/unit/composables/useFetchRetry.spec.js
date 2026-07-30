@@ -376,7 +376,6 @@ describe('useFetchRetry', () => {
   describe('retry delay calculation', () => {
     it('should use exponential delay: attempt * 1000', async () => {
       const responseData = { success: true }
-      const delayCalls = []
 
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
@@ -410,7 +409,10 @@ describe('useFetchRetry', () => {
       })
 
       const retryFetch = fetchRetry(mockFetch)
-      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }
       await retryFetch('http://test.com/api', init)
 
       expect(mockFetch).toHaveBeenCalledWith('http://test.com/api', init)

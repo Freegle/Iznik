@@ -50,7 +50,10 @@
       </div>
 
       <!-- Count editor -->
-      <div class="bulkupdate-item__count" :class="{ 'is-muted': !item.available }">
+      <div
+        class="bulkupdate-item__count"
+        :class="{ 'is-muted': !item.available }"
+      >
         <label :for="'bulkupdate-qty-' + item.id" class="small mb-0 me-1">
           Number available
         </label>

@@ -53,8 +53,8 @@ describe('tryst store', () => {
       store.init({ public: {} })
 
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetch.mockReturnValueOnce(firstPromise)
 

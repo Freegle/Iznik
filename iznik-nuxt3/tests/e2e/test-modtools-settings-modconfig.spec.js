@@ -24,9 +24,14 @@ async function navigateToModConfigTab(page) {
 }
 
 async function selectFirstConfig(page) {
-  const configSelect = page.locator('.tab-pane.active .scrollinplace select').first()
+  const configSelect = page
+    .locator('.tab-pane.active .scrollinplace select')
+    .first()
   // Wait for the select to be in the DOM (it may be hidden by BVN; we use force).
-  await configSelect.waitFor({ state: 'attached', timeout: timeouts.ui.appearance })
+  await configSelect.waitFor({
+    state: 'attached',
+    timeout: timeouts.ui.appearance,
+  })
   const options = await configSelect.locator('option').all()
   for (const opt of options) {
     const val = await opt.getAttribute('value')
@@ -45,17 +50,27 @@ async function expandGeneralSettings(page) {
   const alreadyOpen = await accordionContent.isVisible().catch(() => false)
   if (!alreadyOpen) {
     // Use .btn selector to match both <button> and <a class="btn"> renderings.
-    const toggleBtn = page.locator('.tab-pane.active .btn:has-text("General Settings")')
-    await toggleBtn.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    const toggleBtn = page.locator(
+      '.tab-pane.active .btn:has-text("General Settings")'
+    )
+    await toggleBtn.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     await toggleBtn.click()
-    await accordionContent.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await accordionContent.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
   }
 }
 
 async function saveConfigName(page, name) {
   await expandGeneralSettings(page)
 
-  const nameField = page.locator('#accordion-general input[type="text"]').first()
+  const nameField = page
+    .locator('#accordion-general input[type="text"]')
+    .first()
   await nameField.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
   await nameField.clear()
   await nameField.fill(name)
@@ -92,8 +107,13 @@ test.describe('ModTools Settings - ModConfig persistence', () => {
     await expandGeneralSettings(page)
 
     // Read current name so we can restore it after the test
-    const nameField = page.locator('#accordion-general input[type="text"]').first()
-    await nameField.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    const nameField = page
+      .locator('#accordion-general input[type="text"]')
+      .first()
+    await nameField.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     const originalName = await nameField.inputValue()
 
     const testName = `TestConfig_${Date.now()}`
@@ -105,7 +125,9 @@ test.describe('ModTools Settings - ModConfig persistence', () => {
     await selectFirstConfig(page)
     await expandGeneralSettings(page)
 
-    const nameFieldAfter = page.locator('#accordion-general input[type="text"]').first()
+    const nameFieldAfter = page
+      .locator('#accordion-general input[type="text"]')
+      .first()
     await nameFieldAfter.waitFor({
       state: 'visible',
       timeout: timeouts.ui.appearance,

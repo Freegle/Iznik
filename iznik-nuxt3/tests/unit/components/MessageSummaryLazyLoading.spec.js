@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
+import { describe, it, expect } from 'vitest'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -16,8 +16,13 @@ describe('MessageSummary image lazy loading', () => {
       resolve(__dirname, '../../../components/MessageSummary.vue'),
       'utf-8'
     )
-    const idx = source.indexOf('v-else-if="message.attachments[0]?.externaluid"')
-    expect(idx, 'externaluid branch should exist in MessageSummary template').toBeGreaterThan(-1)
+    const idx = source.indexOf(
+      'v-else-if="message.attachments[0]?.externaluid"'
+    )
+    expect(
+      idx,
+      'externaluid branch should exist in MessageSummary template'
+    ).toBeGreaterThan(-1)
     const end = source.indexOf('/>', idx)
     const nuxtPictureBlock = source.substring(idx, end)
     expect(
