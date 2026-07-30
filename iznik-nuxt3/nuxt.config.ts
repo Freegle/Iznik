@@ -71,6 +71,15 @@ console.log('prerenderRoutes:', prerenderRoutes)
 export default defineNuxtConfig({
   devtools: { enabled: true },
 
+  // Nuxt 4 defaults srcDir to app/. We deliberately keep the flat Nuxt 3 layout:
+  // file-sync.sh, .eslintrc.js overrides and vitest coverage globs all anchor on
+  // top-level pages/components/layouts, and moving them would silently break
+  // those (vitest coverage would drop to zero rather than error).
+  srcDir: '.',
+  dir: {
+    app: 'app',
+  },
+
   // Rendering modes are confusing.
   //
   // - target can be:
@@ -110,9 +119,6 @@ export default defineNuxtConfig({
   // - For historical reasons and preference we use the options API everywhere else.
   //
   // Sometimes when debugging it's useful to set ssr: false, because the errors are clearer when generated on the client.
-  // @ts-ignore
-  target: config.ISAPP ? 'static' : 'server',
-
   ssr: !config.ISAPP,
   spaLoadingTemplate: false,
 
@@ -138,8 +144,8 @@ export default defineNuxtConfig({
         process.env.CONTEXT === 'production'
           ? process.env.URL
           : process.env.DEPLOY_URL
-            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
-            : '',
+          ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
+          : '',
     },
   },
 
@@ -278,13 +284,6 @@ export default defineNuxtConfig({
     },
   },
 
-  render: {
-    bundleRenderer: {
-      shouldPrefetch: () => false,
-      shouldPreload: () => false,
-    },
-  },
-
   experimental: {
     emitRouteChunkError: 'reload',
     asyncContext: true,
@@ -309,11 +308,6 @@ export default defineNuxtConfig({
     // relative ./_nuxt/*.js import at build time. The web build keeps the
     // feature (its browsers are modern and it's served via Netlify).
     entryImportMap: !config.ISAPP,
-  },
-
-  webpack: {
-    // Reduce size of CSS initial load.
-    extractCSS: true,
   },
 
   modules: [
@@ -414,7 +408,7 @@ export default defineNuxtConfig({
 
   css: [
     '@fortawesome/fontawesome-svg-core/styles.css',
-    '/assets/css/global.scss',
+    '~/assets/css/global.scss',
   ],
 
   build: {
@@ -446,7 +440,7 @@ export default defineNuxtConfig({
         '@vue-leaflet/vue-leaflet',
         'leaflet-control-geocoder/src/control',
         'leaflet-control-geocoder/src/geocoders/photon',
-        'supercluster/dist/supercluster',
+        'supercluster',
         'dayjs/plugin/utc',
         'dayjs/plugin/timezone',
         '@vueuse/core',
@@ -482,16 +476,16 @@ export default defineNuxtConfig({
         'turf-buffer',
         '@vueform/toggle',
         'save-file',
-        '@formatjs/intl-locale/should-polyfill',
-        '@formatjs/intl-pluralrules/should-polyfill',
+        '@formatjs/intl-locale/should-polyfill.js',
+        '@formatjs/intl-pluralrules/should-polyfill.js',
         '@uppy/core',
-        '@uppy/vue',
+        '@uppy/vue/dashboard-modal',
         '@uppy/tus',
         '@uppy/compressor',
         'object.hasown',
-        '@formatjs/intl-locale/polyfill',
-        '@formatjs/intl-pluralrules/polyfill-force',
-        '@formatjs/intl-pluralrules/locale-data/en',
+        '@formatjs/intl-locale/polyfill.js',
+        '@formatjs/intl-pluralrules/polyfill-force.js',
+        '@formatjs/intl-pluralrules/locale-data/en.js',
         'vuedraggable',
         'vue-highlight-words',
         '@chenfengyuan/vue-number-input',
@@ -502,7 +496,6 @@ export default defineNuxtConfig({
         'vue-google-charts',
         'vue-letter',
         'letterparser',
-        'csv-writer',
         'pluralize',
         'diff',
       ],
@@ -697,11 +690,11 @@ export default defineNuxtConfig({
         ...(config.ADS_SCRIPT_ENABLED
           ? [
               {
-          type: 'text/javascript',
-          body: true,
-          async: true,
-          innerHTML:
-            `try {
+                type: 'text/javascript',
+                tagPosition: 'bodyClose',
+                async: true,
+                innerHTML:
+                  `try {
               window.dataLayer = window.dataLayer || [];
               function ce_gtag() {
                   window.dataLayer.push(arguments);
@@ -726,10 +719,10 @@ export default defineNuxtConfig({
               window.googletag.cmd.push(function() {
                 // On the dev server, where COOKIEYES is not set, we want ads to load immediately.
               ` +
-            (config.COOKIEYES
-              ? `window.googletag.pubads().disableInitialLoad()`
-              : '') +
-            `
+                  (config.COOKIEYES
+                    ? `window.googletag.pubads().disableInitialLoad()`
+                    : '') +
+                  `
                 window.googletag.pubads().enableSingleRequest()
                 window.googletag.enableServices()
               });
@@ -821,11 +814,11 @@ export default defineNuxtConfig({
                  
               window.pbjs.que.push(function() {
                  console.log('Add PBJS ad units', ` +
-            JSON.stringify(config.AD_PREBID_CONFIG) +
-            `);
+                  JSON.stringify(config.AD_PREBID_CONFIG) +
+                  `);
                  window.pbjs.addAdUnits(` +
-            JSON.stringify(config.AD_PREBID_CONFIG) +
-            `)
+                  JSON.stringify(config.AD_PREBID_CONFIG) +
+                  `)
               });
 
             function loadScript(url, block) {
@@ -853,8 +846,8 @@ export default defineNuxtConfig({
                 window.cookieYesComplete = true;
                 console.log('Consider load of GPT and prebid');
   ` +
-            (config.PLAYWIRE_PUB_ID
-              ? `
+                  (config.PLAYWIRE_PUB_ID
+                    ? `
                 console.log('Load playwire code')
                 window.ramp = window.ramp || {}
                 window.ramp.que = window.ramp.que || []
@@ -862,11 +855,11 @@ export default defineNuxtConfig({
       
                 // Load the Ramp configuration script
                 const pubId = '` +
-                config.PLAYWIRE_PUB_ID +
-                `' 
+                      config.PLAYWIRE_PUB_ID +
+                      `' 
                 const websiteId = '` +
-                config.PLAYWIRE_WEBSITE_ID +
-                `'
+                      config.PLAYWIRE_WEBSITE_ID +
+                      `'
       
                 const configScript = document.createElement('script')
                 configScript.src =
@@ -885,10 +878,10 @@ export default defineNuxtConfig({
                 console.log('Appended Playwire script to DOM')
                 
                 // Currently using Playwire so don't need to load GPT and prebid.`
-              : `
+                    : `
                 console.log('Playwire not configured, skipping script load')
                 // Using AdSense or other ad solution instead of Playwire`) +
-            `
+                  `
                               
                 // if (!window.weHaveLoadedGPT) {
                 //   window.weHaveLoadedGPT = true;
@@ -919,14 +912,14 @@ export default defineNuxtConfig({
             // Previously CookieYes was loaded inside postGSI(), creating an unnecessary
             // sequential bottleneck (GSI download must finish before CookieYes even starts).
             ` +
-            (!config.ISAPP || config.USE_COOKIES
-              ? config.COOKIEYES
-                ? `
+                  (!config.ISAPP || config.USE_COOKIES
+                    ? config.COOKIEYES
+                      ? `
             // Load CookieYes immediately (no longer waits for GSI)
             console.log('Load CookieYes');
             loadScript('` +
-                  config.COOKIEYES +
-                  `', false)
+                        config.COOKIEYES +
+                        `', false)
 
             // Wait until CookieYes has set its cookie and TCF consent is available.
             var retries = 10
@@ -963,8 +956,8 @@ export default defineNuxtConfig({
                   // an exception then it's likely to be because it's blocked.
                   console.log('Try fetching script')
                   fetch('` +
-                  config.COOKIEYES +
-                  `').then((response) => {
+                        config.COOKIEYES +
+                        `').then((response) => {
                     console.log('Fetch returned', response)
 
                     if (response.ok) {
@@ -987,7 +980,7 @@ export default defineNuxtConfig({
 
             checkCookieYes();
             `
-                : `
+                      : `
             // No CookieYes configured (dev environment) - defer ad loading to
             // simulate the natural delay that CookieYes consent introduces on
             // production (user must read banner + click Accept, typically 5-15s).
@@ -995,11 +988,11 @@ export default defineNuxtConfig({
             console.log('No CookieYes to load, deferring ads to simulate consent delay')
             setTimeout(window.postCookieYes, 8000);
             `
-              : `
+                    : `
             // App build without cookies - no consent or ads needed
             `) +
-            (!config.ISAPP
-              ? `
+                  (!config.ISAPP
+                    ? `
             // Web builds: Load GSI for Google One Tap sign-in.
             // Defer for new visitors (no reason to expect auto-login), load immediately
             // for returning users where One Tap may auto-sign-in.
@@ -1023,10 +1016,10 @@ export default defineNuxtConfig({
               }
             }
             `
-              : `
+                    : `
             // App builds: GSI not needed (apps use Capacitor plugin for Google login)
             `) +
-            `
+                  `
           } catch (e) {
             console.error('Error initialising ads and consent:', e.message);
           }`,
@@ -1037,85 +1030,93 @@ export default defineNuxtConfig({
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { hid: 'author', name: 'author', content: branding.siteName },
+        { key: 'author', name: 'author', content: branding.siteName },
         { name: 'supported-color-schemes', content: 'light' },
         { name: 'color-scheme', content: 'light' },
         {
           name: 'facebook-domain-verification',
           content: branding.facebookDomainVerification,
         },
-        { hid: 'og:type', property: 'og:type', content: 'website' },
+        { key: 'og:type', property: 'og:type', content: 'website' },
         {
-          hid: 'description',
+          key: 'description',
           name: 'description',
           content: branding.description,
         },
         {
-          hid: 'apple-mobile-web-app-title',
+          key: 'apple-mobile-web-app-title',
           name: 'apple-mobile-web-app-title',
           content: branding.description,
         },
 
         {
-          hid: 'og:image',
+          key: 'og:image',
           property: 'og:image',
           content: config.USER_SITE + '/icon.png',
         },
-        { hid: 'og:locale', property: 'og:locale', content: 'en_GB' },
+        { key: 'og:locale', property: 'og:locale', content: 'en_GB' },
         {
-          hid: 'og:title',
+          key: 'og:title',
           property: 'og:title',
           content: fullTitle,
         },
-        { hid: 'og:site_name', property: 'og:site_name', content: branding.siteName },
         {
-          hid: 'og:url',
+          key: 'og:site_name',
+          property: 'og:site_name',
+          content: branding.siteName,
+        },
+        {
+          key: 'og:url',
           property: 'og:url',
           content: 'https://www.ilovefreegle.org',
         },
         {
-          hid: 'fb:app_id',
+          key: 'fb:app_id',
           property: 'fb:app_id',
           content: config.FACEBOOK_APPID,
         },
         {
-          hid: 'og:description',
+          key: 'og:description',
           property: 'og:description',
           content: branding.description,
         },
         {
-          hid: 'twitter:title',
+          key: 'twitter:title',
           name: 'twitter:title',
           content: fullTitle,
         },
         {
-          hid: 'twitter:description',
+          key: 'twitter:description',
           name: 'twitter:description',
           content: branding.description,
         },
         {
-          hid: 'twitter:image',
+          key: 'twitter:image',
           name: 'twitter:image',
           content: config.USER_SITE + '/icon.png',
         },
         {
-          hid: 'twitter:image:alt',
+          key: 'twitter:image:alt',
           name: 'twitter:image:alt',
           content: branding.logoAlt,
         },
         {
-          hid: 'twitter:card',
+          key: 'twitter:card',
           name: 'twitter:card',
           content: 'summary_large_image',
         },
-        { hid: 'twitter:site', name: 'twitter:site', content: branding.twitterHandle },
         {
-          hid: 'OMG-Verify-V1',
+          key: 'twitter:site',
+          name: 'twitter:site',
+          content: branding.twitterHandle,
+        },
+        {
+          key: 'OMG-Verify-V1',
           name: 'OMG-Verify-V1',
           content: '954a2917-d603-4df4-8802-f6a78846a9c0',
         },
         {
-          hid: 'Awin',
+          key: 'Awin',
           name: 'Awin',
           content: 'Awin',
         },
@@ -1211,17 +1212,12 @@ export default defineNuxtConfig({
     },
   },
 
-  compatibilityDate: '2024-11-29',
+  compatibilityDate: '2026-07-30',
 
   // Disable HTTPS redirects for development
   security: {
     headers: {
       strictTransportSecurity: false,
     },
-  },
-
-  // Disable security features that force HTTPS
-  routerOptions: {
-    strictSSL: false,
   },
 })

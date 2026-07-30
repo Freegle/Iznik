@@ -311,7 +311,7 @@ if (message.value) {
 } else if (gone.value) {
   /* Nothing to describe, but still keep it out of the index. */
   useHead({
-    meta: [{ hid: 'robots', name: 'robots', content: 'noindex, follow' }],
+    meta: [{ key: 'robots', name: 'robots', content: 'noindex, follow' }],
   })
 }
 

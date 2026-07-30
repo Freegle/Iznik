@@ -107,7 +107,11 @@ export default defineConfig({
         rootDir,
         'tests/unit/mocks/handsontable-registry.js'
       ),
-      'handsontable/dist/handsontable.full.css': path.join(
+      'handsontable/styles/handsontable.min.css': path.join(
+        rootDir,
+        'tests/unit/mocks/handsontable-css.js'
+      ),
+      'handsontable/styles/ht-theme-classic.min.css': path.join(
         rootDir,
         'tests/unit/mocks/handsontable-css.js'
       ),

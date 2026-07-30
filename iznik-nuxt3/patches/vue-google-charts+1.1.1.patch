@@ -1,8 +1,8 @@
 diff --git a/node_modules/vue-google-charts/dist/index.cjs b/node_modules/vue-google-charts/dist/index.cjs
-index 625f83b..c9a814b 100644
+index 82a47c8..18d9640 100644
 --- a/node_modules/vue-google-charts/dist/index.cjs
 +++ b/node_modules/vue-google-charts/dist/index.cjs
-@@ -9,7 +9,8 @@ let chartsLoaderPromise = null;
+@@ -17,7 +17,8 @@ let chartsLoaderPromise = null;
  const loadedPackages = new Map();
  function getChartsLoader() {
      // If already included in the page:
@@ -13,10 +13,10 @@ index 625f83b..c9a814b 100644
      }
      if (chartsLoaderPromise === null) {
 diff --git a/node_modules/vue-google-charts/dist/index.js b/node_modules/vue-google-charts/dist/index.js
-index c8dc85d..bc148cf 100644
+index 8e75700..3d5391a 100644
 --- a/node_modules/vue-google-charts/dist/index.js
 +++ b/node_modules/vue-google-charts/dist/index.js
-@@ -5,7 +5,7 @@ let chartsLoaderPromise = null;
+@@ -13,7 +13,7 @@ let chartsLoaderPromise = null;
  const loadedPackages = new Map();
  function getChartsLoader() {
      // If already included in the page:
@@ -26,10 +26,10 @@ index c8dc85d..bc148cf 100644
      }
      if (chartsLoaderPromise === null) {
 diff --git a/node_modules/vue-google-charts/legacy/index.cjs b/node_modules/vue-google-charts/legacy/index.cjs
-index d359648..a1bc926 100644
+index b822bb6..ef199d8 100644
 --- a/node_modules/vue-google-charts/legacy/index.cjs
 +++ b/node_modules/vue-google-charts/legacy/index.cjs
-@@ -7,7 +7,7 @@ let chartsLoaderPromise = null;
+@@ -15,7 +15,7 @@ let chartsLoaderPromise = null;
  const loadedPackages = new Map();
  function getChartsLoader() {
      // If already included in the page:
@@ -39,10 +39,10 @@ index d359648..a1bc926 100644
      }
      if (chartsLoaderPromise === null) {
 diff --git a/node_modules/vue-google-charts/legacy/index.js b/node_modules/vue-google-charts/legacy/index.js
-index abe0908..9771527 100644
+index a1fe765..6a827a3 100644
 --- a/node_modules/vue-google-charts/legacy/index.js
 +++ b/node_modules/vue-google-charts/legacy/index.js
-@@ -3,7 +3,7 @@ let chartsLoaderPromise = null;
+@@ -11,7 +11,7 @@ let chartsLoaderPromise = null;
  const loadedPackages = new Map();
  function getChartsLoader() {
      // If already included in the page:

@@ -9,8 +9,7 @@ const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 // typing - the same convenience the post reply pane already has. Persisted to
 // localStorage so it survives a reload; kept in its own tiny store rather than the main
 // chat store so the persisted footprint is just the drafts map.
-export const useChatDraftStore = defineStore({
-  id: 'chatdraft',
+export const useChatDraftStore = defineStore('chatdraft', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     pick: ['drafts'],

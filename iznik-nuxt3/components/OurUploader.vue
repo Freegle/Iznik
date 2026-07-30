@@ -53,12 +53,13 @@
 </template>
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { shouldPolyfill as shouldPolyfillLocale } from '@formatjs/intl-locale/should-polyfill'
-import { shouldPolyfill as shouldPolyfillPlural } from '@formatjs/intl-pluralrules/should-polyfill'
-// eslint-disable-next-line import/default
+import { shouldPolyfill as shouldPolyfillLocale } from '@formatjs/intl-locale/should-polyfill.js'
+import { shouldPolyfill as shouldPolyfillPlural } from '@formatjs/intl-pluralrules/should-polyfill.js'
+
 import Uppy from '@uppy/core'
-import { DashboardModal } from '@uppy/vue'
-// eslint-disable-next-line import/default, import/namespace, import/no-named-as-default, import/no-named-as-default-member
+// @uppy/vue v3 moved DashboardModal to a subpath default export.
+import DashboardModal from '@uppy/vue/dashboard-modal'
+
 import Tus from '@uppy/tus'
 import Compressor from '@uppy/compressor'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
@@ -94,7 +95,7 @@ try {
   console.log('Consider polyfill locale')
   if (shouldPolyfillLocale()) {
     console.log('Need to polyfill Locale')
-    await import('@formatjs/intl-locale/polyfill')
+    await import('@formatjs/intl-locale/polyfill.js')
   }
 
   console.log('Consider polyfill plural')
@@ -105,12 +106,12 @@ try {
 
     if (unsupportedLocale) {
       console.log('Polyfill-force')
-      await import('@formatjs/intl-pluralrules/polyfill-force')
+      await import('@formatjs/intl-pluralrules/polyfill-force.js')
       console.log(
         'Polyfill-locale',
-        '@formatjs/intl-pluralrules/locale-data/en'
+        '@formatjs/intl-pluralrules/locale-data/en.js'
       )
-      await import('@formatjs/intl-pluralrules/locale-data/en')
+      await import('@formatjs/intl-pluralrules/locale-data/en.js')
     }
   }
 
@@ -703,8 +704,9 @@ async function uploadSuccess(result) {
 }
 </script>
 <style lang="scss">
-@import '@uppy/core/dist/style.css';
-@import '@uppy/webcam/dist/style.css';
+@import '@uppy/core/css/style.css';
+@import '@uppy/dashboard/css/style.css';
+@import '@uppy/webcam/css/style.css';
 @import 'assets/css/uploader.scss';
 @import 'bootstrap/scss/functions';
 @import 'bootstrap/scss/variables';

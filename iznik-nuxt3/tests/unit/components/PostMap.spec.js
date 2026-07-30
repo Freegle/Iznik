@@ -147,16 +147,19 @@ vi.mock('lodash.clonedeep', () => ({
 // Mock wicket for WKT parsing
 vi.mock('wicket', () => ({
   default: {
-    Wkt: vi.fn().mockImplementation(() => ({
-      read: vi.fn(),
-      toJson: vi.fn().mockReturnValue({}),
-      toObject: vi.fn().mockReturnValue({
-        getBounds: vi.fn().mockReturnValue({
-          getSouthWest: () => ({ lat: 51, lng: -2 }),
-          getNorthEast: () => ({ lat: 54, lng: 0 }),
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    Wkt: vi.fn(function () {
+      return {
+        read: vi.fn(),
+        toJson: vi.fn().mockReturnValue({}),
+        toObject: vi.fn().mockReturnValue({
+          getBounds: vi.fn().mockReturnValue({
+            getSouthWest: () => ({ lat: 51, lng: -2 }),
+            getNorthEast: () => ({ lat: 54, lng: 0 }),
+          }),
         }),
-      }),
-    })),
+      }
+    }),
   },
 }))
 
@@ -166,20 +169,25 @@ beforeEach(() => {
   global.window = global.window || {}
   global.window.L = {
     Browser: { mobile: false },
-    LatLngBounds: vi.fn().mockImplementation((bounds) => ({
-      getSouthWest: () => ({
-        lat: Array.isArray(bounds) && bounds[0] ? bounds[0][0] : 51,
-        lng: Array.isArray(bounds) && bounds[0] ? bounds[0][1] : -2,
-      }),
-      getNorthEast: () => ({
-        lat: Array.isArray(bounds) && bounds[1] ? bounds[1][0] : 54,
-        lng: Array.isArray(bounds) && bounds[1] ? bounds[1][1] : 0,
-      }),
-      pad: vi.fn().mockReturnThis(),
-      contains: vi.fn().mockReturnValue(true),
-      toBBoxString: vi.fn().mockReturnValue('51,-2,54,0'),
-    })),
-    LatLng: vi.fn().mockImplementation((lat, lng) => ({ lat, lng })),
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    LatLngBounds: vi.fn(function (bounds) {
+      return {
+        getSouthWest: () => ({
+          lat: Array.isArray(bounds) && bounds[0] ? bounds[0][0] : 51,
+          lng: Array.isArray(bounds) && bounds[0] ? bounds[0][1] : -2,
+        }),
+        getNorthEast: () => ({
+          lat: Array.isArray(bounds) && bounds[1] ? bounds[1][0] : 54,
+          lng: Array.isArray(bounds) && bounds[1] ? bounds[1][1] : 0,
+        }),
+        pad: vi.fn().mockReturnThis(),
+        contains: vi.fn().mockReturnValue(true),
+        toBBoxString: vi.fn().mockReturnValue('51,-2,54,0'),
+      }
+    }),
+    LatLng: vi.fn(function (lat, lng) {
+      return { lat, lng }
+    }),
   }
 
   // Mock process.client without replacing process entirely

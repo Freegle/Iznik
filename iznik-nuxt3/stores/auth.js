@@ -20,8 +20,7 @@ import { trackConversion } from '~/composables/useTrackConversion'
 // client only finds out here).
 const NEW_ACCOUNT_WINDOW_MS = 5 * 60 * 1000
 
-export const useAuthStore = defineStore({
-  id: 'auth',
+export const useAuthStore = defineStore('auth', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     // We don't persist much about the user, to avoid data getting 'stuck'.  All we need is enough to log us

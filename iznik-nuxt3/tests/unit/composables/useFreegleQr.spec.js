@@ -6,9 +6,10 @@ import {
 } from '~/composables/useFreegleQr'
 
 const mockDownload = vi.fn()
-const MockQRCodeStyling = vi.fn().mockImplementation(() => ({
-  download: mockDownload,
-}))
+// vitest 4 requires constructor mocks to be constructible (no arrows).
+const MockQRCodeStyling = vi.fn(function () {
+  return { download: mockDownload }
+})
 
 vi.mock('qr-code-styling', () => ({
   default: MockQRCodeStyling,

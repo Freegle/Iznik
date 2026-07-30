@@ -27,7 +27,8 @@ vi.mock('#app', () => ({
 }))
 
 vi.mock('jwt-decode', () => ({
-  default: vi.fn().mockReturnValue({
+  // jwt-decode v4 dropped the default export in favour of jwtDecode.
+  jwtDecode: vi.fn().mockReturnValue({
     email: 'test@example.com',
     name: 'Test User',
   }),

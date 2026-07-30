@@ -42,7 +42,7 @@
 </template>
 <script setup>
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import Supercluster from 'supercluster/dist/supercluster'
+import Supercluster from 'supercluster'
 import ClusterIcon from './ClusterIcon'
 import { MAX_MAP_ZOOM } from '~/constants'
 

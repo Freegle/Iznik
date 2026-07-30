@@ -30,8 +30,7 @@ function dbg() {
   }
 }
 
-export const useMobileStore = defineStore({
-  id: 'mobile',
+export const useMobileStore = defineStore('mobile', {
   state: () => ({
     config: null,
     isApp: false,

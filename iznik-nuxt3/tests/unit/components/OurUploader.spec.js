@@ -4,11 +4,11 @@ import { defineComponent, h, Suspense, ref } from 'vue'
 import OurUploader from '~/components/OurUploader.vue'
 
 // Mock polyfill check functions
-vi.mock('@formatjs/intl-locale/should-polyfill', () => ({
+vi.mock('@formatjs/intl-locale/should-polyfill.js', () => ({
   shouldPolyfill: vi.fn(() => false),
 }))
 
-vi.mock('@formatjs/intl-pluralrules/should-polyfill', () => ({
+vi.mock('@formatjs/intl-pluralrules/should-polyfill.js', () => ({
   shouldPolyfill: vi.fn(() => false),
 }))
 
@@ -40,7 +40,8 @@ const mockTusUpload = {
 }
 
 vi.mock('tus-js-client', () => ({
-  Upload: vi.fn().mockImplementation((file, options) => {
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  Upload: vi.fn(function (file, options) {
     mockTusUpload.options = options
     return mockTusUpload
   }),
@@ -56,12 +57,15 @@ const mockUppy = {
 }
 
 vi.mock('@uppy/core', () => ({
-  default: vi.fn(() => mockUppy),
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  default: vi.fn(function () {
+    return mockUppy
+  }),
 }))
 
 // Mock Uppy plugins
-vi.mock('@uppy/vue', () => ({
-  DashboardModal: defineComponent({
+vi.mock('@uppy/vue/dashboard-modal', () => ({
+  default: defineComponent({
     name: 'DashboardModal',
     props: ['uppy', 'open', 'props'],
     template: '<div class="uppy-dashboard-modal" />',

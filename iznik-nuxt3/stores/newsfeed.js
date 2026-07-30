@@ -3,8 +3,7 @@ import { nextTick } from 'vue'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
 
-export const useNewsfeedStore = defineStore({
-  id: 'newsfeed',
+export const useNewsfeedStore = defineStore('newsfeed', {
   state: () => ({
     // This is a barebones list of items in order.
     feed: [],
