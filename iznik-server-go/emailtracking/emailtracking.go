@@ -204,7 +204,7 @@ func Click(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Redirect("/")
 	}
-	destinationURL := string(urlBytes)
+	destinationURL := RepairDoubledSiteURL(string(urlBytes))
 
 	// Validate URL
 	if destinationURL == "" || !isValidRedirectURL(destinationURL) {
@@ -1290,6 +1290,27 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// RepairDoubledSiteURL repairs destinations baked into emails sent while
+// ChaseUpMail unconditionally prefixed the user site onto notification URLs
+// that were already absolute, producing e.g.
+// https://www.ilovefreegle.orghttps://www.ilovefreegle.org/stories. The
+// corruption is a bare scheme+host immediately followed by a second absolute
+// URL; a legitimate URL embedded in a query string is always preceded by a
+// path or query separator, so only strip when the prefix contains none.
+func RepairDoubledSiteURL(u string) string {
+	schemeEnd := strings.Index(u, "://")
+	if schemeEnd < 0 {
+		return u
+	}
+	rest := u[schemeEnd+3:]
+	for _, scheme := range []string{"https://", "http://"} {
+		if i := strings.Index(rest, scheme); i > 0 && !strings.ContainsAny(rest[:i], "/?#") {
+			return rest[i:]
+		}
+	}
+	return u
 }
 
 // isValidRedirectURL validates URL is safe for redirect
