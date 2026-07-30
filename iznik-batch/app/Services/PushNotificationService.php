@@ -350,7 +350,7 @@ class PushNotificationService
 
             $title = ($latest->title ?? '') ?: 'You have a new notification';
             $message = $latest->text ?? '';
-            $route = ($latest->url ?? '') ?: '/';
+            $route = $this->notificationRoute($latest->url ?? '');
 
             if (($latest->type ?? '') === 'Exhort') {
                 $category = self::CATEGORY_EXHORT;
@@ -380,6 +380,31 @@ class PushNotificationService
             'threadId' => $threadId,
             'notId' => (string) $userId,
         ];
+    }
+
+    /**
+     * Turn a users_notifications.url into an in-app route.
+     *
+     * The app feeds this straight to vue-router, which needs a path. Some
+     * notifications store a full URL rather than a path (the stories exhort is
+     * scheduled with https://www.ilovefreegle.org/stories), so strip our own
+     * site off the front.
+     */
+    private function notificationRoute(?string $url): string
+    {
+        $url = trim((string) $url);
+
+        if ($url === '') {
+            return '/';
+        }
+
+        $userSite = rtrim((string) config('freegle.sites.user'), '/');
+
+        if ($userSite !== '' && str_starts_with($url, $userSite)) {
+            $url = substr($url, strlen($userSite));
+        }
+
+        return $url === '' ? '/' : $url;
     }
 
     /**
