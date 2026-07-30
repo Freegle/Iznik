@@ -100,13 +100,11 @@ class TNParityCheckCommand extends Command
         // ── 3. API path ────────────────────────────────────────────────────
         $this->line('Running API path…');
 
-        // dryRun=true: [WRITE] log lines are still emitted for comparison, but no
-        // DB writes, no TUS photo uploads, and no push notifications fire. Built
-        // outside the closure so it can be reused for the Layer 1 single-post
-        // lookup fallback below (live mode only).
         $apiKey     = (string) config('freegle.trashnothing.api_key', '');
         $apiBaseUrl = (string) config('freegle.trashnothing.api_base_url', '');
-        $apiSyncer  = new PostSyncer(true, $localTesting, $apiKey, $apiBaseUrl, $loki);
+        // Doesn't use dryRun because we're already using DB transaction rollback.
+        // Needs to actually write to the DB for testing, e.g. to create stub users.
+        $apiSyncer  = new PostSyncer(false, $localTesting, $apiKey, $apiBaseUrl, $loki);
 
         $apiLines = $this->captureTraceLogs(function () use ($apiSyncer, $from, $to) {
             $apiSyncer->sync($from, $to);
