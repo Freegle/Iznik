@@ -4002,11 +4002,27 @@ jobs:
             curl -X DELETE \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST \
+            # Verify the write landed. This used to print a ✅ regardless of what the API
+            # said, so an expired CIRCLECI_API_TOKEN ("Invalid token provided.") left the
+            # variable stuck at an old version while the job stayed green. Every later
+            # release then recomputed the SAME next version, and iOS failed with
+            # "Invalid Pre-Release Train ... is closed for new build submissions" once that
+            # version had been released — silently unshippable on iOS.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "The version variable is now STALE. The next ModTools release will rebuild"
+              echo "${NEW_VERSION} instead of moving on, and iOS will be rejected once that"
+              echo "version is released. Fix CIRCLECI_API_TOKEN, then set the variable to"
+              echo "${NEW_VERSION} before the next release."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - store_artifacts:
           path: android/app/build/outputs/bundle/release/
@@ -4341,10 +4357,21 @@ jobs:
             NEW_VERSION=$(cat .new_version)
             curl -X DELETE -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+            # Fail loudly rather than printing a ✅ the API never earned — see the matching
+            # step in build-android-modtools for what a silent failure here costs.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "Fix CIRCLECI_API_TOKEN, then set the variable to ${NEW_VERSION}"
+              echo "before the next release, or iOS will retry a closed version train."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - run:
           name: Collect Xcode build logs
