@@ -1247,4 +1247,49 @@ class PushNotificationServiceTest extends TestCase
         $this->assertStringNotContainsString('ModBob', $payload['title'],
             'Individual mod name must NOT leak to the member in push title');
     }
+
+    /**
+     * The app pushes the payload route into vue-router, so it must be a path.
+     * The stories exhort is scheduled with a full URL in users_notifications.url,
+     * which would otherwise be routed to verbatim and land on a 404.
+     */
+    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'title' => 'Tell us your Freegle story!',
+            'text' => 'We love to hear why people Freegle.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/stories', $payload['route'],
+            'Absolute notification URLs on our own site must become a router path');
+    }
+
+    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => '/microvolunteering/message/123',
+            'title' => 'Can you help?',
+            'text' => 'Check this post.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/microvolunteering/message/123', $payload['route'],
+            'Relative notification URLs must be passed through unchanged');
+    }
 }

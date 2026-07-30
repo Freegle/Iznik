@@ -77,6 +77,31 @@ class ChaseUpMail extends MjmlMailable
         );
     }
 
+    /**
+     * Work out where a notification's button should point.
+     *
+     * Exhort notifications carry their own URL in users_notifications.url. That
+     * column holds a site-relative path for some senders (microvolunteering
+     * writes /microvolunteering/message/123) and a full URL for others (the
+     * stories nudge is scheduled with https://www.ilovefreegle.org/stories), so
+     * only prepend the site when it is relative. Prepending unconditionally
+     * produced links to https://www.ilovefreegle.orghttps://www.ilovefreegle.org/stories.
+     */
+    public function resolveNotificationUrl(array $notif): string
+    {
+        $url = $notif['url'] ?? null;
+
+        if (($notif['type'] ?? '') === 'Exhort' && $url) {
+            return preg_match('#^https?://#i', $url)
+                ? $url
+                : rtrim($this->userSite, '/') . '/' . ltrim($url, '/');
+        }
+
+        return ($notif['newsfeed'] ?? null)
+            ? $this->userSite . '/chitchat/' . $notif['newsfeed']['id']
+            : $this->chitchatUrl;
+    }
+
     public function build(): static
     {
         $count       = count($this->notifications);
@@ -85,9 +110,7 @@ class ChaseUpMail extends MjmlMailable
 
         // Build tracked URLs per notification — mutate public property so text view sees them too.
         $this->notifications = array_map(function ($notif) {
-            $url = ($notif['type'] === 'Exhort' && $notif['url'])
-                ? $this->userSite . $notif['url']
-                : ($notif['newsfeed'] ? $this->userSite . '/chitchat/' . $notif['newsfeed']['id'] : $this->chitchatUrl);
+            $url = $this->resolveNotificationUrl($notif);
 
             $notif['trackedUrl'] = $this->trackedUrl($url, 'notification_' . $notif['id'], 'view');
 
