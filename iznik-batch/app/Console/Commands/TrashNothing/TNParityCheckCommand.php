@@ -40,6 +40,7 @@ use Illuminate\Support\Facades\Log;
 class TNParityCheckCommand extends Command
 {
     private const CSV_URL = 'https://trashnothing.com/cimg/fd-post-log.csv';
+    private const POST_ID_PREFIX = 'post_id=';
 
     protected $signature = 'tn:parity-check
                             {--local-testing : Use fixture files instead of live CSV / live TN API}
@@ -99,29 +100,41 @@ class TNParityCheckCommand extends Command
         // ── 3. API path ────────────────────────────────────────────────────
         $this->line('Running API path…');
 
-        $apiLines = $this->captureTraceLogs(function () use ($localTesting, $from, $to, $loki) {
-            $apiKey     = (string) config('freegle.trashnothing.api_key', '');
-            $apiBaseUrl = (string) config('freegle.trashnothing.api_base_url', '');
-            // dryRun=true: [WRITE] log lines are still emitted for comparison, but no
-            // DB writes, no TUS photo uploads, and no push notifications fire.
-            $syncer     = new PostSyncer(true, $localTesting, $apiKey, $apiBaseUrl, $loki);
-            $syncer->sync($from, $to);
+        // dryRun=true: [WRITE] log lines are still emitted for comparison, but no
+        // DB writes, no TUS photo uploads, and no push notifications fire. Built
+        // outside the closure so it can be reused for the Layer 1 single-post
+        // lookup fallback below (live mode only).
+        $apiKey     = (string) config('freegle.trashnothing.api_key', '');
+        $apiBaseUrl = (string) config('freegle.trashnothing.api_base_url', '');
+        $apiSyncer  = new PostSyncer(true, $localTesting, $apiKey, $apiBaseUrl, $loki);
+
+        $apiLines = $this->captureTraceLogs(function () use ($apiSyncer, $from, $to) {
+            $apiSyncer->sync($from, $to);
         });
 
         $this->line('API path: ' . count($apiLines) . ' trace line(s).');
 
         // ── 4. Compare (coverage-first, four-layer model — see class docblock) ──
-        return $this->compareAndReport($emailLines, $apiLines);
+        return $this->compareAndReport($emailLines, $apiLines, $apiSyncer, $localTesting, $from, $to);
     }
 
     /**
-     * Runs the four-layer comparison and prints a plaintext summary + failure
-     * lists. Returns Command::FAILURE if Layer 1 or Layer 3 found problems,
-     * Command::SUCCESS otherwise (Layers 2/4 are informational only).
+     * Runs the four-layer comparison, refines Layer 1 misses via a live
+     * single-post lookup fallback (see reclassifyLayer1Misses()), and prints
+     * a plaintext summary + failure lists. Returns Command::FAILURE if
+     * Layer 1 or Layer 3 found problems, Command::SUCCESS otherwise
+     * (Layers 2/4 are informational only).
      */
-    private function compareAndReport(array $emailLines, array $apiLines): int
+    private function compareAndReport(array $emailLines, array $apiLines, PostSyncer $apiSyncer, bool $localTesting, string $from, string $to): int
     {
         $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        // Fixture data has no live API to look up against, and this is not
+        // something unit/feature tests should exercise — skip in --local-testing.
+        if (!$localTesting && !empty($layers['layer1Missing'])) {
+            $layers = $this->reclassifyLayer1Misses($layers, $apiSyncer, $from, $to);
+        }
+
         $this->printReport($layers);
 
         if (empty($layers['layer1Missing']) && empty($layers['layer3Mismatches'])) {
@@ -133,6 +146,67 @@ class TNParityCheckCommand extends Command
         return Command::FAILURE;
     }
 
+    // Outcomes meaning the post was never going to be posted to FD anyway, so
+    // /posts/all correctly excludes it — not a coverage regression. Per the
+    // OpenAPI Post model docblock, outcome is one of satisfied/withdrawn/
+    // promised/expired (offers) or satisfied/withdrawn/expired (wanted);
+    // 'deleted' isn't a real outcome value (a deleted post 404s instead, see
+    // the not_found branch below) but is matched defensively in case TN ever
+    // returns it as one.
+    private const RESOLVED_OUTCOMES = ['satisfied', 'withdrawn', 'deleted'];
+
+    /**
+     * For each Layer 1 candidate miss, looks the post up directly by ID
+     * (bypassing the date-range listing) and splits it into four buckets:
+     *
+     * - genuinely missing (kept in layer1Missing — a real regression)
+     * - deleted from TN after the fact (moved to layer1Deleted — informational)
+     * - exists but its `date` now falls outside [from, to] (moved to
+     *   layer1BumpedOutOfWindow — informational; TN mutates `date` on
+     *   repost/edit, which is invisible from the partner email side)
+     * - reached a resolved outcome (satisfied/withdrawn) before the API path
+     *   ran (moved to layer1ResolvedOutcome — informational; we wouldn't
+     *   have posted it to FD anyway, so its absence isn't a regression)
+     *
+     * Confirmed live in production — see plans/tn-api-post-ingestion.md
+     * section Q for the specific post_ids this was found against.
+     */
+    private function reclassifyLayer1Misses(array $layers, PostSyncer $apiSyncer, string $from, string $to): array
+    {
+        $stillMissing = [];
+        $deleted      = [];
+        $bumped       = [];
+        $resolved     = [];
+
+        foreach ($layers['layer1Missing'] as $postId) {
+            $result = $apiSyncer->lookupPostById($postId);
+
+            if ($result['status'] === 'not_found') {
+                $deleted[] = $postId;
+                continue;
+            }
+
+            if ($result['status'] === 'found' && in_array($result['outcome'], self::RESOLVED_OUTCOMES, true)) {
+                $resolved[] = "post_id={$postId} outcome={$result['outcome']}";
+                continue;
+            }
+
+            if ($result['status'] === 'found' && $result['date'] !== null && ($result['date'] < $from || $result['date'] > $to)) {
+                $bumped[] = "post_id={$postId} now dated {$result['date']} (outside window {$from}..{$to})";
+                continue;
+            }
+
+            $stillMissing[] = $postId;
+        }
+
+        $layers['layer1Missing']          = $stillMissing;
+        $layers['layer1Deleted']          = $deleted;
+        $layers['layer1BumpedOutOfWindow'] = $bumped;
+        $layers['layer1ResolvedOutcome']   = $resolved;
+
+        return $layers;
+    }
+
     private function printReport(array $layers): void
     {
         $this->line('');
@@ -141,39 +215,41 @@ class TNParityCheckCommand extends Command
         $this->line('Layer 2 (extra, api-only): ' . count($layers['layer2Extra']));
         $this->line('Layer 3 (same-group):      overlap=' . $layers['overlapCount'] . ' mismatches=' . count($layers['layer3Mismatches']));
         $this->line('Layer 4 (divergence):      ' . count($layers['layer4Divergences']));
+        if (isset($layers['layer1Deleted']) || isset($layers['layer1BumpedOutOfWindow']) || isset($layers['layer1ResolvedOutcome'])) {
+            $this->line('Layer 1 (filtered out):    deleted=' . count($layers['layer1Deleted'] ?? []) . ' bumped_out_of_window=' . count($layers['layer1BumpedOutOfWindow'] ?? []) . ' resolved_outcome=' . count($layers['layer1ResolvedOutcome'] ?? []));
+        }
         $this->line('');
 
-        if (!empty($layers['layer1Missing'])) {
-            $this->error('Layer 1 FAILURES — posts the email path processed but the API path never covered:');
-            foreach ($layers['layer1Missing'] as $postId) {
-                $this->line('  ' . ($layers['layer1Details'][$postId] ?? 'post_id=' . $postId));
-            }
-            $this->line('');
+        $layer1MissingLines = array_map(
+            static fn (string $postId) => $layers['layer1Details'][$postId] ?? self::POST_ID_PREFIX . $postId,
+            $layers['layer1Missing'],
+        );
+        $layer1DeletedLines = array_map(static fn (string $postId) => self::POST_ID_PREFIX . $postId, $layers['layer1Deleted'] ?? []);
+        $layer2ExtraLines   = array_map(static fn (string $postId) => self::POST_ID_PREFIX . $postId, $layers['layer2Extra']);
+
+        $this->printSection('Layer 1 FAILURES — posts the email path processed but the API path never covered:', $layer1MissingLines, isFailure: true);
+        $this->printSection('Layer 1 (informational) — deleted from TN after the email was sent:', $layer1DeletedLines);
+        $this->printSection('Layer 1 (informational) — exists on TN but its date was bumped outside the query window (repost/edit):', $layers['layer1BumpedOutOfWindow'] ?? []);
+        $this->printSection('Layer 1 (informational) — reached a resolved outcome (satisfied/withdrawn), never going to be posted to FD:', $layers['layer1ResolvedOutcome'] ?? []);
+        $this->printSection('Layer 2 (informational) — posts the API path covered that the email path never saw:', $layer2ExtraLines);
+        $this->printSection('Layer 3 FAILURES — same group on both paths, but content/outcome differs:', $layers['layer3Mismatches'], isFailure: true);
+        $this->printSection('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:', $layers['layer4Divergences']);
+    }
+
+    /**
+     * @param  string[]  $lines
+     */
+    private function printSection(string $title, array $lines, bool $isFailure = false): void
+    {
+        if (empty($lines)) {
+            return;
         }
 
-        if (!empty($layers['layer2Extra'])) {
-            $this->line('Layer 2 (informational) — posts the API path covered that the email path never saw:');
-            foreach ($layers['layer2Extra'] as $postId) {
-                $this->line('  post_id=' . $postId);
-            }
-            $this->line('');
+        $isFailure ? $this->error($title) : $this->line($title);
+        foreach ($lines as $line) {
+            $this->line('  ' . $line);
         }
-
-        if (!empty($layers['layer3Mismatches'])) {
-            $this->error('Layer 3 FAILURES — same group on both paths, but content/outcome differs:');
-            foreach ($layers['layer3Mismatches'] as $line) {
-                $this->line('  ' . $line);
-            }
-            $this->line('');
-        }
-
-        if (!empty($layers['layer4Divergences'])) {
-            $this->line('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:');
-            foreach ($layers['layer4Divergences'] as $line) {
-                $this->line('  ' . $line);
-            }
-            $this->line('');
-        }
+        $this->line('');
     }
 
     private function loadCsvText(bool $localTesting): ?string

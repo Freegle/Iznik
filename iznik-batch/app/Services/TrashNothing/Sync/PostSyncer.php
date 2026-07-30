@@ -198,6 +198,40 @@ class PostSyncer
     }
 
     /**
+     * Looks up a single post by ID directly (GET /posts/{id}), bypassing the
+     * date-range listing. Used by TNParityCheckCommand to distinguish a
+     * genuine Layer 1 miss (post exists, in-window, unresolved outcome, but
+     * /posts/all never returned it — a real bug) from false-positive causes
+     * confirmed in production: TN mutating a post's `date` on repost/edit —
+     * which moves it out of any date-window anchored to when it was first
+     * emailed — the post being deleted outright after the fact, or the post
+     * having reached an outcome (satisfied/withdrawn) that means it was never
+     * going to be posted to FD in the first place. See plans/
+     * tn-api-post-ingestion.md section Q for the confirmed live examples.
+     *
+     * @return array{status: 'found'|'not_found'|'error', date: string|null, outcome: string|null}
+     */
+    public function lookupPostById(string $postId): array
+    {
+        $this->throttle();
+
+        try {
+            $post = $this->buildApiClient()->getPost($postId);
+            return [
+                'status'  => 'found',
+                'date'    => $post->getDate()?->format('Y-m-d\TH:i:s\Z'),
+                'outcome' => $post->getOutcome(),
+            ];
+        } catch (ApiException $e) {
+            if ($e->getCode() === 404) {
+                return ['status' => 'not_found', 'date' => null, 'outcome' => null];
+            }
+            Log::warning('TN parity: single-post lookup failed', ['post_id' => $postId, 'error' => $e->getMessage()]);
+            return ['status' => 'error', 'date' => null, 'outcome' => null];
+        }
+    }
+
+    /**
      * Resolve the Freegle group whose area contains this post's coordinates.
      */
     private function findGroupByLocation(float $lat, float $lng): ?Group
