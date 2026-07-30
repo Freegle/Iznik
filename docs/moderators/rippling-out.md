@@ -69,11 +69,16 @@ On posts in your moderation screens there is a **"View rippling reach"** button 
 map-marker icon) that shows you on a map the area a post is currently visible in. This is
 useful for checking how far a post has spread or why it turned up on your list.
 
-The red area is the *projected* spread - where the schedule says the post should have
-reached by now. A **dashed blue outline** shows where the engine's reach *actually* is,
-which can differ: if the reach was frozen (for example the origin copy went back to
-Pending) a warning above the map says so, and the reach can also be trimmed where members
-have left a community or capped by the poster's own distance preference.
+The **blue area** is where the post has *actually* rippled out to, read from the engine
+rather than modelled from the schedule. That matters because the two can differ: if the
+reach was frozen (for example the origin copy went back to Pending) a warning above the map
+says so, and the reach can also be trimmed where members have left a community or capped by
+the poster's own distance preference. A post that has not rippled out yet says so instead of
+drawing an area.
+
+Any moderator can open this, not just moderators of the communities the post is on - since
+rippling is what carries posts beyond their original community, the person wondering how far
+one travelled is often not a mod of where it started.
 
 ### 3. A reminder when you edit a shared post
 

@@ -69,11 +69,11 @@ export async function setupRipplingExplorer({
     }
   ).addTo(map)
 
-  // The ACTUAL stored reach outline (per-post reach modal only). The projection animates what
-  // the schedule SAYS the reach should be; this overlay is what the engine actually holds -
-  // the two diverge when a reach is held, clipped where members left a group, or capped by
-  // the poster's distance preference. The host modal fetches it separately, so it arrives
-  // after mount: watch, and redraw on change.
+  // The ACTUAL stored reach outline (per-post reach modal only): what the engine actually
+  // holds, as opposed to what the schedule says it should - the two diverge when a reach is
+  // held, clipped where members left a group, or capped by the poster's distance preference,
+  // which is why the modal draws this instead of the projection. The host modal fetches it
+  // separately, so it arrives after mount: watch, and redraw on change.
   let actualReachLayer = null
   function drawActualReach(raw) {
     if (actualReachLayer) {
@@ -85,13 +85,21 @@ export async function setupRipplingExplorer({
     if (!raw || !map) return
     const latlngs = geoJsonToLatLngs(raw)
     if (!latlngs) return
-    // Dashed outline, no fill, so it reads against the filled red projection.
-    actualReachLayer = L.polygon(latlngs, {
-      color: '#0055cc',
-      weight: 2,
-      dashArray: '6 4',
-      fill: false,
-    })
+    // With the projection suppressed this is the only reach on the map, so fill it and
+    // drop the dashes - it's the subject, not an annotation over something else. Alongside
+    // a projection it stays a dashed outline so the filled red area still reads through.
+    actualReachLayer = L.polygon(
+      latlngs,
+      props.hideProjection
+        ? {
+            color: '#0055cc',
+            weight: 2,
+            fill: true,
+            fillColor: '#0055cc',
+            fillOpacity: 0.18,
+          }
+        : { color: '#0055cc', weight: 2, dashArray: '6 4', fill: false }
+    )
       .bindTooltip('Actual reach right now (from the engine)', { sticky: true })
       .addTo(map)
   }
@@ -1586,6 +1594,16 @@ export async function setupRipplingExplorer({
 
   function drawPolygons(data, transitionMs, skipStandard = false) {
     lastIsoData = data
+    // Projection suppressed (per-post reach modal): the actual stored reach is drawn
+    // instead, so don't put a modelled outline on the same map to argue with it. Clear
+    // anything already drawn - a pin move must not strand the previous projection.
+    if (props.hideProjection) {
+      Object.keys(layers).forEach((k) => {
+        if (map && map.hasLayer(layers[k])) map.removeLayer(layers[k])
+        delete layers[k]
+      })
+      return
+    }
     const dur = transitionMs || 0
     const outgoing = Object.assign({}, layers)
     const newLayers = {}
