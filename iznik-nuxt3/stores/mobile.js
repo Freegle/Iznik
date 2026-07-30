@@ -87,7 +87,7 @@ export const useMobileStore = defineStore('mobile', {
       const { Device } = await import('@capacitor/device')
       const { Badge } = await import('@capawesome/capacitor-badge')
       const { PushNotifications } =
-        await import('@freegle/capacitor-push-notifications-cap7')
+        await import('@freegle/capacitor-push-notifications-cap8')
       const { AppLauncher } = await import('@capacitor/app-launcher')
       const { App } = await import('@capacitor/app')
 

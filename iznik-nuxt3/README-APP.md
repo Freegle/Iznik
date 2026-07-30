@@ -47,7 +47,7 @@ The app uses Capacitor to bridge web code with native device features. This sect
 
 ### Capacitor Framework
 
-The app uses Capacitor 7 to bridge web code with native functionality:
+The app uses Capacitor 8 to bridge web code with native functionality:
 
 - **App ID**: `org.ilovefreegle.direct`
 - **App Name**: Freegle
@@ -91,30 +91,21 @@ These features use native device capabilities not available in web browsers.
 
 The mobile app supports multiple authentication methods with native implementations:
 
-1. **Google Sign-In**
-   - Package: `@codetrix-studio/capacitor-google-auth`
+1. **Google Sign-In and Facebook Login**
+   - Package: `@capgo/capacitor-social-login`
    - Platform-specific client IDs for Android and iOS
-   - Native Google Sign-In UI
+   - Native sign-in UI; supports Facebook "Limited Login" on iOS
 
-2. **Facebook Login**
-   - Package: Custom Capacitor Social Login plugin
-   - Support for "Limited Login" on iOS
-   - Native Facebook authentication
-
-3. **Apple Sign In**
-   - iOS only
+2. **Apple Sign In**
+   - Package: `@capacitor-community/apple-sign-in` (iOS only)
    - Native Sign in with Apple integration
    - Identity token handling
-
-4. **Yahoo Login**
-   - Uses in-app browser (Cordova InAppBrowser)
-   - OAuth flow with native browser
 
 ### Push Notifications
 
 Custom implementation using Freegle's fork:
 
-- **Package**: `@freegle/capacitor-push-notifications-cap7`
+- **Package**: `@freegle/capacitor-push-notifications-cap8` (cap8 branch of the capacitor-push-notifications-cap7 repo, based on upstream 8.1.2)
 - **Features**:
   - Foreground and background push handling
   - Badge count management on home screen icon
@@ -323,10 +314,10 @@ The mobile app requires specific Capacitor plugins and dependencies for native f
 
 ```json
 {
-  "@capacitor/core": "^7.x",
-  "@capacitor/cli": "^7.x",
-  "@capacitor/android": "^7.x",
-  "@capacitor/ios": "^7.x"
+  "@capacitor/core": "^8.x",
+  "@capacitor/cli": "^8.x",
+  "@capacitor/android": "^8.x",
+  "@capacitor/ios": "^8.x"
 }
 ```
 

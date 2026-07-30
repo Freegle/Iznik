@@ -514,7 +514,7 @@ onMounted(async () => {
   if (mobileStore.isApp) {
     try {
       const { PushNotifications } =
-        await import('@freegle/capacitor-push-notifications-cap7')
+        await import('@freegle/capacitor-push-notifications-cap8')
       await PushNotifications.removeAllDeliveredNotifications()
     } catch (e) {
       console.log('removeAllDeliveredNotifications error', e)
@@ -527,7 +527,7 @@ onMounted(async () => {
       App.addListener('resume', async () => {
         try {
           const { PushNotifications } =
-            await import('@freegle/capacitor-push-notifications-cap7')
+            await import('@freegle/capacitor-push-notifications-cap8')
           await PushNotifications.removeAllDeliveredNotifications()
         } catch (e) {}
         await checkWork()
