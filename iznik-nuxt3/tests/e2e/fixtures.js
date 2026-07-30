@@ -299,6 +299,7 @@ const test = base.test.extend({
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
       /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
+      /ERR_NETWORK_CHANGED/, // Docker bridge interface churn mid-request in the test environment
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
       // Can happen in test environments. Newer headless Chromium (Playwright
       // 1.62+) reports "Error connecting to Credential Management service"

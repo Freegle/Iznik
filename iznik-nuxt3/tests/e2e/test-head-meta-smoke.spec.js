@@ -19,7 +19,7 @@ test.describe('Rendered head/meta smoke tests', () => {
     await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
 
     const title = await page.title()
-    expect(title).toContain('Freegle')
+    expect(title).toContain('give it away')
 
     // Exactly one of each keyed meta tag: duplicates would mean unhead
     // deduplication regressed in the hid:->key: migration.
@@ -74,7 +74,9 @@ test.describe('Rendered head/meta smoke tests', () => {
       timeout: timeouts.navigation.initial,
     })
 
-    await expect(page.locator('h1').first()).toBeVisible({
+    // Wait until the page has real content (it has no h1), then check that
+    // the navbar never rendered.
+    await expect(page.locator('#__nuxt')).toContainText('Reuse', {
       timeout: timeouts.ui.appearance,
     })
     await expect(page.locator('header .navbar')).toHaveCount(0)
