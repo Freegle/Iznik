@@ -57,7 +57,6 @@
     "@vue/shared": "3.5.40",
     "@vue/compiler-dom": "3.5.40",
     "@vue/compiler-core": "3.5.40",
-    "@vitejs/plugin-legacy": "^8.2.2",
     "@bomb.sh/tab": {
       "cac": "^7.0.0"
     }
@@ -82,7 +81,6 @@
     "ipx": "^3.1.1",
     "monocart-reporter": "^2.12.4",
     "nuxt": "^4.5.1",
-    "nuxt-vite-legacy": "^2.0.1",
     "prettier": "^3.9.6",
     "sass": "^1.102.0",
     "typescript": "^5.9.3",
@@ -152,7 +150,7 @@
     "isomorphic-dompurify": "^3.18.0",
     "jwt-decode": "^4.0.0",
     "leaflet": "^1.9.4",
-    "leaflet-control-geocoder": "^1.13.0",
+    "leaflet-control-geocoder": "^4.0.0",
     "lodash.clonedeep": "^4.5.0",
     "lodash.get": "^4.4.2",
     "marked": "^18.0.7",

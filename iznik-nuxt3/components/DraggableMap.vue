@@ -149,14 +149,12 @@ async function ready() {
   mapObject.value = map.value.leafletObject
   if (import.meta.client && mapObject.value) {
     try {
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
-      const { Photon } =
-        await import('leaflet-control-geocoder/src/geocoders/photon')
+      const { Geocoder, geocoders } = await import('leaflet-control-geocoder')
 
       new Geocoder({
         placeholder: 'Search for a place...',
         defaultMarkGeocode: false,
-        geocoder: new Photon({
+        geocoder: new geocoders.Photon({
           geocodingQueryParams: {
             bbox: '-7.57216793459, 49.959999905, 1.68153079591, 58.6350001085',
           },

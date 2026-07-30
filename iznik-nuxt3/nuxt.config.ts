@@ -1,5 +1,6 @@
 import eslintPlugin from 'vite-plugin-eslint2'
 import { VitePWA } from 'vite-plugin-pwa'
+import legacy from '@vitejs/plugin-legacy'
 
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
@@ -314,7 +315,6 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
     'pinia-plugin-persistedstate/nuxt',
     '@nuxt/image',
-    'nuxt-vite-legacy',
     ['@bootstrap-vue-next/nuxt', { css: false }],
     'nuxt-vitalizer',
 
@@ -441,8 +441,7 @@ export default defineNuxtConfig({
 
         'wicket/wicket-leaflet',
         '@vue-leaflet/vue-leaflet',
-        'leaflet-control-geocoder/src/control',
-        'leaflet-control-geocoder/src/geocoders/photon',
+        'leaflet-control-geocoder',
         'supercluster',
         'dayjs/plugin/utc',
         'dayjs/plugin/timezone',
@@ -521,9 +520,32 @@ export default defineNuxtConfig({
         },
       },
     },
-    plugins:
+    plugins: [
+      // Polyfills-only mode of @vitejs/plugin-legacy (renderLegacyChunks:
+      // false): no ES5/SystemJS legacy chunks — those targets are broken
+      // upstream anyway (vitejs/vite#21951: the polyfills-legacy bootstrap
+      // chunk itself ships unparsable ES6+) — but keep injecting the
+      // modernPolyfills below into the modern bundle on Netlify. They patch
+      // real API gaps in browsers older than Vite 8's chrome111/safari16.4
+      // baseline, e.g. the Chrome WebView 90 `.at()` crash (Sentry 7493124034).
+      ...(config.NODE_ENV !== 'test' && isNetlify
+        ? [
+            legacy({
+              renderLegacyChunks: false,
+              modernPolyfills: [
+                'es.global-this',
+                'es.object.from-entries',
+                'es.array.flat-map',
+                'es.array.flat',
+                'es.array.at',
+                'es.string.replace-all',
+                'es.promise.any',
+              ],
+            }),
+          ]
+        : []),
       // Skip heavy plugins during unit testing for faster test startup
-      config.NODE_ENV === 'test'
+      ...(config.NODE_ENV === 'test'
         ? []
         : config.ISAPP && production
           ? [
@@ -608,26 +630,9 @@ export default defineNuxtConfig({
                     }
                   },
                 }),
-              ],
+              ]),
+    ],
   },
-
-  // Note that this is not the standard @vitejs/plugin-legacy, but https://www.npmjs.com/package/nuxt-vite-legacy
-  // Only enable legacy builds on Netlify where we need old browser support.
-  // Skip in CI/Docker for faster builds (40-50% improvement).
-  legacy: isNetlify
-    ? {
-        targets: ['chrome 49', 'since 2015', 'ios>=12', 'safari>=12'],
-        modernPolyfills: [
-          'es.global-this',
-          'es.object.from-entries',
-          'es.array.flat-map',
-          'es.array.flat',
-          'es.array.at',
-          'es.string.replace-all',
-          'es.promise.any',
-        ],
-      }
-    : false,
 
   // Sentry needs sourcemaps.
   sourcemap: {
