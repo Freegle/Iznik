@@ -76,12 +76,16 @@ get_container_info() {
             targets="$targets"$'\n'"${CN}-modtools-dev-live /app/${relative_path#iznik-nuxt3/} ModTools-Dev-Live"
         fi
         echo "$targets"
-    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* ]]; then
+    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* || "$relative_path" == iznik-nuxt3/pages/* || "$relative_path" == iznik-nuxt3/server/* ]]; then
         # Shared code used by both Freegle and ModTools - sync to all containers.
-        # assets/ is here rather than in the generic iznik-nuxt3/* branch below because that
-        # branch skips modtools-dev-local, which is where vitest runs: a unit test that reads
-        # a stylesheet (e.g. for the feed card sizing constants) would otherwise see the
-        # copy baked into the image rather than the edit on disk.
+        # assets/, pages/ and server/ are here rather than in the generic iznik-nuxt3/*
+        # branch below because that branch skips modtools-dev-local, which is where vitest
+        # runs. Unit test files ARE synced there, so any source a unit test imports must be
+        # too - otherwise today's tests run against the copy baked into the image and fail
+        # locally while passing in CI, which builds the image from a full checkout.
+        # Seen with tests/unit/server/sitemap.spec.js (server/utils/sitemap.js absent from
+        # the container entirely), MessageSummaryRowSize.spec.js (assets/css/_feed-card.scss
+        # missing) and stats.spec.js (a pages/stats copy months out of date).
         local targets="${CN}-dev-local /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Local"
         if docker ps --format '{{.Names}}' | grep -q "^${CN}-dev-live$"; then
             targets="$targets"$'\n'"${CN}-dev-live /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Live"
