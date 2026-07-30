@@ -138,8 +138,8 @@ gcloud compute addresses describe yesterday-static-ip --project=freegle-yesterda
 
 2. **Assign static IP to VM:**
 ```bash
-gcloud compute instances delete-access-config yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat"
-gcloud compute instances add-access-config yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat" --address=<STATIC_IP>
+gcloud compute instances delete-access-config yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat"
+gcloud compute instances add-access-config yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat" --address=<STATIC_IP>
 ```
 
 3. **Set up DNS A record:**
@@ -596,7 +596,9 @@ The Yesterday system is secured with multiple layers:
 - Read-only access to production backups via GCP IAM
 - All services isolated in dedicated `freegle-yesterday` GCP project
 - Preemptible VM to minimize costs
-- Firewall rules allow only required ports (22, 80, 443, 8082-8084)
+- Firewall rules open 22, 8095, 8181, 8193 and 8444-8448 to `0.0.0.0/0`
+  (80/443 are NOT open; Let's Encrypt uses DNS-01). Of these only 8095 is
+  unauthenticated, by design. See `Security.md` for the full reachable-port table
 - 2FA gateway protects access to backup management UI
 - Optional HTTP Basic Auth adds defense-in-depth (configured via `BACKUP_BASIC_AUTH`)
 - All outbound email captured in Mailhog (no external sending)
@@ -620,19 +622,19 @@ The system runs automatically:
 Start the Yesterday VM:
 
 ```bash
-gcloud compute instances start yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a
+gcloud compute instances start yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a
 ```
 
 Stop the Yesterday VM:
 
 ```bash
-gcloud compute instances stop yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a
+gcloud compute instances stop yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a
 ```
 
 SSH into the VM:
 
 ```bash
-gcloud compute ssh yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a
+gcloud compute ssh yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a
 ```
 
 ## Monitoring
