@@ -106,6 +106,13 @@ async function runStep(page, step, baseUrl) {
   if (step.scrollTo != null) return locator(page, step.scrollTo).first().scrollIntoViewIfNeeded();
   if (step.scrollBy != null) return page.evaluate((y) => window.scrollBy(0, y), step.scrollBy);
   if (step.setViewport != null) return page.setViewportSize(step.setViewport);
+  // setState runs a small JS snippet to establish read-only client state (e.g.
+  // history.state for a post-success landing) — NOT a mutation. It must not call
+  // any network/submit API; it only arranges what an already-reachable page shows.
+  if (step.setState != null) return page.evaluate((src) => {
+    // eslint-disable-next-line no-new-func
+    return Function(src)();
+  }, subst(step.setState));
   return undefined;
 }
 
@@ -131,6 +138,13 @@ export async function capture(plan, { baseUrl, assetsDir, headful = false, stora
       try {
         // A shot may target a different app (e.g. ModTools) via its own baseUrl.
         const shotBase = (shot.baseUrl ? subst(shot.baseUrl) : baseUrl).replace(/\/$/, '');
+        // initState arranges read-only client state (e.g. history.state for a
+        // post-success landing) BEFORE the page's own scripts run, so a state the
+        // app normally reaches only via a submit can be shown without submitting.
+        // It must not perform any mutation/network call.
+        if (shot.initState != null) {
+          await page.addInitScript(subst(shot.initState));
+        }
         await page.goto(shotBase + subst(shot.route), { waitUntil: 'networkidle', timeout: 30000 });
         for (const step of shot.steps || []) await runStep(page, step, shotBase);
         const dest = join(assetsDir, shot.name);

@@ -167,6 +167,12 @@ type PatchNoticeboardRequest struct {
 
 func PostNoticeboard(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
+	if myid == 0 {
+		// Previously unchecked: an anonymous caller could record noticeboard checks
+		// (userid 0) and flip a board active/inactive. PatchNoticeboard already gates
+		// this; POST must too.
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
 
 	var req PostNoticeboardRequest
 	if err := c.BodyParser(&req); err != nil {

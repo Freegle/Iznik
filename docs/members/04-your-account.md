@@ -86,6 +86,12 @@ community statistics and so you always have a record of what you gave or receive
 - **Deactivate or delete**: you can permanently delete your account from **Unsubscribe**
   (`/unsubscribe`). This is permanent. If you are logged out, enter your email and confirm
   from the link we send you.
+- **If you stop using Freegle**: after six months without a visit your account goes
+  dormant and we stop emailing you. We do not remove member data for inactivity, so your
+  posting history stays intact and you can pick up where you left off just by logging back
+  in. Accounts that signed up but never joined a community do have their personal data
+  removed automatically after six months. See
+  [/privacy](https://www.ilovefreegle.org/privacy) for the full policy.
 
 ## More things members do
 

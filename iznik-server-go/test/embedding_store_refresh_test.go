@@ -86,7 +86,7 @@ func closeTestMessage(t *testing.T, msgID uint64) {
 // searchByVec runs Store.Search with a query vector equal to the target vector
 // (cosine ~1) and reports whether msgID is the top hit.
 func searchFindsAsTop(t *testing.T, store *embedding.Store, vec [embedding.EmbeddingDim]float32, msgID uint64) bool {
-	results := store.Search(vec[:], 5, "", nil, 0, 0, 0, 0)
+	results := store.Search(vec[:], 5, "", nil, nil, 0, 0, 0, 0)
 	require.NotEmpty(t, results, "expected at least one search result")
 	return results[0].Msgid == msgID
 }
@@ -133,7 +133,7 @@ func TestStoreRefreshRemovesClosedMessage(t *testing.T) {
 	require.NoError(t, store.Refresh())
 	assert.Equal(t, 1, store.Count())
 
-	results := store.Search(vec2[:], 5, "", nil, 0, 0, 0, 0)
+	results := store.Search(vec2[:], 5, "", nil, nil, 0, 0, 0, 0)
 	for _, r := range results {
 		assert.NotEqual(t, msg2, r.Msgid, "closed message must be removed from the store")
 	}

@@ -1,4 +1,5 @@
 import BaseAPI from '@/api/BaseAPI'
+import { notAHeldConflict } from '~/api/heldConflict'
 
 export default class SpammersAPI extends BaseAPI {
   async fetch(params) {
@@ -14,7 +15,7 @@ export default class SpammersAPI extends BaseAPI {
   }
 
   patch(params) {
-    return this.$patchv2('/modtools/spammers', params)
+    return this.$patchv2('/modtools/spammers', params, notAHeldConflict)
   }
 
   del(params) {

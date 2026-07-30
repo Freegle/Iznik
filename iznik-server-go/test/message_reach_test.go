@@ -29,8 +29,8 @@ func ensureRippleReachTable() {
 
 func insertReach(mid uint64, tick, total int) {
 	db := database.DBConn
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, tick, total_ticks, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ?, ?, 'expanding') "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, tick, total_ticks, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), ?, ?, 'expanding') "+
 		"ON DUPLICATE KEY UPDATE tick = VALUES(tick), total_ticks = VALUES(total_ticks)", mid, tick, total)
 }
 

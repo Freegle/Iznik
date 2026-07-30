@@ -34,6 +34,23 @@ run_for_date() {
     fi
 }
 
+# Backstop: record a failure in restore-status.json no matter which restore
+# path died (the sub-scripts try to do this themselves, but may die before
+# they can — e.g. killed, or failing before their trap is set). Without this
+# the API's in-memory job stays "starting" forever and 409s every later load.
+write_failed_status() {
+    local date8="$1" exit_code="$2"
+    cat > "$TRIGGER_DIR/restore-status.json" <<EOF
+{
+  "status": "failed",
+  "message": "Restore for ${date8} failed with exit code ${exit_code}",
+  "backupDate": "${date8}",
+  "filesRemaining": 0,
+  "timestamp": "$(date -Iseconds)"
+}
+EOF
+}
+
 echo "Restore monitor started, watching for $TRIGGER_FILE"
 
 while true; do
@@ -57,9 +74,11 @@ while true; do
                 echo "✅ Restore completed successfully"
             else
                 echo "❌ Restore failed with exit code $EXIT_CODE"
+                write_failed_status "$BACKUP_DATE" "$EXIT_CODE"
             fi
         else
             echo "❌ Invalid backup date format: $BACKUP_DATE"
+            write_failed_status "$BACKUP_DATE" "invalid-date"
         fi
 
         echo "=== Restore monitor ready ==="

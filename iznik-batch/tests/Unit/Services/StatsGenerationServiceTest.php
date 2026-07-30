@@ -272,24 +272,27 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertEquals(1, $breakdown[Message::TYPE_WANTED]);
     }
 
-    public function test_searches_count_matches_when_groupid_appears_in_csv(): void
+    public function test_searches_count_tallies_rows_for_the_group(): void
     {
+        // search_history.groups is an INT on production and holds a single group
+        // id, so a row can never carry a comma-separated list. This test used to
+        // insert one, which was only possible while the migrations declared the
+        // column as TEXT.
+        //
+        // StatsGenerationService still explodes the value on commas, described in
+        // its own comment as V1 behaviour. That branch is unreachable against
+        // production's schema. See the PR that brought the migrations into parity:
+        // if searches really should record several groups, the column needs to
+        // change on live rather than the code keep pretending it already has.
         $group = $this->createTestGroup();
         $otherGroup = $this->createTestGroup();
-        // A third, unrelated group id for the "other ids share the CSV" decoy. It must be a
-        // real, distinct id: a hardcoded literal (previously 999) collides whenever the groups
-        // auto-increment happens to assign $group that exact id, which makes the decoy token
-        // equal the group under test and double-counts it (Searches tally 3 instead of 2). The
-        // failing id depends only on how many groups earlier tests created, so it surfaced as a
-        // flake when the suite grew.
-        $unrelatedGroup = $this->createTestGroup();
 
         DB::table('search_history')->insert([
-            ['date' => $this->date.' 10:00:00', 'term' => 'sofa', 'groups' => (string) $group->id],
-            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $otherGroup->id.','.$group->id.','.$unrelatedGroup->id],
-            ['date' => $this->date.' 12:00:00', 'term' => 'table', 'groups' => (string) $otherGroup->id],
+            ['date' => $this->date.' 10:00:00', 'term' => 'sofa', 'groups' => $group->id],
+            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $group->id],
+            ['date' => $this->date.' 12:00:00', 'term' => 'table', 'groups' => $otherGroup->id],
             // Wrong date — ignored.
-            ['date' => '2026-04-02 10:00:00', 'term' => 'desk', 'groups' => (string) $group->id],
+            ['date' => '2026-04-02 10:00:00', 'term' => 'desk', 'groups' => $group->id],
         ]);
 
         $this->service->generate($group->id, $this->date);

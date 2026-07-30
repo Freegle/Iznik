@@ -67,7 +67,7 @@
            and a keep/remove control per <optional>, filled in order so you never
            have to look back at the template. -->
       <div v-else class="mt-2 segmented-editor border rounded p-3">
-        <p class="text-danger small mb-2">
+        <p class="text-muted small mb-2">
           Fill in the highlighted boxes and choose Keep or Remove for any
           optional parts. You can edit any of the rest of the wording too. This
           is the message the member will receive.
@@ -132,6 +132,9 @@
           </template>
         </div>
       </div>
+      <NoticeMessage v-if="heldError" variant="warning" class="mt-1 mb-1">
+        {{ heldError }}
+      </NoticeMessage>
       <NoticeMessage v-if="directiveWarning" variant="danger" class="mt-1 mb-1">
         {{ directiveWarning }}
       </NoticeMessage>
@@ -211,7 +214,7 @@
             :flex="false"
             icon-class="pe-1"
             class="m-1 d-inline-block"
-            @handle="process"
+            @handle="(callback) => guardHold(() => process(callback))"
           />
           <b-button variant="white" @click="hide"> Cancel </b-button>
         </div>
@@ -226,6 +229,7 @@ import { setupKeywords } from '~/composables/useKeywords'
 import { useUserStore } from '~/stores/user'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMemberStore } from '~/stores/member'
+import { useHeldNotice } from '~/composables/useHeldNotice'
 import { useMessageStore } from '~/stores/message'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { useOurModal } from '~/composables/useOurModal'
@@ -287,6 +291,7 @@ const { modal, show, hide } = useOurModal()
 const modGroupStore = useModGroupStore()
 const messageStore = useMessageStore()
 const memberStore = useMemberStore()
+const { heldError, guardHold } = useHeldNotice()
 const userStore = useUserStore()
 const stdmsgStore = useStdmsgStore()
 const { typeOptions } = setupKeywords()
@@ -685,7 +690,7 @@ async function fillin() {
 
   if (props.autosend && !warning.value) {
     // Start doing stuff.
-    process()
+    guardHold(() => process())
   }
 }
 

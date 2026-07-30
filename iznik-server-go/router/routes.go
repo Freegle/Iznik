@@ -48,6 +48,7 @@ import (
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
+	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/logs"
@@ -61,6 +62,7 @@ import (
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
@@ -259,6 +261,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Authority ID"
 		// @Success 200 {array} authority.Message
 		rg.Get("/authority/:id/message", authority.Messages)
+
+		// Item impact estimate
+		// @Router /item/impact [get]
+		// @Summary Estimate reuse impact for an item name
+		// @Description Estimates weight, CO2e saved and financial benefit of reuse for qty units of a free-text item name. Public, read-only - never writes to the items catalog. Lookup order: (1) exact case-insensitive match against the items catalog with a known weight, (2) fuzzy word-overlap match (>10%) against the standard weights reference table, (3) popularity-weighted average item weight.
+		// @Tags item
+		// @Produce json
+		// @Param name query string true "Free-text item name"
+		// @Param qty query integer false "Quantity (default 1)"
+		// @Success 200 {object} item.ImpactResponse
+		// @Failure 400 {object} fiber.Error "Missing or empty name"
+		rg.Get("/item/impact", item.Impact)
 
 		// Chats
 		// @Router /chat [get]
@@ -639,6 +653,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.Message
 		rg.Get("/group/:id/message", group.GetGroupMessages)
 
+		// Group Message Summaries
+		// @Router /group/{id}/message/summary [get]
+		// @Summary Get id + subject for a group's live posts
+		// @Description Backs the server-rendered, crawlable post list on the community page
+		// @Tags group,message
+		// @Produce json
+		// @Param id path integer true "Group ID"
+		// @Success 200 {array} group.GroupMessageSummary
+		rg.Get("/group/:id/message/summary", group.GetGroupMessageSummaries)
+
 		// Group PATCH
 		// @Router /group [patch]
 		// @Summary Update group settings
@@ -868,6 +892,15 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
 
+		// Message Sitemap
+		// @Router /message/sitemap [get]
+		// @Summary Live posts for the search-engine sitemap
+		// @Description Returns id + lastmod for every currently-live Offer/Wanted post, for building sitemap.xml
+		// @Tags message
+		// @Produce json
+		// @Success 200 {array} message.SitemapEntry
+		rg.Get("/message/sitemap", message.Sitemap)
+
 		// Message Count
 		// @Router /message/count [get]
 		// @Summary Get message count
@@ -932,6 +965,39 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} message.ReachResponse
 		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
 		rg.Get("/message/:id/reach", message.Reach)
+
+		// Similar posts for the "more like this nearby" recommendation strip.
+		// @Router /message/{id}/similar [get]
+		// @Summary Posts similar to a given post (recommendations)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 8, max 20)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/similar", message.Similar)
+
+		// Offers matching a wanted being composed. Registered before /message/:ids
+		// so "matches" is not treated as a message id.
+		// @Router /message/matches [get]
+		// @Summary Offers matching a wanted being composed (recommendations)
+		// @Tags message
+		// @Produce json
+		// @Param query query string true "Item text of the wanted"
+		// @Param lat query number true "Poster's latitude"
+		// @Param lng query number true "Poster's longitude"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/matches", message.Matches)
+
+		// Opposite-type posts matching a given post — candidate set for the
+		// matched-posts email (batch job). Reach-filtered against the post owner.
+		// @Router /message/{id}/matches [get]
+		// @Summary Opposite-type posts matching a given post (matched-posts email)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 10, max 30)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/matches", message.PostMatches)
 
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
@@ -1015,6 +1081,12 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "User not found"
 		rg.Get("/user/search", user.SearchUsers)
 		rg.Get("/user/byemail/:email", user.GetUserByEmail)
+		// Targeted opt-out from matched-posts suggestion emails (relevantallowed=0),
+		// key-authenticated so it works as a one-click List-Unsubscribe. Registered
+		// before /user/:id? so "relevantoff" is not treated as a user id.
+		// @Router /user/relevantoff [get]
+		rg.Get("/user/relevantoff", user.RelevantOff)
+		rg.Post("/user/relevantoff", user.RelevantOff)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
@@ -1405,6 +1477,20 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
 
+		// Re-engagement Email Effectiveness (authenticated, admin only)
+		// @Router /email/stats/reengage [get]
+		// @Summary Get re-engagement email effectiveness
+		// @Description Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/reengage", emailtracking.ReengageEffectiveness)
+
 		// Browse-feed scroll-depth curve for the sysadmin "Scrolling" tab (Support/Admin).
 		// @Router /modtools/scroll/depth [get]
 		// @Summary Browse-feed scroll-depth curve
@@ -1412,6 +1498,14 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags browse
 		// @Produce json
 		rg.Get("/modtools/scroll/depth", browse.ScrollDepthCurve)
+
+		// Recommendation funnel (impressions/clicks/replies + holdout) for the
+		// sysadmin "Recommendations" tab (Support/Admin).
+		// @Router /modtools/recommendations/stats [get]
+		// @Summary Recommendation funnel stats
+		// @Tags recommendations
+		// @Produce json
+		rg.Get("/modtools/recommendations/stats", recommendations.Stats)
 
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]

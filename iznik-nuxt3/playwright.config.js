@@ -106,6 +106,15 @@ module.exports = defineConfig({
                     // the e2e suite does not navigate into, so it is pure
                     // denominator noise. Unit tests cover it.
                     !sourcePath.includes('components/ChatMobileNavbar') &&
+                    // useHaptics: native-only Capacitor haptic feedback;
+                    // all methods are no-ops on web so Playwright never
+                    // exercises them. Unit-tested via useHaptics.spec.js.
+                    !sourcePath.includes('useHaptics') &&
+                    // give/mobile/photos: app-only give-flow page for
+                    // attaching photos before posting; Playwright e2e tests
+                    // run against the web build and never navigate here.
+                    // Unit-tested via pages/give/mobile/photos.spec.js.
+                    !sourcePath.includes('give/mobile/photos') &&
                     sourcePath.length < 300
                   )
                 },

@@ -269,7 +269,7 @@ describe('delegate_to_coder boilerplate — PUSH_VERIFIED marker', () => {
   })
 
   it('instructs the delegate to verify via git log origin/<branch>', () => {
-    expect(actionsTs).toContain('git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H')
+    expect(actionsTs).toContain('git log origin/<branch> -1 --format=%H')
   })
 
   it('instructs the delegate to emit DELEGATE_FAILED= if verification fails', () => {

@@ -153,35 +153,60 @@ const head = buildHead(
 
 useHead(head)
 
-await groupStore.fetch()
+// The landing data cascade: group list → message inbounds → message details.
+// On the web this is an SSR prefetch so the landing page arrives fully
+// rendered. In the app build (ssr: false) these used to be top-level awaits,
+// blocking the app's first paint on three sequential API round trips - even
+// for logged-in users, who are redirected to /browse and never see this data.
+async function fetchLandingData() {
+  await groupStore.fetch()
 
-try {
-  const list = await messageStore.fetchInBounds(
-    49.45,
-    -9,
-    61,
-    2,
-    null,
-    50,
-    true
-  )
-  const offers = list.filter((item) => item.type === 'Offer')
+  try {
+    const list = await messageStore.fetchInBounds(
+      49.45,
+      -9,
+      61,
+      2,
+      null,
+      50,
+      true
+    )
+    const offers = list.filter((item) => item.type === 'Offer')
 
-  const preloadPromises = []
-  for (const offer of offers.slice(0, 12)) {
-    preloadPromises.push(messageStore.fetch(offer.id))
+    const preloadPromises = []
+    for (const offer of offers.slice(0, 12)) {
+      preloadPromises.push(messageStore.fetch(offer.id))
+    }
+    await Promise.all(preloadPromises)
+  } catch (e) {
+    console.log('SSR: Failed to prefetch messages', e)
   }
-  await Promise.all(preloadPromises)
-} catch (e) {
-  console.log('SSR: Failed to prefetch messages', e)
+}
+
+const authStore = useAuthStore()
+const isAppBuild = !!runtimeConfig.public.ISAPP
+
+if (!isAppBuild || import.meta.server) {
+  // Web build: unchanged blocking prefetch (server render and the matching
+  // client hydration pass).
+  await fetchLandingData()
+} else {
+  // App build: never block first paint on these three round trips. By
+  // onMounted the root Suspense has resolved, so the layout's session fetch
+  // has finished and we know whether we're really logged in: logged-in users
+  // are redirected to /browse by goHome() and never see this data, so only
+  // fetch it when we ended up logged out.
+  onMounted(() => {
+    if (!me.value) {
+      fetchLandingData().catch((e) => {
+        console.log('Landing data fetch failed', e?.message)
+      })
+    }
+  })
 }
 
 // Computed properties
-const me = computed(() => {
-  // Access the user store to get the current user
-  const authStore = useAuthStore()
-  return authStore?.user
-})
+const me = computed(() => authStore?.user)
 
 const isApp = ref(mobileStore.isApp) // APP
 

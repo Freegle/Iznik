@@ -62,7 +62,9 @@ type scoredResult struct {
 //
 // Returns VectorStats alongside the results so the caller can emit diagnostic
 // logs — see the type comment for why.
-func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
+// allowedIDs, when non-nil, restricts the search to those msgids (the browse-feed universe
+// for browse-scoped searches); nil = no restriction.
+func VectorSearch(term string, limit int, groupids []uint64, allowedIDs map[uint64]bool, msgtype string,
 	nelat, nelng, swlat, swlng float32) ([]SearchResult, VectorStats, error) {
 
 	stats := VectorStats{StoreSize: embedding.Global.Count()}
@@ -81,7 +83,7 @@ func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 	// Fetch more than needed so we can re-rank with keyword boost.
 	storeStart := time.Now()
 	vecResults := embedding.Global.Search(queryVec, limit*3, msgtype, groupids,
-		swlat, swlng, nelat, nelng)
+		allowedIDs, swlat, swlng, nelat, nelng)
 	stats.StoreMs = float64(time.Since(storeStart).Microseconds()) / 1000.0
 	stats.Candidates = len(vecResults)
 

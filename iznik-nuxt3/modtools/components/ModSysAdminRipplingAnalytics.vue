@@ -32,9 +32,21 @@
       </div>
     </div>
 
-    <div v-if="loading" class="text-center py-5">
-      <b-spinner />
-      <p class="text-muted small mt-2 mb-0">Computing live KPIs…</p>
+    <div v-if="loading" class="rip-loading text-center py-5">
+      <div class="d-flex align-items-center justify-content-center mb-2">
+        <b-spinner small class="me-2" />
+        <span class="fw-bold">Computing live rippling KPIs…</span>
+      </div>
+      <p class="text-muted small mb-2">
+        The full picture runs a lot of database work, so a wide window can take
+        up to a minute — this is still working, not stuck.
+      </p>
+      <div class="rip-progress mx-auto">
+        <div class="rip-progress-bar" :style="{ width: loadPct + '%' }" />
+      </div>
+      <p class="text-muted small mt-2 mb-0">
+        {{ loadPct }}% · {{ Math.round(loadElapsed) }}s
+      </p>
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else-if="s1">
@@ -125,7 +137,10 @@
       <!-- Section 2 - trends -->
       <h5 class="section-h">Trends</h5>
       <p class="text-muted small mb-2">
-        Each headline number over time, by post arrival day.
+        Each headline number over time, by the day the post entered rippling.
+        Figures use fixed windows (replies within 36h, taken within 14 days) so
+        every day is measured the same way — a dashed tail marks days too
+        recent for the window to have finished, not a real decline.
       </p>
       <div class="kpi-grid trends">
         <div v-for="t in trendCharts" :key="t.title" class="panel">
@@ -372,6 +387,17 @@
             :options="channelStackOptions()"
             style="width: 100%; height: 320px"
           />
+          <p v-else-if="metricsLoading" class="sub">Loading…</p>
+          <p v-else-if="metricsError" class="sub text-danger">
+            Couldn't load reply attribution: {{ metricsError }}
+          </p>
+          <p
+            v-else-if="metricsDegraded.includes('reply_source_split')"
+            class="sub text-danger"
+          >
+            Reply attribution timed out on the server — not "no data", we don't
+            know.
+          </p>
           <p v-else class="sub">
             No attribution data yet — accrues from reply-time capture.
           </p>
@@ -411,7 +437,21 @@
             </b-td>
           </b-tr>
           <b-tr v-if="!hotspots.length">
-            <b-td colspan="6" class="text-muted">
+            <b-td v-if="metricsLoading" colspan="6" class="text-muted">
+              Loading…
+            </b-td>
+            <b-td v-else-if="metricsError" colspan="6" class="text-danger">
+              Couldn't load hotspots: {{ metricsError }}
+            </b-td>
+            <b-td
+              v-else-if="metricsDegraded.includes('hotspots')"
+              colspan="6"
+              class="text-danger"
+            >
+              Hotspots timed out on the server — not "no hotspots", we don't
+              know.
+            </b-td>
+            <b-td v-else colspan="6" class="text-muted">
               No hotspots flagged — nothing unusual to act on.
             </b-td>
           </b-tr>
@@ -442,6 +482,13 @@ const strata = [
 
 const loading = ref(true)
 const error = ref(null)
+// Time-based progress for the KPI fetch. The backend runs it as
+// one request with no progress feed, so we ease a bar toward ~95% over the
+// expected duration (real completion snaps it to 100%) to show a wide, slow
+// window is working rather than frozen.
+const loadPct = ref(0)
+const loadElapsed = ref(0)
+let loadTimer = null
 const startDate = ref('')
 const endDate = ref('')
 const stratum = ref('all')
@@ -465,11 +512,21 @@ const drivePct = computed(() =>
 // large enough to keep the number of round-trips (and the progress bar's granularity) sensible.
 const DRIVE_CHUNK = 5
 // Folded in from the retired dashboard: reply-source attribution + geographic hotspots
-// (fetched in parallel from the metrics endpoint, which already computes them).
+// (fetched alongside the KPIs from the metrics endpoint, which already computes them).
 const replySource = ref([])
 const hotspots = ref([])
 const attributionCaptureFrom = ref('')
 const heldBySource = ref([])
+// The metrics request feeds only those panels, so it gets its own loading/error state: a failure
+// there must not blank the KPIs, the trends or the drive-time pass, which come from a different
+// endpoint. The panels say what went wrong instead of silently reading as "no data".
+const metricsLoading = ref(false)
+const metricsError = ref(null)
+// Sections the server gave up on (its query hit the endpoint's deadline). They come back empty,
+// which would otherwise read as "nothing to show" rather than "we don't know".
+const metricsDegraded = ref([])
+// The start|end the loaded metrics sections belong to, so a density change doesn't refetch them.
+let metricsWindow = null
 
 const stratumLabel = computed(() =>
   stratum.value === 'all' ? 'all-density' : stratum.value
@@ -591,19 +648,38 @@ const rippledTakersPie = computed(() =>
     : null
 )
 
-function series(rows, key) {
+// A trend series, optionally carrying a per-day maturity flag as a Google Charts 'certainty'
+// role: days too recent for their fixed accrual window to have finished draw dashed/pale, so a
+// still-accruing tail reads as provisional rather than as a decline. A missing flag (older API)
+// is treated as mature.
+function series(rows, key, matureKey) {
   if (!rows || !rows.length) return null
-  return [['Date', 'v'], ...rows.map((r) => [new Date(r.day), r[key] || 0])]
+  if (!matureKey) {
+    return [['Date', 'v'], ...rows.map((r) => [new Date(r.day), r[key] || 0])]
+  }
+  return [
+    ['Date', 'v', { type: 'boolean', role: 'certainty' }],
+    ...rows.map((r) => [new Date(r.day), r[key] || 0, r[matureKey] !== false]),
+  ]
 }
 const trendCharts = computed(() => {
   const k = s2.value.kpis
   const dt = s2.value.drive_time
   return [
-    { title: 'Reply rate (%)', data: series(k, 'replied_pct'), color: POS },
-    { title: 'Taken rate (%)', data: series(k, 'taken_pct'), color: '#146c43' },
     {
-      title: 'Mean replies / offer',
-      data: series(k, 'mean_replies'),
+      title: 'Reply rate within 36h (%)',
+      data: series(k, 'replied_pct', 'replied_mature'),
+      color: POS,
+    },
+    {
+      title: 'Taken within 14 days (%)',
+      data: series(k, 'taken_pct', 'taken_mature'),
+      color: '#146c43',
+      note: 'Outcomes are marked weeks late, so the dashed provisional tail is long.',
+    },
+    {
+      title: 'Mean replies within 36h / offer',
+      data: series(k, 'mean_replies', 'replied_mature'),
       color: '#17a2b8',
     },
     {
@@ -699,35 +775,95 @@ const bullseyeAria = computed(() => {
   )} in the ${outer.min_lo}-${outer.min_hi} minute ring.`
 })
 
+// Eases the loading bar toward ~95% over ~40s of elapsed time so a slow, wide
+// window reads as "working", then stopLoadProgress snaps it to 100 on completion.
+function startLoadProgress() {
+  loadElapsed.value = 0
+  loadPct.value = 0
+  clearInterval(loadTimer)
+  loadTimer = setInterval(() => {
+    loadElapsed.value += 0.5
+    loadPct.value = Math.min(
+      95,
+      Math.round(95 * (1 - Math.exp(-loadElapsed.value / 12)))
+    )
+  }, 500)
+}
+
+function stopLoadProgress() {
+  clearInterval(loadTimer)
+  loadTimer = null
+  loadPct.value = 100
+}
+
+onBeforeUnmount(() => clearInterval(loadTimer))
+
 async function fetchAnalytics() {
   loading.value = true
   error.value = null
+  startLoadProgress()
+  // Kick the metrics request off alongside the KPIs but do NOT await it here. It only feeds the
+  // reply-attribution and hotspot panels; awaiting it as part of the tab's success meant one slow
+  // or failed metrics call took the whole tab down with it (and skipped the drive-time pass).
+  loadMetrics()
   try {
-    const [result, metrics] = await Promise.all([
-      apiInstance.rippling.fetchAnalytics(
-        stratum.value,
-        startDate.value,
-        endDate.value
-      ),
-      apiInstance.rippling.fetchMetrics(0, startDate.value, endDate.value),
-    ])
+    const result = await apiInstance.rippling.fetchAnalytics(
+      stratum.value,
+      startDate.value,
+      endDate.value
+    )
     s1.value = result?.section1 || null
     s2.value = result?.section2 || { kpis: [], drive_time: [] }
     s3.value = result?.section3 || null
     bull.value = result?.bullseye || []
-    replySource.value = metrics?.reply_source_split || []
-    hotspots.value = metrics?.hotspots || []
-    attributionCaptureFrom.value = metrics?.attribution_capture_from || ''
-    heldBySource.value = metrics?.held_reply_by_source || []
   } catch (e) {
     error.value = e.message || 'Unknown error'
   } finally {
+    stopLoadProgress()
     loading.value = false
   }
   // Drive-time metrics are a slow sampled routing pass (~250 isochrone calls). Load them AFTER the
   // KPIs are on screen, not blocking them — the drive panels show their own spinner meanwhile.
   // Skip it if the KPIs failed: there are no panels to fill, so don't hit the routing graph.
   if (!error.value && s1.value) loadDriveTimes()
+}
+
+// Reply attribution + hotspots, from the metrics endpoint. Independent of the KPI request above,
+// so it fills its panels in when it arrives and reports its own failure if it doesn't.
+async function loadMetrics() {
+  // Remember which window this pass is for, so a slow in-flight response can't overwrite the
+  // panels after the user has moved to a different one.
+  const forStart = startDate.value
+  const forEnd = endDate.value
+  const isStale = () => forStart !== startDate.value || forEnd !== endDate.value
+  // These sections vary by window only - not by density - so a density change reuses what is
+  // already on screen rather than blanking the panels and refetching the same rows. A previous
+  // failure is worth retrying, though.
+  const window = forStart + '|' + forEnd
+  if (metricsWindow === window && !metricsError.value) return
+  metricsWindow = window
+  metricsLoading.value = true
+  metricsError.value = null
+  metricsDegraded.value = []
+  replySource.value = []
+  hotspots.value = []
+  attributionCaptureFrom.value = ''
+  heldBySource.value = []
+  try {
+    const metrics = await apiInstance.rippling.fetchMetrics(0, forStart, forEnd)
+    if (isStale()) return
+    replySource.value = metrics?.reply_source_split || []
+    hotspots.value = metrics?.hotspots || []
+    attributionCaptureFrom.value = metrics?.attribution_capture_from || ''
+    heldBySource.value = metrics?.held_reply_by_source || []
+    metricsDegraded.value = metrics?.degraded || []
+  } catch (e) {
+    if (isStale()) return
+    metricsError.value = e.message || 'Unknown error'
+  } finally {
+    // Only clear the spinner if a newer request hasn't already taken over.
+    if (!isStale()) metricsLoading.value = false
+  }
 }
 
 async function loadDriveTimes() {
@@ -816,6 +952,19 @@ $line: #e4e8e3;
   height: 100%;
   background: $green;
   transition: width 0.3s ease;
+}
+
+.rip-progress {
+  max-width: 340px;
+  height: 8px;
+  background: $line;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rip-progress-bar {
+  height: 100%;
+  background: $green;
+  transition: width 0.4s ease;
 }
 
 .rip-analytics {

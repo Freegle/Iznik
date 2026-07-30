@@ -225,6 +225,25 @@ func TestGroupFilter_LargeIDs(t *testing.T) {
 	assert.Contains(t, result, "18446744073709551615")
 }
 
+// ── msgidFilter ───────────────────────────────────────────────────────────────
+
+func TestMsgidFilter_Empty(t *testing.T) {
+	assert.Equal(t, "", msgidFilter(nil))
+	assert.Equal(t, "", msgidFilter([]uint64{}))
+}
+
+func TestMsgidFilter_SingleID(t *testing.T) {
+	result := msgidFilter([]uint64{120945664})
+	// Restricts by spatial msgid - the browse-feed universe for browse-scoped search.
+	assert.Contains(t, result, "messages_spatial.msgid IN (120945664)")
+	assert.True(t, strings.HasPrefix(result, " AND "))
+}
+
+func TestMsgidFilter_MultipleIDs(t *testing.T) {
+	result := msgidFilter([]uint64{1, 2, 3})
+	assert.Contains(t, result, "IN (1,2,3)")
+}
+
 // ── typeFilter ────────────────────────────────────────────────────────────────
 
 var typeFilterTests = []struct {
@@ -236,8 +255,8 @@ var typeFilterTests = []struct {
 	{utils.WANTED, utils.WANTED, false},
 	{"", "", true},
 	{"Unknown", "", true},
-	{"offer", "", true},  // case-sensitive
-	{"OFFER", "", true},  // case-sensitive
+	{"offer", "", true}, // case-sensitive
+	{"OFFER", "", true}, // case-sensitive
 }
 
 func TestTypeFilter_Table(t *testing.T) {

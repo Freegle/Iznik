@@ -18,4 +18,11 @@
     <bool name="billing_address_required">true</bool>
     <string name="billing_address_format">Full</string>
     <bool name="google_pay_existing_payment_method_required">false</bool>
+    <!-- App-icon long-press shortcut labels -->
+    <string name="shortcut_give_short">Give</string>
+    <string name="shortcut_give_long">Give something away</string>
+    <string name="shortcut_find_short">Ask</string>
+    <string name="shortcut_find_long">Ask for something</string>
+    <string name="shortcut_chats_short">Chats</string>
+    <string name="shortcut_chats_long">My chats</string>
 </resources>

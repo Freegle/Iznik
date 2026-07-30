@@ -69,8 +69,9 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 		"'POLYGON((0.05 51.45,0.15 51.45,0.15 51.55,0.05 51.55,0.05 51.45))', 3857) WHERE id = ?", group2)
 
 	// Reach covers BOTH the western origin area and the eastern group2 area.
-	db.Exec("INSERT INTO rippling_reach (msgid, polygon) VALUES (?, ST_GeomFromText("+
-		"'POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))', 3857))", mid)
+	db.Exec("INSERT INTO rippling_reach (msgid, polygon, outer_bound) VALUES (?, ST_GeomFromText("+
+		"'POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))', 3857)))", mid)
 
 	covers := func(lng, lat string) int {
 		var v int

@@ -248,6 +248,13 @@ Schedule::command('users:remove-spammers')
 
 // Process bounced emails — mark as invalid.
 // V1: cron/bounce.php + bounce_users.php
+// Turn digest opens/clicks into per-member 'seen' markers so the digest and browse
+// feed stop re-showing posts a member has already had a chance to see.
+Schedule::command('mail:digest:mark-seen')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('mail:digest:mark-seen'));
+
 Schedule::command('mail:bounced')
     ->hourly()
     ->withoutOverlapping(120)
@@ -657,13 +664,43 @@ Schedule::command('mail:donations:thank-prep')
     ->sendOutputTo(cronLog('mail:donations:thank-prep'))
     ->runInBackground();
 
-// User management commands (users:cleanup still parked — no V1 cutover).
-// Schedule::command('users:cleanup')
-//     ->weekly()
-//     ->sundays()
-//     ->at('06:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
+// Reconcile donation userids: backfill donations never linked to an account and
+// re-point donations stranded on a since-deleted account (the donate/leave/rejoin
+// gap) onto the live account that now owns the payer email. The IPN handlers match
+// new donations at receipt, but new strandings appear whenever an account holding
+// donations is deleted without its donations being reassigned, so this runs as a
+// weekly safety net. Donations already on a live account (duplicate-account case)
+// are left for a human merge. Weekly, off-peak.
+Schedule::command('donations:correct-userids')
+    ->weeklyOn(2, '02:20')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('donations:correct-userids'))
+    ->runInBackground();
+
+// User management: Yahoo Groups removal, inactive-user forget, GDPR grace-period
+// forget, and hard delete of fully forgotten users with no messages left.
+// V1: cron/users_retention.php (User::userRetention + User::processForgets).
+//
+// No --limit: the phases run serially within a single invocation (guarded by
+// withoutOverlapping), so the whole backlog is worked through steadily rather
+// than in parallel. The service-level caps (50k forgets, 100k hard deletes)
+// remain as a backstop.
+Schedule::command('users:cleanup')
+    ->dailyAt('06:00')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('users:cleanup'))
+    ->runInBackground();
+
+// Matched-posts email: for each recently-arrived Offer/Wanted, email the owner
+// (and the owners of posts it matches) the opposite-type posts near them via
+// apiv2's vector store. Resurrects V1 cron/relevant.php ("Any of these take your
+// fancy?") with vector matching. Every 10 min so matches surface promptly; the
+// per-(msgid,userid) ledger + per-user cooldown stop repeat mailing.
+Schedule::command('matches:notify')
+    ->everyTenMinutes()
+    ->withoutOverlapping(20)
+    ->sendOutputTo(cronLog('matches:notify'))
+    ->runInBackground();
 
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
@@ -732,6 +769,27 @@ Schedule::command('mail:engage')
     ->dailyAt('16:00')
     ->withoutOverlapping(360)
     ->sendOutputTo(cronLog('mail:engage'))
+    ->runInBackground();
+
+// First-week onboarding tip sequence for new members: one short tip a day for
+// the first five days, after the welcome mail. Dark by default: inert unless
+// FREEGLE_REENGAGE_ALLOWLIST is set AND "Reengage" is in
+// FREEGLE_MAIL_ENABLED_TYPES. Runs daily so members get the next due tip as they
+// cross each day threshold; one-a-day spacing is enforced in the service, and
+// TrashNothing/LoveJunk accounts are excluded there.
+Schedule::command('mail:reengage')
+    ->dailyAt('15:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('mail:reengage'))
+    ->runInBackground();
+
+// Record whether a tip drove a real action (login/reply/post within the window)
+// for onboarding sends, so per-tip/arm/segment effectiveness and control-arm
+// lift can be graphed in the sysadmin dashboard. Runs after the day's sends.
+Schedule::command('mail:reengage-outcomes')
+    ->dailyAt('16:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('mail:reengage-outcomes'))
     ->runInBackground();
 
 // Ask eligible users with outcomes/offers to share their Freegle story.
@@ -1092,13 +1150,6 @@ Schedule::command('groups:remind-closed')
 //     ->sendOutputTo(cronLog('groups:remind-customisation'))
 //     ->runInBackground();
 
-// V1: cron/donations_thank.php
-// Schedule::command('mail:donations:thank')
-//     ->dailyAt('09:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:donations:thank'))
-//     ->runInBackground();
-
 // V1: cron/donations_ads_target.php
 Schedule::command('donations:update-ads-target')
     ->everyMinute()
@@ -1151,37 +1202,6 @@ Schedule::command('messages:update-index')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('messages:update-index'))
     ->runInBackground();
-// Remove confirmed spammers from groups.
-// V1: cron/check_spammers.php
-// Schedule::command('users:remove-spammers')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:remove-spammers'))
-//     ->runInBackground();
-
-// Process chat spam messages.
-// V1: cron/chat_spam.php
-// Schedule::command('chats:process-spam')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('chats:process-spam'))
-//     ->runInBackground();
-
-// Send mod notifications.
-// V1: cron/mod_notifs.php
-// Schedule::command('mail:mod-notifs')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:mod-notifs'))
-//     ->runInBackground();
-
-// Update GiftAid donations.
-// V1: cron/donations_giftaid.php
-// Schedule::command('donations:update-giftaid')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('donations:update-giftaid'))
-//     ->runInBackground();
 
 // Volunteering opportunity maintenance — daily. Asks owners of dateless
 // opportunities approaching expiry whether they are still active (renewal

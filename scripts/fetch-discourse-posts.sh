@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-API_KEY="46b3754526cb8b721315ebafe949448d"
+API_KEY="${DISCOURSE_API_KEY:-DUMMY_DISCOURSE_API_KEY_ROTATE_AND_SET_ENV}"
 API_CLIENT="discourse-mcp"
 # Read DISCOURSE_URL from .env if not set in environment.
 if [ -z "${DISCOURSE_URL:-}" ]; then
@@ -33,8 +33,7 @@ api_call() {
         local result
         local http_code
         result=$(curl -s -w "\n%{http_code}" \
-            -H "User-Api-Key: $API_KEY" \
-            -H "User-Api-Client-Id: $API_CLIENT" \
+            -H "Api-Key: $API_KEY" \
             "$url" 2>/dev/null)
         http_code=$(echo "$result" | tail -1)
         local body

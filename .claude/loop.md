@@ -104,7 +104,7 @@ API_KEY=$(python3 -c "import json; print(json.load(open('/home/edward/profile.js
 If the key cannot be read, skip to Step 5.
 
 ```bash
-curl -s -H "User-Api-Key: $API_KEY" \
+curl -s -H "Api-Key: $API_KEY" \
   "https://discourse.ilovefreegle.org/latest.json?order=activity&per_page=30" \
   | python3 -c "
 import json, sys
@@ -121,7 +121,7 @@ For each topic ID `T` where `T` is not in state or has posts beyond `last_post`:
 ```bash
 LAST=$(python3 -c "import json; s=json.load(open('/home/edward/FreegleDockerWSL/.claude/monitor-state.json')); print(s.get('discourse_topics',{}).get('$T',{}).get('last_post',0))")
 
-curl -s -H "User-Api-Key: $API_KEY" \
+curl -s -H "Api-Key: $API_KEY" \
   "https://discourse.ilovefreegle.org/t/${T}.json" \
   | python3 -c "
 import json, sys, html, re

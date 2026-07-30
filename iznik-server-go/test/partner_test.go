@@ -34,6 +34,9 @@ func TestFindByTNIdOrEmailByTNId(t *testing.T) {
 	db := database.DBConn
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77777)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77777, userID)
 
 	found := user.FindByTNIdOrEmail(db, 77777, "")
@@ -64,6 +67,9 @@ func TestCreatePartnerUser(t *testing.T) {
 	db := database.DBConn
 
 	email := prefix + "-gtest@example.com"
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before CreatePartnerUser claims it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 88888)
 	userID, err := user.CreatePartnerUser(db, 88888, email)
 	assert.NoError(t, err)
 	assert.Greater(t, userID, uint64(0))

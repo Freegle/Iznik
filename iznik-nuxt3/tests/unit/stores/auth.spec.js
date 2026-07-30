@@ -62,8 +62,9 @@ vi.mock('~/stores/compose', () => ({
   useComposeStore: () => ({}),
 }))
 
+const mockFetchBatch = vi.fn()
 vi.mock('~/stores/group', () => ({
-  useGroupStore: () => ({ list: {}, fetchBatch: vi.fn() }),
+  useGroupStore: () => ({ list: {}, fetchBatch: mockFetchBatch }),
 }))
 
 vi.mock('~/stores/mobile', () => ({
@@ -501,6 +502,54 @@ describe('auth store', () => {
 
       expect(mockSetAppOutOfDate).not.toHaveBeenCalled()
       expect(store.user.id).toBe(5)
+    })
+  })
+
+  describe('fetchUser group batch off the critical path', () => {
+    it('resolves without waiting for the group detail batch', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({
+        me: { id: 5 },
+        groups: [{ groupid: 11 }, { groupid: 22 }],
+      })
+      // The batch hangs forever - fetchUser (and therefore first paint, which
+      // awaits it in the layouts) must not wait for group details.
+      mockFetchBatch.mockReturnValue(new Promise(() => {}))
+
+      const result = await Promise.race([
+        store.fetchUser().then(() => 'fetchUser'),
+        new Promise((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+      ])
+
+      expect(result).toBe('fetchUser')
+      expect(store.user.id).toBe(5)
+      expect(mockFetchBatch).toHaveBeenCalledWith([11, 22])
+    })
+
+    it('survives a rejected group batch', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({
+        me: { id: 5 },
+        groups: [{ groupid: 11 }],
+      })
+      mockFetchBatch.mockRejectedValue(new Error('batch down'))
+
+      await store.fetchUser()
+      // Let the rejected batch settle - it must not become an unhandled
+      // rejection or clear the user.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(store.user.id).toBe(5)
+    })
+
+    it('records when the session was fetched', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+
+      const before = Date.now()
+      await store.fetchUser()
+
+      expect(store.userFetchedAt).toBeGreaterThanOrEqual(before)
     })
   })
 

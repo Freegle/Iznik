@@ -2,6 +2,18 @@
   <div :class="{ 'mb-2': !showFilters }">
     <h2 class="visually-hidden">Post Filters</h2>
     <b-collapse v-model="showFilters" class="p-2 bg-primary-subtle">
+      <!-- Generic "how the nearby feed works" help - kept above the filters (and the
+           "How far away" control) so the explanation reads before the controls. -->
+      <div v-if="browseView === 'nearby'" class="nearby-help">
+        <p class="help-text mt-0">
+          We show posts near you first, then gradually further away.
+          <a href="#" @click.prevent="whichPostsModal?.show()">
+            How does this work?
+          </a>
+          ·
+          <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
+        </p>
+      </div>
       <div variant="info" class="filters mb-2">
         <div class="group">
           <GroupSelect
@@ -68,16 +80,6 @@
       <!-- Rippling-out (#1): the catchment is worked out automatically and ripples
            out over time. The distance slider above only narrows which of those
            already-reaching posts are shown - it isn't a manual travel-time control. -->
-      <div v-if="browseView === 'nearby'" class="nearby-help">
-        <p class="help-text d-none d-md-block mt-0">
-          We show posts near you first, then gradually further away.
-          <a href="#" @click.prevent="whichPostsModal?.show()">
-            How does this work?
-          </a>
-          ·
-          <nuxt-link no-prefetch to="/settings">Change postcode</nuxt-link>
-        </p>
-      </div>
       <hr />
       <div class="d-flex justify-content-around mt-2">
         <b-input-group class="shrink">
@@ -500,8 +502,12 @@ const hasNonDefaultFilters = computed(() => {
     min-width: 0;
 
     @include media-breakpoint-up(md) {
-      grid-column: 1 / 2;
-      grid-row: 3 / 4;
+      /* Span the FULL panel width on its own row rather than sharing the 2fr column
+         with Sort. The reach hint / nearby-towns list then has the whole panel to use,
+         so its (deliberate) ellipsis-truncation only bites when genuinely tight instead
+         of at every larger width (Discourse 9808, Neville #600). */
+      grid-column: 1 / 4;
+      grid-row: 2 / 3;
     }
   }
 
@@ -510,7 +516,8 @@ const hasNonDefaultFilters = computed(() => {
     grid-row: 4 / 5;
 
     @include media-breakpoint-up(md) {
-      grid-column: 2 / 3;
+      /* Sort drops below the now full-width distance slider. */
+      grid-column: 1 / 2;
       grid-row: 3 / 4;
     }
   }
@@ -536,7 +543,10 @@ const hasNonDefaultFilters = computed(() => {
   }
 }
 
-// Help text - hidden on mobile
+// Help text - the whole rippling explanation ("We show posts near you first ..." plus the
+// "How does this work?" / "Change postcode" links) stays visible at every width. It was
+// previously hidden on mobile, which lost the explanatory line members asked for (Discourse
+// 9808, Neville #585/#600).
 .help-text {
   font-size: 0.8rem;
   color: var(--color-gray-600);

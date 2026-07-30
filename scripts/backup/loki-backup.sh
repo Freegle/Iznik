@@ -17,8 +17,8 @@ RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
 echo "=== Loki Backup Started: $(date) ==="
 
-# Check for gcloud credentials by testing gsutil
-if ! gsutil ls "$GCS_BUCKET" >/dev/null 2>&1; then
+# Check for gcloud credentials by testing bucket access
+if ! gcloud storage ls "$GCS_BUCKET" >/dev/null 2>&1; then
     echo "⚠️  Cannot access GCS bucket (no credentials or bucket doesn't exist)"
     echo "   Skipping backup - this is expected in dev environments"
     echo "   To enable backups, mount gcloud credentials at /root/.config/gcloud"
@@ -59,7 +59,7 @@ echo "Backup size: $BACKUP_SIZE"
 
 # Upload to GCS
 echo "Uploading to GCS..."
-gsutil cp "$BACKUP_FILE" "$GCS_BUCKET/"
+gcloud storage cp "$BACKUP_FILE" "$GCS_BUCKET/"
 
 # Clean up local backup
 rm -f "$BACKUP_FILE"
@@ -77,12 +77,12 @@ if [ -z "$CUTOFF_DATE" ]; then
 fi
 echo "Cutoff date: $CUTOFF_DATE"
 
-gsutil ls "$GCS_BUCKET/" 2>/dev/null | while read backup; do
+gcloud storage ls "$GCS_BUCKET/" 2>/dev/null | while read backup; do
     # Extract date from filename (loki-backup-YYYYMMDD_HHMMSS.tar.gz)
     backup_date=$(basename "$backup" | grep -oE '[0-9]{8}' | head -1)
     if [ -n "$backup_date" ] && [ "$backup_date" -lt "$CUTOFF_DATE" ]; then
         echo "Removing old backup: $backup"
-        gsutil rm "$backup"
+        gcloud storage rm "$backup"
     fi
 done
 

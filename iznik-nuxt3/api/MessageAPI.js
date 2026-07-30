@@ -1,6 +1,8 @@
 import BaseAPI from '@/api/BaseAPI'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
+import { notAHeldConflict } from '~/api/heldConflict'
+
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
     return this.$getv2('/message/' + id, {}, logError)
@@ -42,6 +44,24 @@ export default class MessageAPI extends BaseAPI {
       '/message/search/' + encodeURIComponent(params.search),
       params
     )
+  }
+
+  // Posts semantically similar to a given post, for the "more like this nearby"
+  // recommendation strip. Returns [{id, groupid, score, lat, lng}].
+  similar(id, limit) {
+    return this.$getv2('/message/' + id + '/similar', limit ? { limit } : {})
+  }
+
+  // Existing OFFERs near a location matching a free-text query, for the
+  // "people are offering these near you" panel shown while composing a WANTED.
+  // Returns [{id, groupid, score, lat, lng}].
+  matches(query, lat, lng, limit) {
+    return this.$getv2('/message/matches', {
+      query,
+      lat,
+      lng,
+      ...(limit ? { limit } : {}),
+    })
   }
 
   mygroups(gid) {
@@ -170,14 +190,18 @@ export default class MessageAPI extends BaseAPI {
   }
 
   approve(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/message', {
-      action: 'Approve',
-      id,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Approve',
+        id,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   reply(id, groupid, subject = null, stdmsgid = null, body = null) {
@@ -192,41 +216,57 @@ export default class MessageAPI extends BaseAPI {
   }
 
   reject(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/message', {
-      action: 'Reject',
-      id,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Reject',
+        id,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   delete(id, groupid, subject = null, stdmsgid = null, body = null) {
-    return this.$postv2('/message', {
-      action: 'Delete',
-      id,
-      groupid,
-      subject,
-      stdmsgid,
-      body,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Delete',
+        id,
+        groupid,
+        subject,
+        stdmsgid,
+        body,
+      },
+      notAHeldConflict
+    )
   }
 
   spam(id, groupid) {
-    return this.$postv2('/message', {
-      action: 'Spam',
-      id,
-      groupid,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Spam',
+        id,
+        groupid,
+      },
+      notAHeldConflict
+    )
   }
 
   hold(id, groupid) {
-    return this.$postv2('/message', {
-      action: 'Hold',
-      id,
-      groupid,
-    })
+    return this.$postv2(
+      '/message',
+      {
+        action: 'Hold',
+        id,
+        groupid,
+      },
+      notAHeldConflict
+    )
   }
 
   release(id, groupid) {
@@ -291,14 +331,14 @@ export default class MessageAPI extends BaseAPI {
     return await this.$getv2('/message/count', params, log)
   }
 
-  async markSeen(ids) {
-    return await this.$postv2(
-      '/messages/markseen',
-      {
-        ids,
-      },
-      false
-    )
+  async markSeen(ids, source) {
+    const body = { ids }
+    // Optional impression source tag (e.g. 'similar_posts') so a recommendation
+    // widget's impressions can be measured. Omitted for ordinary browse views.
+    if (source) {
+      body.source = source
+    }
+    return await this.$postv2('/messages/markseen', body, false)
   }
 
   // --- Bulk-offer ("clearance") logged-out update link ---------------------
@@ -321,9 +361,12 @@ export default class MessageAPI extends BaseAPI {
 
   // Update one item's availability and/or count from the logged-out page.
   async updateBulkEditItem(token, itemid, changes) {
-    return await this.$postv2('/bulkoffer/update/' + encodeURIComponent(token), {
-      itemid,
-      ...changes,
-    })
+    return await this.$postv2(
+      '/bulkoffer/update/' + encodeURIComponent(token),
+      {
+        itemid,
+        ...changes,
+      }
+    )
   }
 }

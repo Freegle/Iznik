@@ -8,7 +8,7 @@
         class="mb-1"
         :spinclass="spinclass"
         :disabled="disabled"
-        @handle="click"
+        @handle="(callback) => guardHold(() => click(callback))"
       />
       <v-icon
         v-if="autosend"
@@ -17,11 +17,14 @@
         class="autosend"
       />
     </div>
+    <NoticeMessage v-if="heldError" variant="warning" class="mt-1 mb-1">
+      {{ heldError }}
+    </NoticeMessage>
     <ConfirmModal
       v-if="showDeleteModal"
       ref="deleteConfirm"
       :title="'Delete: ' + (user ? user.displayname : '#' + userid)"
-      @confirm="deleteConfirmed"
+      @confirm="() => guardHold(deleteConfirmed)"
     />
     <ModSpammerReport v-if="showSpamModal" ref="spamConfirm" :userid="userid" />
     <ModStdMessageModal
@@ -37,6 +40,7 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
 import { useMemberStore } from '~/stores/member'
+import { useHeldNotice } from '~/composables/useHeldNotice'
 import { useUserStore } from '~/stores/user'
 import { useSpammerStore } from '~/stores/spammer'
 import { useStdmsgStore } from '~/stores/stdmsg'
@@ -161,6 +165,7 @@ const emit = defineEmits(['pressed'])
 const memberStore = useMemberStore()
 const userStore = useUserStore()
 const spammerStore = useSpammerStore()
+const { heldError, guardHold } = useHeldNotice()
 const stdmsgStore = useStdmsgStore()
 const { myid } = useMe()
 

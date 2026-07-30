@@ -24,7 +24,7 @@ mountpoint -q "$YLVM_STAGE_MNT"  || ylvm_die "Staging not mounted — run setup-
 
 # Discover the most recent N backup dates available in the bucket (YYYYMMDD).
 ylvm_log "Listing last $N backups in $YLVM_BUCKET ..."
-mapfile -t DATES < <(gsutil ls "$YLVM_BUCKET/iznik-*.xbstream" 2>/dev/null \
+mapfile -t DATES < <(gcloud storage ls "$YLVM_BUCKET/iznik-*.xbstream" 2>/dev/null \
     | sed -E 's#.*/iznik-([0-9]{4})-([0-9]{2})-([0-9]{2})-.*#\1\2\3#' \
     | grep -E '^[0-9]{8}$' | sort -u | tail -n "$N")
 

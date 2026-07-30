@@ -73,4 +73,15 @@ export default class EmailTrackingAPI extends BaseAPI {
   async fetchDigestPositions(params = {}) {
     return await this.$getv2('/modtools/email/stats/digestpositions', params)
   }
+
+  /**
+   * Fetch reengagement effectiveness stats: send/open/click/reengage funnel,
+   * broken down by reengagement stage, experiment arm, and post segment.
+   * @param {Object} params - Query parameters
+   * @param {string} [params.start] - Start date (YYYY-MM-DD)
+   * @param {string} [params.end] - End date (YYYY-MM-DD)
+   */
+  async fetchReengageEffectiveness(params = {}) {
+    return await this.$getv2('/modtools/email/stats/reengage', params)
+  }
 }

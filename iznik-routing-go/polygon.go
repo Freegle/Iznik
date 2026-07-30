@@ -19,12 +19,23 @@ type geoGeometry struct {
 // buildIsochroneRings rasterises the reached nodes onto a grid and traces all
 // boundary rings, returning them sorted by area (largest first).
 func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float64) [][][2]float64 {
-	if len(reached) == 0 {
+	grid, rows, cols, minLat, minLng, ok := buildIsochroneGrid(g, reached, resolution)
+	if !ok {
 		return nil
 	}
 
+	return traceBoundary(grid, rows, cols, minLat, minLng, resolution)
+}
+
+// buildIsochroneGrid rasterises the reached nodes and edges onto a closed boolean grid
+// (the shared first stage of the exact polygon and its sandwich bounds — see bounds.go).
+func buildIsochroneGrid(g *Graph, reached map[NodeID]float32, resolution float64) (grid [][]bool, rows, cols int, minLat, minLng float64, ok bool) {
+	if len(reached) == 0 {
+		return nil, 0, 0, 0, 0, false
+	}
+
 	// Find bounding box.
-	minLat, minLng := math.MaxFloat64, math.MaxFloat64
+	minLat, minLng = math.MaxFloat64, math.MaxFloat64
 	maxLat, maxLng := -math.MaxFloat64, -math.MaxFloat64
 	for id := range reached {
 		n := g.Nodes[id]
@@ -49,11 +60,11 @@ func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float6
 	maxLat += resolution
 	maxLng += resolution
 
-	cols := int((maxLng-minLng)/resolution) + 2
-	rows := int((maxLat-minLat)/resolution) + 2
+	cols = int((maxLng-minLng)/resolution) + 2
+	rows = int((maxLat-minLat)/resolution) + 2
 
 	// Mark grid cells that contain at least one reachable node.
-	grid := make([][]bool, rows)
+	grid = make([][]bool, rows)
 	for i := range grid {
 		grid[i] = make([]bool, cols)
 	}
@@ -123,7 +134,7 @@ func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float6
 		}
 	}
 
-	return traceBoundary(grid, rows, cols, minLat, minLng, resolution)
+	return grid, rows, cols, minLat, minLng, true
 }
 
 // stampLine marks every grid cell on the line between (r0,c0) and (r1,c1) as filled,

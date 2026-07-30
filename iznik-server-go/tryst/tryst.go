@@ -1,10 +1,12 @@
 package tryst
 
 import (
-	"strings"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -29,8 +31,15 @@ func canSee(myid uint64, t *Tryst) bool {
 	return t.ID > 0 && (t.User1 == myid || t.User2 == myid)
 }
 
-// calendarLink generates a Google Calendar link for a tryst.
-// The link creates a 1-hour event starting at the arrangedfor time.
+// calendarLink generates an Add to Calendar link for a tryst, creating a
+// 1-hour event starting at the arrangedfor time.
+//
+// The event data is base64url-encoded JSON in a `data` query param, matching
+// the format iznik-batch's TrystService::buildCalendarLink() already uses for
+// the calendar invite email, and that AddToCalendar.vue / pages/calendar.client.vue
+// expect. A previous version of this function returned a raw Google Calendar
+// render URL, which those consumers can't parse - the button appeared to do
+// nothing when tapped.
 func calendarLink(arrangedfor *string) string {
 	if arrangedfor == nil || *arrangedfor == "" {
 		return ""
@@ -45,16 +54,27 @@ func calendarLink(arrangedfor *string) string {
 		}
 	}
 
-	start := t.UTC().Format("20060102T150405Z")
-	end := t.Add(time.Hour).UTC().Format("20060102T150405Z")
+	t = t.UTC()
+	end := t.Add(time.Hour)
 
-	return fmt.Sprintf(
-		"https://www.google.com/calendar/render?action=TEMPLATE&text=%s&dates=%s/%s&details=%s&sf=true&output=xml",
-		url.QueryEscape("Freegle Handover"),
-		start,
-		end,
-		url.QueryEscape("Arrange handover of Freegle item"),
-	)
+	eventData := map[string]string{
+		"name":        "Freegle Handover",
+		"description": "Arrange handover of Freegle item",
+		"startDate":   t.Format("2006-01-02"),
+		"startTime":   t.Format("15:04"),
+		"endTime":     end.Format("15:04"),
+		"timeZone":    "UTC",
+		"location":    "",
+	}
+
+	jsonData, err := json.Marshal(eventData)
+	if err != nil {
+		return ""
+	}
+
+	encoded := base64.RawURLEncoding.EncodeToString(jsonData)
+
+	return fmt.Sprintf("https://%s/calendar?data=%s", os.Getenv("USER_SITE"), encoded)
 }
 
 // GetTryst handles GET /tryst - list user's trysts or single by ID.

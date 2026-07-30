@@ -42,6 +42,55 @@ describe('persist_classifications action', () => {
     expect(bug?.reporter).toBe('alice')
   })
 
+  it('treats a confirming retest of an already-fixed bug as success feedback, not a regression', async () => {
+    // Original bug, already fixed by a PR.
+    upsertDiscourseBug(db, {
+      topic: 9932, post: 1, reporter: 'Derek', state: 'fixed', prNumber: 1108,
+      symptomTags: ['mapping', 'centre-point'], featureArea: 'group mapping',
+    })
+    db.prepare(`UPDATE discourse_bug SET fixed_at = datetime('now') WHERE topic = 9932 AND post = 1`).run()
+
+    const result = await persistClassificationsHandler({}, {
+      classifications: [
+        {
+          topic: 9932, post: 7, type: 'retest', user: 'Derek',
+          summary: 'Derek confirms the centre point now saves and the Wales link works',
+          originalPostText: 'Thanks Centre point now showing and the Wales click takes me to Wales',
+          symptom_tags: ['mapping', 'centre-point'], code_area: 'nuxt:Mapping',
+        },
+      ],
+    })
+
+    // The confirmation must NOT become a new (regression) bug that would draw a
+    // "please retest" auto-reply on the post that confirmed the fix.
+    expect(getDiscourseBug(db, 9932, 7)).toBeNull()
+    expect(result.skipped).toBe(1)
+    expect(getDiscourseBug(db, 9932, 1)?.state).toBe('fixed')
+  })
+
+  it('still flags a STILL-BROKEN retest of a fixed bug as a regression', async () => {
+    upsertDiscourseBug(db, {
+      topic: 940, post: 1, reporter: 'sam', state: 'fixed', prNumber: 500,
+      symptomTags: ['login', 'crash'], featureArea: 'login',
+    })
+    db.prepare(`UPDATE discourse_bug SET fixed_at = datetime('now') WHERE topic = 940 AND post = 1`).run()
+
+    await persistClassificationsHandler({}, {
+      classifications: [
+        {
+          topic: 940, post: 4, type: 'retest', user: 'sam',
+          summary: 'still crashing on login', originalPostText: 'Tried again and it is still not working',
+          symptom_tags: ['login', 'crash'], code_area: 'go-api:Login',
+        },
+      ],
+    })
+
+    // A genuine still-broken retest IS persisted (flagged as a regression).
+    const row = getDiscourseBug(db, 940, 4)
+    expect(row).not.toBeNull()
+    expect(row?.state).toBe('deferred')
+  })
+
   it('accepts post_number as alias for post', async () => {
     const result = await persistClassificationsHandler({}, {
       classifications: [{ topic: 124, post_number: 2, type: 'bug', user: 'bob' }],

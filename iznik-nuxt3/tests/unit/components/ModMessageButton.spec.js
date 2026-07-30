@@ -68,6 +68,7 @@ function mountButton(props = {}) {
         },
         ConfirmModal: { template: '<div />' },
         ModStdMessageModal: { template: '<div />' },
+        NoticeMessage: { template: '<div><slot /></div>', props: ['variant'] },
         'v-icon': { template: '<i />' },
       },
     },

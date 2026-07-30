@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, Suspense, h } from 'vue'
+import dayjs from 'dayjs'
 import { DASHBOARD_CHART_HEADER } from '~/composables/useAuthoritySearch'
 
 import StatsPage from '~/pages/stats/[[groupname]].vue'
@@ -233,6 +234,40 @@ describe('pages/stats/[[groupname]].vue', () => {
         .findAllComponents({ name: 'GChart' })
         .filter((c) => c.props('type') === 'LineChart')
       expect(lineCharts.length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('date range — complete months only', () => {
+    // The page deliberately ends the window at the last COMPLETE month so a
+    // part-finished month can't render as a cliff on the monthly charts. That
+    // means for the whole of the current month the newest data shown is the end
+    // of the previous month, which reads as "the stats have stopped updating"
+    // unless the range is stated on the page.
+    it('requests data up to the end of the previous month, not today', async () => {
+      mountPage()
+      await flushPromises()
+
+      const params = mockStatsFetch.mock.calls[0][0]
+      expect(params.end).toBe(
+        dayjs().subtract(1, 'month').endOf('month').format('YYYY-MM-DD')
+      )
+    })
+
+    it('states the range on the page so a complete-months window is not mistaken for stale data', async () => {
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Showing data for:')
+      expect(wrapper.text()).toContain(
+        dayjs().subtract(1, 'month').endOf('month').format('D MMMM YYYY')
+      )
+    })
+
+    it('does not claim "the last 12 months" when the window excludes the current month', async () => {
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('the last 12 months')
     })
   })
 })

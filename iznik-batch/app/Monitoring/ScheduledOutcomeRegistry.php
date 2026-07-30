@@ -83,9 +83,10 @@ class ScheduledOutcomeRegistry
             // posts and always stamps contentcheck_checked_at. A Pending,
             // un-checked, undeleted post whose message+user are live (mirrors
             // the worker's exact join) that has sat past $backlogMin = a stalled
-            // moderation pipeline. The joins exclude rows the worker skips
-            // permanently (deleted message / null fromuser) so they don't
-            // false-alarm.
+            // moderation pipeline. The predicates exclude rows the worker skips
+            // (deleted message / null fromuser / held-by-a-mod) so they don't
+            // false-alarm: a held post is deliberately pulled back for review and
+            // is never checked until a mod releases it, so it can sit indefinitely.
             (new BacklogCheck(
                 'messages:contentcheck',
                 'messages_groups as mg',
@@ -97,6 +98,7 @@ class ScheduledOutcomeRegistry
                     ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
                     ->whereNull('mg.contentcheck_checked_at')
                     ->where('mg.deleted', 0)
+                    ->whereNull('mg.heldby')
                     ->whereNull('m.deleted')
                     ->whereNotNull('m.fromuser')
                     ->whereNull('u.deleted'),

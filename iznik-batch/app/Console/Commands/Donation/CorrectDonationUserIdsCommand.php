@@ -7,10 +7,19 @@ use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 
 /**
- * One-shot backfill of users_donations.userid for the historical backlog of
- * unmatched donations. Deliberately NOT scheduled — the PayPal/Stripe IPN
- * handlers now match at receipt time (email/canon/prior donation); this just
- * cleans up donations that landed before that logic existed.
+ * Reconcile users_donations.userid against live accounts. Two populations:
+ *
+ *   1. donations never linked to any account (userid IS NULL) — the historical
+ *      backlog from before the IPN handlers matched at receipt time; and
+ *   2. donations stranded on a since-DELETED account (the donate/leave/rejoin
+ *      gap) — re-pointed to the live account that now owns the payer email.
+ *
+ * The PayPal/Stripe IPN handlers match new donations at receipt, but neither
+ * they nor the null-only backfill ever revisit population 2, and new strandings
+ * appear whenever an account holding donations is later deleted without its
+ * donations being reassigned — so this is now scheduled to run periodically.
+ * Donations already on a LIVE account are deliberately left alone: that is the
+ * duplicate-account case, resolved by a human account merge, not here.
  */
 class CorrectDonationUserIdsCommand extends Command
 {
@@ -18,9 +27,9 @@ class CorrectDonationUserIdsCommand extends Command
 
     protected $signature = 'donations:correct-userids
                             {--dry-run : Report what would change without writing}
-                            {--limit= : Only scan this many unmatched donations}';
+                            {--limit= : Only scan this many candidate donations}';
 
-    protected $description = 'Backfill unmatched donations to accounts by email/canon or a prior donation from the same Payer (one-shot; not scheduled).';
+    protected $description = 'Reconcile donation userids: backfill unlinked donations and re-point donations stranded on deleted accounts to the live account owning the payer email.';
 
     public function handle(DonationUserIdBackfillService $service): int
     {
@@ -34,18 +43,20 @@ class CorrectDonationUserIdsCommand extends Command
         return $this->runWithLogging(function () use ($service, $dryRun, $limit) {
             $r = $service->backfill($dryRun, $limit);
 
-            $verb = $dryRun ? 'Would link' : 'Linked';
+            $verb = $dryRun ? 'Would re-link' : 'Re-linked';
             $this->info(sprintf(
-                '%s %d of %d unmatched donation(s): %d by email/canon, %d by prior donation.',
+                '%s %d of %d candidate donation(s): %d unlinked backfilled, %d stranded on a deleted account re-pointed (%d by email/canon, %d by prior donation).',
                 $verb,
                 $r['updated'],
                 $r['scanned'],
+                $r['null_backfilled'],
+                $r['deleted_repointed'],
                 $r['matched_email'],
                 $r['matched_prior']
             ));
 
             if ($r['scanned'] === 0) {
-                $this->info('No unmatched donations found.');
+                $this->info('No candidate donations found.');
             }
 
             return Command::SUCCESS;

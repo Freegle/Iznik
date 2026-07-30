@@ -27,7 +27,10 @@
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/_feed-card.scss';
 
+/* Sizes here must track MessageSummary's, or the card jumps size when the real one
+   replaces the skeleton. Both read --summary-row-size (assets/css/_feed-card.scss). */
 .message-skeleton {
   position: relative;
   overflow: hidden;
@@ -37,7 +40,7 @@
   @include media-breakpoint-up(lg) {
     display: flex;
     flex-direction: row;
-    max-height: 200px;
+    max-height: var(--summary-row-size, #{$feed-card-max});
     border: 1px solid $color-gray--light;
     box-shadow: var(--shadow-sm);
   }
@@ -56,8 +59,8 @@
   }
 
   @include media-breakpoint-up(lg) {
-    width: 200px;
-    height: 200px;
+    width: var(--summary-row-size, #{$feed-card-max});
+    height: var(--summary-row-size, #{$feed-card-max});
     padding-bottom: 0;
     flex-shrink: 0;
   }
@@ -79,7 +82,16 @@
   }
 
   @include media-breakpoint-up(lg) {
-    padding: 1rem 1.5rem;
+    padding: clamp(
+        0.25rem,
+        calc((var(--summary-row-size, #{$feed-card-max}) - 64px) / 6),
+        1rem
+      )
+      clamp(
+        0.75rem,
+        calc(var(--summary-row-size, #{$feed-card-max}) * 0.12),
+        1.5rem
+      );
     gap: 0.5rem;
     border: none;
     border-left: 1px solid $color-gray--light;
@@ -96,6 +108,12 @@
   gap: 0.5rem;
   align-items: center;
   margin-bottom: 0.35rem;
+
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-compact-max) {
+      margin-bottom: 0;
+    }
+  }
 }
 
 .skeleton-tag {
@@ -133,12 +151,26 @@
     height: 0.75rem;
   }
 
+  /* MessageSummary shows fewer description lines as the row shrinks, so the skeleton has
+     to lose them at the same points or the card jumps size on hydration. */
   &--text {
     width: 90%;
+
+    @include media-breakpoint-up(lg) {
+      @media (max-height: $feed-card-compact-max) {
+        display: none;
+      }
+    }
   }
 
   &--short {
     width: 55%;
+
+    @include media-breakpoint-up(lg) {
+      @media (max-height: $feed-card-oneline-max) {
+        display: none;
+      }
+    }
   }
 
   &--meta {

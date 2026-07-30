@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,9 +24,10 @@ import (
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
-	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -39,10 +41,13 @@ import (
 var emailRegexp = regexp.MustCompile(utils.EMAIL_REGEXP)
 var phoneRegexp = regexp.MustCompile(utils.PHONE_REGEXP)
 var tnRegexp = regexp.MustCompile(utils.TN_REGEXP)
+
 // tnPicPageURLRegexp finds each TN "pics" page link embedded in a textbody.
 var tnPicPageURLRegexp = regexp.MustCompile(`(?m)https://trashnothing\.com/pics/\S+`)
+
 // tnPicHeaderRegexp strips the "Check out the pictures…" intro line.
 var tnPicHeaderRegexp = regexp.MustCompile(`(?m)^Check out the pictures[^\n]*\n?`)
+
 // tnPicURLLineRegexp strips individual trashnothing.com/pics/ URL lines.
 var tnPicURLLineRegexp = regexp.MustCompile(`(?m)^https://trashnothing\.com/pics/[^\n]*\n?`)
 
@@ -224,22 +229,22 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby           *uint64    `json:"heldby"`
-	Source           *string    `json:"source"`
-	Sourceheader     *string    `json:"sourceheader"`
-	Fromaddr         *string    `json:"fromaddr"`
-	Fromip           *string    `json:"fromip"`
-	Fromcountry      *string    `json:"fromcountry"`
+	Heldby             *uint64             `json:"heldby"`
+	Source             *string             `json:"source"`
+	Sourceheader       *string             `json:"sourceheader"`
+	Fromaddr           *string             `json:"fromaddr"`
+	Fromip             *string             `json:"fromip"`
+	Fromcountry        *string             `json:"fromcountry"`
 	Repostat           *time.Time          `json:"repostat"`
-	Canrepost        bool       `json:"canrepost"`
-	Deliverypossible bool       `json:"deliverypossible"`
-	Deadline         *time.Time `json:"deadline"`
-	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
-	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
-	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
-	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
-	Tnpostid         *string          `json:"tnpostid"`
-	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	Canrepost          bool                `json:"canrepost"`
+	Deliverypossible   bool                `json:"deliverypossible"`
+	Deadline           *time.Time          `json:"deadline"`
+	Edits              []MessageEdit       `json:"edits,omitempty" gorm:"-"`
+	RawMessage         *string             `json:"message,omitempty" gorm:"column:message"`
+	Worry              []WorryMatch        `json:"worry,omitempty" gorm:"-"`
+	Postings           []MessagePosting    `json:"postings,omitempty" gorm:"-"`
+	Tnpostid           *string             `json:"tnpostid"`
+	Expiresat          *time.Time          `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -281,13 +286,13 @@ type WorryWord struct {
 }
 
 type MessageEdit struct {
-	ID              uint64     `json:"id"`
-	Oldsubject      *string    `json:"oldsubject"`
-	Newsubject      *string    `json:"newsubject"`
-	Oldtext         *string    `json:"oldtext"`
-	Newtext         *string    `json:"newtext"`
-	Reviewrequired  int        `json:"reviewrequired"`
-	Timestamp       *time.Time `json:"timestamp"`
+	ID             uint64     `json:"id"`
+	Oldsubject     *string    `json:"oldsubject"`
+	Newsubject     *string    `json:"newsubject"`
+	Oldtext        *string    `json:"oldtext"`
+	Newtext        *string    `json:"newtext"`
+	Reviewrequired int        `json:"reviewrequired"`
+	Timestamp      *time.Time `json:"timestamp"`
 }
 
 // computeExpiresat calculates when a message expires based on group settings.
@@ -467,7 +472,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages "+
 					"LEFT JOIN users ON users.id = messages.fromuser "+
 					"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE messages.id = ? AND messages.deleted IS NULL " + userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
+					"WHERE messages.id = ? AND messages.deleted IS NULL "+userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
 				found = !errors.Is(err, gorm.ErrRecordNotFound)
 			}()
 
@@ -516,9 +521,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			go func() {
 				defer wg.Done()
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
-			// that is no longer active, return an empty externaluid so the frontend shows
-			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
+				// that is no longer active, return an empty externaluid so the frontend shows
+				// a placeholder instead of the rejected illustration.
+				db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
@@ -540,6 +545,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				//
 				// Check that the reply isn't too long ago compared to the most recent post of it.  That can happen
 				// very occasionally if someone posts, an item for a long time, and there is a reply
+				//
+				// Gate rippling held replies: an email/TN reply from outside the post's current reach is
+				// held (rippling_held_replies, status <> 'released') so it doesn't reach the poster before
+				// the post ripples to the replier. Every delivery channel honours this - the in-app chat
+				// list/count and message fetch (chat/chatmessage.go), the poster-notification email and
+				// push, and the chat-list badge/snippet/roster (PR #927). This own-posts reply list feeds
+				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
+				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
+				// (no mod exemption), matching the #927 count-surface gates.
 				db.Raw("SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 					"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname "+
 					"FROM chat_messages "+
@@ -548,6 +562,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"INNER JOIN users ON users.id = chat_messages.userid "+
 					"WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 					"AND reviewrequired = 0 AND reviewrejected = 0 "+
+					"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
 					"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ? "+
 					"GROUP BY userid;", id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).Scan(&messageReply)
 
@@ -616,6 +631,25 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
+
+			// Per-group hold visibility. The message-level messages.heldby mirror
+			// (set globally by Hold / Back-to-Pending) selected into Heldby above
+			// leaks one group's hold to mods of every OTHER group the post rippled
+			// to ("posts held by mods not on my team"). Resolve the hold the viewer
+			// should actually see: one on a group THEY moderate. Non-mods see none.
+			message.Heldby = nil
+			if isGroupMod {
+				var myModGroups []uint64
+				db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+					myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&myModGroups)
+				if len(myModGroups) > 0 {
+					viewer := make(map[uint64]bool, len(myModGroups))
+					for _, g := range myModGroups {
+						viewer[g] = true
+					}
+					message.Heldby = effectiveHeldby(messageGroups, viewer)
+				}
+			}
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
 			message.MessageReply = messageReply
@@ -918,26 +952,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// be reach-eligible if ANY of them is within the post's reach. Extending this to
 		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
-		if latlng.Lat != 0 || latlng.Lng != 0 {
-			var reachBlocked []struct {
-				Msgid uint64 `gorm:"column:msgid"`
-			}
-			// Ignore the error: until the reach engine (PR A) is deployed the
-			// rippling_reach table may not exist, in which case nothing is reach-blocked.
-			if err := db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
-				"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				ids, latlng.Lng, latlng.Lat, utils.SRID).Scan(&reachBlocked).Error; err == nil {
-				for _, b := range reachBlocked {
-					blockedSet[b.Msgid] = true
-				}
-				if n := len(reachBlocked); n > 0 {
-					// Q5 (§15): count reply-blocked-by-reach events (one per post the member
-					// can't reply to yet). Best-effort — errors ignored so it never affects the
-					// response.
-					db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
-						"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
-				}
-			}
+		reachBlocked := ReachBlockedSet(ids, float64(latlng.Lat), float64(latlng.Lng))
+		for msgid := range reachBlocked {
+			blockedSet[msgid] = true
+		}
+		if n := len(reachBlocked); n > 0 {
+			// Q5 (§15): count reply-blocked-by-reach events (one per post the member
+			// can't reply to yet). Best-effort — errors ignored so it never affects the
+			// response.
+			db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
+				"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
 		}
 
 		// Banned-blocked: the viewer is banned from every group the post is on. Only run
@@ -1049,7 +1073,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 		if strings.Contains(scan, "\u00a3") {
 			if !found["\u00a3"] {
 				matches = append(matches, WorryMatch{
-					Word: "\u00a3",
+					Word:      "\u00a3",
 					Worryword: WorryWord{Keyword: "\u00a3", Type: "Review"},
 				})
 				found["\u00a3"] = true
@@ -1075,7 +1099,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 			}
 			if strings.Contains(subjectLower, kw) || strings.Contains(textbodyLower, kw) {
 				matches = append(matches, WorryMatch{
-					Word: w.Keyword,
+					Word:      w.Keyword,
 					Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 				})
 				found[kw] = true
@@ -1098,7 +1122,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 				ratio := float64(len(token)) / float64(len(kw))
 				if ratio >= 0.75 && ratio <= 1.25 && strings.EqualFold(token, kw) {
 					matches = append(matches, WorryMatch{
-						Word: w.Keyword,
+						Word:      w.Keyword,
 						Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 					})
 					found[kw] = true
@@ -1126,7 +1150,6 @@ func splitOnWordBoundary(text string) []string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	return re.Split(text, -1)
 }
-
 
 func GetMessagesForUser(c *fiber.Ctx) error {
 	db := database.DBConn
@@ -1508,6 +1531,108 @@ func Search(c *fiber.Ctx) error {
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
 	swlng, _ := strconv.ParseFloat(c.Query("swlng", "0"), 32)
 
+	// --- Browse-scoped search (Discourse group-listings 9933). When the client passes
+	// browse=1, the universe searched must be EXACTLY the set of posts the member would see
+	// scrolling to the bottom of their browse feed for their current filters:
+	//   Nearby             -> posts whose rippling reach covers the member (+ their own posts)
+	//   All my communities -> their member groups (the client sends the groupids)
+	//   A specific group   -> that group (the client sends the groupid)
+	// plus their "How far away" slider cap and "Sort by" order. Previously search applied no
+	// location scope at all, so the vector store returned nationwide semantic matches while
+	// genuinely-in-feed posts were crowded out. Without the flag (ModTools, explore pages,
+	// map-viewport searches) behaviour is unchanged.
+	const browseDistanceUnlimited = 9007199254740991.0 // Number.MAX_SAFE_INTEGER: slider at max ("no limit")
+
+	browseScoped := c.Query("browse", "") == "1" && myid > 0
+	var memberLat, memberLng float64
+	browseMaxMiles := float64(browseDistanceUnlimited)
+	var browseSort string
+
+	if browseScoped {
+		if ll := user.GetLatLng(myid); ll.Lat != 0 || ll.Lng != 0 {
+			memberLat, memberLng = float64(ll.Lat), float64(ll.Lng)
+		}
+		var rawDist, rawSort string
+		db.Raw("SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
+			"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '') FROM users WHERE id = ?", myid).
+			Row().Scan(&rawDist, &rawSort)
+		if rawDist != "" {
+			if v, err := strconv.ParseFloat(rawDist, 64); err == nil && v > 0 {
+				browseMaxMiles = v
+			}
+		}
+		browseSort = rawSort
+	}
+
+	// Nearby view (browse-scoped, no group selected): compute the feed's msgid universe up
+	// front and give it to BOTH search arms, so their internal LIMIT/top-K cuts happen WITHIN
+	// the feed universe. Filtering afterwards does not work: for a common term the capped
+	// candidate sets fill up with out-of-feed posts first (measured live: only 4 of the 16
+	// in-feed "table" posts survived to the candidate pool).
+	var universeIDs []uint64
+	var universeSet map[uint64]bool
+
+	if browseScoped && len(groupids) == 0 && (memberLat != 0 || memberLng != 0) {
+		universeIDs = nearbyFeedMsgIDs(db, myid, memberLat, memberLng)
+
+		if len(universeIDs) == 0 {
+			// An empty feed means there is nothing to search.
+			wg.Wait()
+			return c.JSON([]SearchResult{})
+		}
+
+		universeSet = make(map[uint64]bool, len(universeIDs))
+		for _, id := range universeIDs {
+			universeSet[id] = true
+		}
+	}
+
+	// applyBrowseFilters completes feed parity for browse-scoped searches: stamp each result's
+	// distance from the member, apply the "How far away" slider cap, and order by "Sort by".
+	// (The universe itself is enforced at candidate selection above.) Applied at every return.
+	applyBrowseFilters := func(rs []SearchResult) []SearchResult {
+		if !browseScoped || (memberLat == 0 && memberLng == 0) {
+			return rs
+		}
+		for i := range rs {
+			rs[i].Distance = utils.Haversine(memberLat, memberLng, rs[i].Lat, rs[i].Lng)
+		}
+		if browseMaxMiles < browseDistanceUnlimited {
+			kept := rs[:0]
+			for _, r := range rs {
+				if r.Distance <= browseMaxMiles {
+					kept = append(kept, r)
+				}
+			}
+			rs = kept
+		}
+		switch browseSort {
+		case "Nearby": // the client's "Closest" option
+			sort.SliceStable(rs, func(i, j int) bool { return rs[i].Distance < rs[j].Distance })
+		case "Newest":
+			// Sort by ORIGINAL post time (messages.arrival), not SearchResult.Arrival, which is
+			// the ripple-bumped messages_spatial arrival - ordering by that floats days-old posts
+			// to the top whenever their reach grows (same trap as Discourse 9844 on the feed).
+			if len(rs) > 0 {
+				ids := make([]uint64, 0, len(rs))
+				for _, r := range rs {
+					ids = append(ids, r.Msgid)
+				}
+				var rows []struct {
+					ID      uint64    `gorm:"column:id"`
+					Arrival time.Time `gorm:"column:arrival"`
+				}
+				db.Raw("SELECT id, arrival FROM messages WHERE id IN (?)", ids).Scan(&rows)
+				posted := make(map[uint64]time.Time, len(rows))
+				for _, row := range rows {
+					posted[row.ID] = row.Arrival
+				}
+				sort.SliceStable(rs, func(i, j int) bool { return posted[rs[i].Msgid].After(posted[rs[j].Msgid]) })
+			}
+		}
+		return rs
+	}
+
 	searchmode := c.Query("searchmode", defaultSearchMode())
 
 	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
@@ -1537,16 +1662,16 @@ func Search(c *fiber.Ctx) error {
 
 			go func() {
 				defer hybridWg.Done()
-				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, universeSet, msgtype,
 					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			go func() {
 				defer hybridWg.Done()
 				if len(expandedWords) > 0 {
-					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
 						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
 						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 				}
 			}()
@@ -1566,7 +1691,7 @@ func Search(c *fiber.Ctx) error {
 
 			if len(merged) > 0 {
 				wg.Wait()
-				return c.JSON(merged)
+				return c.JSON(applyBrowseFilters(merged))
 			}
 			// Both vector and keyword exact/starts returned nothing; fall through to
 			// typo and soundex cascade.
@@ -1580,13 +1705,13 @@ func Search(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			go func() {
 				defer wg.Done()
 				// Add in prefix matches, which helps with plurals.
-				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			wg.Wait()
@@ -1594,11 +1719,11 @@ func Search(c *fiber.Ctx) error {
 			res = append(res, res2...)
 
 			if len(res) == 0 {
-				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
 			if len(res) == 0 {
-				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
 			// Blur
@@ -1627,7 +1752,7 @@ func Search(c *fiber.Ctx) error {
 
 	wg.Wait()
 
-	return c.JSON(filtered)
+	return c.JSON(applyBrowseFilters(filtered))
 }
 
 // Activity represents a recent activity in groups
@@ -2000,6 +2125,37 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	}
 }
 
+// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and/or vector
+// embedding (messages_embeddings) rows for a message whose subject/body has just changed.
+// Both are populated ONCE for messages "missing" from those tables
+// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
+// refreshed on edit, so a search for a term the edit introduced would never match.
+// Deleting the stale rows lets those background jobs re-index and re-embed from the new
+// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
+//
+// The two stores are driven by different fields, so they take independent invalidation
+// flags: messages_index is derived from the message SUBJECT only (indexString is only ever
+// called with subject text), while messages_embeddings is derived from subject+textbody. A
+// body-only edit must not drop the keyword index - those rows still accurately reflect the
+// unchanged subject, and dropping them would make the message unsearchable by keyword for
+// no reason until the next background run.
+//
+// Deleting the messages_embeddings row is necessary but not sufficient for vector search:
+// apiv2 serves vector search entirely from an in-process store (embedding.Global) that
+// Refresh()es every ~2 min and is presence-keyed, so a delete+re-embed landing between two
+// ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
+// We therefore also Evict the msgid from that store so the next Refresh reloads the
+// regenerated blob.
+func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
+	if subjectChanged {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgid)
+	}
+	if subjectChanged || textChanged {
+		db.Exec("DELETE FROM messages_embeddings WHERE msgid = ?", msgid)
+		embedding.Global.Evict(msgid)
+	}
+}
+
 // handleApprove approves a pending message.
 func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -2193,8 +2349,8 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
 		var remainingGroups int64
 		// Pin to the write host: this gates the parent-message soft-delete on rows we
-	// just modified, so it must read the source, not a possibly-lagging replica.
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		// just modified, so it must read the source, not a possibly-lagging replica.
+		db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
 		if remainingGroups == 0 {
 			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
 				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
@@ -2265,8 +2421,15 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 
 	// Trim where the reach extends beyond the rejected group (skip the wholly-within
 	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
+	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
+	// viewers inside the clipped-out area, so it is NULLed in the SAME statement. The
+	// outer bound is left stale-loose (safe) and the next expander tick re-derives both.
+	innerClear := ""
+	if rippling.ReachBoundsReady(db) {
+		innerClear = ", mr.inner_bound = NULL"
+	}
 	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+
-		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) "+
+		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)"+innerClear+" "+
 		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
 		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 		"AND ST_Intersects(mr.polygon, g.polyindex) "+
@@ -2548,6 +2711,9 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		if edit.Newtext != nil {
 			db.Exec("UPDATE messages SET textbody = ? WHERE id = ?", *edit.Newtext, req.ID)
 		}
+		// Applied an edit → whichever of the keyword index / vector embedding depend on
+		// the field(s) just written are now stale.
+		invalidateMessageSearchIndexes(db, req.ID, edit.Newsubject != nil, edit.Newtext != nil)
 	}
 
 	// Mark ALL pending edits as approved.
@@ -2587,6 +2753,11 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+
+		// Reverting restored the previous subject/body, so whichever of the keyword index
+		// / vector embedding depend on the restored field(s) are out of sync again - drop
+		// them to be rebuilt.
+		invalidateMessageSearchIndexes(db, req.ID, old.Oldsubject != nil, old.Oldtext != nil)
 	} else {
 		// No recorded old values — just clear the editedby flag.
 		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
@@ -3114,13 +3285,30 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
 	}
-	if req.Lat != nil {
-		setClauses = append(setClauses, "lat = ?")
-		args = append(args, *req.Lat)
+	// Effective coordinates for this edit. Use the coords the client sent; but if the
+	// location changed without matching coords, derive lat/lng from the chosen location.
+	// Without this a location-only edit sets locationid yet leaves lat/lng stale or NULL,
+	// making the post undiscoverable — browse/search read messages.lat/lng directly
+	// (Discourse 9865). Locations are static reference data, so this lookup returns the
+	// row reliably; it is not a timing/race concern.
+	effLat, effLng := req.Lat, req.Lng
+	if req.Locationid != nil && (effLat == nil || effLng == nil) {
+		var llat, llng *float64
+		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&llat, &llng)
+		if effLat == nil {
+			effLat = llat
+		}
+		if effLng == nil {
+			effLng = llng
+		}
 	}
-	if req.Lng != nil {
+	if effLat != nil {
+		setClauses = append(setClauses, "lat = ?")
+		args = append(args, *effLat)
+	}
+	if effLng != nil {
 		setClauses = append(setClauses, "lng = ?")
-		args = append(args, *req.Lng)
+		args = append(args, *effLng)
 	}
 
 	if len(setClauses) > 0 {
@@ -3132,9 +3320,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// changes. We deliberately UPDATE only — never INSERT — so editing a Pending
 	// message's location cannot leak it into messages_spatial (which backs the public
 	// browse). Only Approved messages have a spatial row; the approval path inserts.
-	if req.Lat != nil && req.Lng != nil {
+	if effLat != nil && effLng != nil {
 		db.Exec("UPDATE messages_spatial SET point = ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857) WHERE msgid = ?",
-			*req.Lng, *req.Lat, req.ID)
+			*effLng, *effLat, req.ID)
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
@@ -3322,6 +3510,28 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	locationChanged := !locationIDsEqual(old.Locationid, current.Locationid)
 	itemsChanged := !stringPtrEqual(oldItemsJSON, newItemsJSON)
 	imagesChanged := !stringPtrEqual(oldImagesJSON, newImagesJSON)
+
+	// Subject, textbody, and item name are exactly the fields
+	// ContentCheckService::checkMessage() scans (concern keywords, per-group
+	// worry words, phone numbers, vague-item, not-an-item, URLs, ...).
+	// processUnprocessed() only re-scans messages_groups rows where
+	// contentcheck_checked_at IS NULL, so once a row has been checked, editing
+	// in new content otherwise leaves it unchecked forever - the automated
+	// moderation filters silently skip it and it can only be caught by a mod
+	// noticing manually. Clearing the stamp here re-queues the row for a fresh
+	// check, for both mods and owners: mods stripping an issue that triggered a
+	// flag also need the clean edit re-verified.
+	if subjectChanged || textChanged || itemsChanged {
+		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
+	}
+
+	// The subject/body drive the search indexes (messages_index keyword search and
+	// messages_embeddings vector search), which are each populated once for "missing"
+	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
+	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	if subjectChanged || textChanged {
+		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
+	}
 
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
 		// Store oldtype/newtype only when type actually changed.
@@ -3959,35 +4169,46 @@ func PutMessage(c *fiber.Ctx) error {
 		saveAccessInstructions(db, newMsgID, req.Accessinstructions)
 	}
 
-	// Add spatial data if locationid is provided, and update the user's last known location
-	// (so that GET /isochrone can auto-create an isochrone for the user).
+	// If the user explicitly chose a location, remember it (GET /isochrone
+	// auto-creates an isochrone for the user from lastlocation).
 	if req.Locationid != nil && *req.Locationid > 0 {
 		db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", *req.Locationid, myid)
+	}
 
-		var lat, lng float64
-		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&lat, &lng)
-		if lat != 0 || lng != 0 {
-			db.Exec("UPDATE messages SET locationid = ?, lat = ?, lng = ? WHERE id = ?",
-				*req.Locationid, lat, lng, newMsgID)
-			// Do NOT insert into messages_spatial here — drafts must not appear
-			// in browse/search results. Spatial index is populated by handleJoinAndPost
-			// after the message is submitted to a group (matching V1 behaviour).
-		}
+	// Denormalise the post's location onto the message so it is discoverable in
+	// browse/search, which read messages.lat/lng directly (see bounds.go). Prefer
+	// the chosen locationid; if the client didn't send one, fall back to the user's
+	// last known location so the post is still findable (parity with the email path,
+	// IncomingMailService). Resolve lat/lng with a JOIN on the WRITE connection in a
+	// single statement. The previous code only denormalised when the client sent a
+	// locationid, and did it via a separate best-effort SELECT whose Scan error was
+	// unchecked and whose !=0 guard silently skipped the UPDATE on any miss — so a post
+	// could go live with no lat/lng and be undiscoverable (Discourse 9865). If nothing
+	// resolves (no locationid and no lastlocation), lat/lng stay NULL and
+	// ContentCheckService holds the post for a moderator to add a postcode.
+	db.Exec("UPDATE messages m "+
+		"JOIN users u ON u.id = ? "+
+		"JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation) "+
+		"SET m.locationid = l.id, m.lat = l.lat, m.lng = l.lng "+
+		"WHERE m.id = ? AND (m.lat IS NULL OR m.lng IS NULL)",
+		myid, newMsgID)
+	// Do NOT insert into messages_spatial here — drafts must not appear in
+	// browse/search results. Spatial index is populated by handleJoinAndPost
+	// after the message is submitted to a group (matching V1 behaviour).
 
-		// Reconstruct subject with location.
-		// The initial subject was set as "Type: Item" without location.
-		// Now that locationid is set, rebuild as "KEYWORD: Item (Area PC)".
-		locStr := constructLocationString(db, newMsgID)
-		if locStr != "" && req.Item != "" {
-			groupid := req.Groupid
-			if groupid == 0 {
-				// Draft may not have a group yet; use item name without location keyword.
-				groupid = getPrimaryGroupForMessage(db, newMsgID)
-			}
-			keyword := getGroupKeyword(db, groupid, req.Type)
-			newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
-			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
+	// Reconstruct subject with location, now that locationid is set.
+	// The initial subject was set as "Type: Item" without location; rebuild as
+	// "KEYWORD: Item (Area PC)". Skipped when no location could be resolved.
+	locStr := constructLocationString(db, newMsgID)
+	if locStr != "" && req.Item != "" {
+		groupid := req.Groupid
+		if groupid == 0 {
+			// Draft may not have a group yet; use item name without location keyword.
+			groupid = getPrimaryGroupForMessage(db, newMsgID)
 		}
+		keyword := getGroupKeyword(db, groupid, req.Type)
+		newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
+		db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
 	}
 
 	resp := fiber.Map{"ret": 0, "status": "Success", "id": newMsgID}
@@ -4004,21 +4225,21 @@ func PutMessage(c *fiber.Ctx) error {
 
 // PostMessageRequest handles action-based POST to /message.
 type PostMessageRequest struct {
-	ID        uint64  `json:"id"`
-	Action    string  `json:"action"`
-	Userid    *uint64 `json:"userid"`
-	Count     *int    `json:"count"`
-	Outcome   string  `json:"outcome"`
-	Happiness *string `json:"happiness"`
-	Comment   *string `json:"comment"`
-	Message   *string `json:"message"`
-	Subject   *string `json:"subject"`
-	Body      *string `json:"body"`
-	Stdmsgid  *uint64 `json:"stdmsgid"`
-	Groupid   *uint64 `json:"groupid"`
-	Type      string  `json:"type"`
-	Textbody  *string `json:"textbody"`
-	Item      *string `json:"item"`
+	ID               uint64  `json:"id"`
+	Action           string  `json:"action"`
+	Userid           *uint64 `json:"userid"`
+	Count            *int    `json:"count"`
+	Outcome          string  `json:"outcome"`
+	Happiness        *string `json:"happiness"`
+	Comment          *string `json:"comment"`
+	Message          *string `json:"message"`
+	Subject          *string `json:"subject"`
+	Body             *string `json:"body"`
+	Stdmsgid         *uint64 `json:"stdmsgid"`
+	Groupid          *uint64 `json:"groupid"`
+	Type             string  `json:"type"`
+	Textbody         *string `json:"textbody"`
+	Item             *string `json:"item"`
 	Partner          *string `json:"partner"`
 	Deadline         *string `json:"deadline"`
 	Deliverypossible *bool   `json:"deliverypossible"`
@@ -4148,8 +4369,88 @@ func PostMessage(c *fiber.Ctx) error {
 	return dispatchPostMessageAction(c, myid, req)
 }
 
+// moderationActionsBlockedByHold are the moderator actions that change moderation
+// state and so must not run while a DIFFERENT moderator holds the message.
+//
+// A hold used to be advisory: ModTools hides Approve/Reject when someone else
+// holds a post (ModMessage.vue), but nothing on the server enforced it, so a mod
+// whose screen was stale acted anyway. In Discourse #9946 a mod rejected a post
+// 27 minutes after a colleague held it and opened a modmail conversation, off a
+// pending list his browser had fetched 90 minutes earlier. No amount of client
+// refreshing closes that race - the check has to be here.
+//
+// Release is deliberately absent: it is the designed escape hatch for taking a
+// post off someone else's hold, so it must stay available or a post is stranded
+// when the holding mod goes away. Member-facing actions (Promise, Outcome, View,
+// Reply, ...) are absent too - a mod hold must not stop the owner using their own
+// post.
+var moderationActionsBlockedByHold = map[string]bool{
+	"Approve":       true,
+	"Reject":        true,
+	"Delete":        true,
+	"Spam":          true,
+	"Hold":          true,
+	"ApproveEdits":  true,
+	"RevertEdits":   true,
+	"Move":          true,
+	"BackToPending": true,
+	"RejectToDraft": true,
+	"BackToDraft":   true,
+}
+
+// heldByAnotherMod returns the id and name of a DIFFERENT moderator holding this
+// message on any of the groups the action would touch, or 0 if it is free to act
+// on.
+func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
+	db := database.DBConn
+
+	ctx := getMessageModContext(db, myid, req.ID)
+	if ctx == nil {
+		// Not a moderator for this message - let the handler produce its own
+		// (403) error rather than masking it with a confusing 409.
+		return 0, ""
+	}
+
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return 0, ""
+	}
+
+	// Read the per-group hold, not the message-level messages.heldby mirror: a
+	// message held on one group must not block moderation on another group it is
+	// also pending on.
+	var holder uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? "+
+		"AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",
+		req.ID, authorizedGroups, myid).Scan(&holder)
+	if holder == 0 {
+		return 0, ""
+	}
+
+	var holderName string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&holderName)
+	return holder, holderName
+}
+
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	// Enforced centrally rather than per-handler so a new moderation action
+	// cannot silently skip the check by forgetting to call it.
+	if moderationActionsBlockedByHold[req.Action] {
+		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"ret":        1,
+				"status":     "Held by another moderator",
+				"heldby":     holder,
+				"heldbyname": holderName,
+			})
+		}
+	}
+
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)

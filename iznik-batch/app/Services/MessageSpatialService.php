@@ -4,20 +4,27 @@ namespace App\Services;
 
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class MessageSpatialService
 {
-    // V1: MessageCollection::RECENTPOSTS = "Midnight 31 days ago"
-    private const RECENT_DAYS = 31;
+    // V1: MessageCollection::RECENTPOSTS = "Midnight 31 days ago". Public so other
+    // features (e.g. the matched-posts backfill) can bound themselves to the same
+    // open-age window that governs messages_spatial membership.
+    public const RECENT_DAYS = 31;
     private const SRID = 3857;
 
     private SpatialAdminService $spatialAdmin;
 
-    public function __construct(SpatialAdminService $spatialAdmin)
+    /** Prunes/restores rippling sandwich bounds when a post's outcome flips. */
+    private ReachBoundsService $reachBounds;
+
+    public function __construct(SpatialAdminService $spatialAdmin, ?ReachBoundsService $reachBounds = null)
     {
         $this->spatialAdmin = $spatialAdmin;
+        $this->reachBounds = $reachBounds ?? new ReachBoundsService();
     }
 
     public function updateSpatialIndex(bool $dryRun = false): array
@@ -138,12 +145,19 @@ class MessageSpatialService
                 if (!$msg->successful) {
                     if (!$dryRun) {
                         DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 1]);
+                        // Completed → prune the post from the cheap reach path via its
+                        // BOUNDS row only; the exact polygon stays for the consumers that
+                        // still need it (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md).
+                        $this->reachBounds->degradeForCompleted((int) $msg->msgid);
                     }
                     $count++;
                 }
             } elseif ($msg->successful) {
                 if (!$dryRun) {
                     DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 0]);
+                    // Reopened (outcome removed) → restore working bounds from the stored
+                    // polygon, or the post would stay invisible to the cheap reach path.
+                    $this->reachBounds->syncFromPolygon((int) $msg->msgid);
                 }
                 $count++;
             }

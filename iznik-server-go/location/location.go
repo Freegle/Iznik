@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -146,24 +147,23 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	results := []ClosestGroup{}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	count := 0
 
+	// Every band's query must complete before we can trust `results`: a group's
+	// "hav" (distance to its registered centre) gates which band can see it at
+	// all, independent of "dist" (distance to its actual polygon boundary), which
+	// is what determines "nearest" for ranking. A large or awkwardly-shaped group
+	// can have a polygon boundary very close to the point while its registered
+	// centre is comparatively far away, so it is only discoverable via a wider
+	// (and slower) band. Stopping as soon as any one band alone had accumulated
+	// `limit` candidates - as this used to do - could return before a still-running
+	// wider band completed, silently dropping a genuinely nearer group in favour of
+	// worse-but-faster-to-find ones (Discourse #9905).
 	for {
-		count++
-		currradius = currradius * 2
+		wg.Add(1)
 
-		if currradius >= radius {
-			break
-		}
-	}
-
-	currradius = math.Round(float64(radius)/16.0 + 0.5)
-	wg.Add(1)
-
-	done := false
-
-	for {
 		go func(currradius float64) {
+			defer wg.Done()
+
 			batch := []ClosestGroup{}
 			var nelat, nelng, swlat, swlng float64
 			p := geo.NewPoint(lat, lng)
@@ -196,39 +196,18 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 				currradius,
 				limit).Scan(&batch)
 
-			mu.Lock()
-			defer mu.Unlock()
-
-			count--
-
-			if len(results) < limit {
-				if len(batch) > 0 {
-					// We found some.
-					for i, r := range batch {
-						if len(r.Namefull) > 0 {
-							batch[i].Namedisplay = r.Namefull
-						} else {
-							batch[i].Namedisplay = r.Nameshort
-						}
-					}
-
-					results = append(results, batch...)
-
-					if len(results) >= limit {
-						if !done {
-							done = true
-							defer wg.Done()
-						}
+			if len(batch) > 0 {
+				for i, r := range batch {
+					if len(r.Namefull) > 0 {
+						batch[i].Namedisplay = r.Namefull
+					} else {
+						batch[i].Namedisplay = r.Nameshort
 					}
 				}
 
-				if count == 0 {
-					// We've run out of areas to search.
-					if !done {
-						done = true
-						defer wg.Done()
-					}
-				}
+				mu.Lock()
+				results = append(results, batch...)
+				mu.Unlock()
 			}
 		}(currradius)
 
@@ -755,16 +734,24 @@ func CreateLocation(c *fiber.Ctx) error {
 		id = uint64(lastID)
 	}
 
-	// Sync to PostgreSQL spatial index (required by PostcodeRemapService).
 	if id > 0 {
+		// Sync to the spatial index table (required by PostcodeRemapService).
 		db.Exec(
 			fmt.Sprintf("REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, %d))", utils.SRID),
 			id, req.Polygon,
 		)
-	}
 
-	// Queue postcode remapping for the new area.
-	if id > 0 {
+		// Cache centroid and max dimension, as UpdateLocation does. Without this a
+		// created area has NULL lat/lng, unlike every edited one.
+		db.Exec("UPDATE locations SET maxdimension = GetMaxDimension(geometry), lat = ST_Y(ST_Centroid(geometry)), lng = ST_X(ST_Centroid(geometry)) WHERE id = ?", id)
+
+		// Put the new area into the spatial KNN index before the remap below runs,
+		// otherwise the remap can't find it and the area gets no postcodes.
+		if err := spatial.UpsertLocation(id, req.Polygon, req.Name, "Polygon"); err != nil {
+			log.Printf("CreateLocation: spatial upsert of %d failed, postcodes may not remap until the next delta sync: %v", id, err)
+		}
+
+		// Queue postcode remapping for the new area.
 		go queue.QueueTask(queue.TaskRemapPostcodes, map[string]interface{}{
 			"location_id": id,
 			"polygon":     req.Polygon,
@@ -857,6 +844,14 @@ func UpdateLocation(c *fiber.Ctx) error {
 
 		// Update cached centroid and max dimensions.
 		db.Exec("UPDATE locations SET maxdimension = GetMaxDimension(ourgeometry), lat = ST_Y(ST_Centroid(ourgeometry)), lng = ST_X(ST_Centroid(ourgeometry)) WHERE id = ?", req.ID)
+
+		// Refresh the spatial KNN index before the remap below runs, so it remaps
+		// against the new shape rather than the one from the last delta sync.
+		var locName string
+		db.Raw("SELECT name FROM locations WHERE id = ?", req.ID).Scan(&locName)
+		if err := spatial.UpsertLocation(req.ID, *req.Polygon, locName, "Polygon"); err != nil {
+			log.Printf("UpdateLocation: spatial upsert of %d failed, postcodes may not remap until the next delta sync: %v", req.ID, err)
+		}
 
 		// Queue postcode remapping. Matching V1: remap the union if geometries overlap,
 		// or remap both old and new separately if they don't.

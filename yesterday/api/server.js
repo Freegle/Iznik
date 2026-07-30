@@ -84,8 +84,15 @@ app.get('/api/backups', async (req, res) => {
   try {
     const bucket = process.env.BACKUP_BUCKET || 'gs://freegle_backup_uk';
 
-    // Get list of backups with size and date
-    const { stdout } = await execAsync(`gsutil ls -l "${bucket}/iznik-*.xbstream"`);
+    // Get list of backups with size and date.
+    //
+    // --json rather than the -l long listing: the columns of a long listing are
+    // a presentation format that differs between gsutil and gcloud storage, and
+    // this used to be scraped with a whitespace split. --json returns
+    // {url, type, metadata} per object, where metadata is the raw GCS API
+    // object, so `size` and `timeCreated` are documented API field names rather
+    // than column positions.
+    const { stdout } = await execAsync(`gcloud storage ls --json "${bucket}/iznik-*.xbstream"`);
 
     // Dates that have an LVM thin snapshot are instantly switchable (~1 min)
     // rather than a full restore (~1-2h). The host writes this manifest after
@@ -96,31 +103,29 @@ app.get('/api/backups', async (req, res) => {
     } catch (e) { /* no manifest yet */ }
 
     const backups = [];
-    const lines = stdout.trim().split('\n');
+    const items = JSON.parse(stdout.trim() || '[]');
 
-    for (const line of lines) {
-      if (line.includes('TOTAL:') || !line.trim()) continue;
+    for (const item of items) {
+      const url = item.url;
+      if (!url) continue;
 
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 3) {
-        const size = parseInt(parts[0]);
-        const dateStr = parts[1];
-        const url = parts[2];
-        const filename = path.basename(url);
+      const metadata = item.metadata || {};
+      const size = parseInt(metadata.size, 10);
+      const dateStr = metadata.timeCreated || metadata.updated || '';
+      const filename = path.basename(url);
 
-        const backupDate = parseBackupDate(filename);
-        if (backupDate) {
-          backups.push({
-            date: backupDate,
-            filename: filename,
-            url: url,
-            size: size,
-            size_human: formatSize(size),
-            timestamp: dateStr,
-            loaded: await isBackupLoaded(backupDate),
-            instant: instantDates.includes(backupDate)
-          });
-        }
+      const backupDate = parseBackupDate(filename);
+      if (backupDate) {
+        backups.push({
+          date: backupDate,
+          filename: filename,
+          url: url,
+          size: Number.isFinite(size) ? size : 0,
+          size_human: Number.isFinite(size) ? formatSize(size) : 'unknown',
+          timestamp: dateStr,
+          loaded: await isBackupLoaded(backupDate),
+          instant: instantDates.includes(backupDate)
+        });
       }
     }
 
@@ -211,6 +216,17 @@ app.post('/api/backups/:backupDate/load', async (req, res) => {
   // Also check in-memory jobs (in case status file hasn't been written yet)
   for (const [jobDate, job] of Object.entries(restorationJobs)) {
     if (job.status !== 'completed' && job.status !== 'failed') {
+      // A restore legitimately takes ~2h; a job still non-terminal after 6h
+      // means the host-side restore died without reporting back. Expire it
+      // rather than letting it 409-block every future load forever.
+      const ageMs = Date.now() - new Date(job.started).getTime();
+      if (ageMs > 6 * 60 * 60 * 1000) {
+        job.status = 'failed';
+        job.error = 'Restore did not report completion within 6 hours';
+        job.completed = new Date().toISOString();
+        console.log(`Expired stale job ${jobDate} (started ${job.started}) as failed`);
+        continue;
+      }
       return res.status(409).json({
         error: `Backup ${jobDate} is already being loaded (status: ${job.status})`,
         currentBackup: jobDate,

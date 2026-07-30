@@ -1,7 +1,7 @@
 <template>
   <client-only>
     <div class="wrapper" @dragenter="onDragEnter">
-      <div class="d-flex flex-column justify-content-around">
+      <div class="d-flex flex-column justify-content-around align-items-center">
         <v-icon
           v-if="!busy"
           :size="iconSize"

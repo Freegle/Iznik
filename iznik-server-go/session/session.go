@@ -1354,6 +1354,10 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
 					"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
 					"AND mg.groupid IN ? "+
+					// rippled_in = 0: the aggregate Feedback work count must match
+					// the per-group badge (groupWork.go) and the list — only posts
+					// that originated on the group, not rippled-in copies. 9808/633.
+					"AND mg.rippled_in = 0 "+
 					"AND mo.comments IS NOT NULL "+
 					"AND mo.comments != 'Sorry, this is no longer available.' "+
 					"AND mo.comments != 'Thanks, this has now been taken.' "+
@@ -1714,7 +1718,10 @@ func PatchSession(c *fiber.Ctx) error {
 		}
 
 		var emails []EmailRecord
-		db.Raw("SELECT id, userid, email FROM users_emails WHERE validatekey = ?", *req.Key).Scan(&emails)
+		// SECURITY: reject keys older than 7 days so a validatekey is not an indefinitely-valid
+		// bearer credential (it can trigger an account merge below). NULL validatetime (legacy rows
+		// predating this) stays accepted for compatibility; new keys always set it.
+		db.Raw("SELECT id, userid, email FROM users_emails WHERE validatekey = ? AND (validatetime IS NULL OR validatetime > NOW() - INTERVAL 7 DAY)", *req.Key).Scan(&emails)
 
 		if len(emails) == 0 {
 			return c.JSON(fiber.Map{
@@ -1725,43 +1732,41 @@ func PatchSession(c *fiber.Ctx) error {
 
 		for _, mail := range emails {
 			if mail.UserID != 0 && mail.UserID != myid {
-				// Email belongs to another user — merge their account into ours.
-				// Move references from the other user to this user.
-				var wg2 sync.WaitGroup
-				wg2.Add(5)
-
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE messages SET fromuser = ? WHERE fromuser = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE chat_rooms SET user1 = ? WHERE user1 = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE chat_rooms SET user2 = ? WHERE user2 = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE chat_messages SET userid = ? WHERE userid = ?", myid, mail.UserID)
-				}()
-				go func() {
-					defer wg2.Done()
-					db.Exec("UPDATE users_emails SET userid = ? WHERE userid = ?", myid, mail.UserID)
-				}()
-				wg2.Wait()
-
-				db.Exec("UPDATE IGNORE memberships SET userid = ? WHERE userid = ?", myid, mail.UserID)
-				db.Exec("DELETE FROM memberships WHERE userid = ?", mail.UserID)
-				db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", mail.UserID)
-
-				stdlog.Printf("Merged user %d into %d during email verify of %s", mail.UserID, myid, mail.Email)
+				// Email belongs to another user — merge their account into
+				// ours. Chat rooms need collision-safe consolidation (the
+				// unique key on user1/user2/chattype forbids a blind
+				// reassignment), so the whole merge runs transactionally in
+				// MergeUserAccounts.
+				if err := MergeUserAccounts(db, myid, mail.UserID); err != nil {
+					// Rolled back — nothing half-applied, and the email is
+					// still confirmed below so verification succeeds for the
+					// user. The duplicate account survives; a later
+					// verification or support action can merge it.
+					stdlog.Printf("ERROR: merge of user %d into %d failed during email verify of %s: %v",
+						mail.UserID, myid, mail.Email, err)
+				} else {
+					stdlog.Printf("Merged user %d into %d during email verify of %s", mail.UserID, myid, mail.Email)
+				}
 			}
 
 			// Clear all preferred flags for this user, then set the confirmed email as preferred.
 			db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", myid)
 			db.Exec("UPDATE users_emails SET userid = ?, preferred = 1, validated = NOW(), validatekey = NULL WHERE id = ?", myid, mail.ID)
+
+			// Confirming the key proves this address accepts mail: the member had to
+			// receive the verification email to click the link. Clear the bounce
+			// suspension, or a member who bounced and then promptly fixed their address
+			// stays silently cut off - users.bouncing gates UnifiedDigestService,
+			// UserManagementService and NotificationChaseUpService, and NOTHING else
+			// resets it (the only other path is the manual, per-domain
+			// UnbounceDomainCommand). Observed live: 47 members had validated
+			// after bouncing - several within MINUTES - and were still suppressed.
+			// Same two-part clear as UnbounceDomainCommand, which is the canonical
+			// unbounce: the per-address timestamp (gates welcome mail via
+			// whereNull('bounced')) and the per-user suspension flag.
+			// Safe if the address later fails again: BounceService re-suspends.
+			db.Exec("UPDATE users_emails SET bounced = NULL WHERE id = ?", mail.ID)
+			db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", myid)
 		}
 
 		return c.JSON(fiber.Map{

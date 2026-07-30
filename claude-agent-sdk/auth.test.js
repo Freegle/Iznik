@@ -2,7 +2,7 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { verifyModerator, extractJWT, MODERATOR_ROLES } = require('./auth')
+const { verifyModerator, extractJWT, SUPPORT_ROLES, driverMode, preferSubscriptionToken } = require('./auth')
 
 // Build a fake fetch returning the given status + JSON body.
 function fakeFetch(status, body) {
@@ -26,29 +26,37 @@ test('extractJWT pulls the bearer token, else empty', () => {
 
 test('verifyModerator returns null with no JWT and never calls the API', async () => {
   let called = false
-  const role = await verifyModerator({ headers: {} }, async () => {
+  const mod = await verifyModerator({ headers: {} }, async () => {
     called = true
   })
-  assert.strictEqual(role, null)
+  assert.strictEqual(mod, null)
   assert.strictEqual(called, false)
 })
 
-test('verifyModerator allows Moderator, Support and Admin', async () => {
-  for (const r of ['Moderator', 'Support', 'Admin']) {
-    assert.ok(MODERATOR_ROLES.has(r))
-    const role = await verifyModerator(modReq(), fakeFetch(200, { me: { systemrole: r } }))
-    assert.strictEqual(role, r)
+test('verifyModerator allows Support and Admin, and returns identity for the audit', async () => {
+  for (const r of ['Support', 'Admin']) {
+    assert.ok(SUPPORT_ROLES.has(r))
+    const mod = await verifyModerator(
+      modReq(),
+      fakeFetch(200, { me: { id: 42, email: 'mod@example.com', systemrole: r } })
+    )
+    assert.deepStrictEqual(mod, { role: r, id: 42, email: 'mod@example.com' })
   }
 })
 
+test('verifyModerator rejects a plain Moderator (not support-level)', async () => {
+  const mod = await verifyModerator(modReq(), fakeFetch(200, { me: { id: 7, systemrole: 'Moderator' } }))
+  assert.strictEqual(mod, null)
+})
+
 test('verifyModerator rejects a plain User', async () => {
-  const role = await verifyModerator(modReq(), fakeFetch(200, { me: { systemrole: 'User' } }))
-  assert.strictEqual(role, null)
+  const mod = await verifyModerator(modReq(), fakeFetch(200, { me: { systemrole: 'User' } }))
+  assert.strictEqual(mod, null)
 })
 
 test('verifyModerator rejects when the session API returns 401 (not logged in)', async () => {
-  const role = await verifyModerator(modReq(), fakeFetch(401, { ret: 1, status: 'Not logged in' }))
-  assert.strictEqual(role, null)
+  const mod = await verifyModerator(modReq(), fakeFetch(401, { ret: 1, status: 'Not logged in' }))
+  assert.strictEqual(mod, null)
 })
 
 test('verifyModerator rejects when me/systemrole is missing', async () => {
@@ -57,8 +65,73 @@ test('verifyModerator rejects when me/systemrole is missing', async () => {
 })
 
 test('verifyModerator rejects when the API call throws', async () => {
-  const role = await verifyModerator(modReq(), async () => {
+  const mod = await verifyModerator(modReq(), async () => {
     throw new Error('network down')
   })
-  assert.strictEqual(role, null)
+  assert.strictEqual(mod, null)
+})
+
+// driverMode() picks the Claude Agent SDK credential purely from the environment.
+function withEnv(env, fn) {
+  const save = { ...process.env }
+  delete process.env.ANTHROPIC_API_KEY
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+  Object.assign(process.env, env)
+  try {
+    fn()
+  } finally {
+    process.env = save
+  }
+}
+
+test('driverMode: api when ANTHROPIC_API_KEY is set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, () => {
+    assert.strictEqual(driverMode(), 'api')
+  })
+})
+
+test('driverMode: subscription when only CLAUDE_CODE_OAUTH_TOKEN is set', () => {
+  withEnv({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(driverMode(), 'subscription')
+  })
+})
+
+test('driverMode: subscription wins when both credentials are set', () => {
+  // The whole point of a `claude setup-token` is to run this headless job on the
+  // subscription rather than metered API spend, so the OAuth token beats the API key.
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(driverMode(), 'subscription')
+  })
+})
+
+test('driverMode: session when neither credential is set', () => {
+  withEnv({}, () => {
+    assert.strictEqual(driverMode(), 'session')
+  })
+})
+
+// preferSubscriptionToken() is what actually makes the token win: it removes a stray
+// ANTHROPIC_API_KEY so the SDK/CLI can't silently bill the metered API (it does so whenever
+// the key is set - the reason monitor-fsm/run-loop.sh unsets it).
+test('preferSubscriptionToken: removes ANTHROPIC_API_KEY when the OAuth token is also set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(preferSubscriptionToken(), true)
+    assert.strictEqual(process.env.ANTHROPIC_API_KEY, undefined)
+    assert.strictEqual(driverMode(), 'subscription')
+  })
+})
+
+test('preferSubscriptionToken: no-op when only ANTHROPIC_API_KEY is set', () => {
+  withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, () => {
+    assert.strictEqual(preferSubscriptionToken(), false)
+    assert.strictEqual(process.env.ANTHROPIC_API_KEY, 'sk-test')
+    assert.strictEqual(driverMode(), 'api')
+  })
+})
+
+test('preferSubscriptionToken: no-op when only the OAuth token is set', () => {
+  withEnv({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-test' }, () => {
+    assert.strictEqual(preferSubscriptionToken(), false)
+    assert.strictEqual(driverMode(), 'subscription')
+  })
 })

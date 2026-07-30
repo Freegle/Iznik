@@ -1,8 +1,8 @@
 package test
 
 import (
-	"fmt"
 	json2 "encoding/json"
+	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +29,7 @@ func TestSearchExact(t *testing.T) {
 
 	// Search on a word in subject
 	words := message.GetWords("Vintage Sofa Available")
-	results := message.GetWordsExact(database.DBConn, words, 100, nil, "All", 0, 0, 0, 0)
+	results := message.GetWordsExact(database.DBConn, words, 100, nil, nil, "All", 0, 0, 0, 0)
 
 	// Should find messages with these words
 	assert.Greater(t, len(results), 0)
@@ -44,7 +44,7 @@ func TestSearchTypo(t *testing.T) {
 	CreateTestMessage(t, userID, groupID, "Beautiful Chair Free", 55.9533, -3.1883)
 
 	words := message.GetWords("Beautiful Chair Free")
-	_ = message.GetWordsTypo(database.DBConn, words, 100, nil, "All", 0, 0, 0, 0)
+	_ = message.GetWordsTypo(database.DBConn, words, 100, nil, nil, "All", 0, 0, 0, 0)
 	// May or may not find results depending on index state
 }
 
@@ -54,7 +54,7 @@ func TestSearchSounds(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Search for a nonsense word that shouldn't exist
-	results := message.GetWordsSounds(database.DBConn, []string{"zcz"}, 100, []uint64{groupID}, "All", 0, 0, 0, 0)
+	results := message.GetWordsSounds(database.DBConn, []string{"zcz"}, 100, []uint64{groupID}, nil, "All", 0, 0, 0, 0)
 	assert.Equal(t, len(results), 0)
 }
 
@@ -69,7 +69,7 @@ func TestSearchStarts(t *testing.T) {
 	// Search on prefix of a word
 	words := message.GetWords("Bookshelf Wooden Large")
 	if len(words) > 0 && len(words[0]) >= 3 {
-		results := message.GetWordsStarts(database.DBConn, []string{words[0][:3]}, 100, nil, "All", 0, 0, 0, 0)
+		results := message.GetWordsStarts(database.DBConn, []string{words[0][:3]}, 100, nil, nil, "All", 0, 0, 0, 0)
 		// Should find something starting with that prefix
 		assert.Greater(t, len(results), 0)
 	}

@@ -128,10 +128,10 @@ export function setup(type) {
 
   const myid = authStore.user?.id
 
-  if (myid) {
-    // Get our own posts so that we can spot duplicates.
-    messageStore.fetchByUser(myid, false)
-  }
+  // Load our own active posts so PostItem's duplicate check can spot a repost of
+  // something still open (see loadOwnActivePosts). Fire-and-forget: the check is
+  // reactive and lights up as the messages arrive.
+  loadOwnActivePosts(messageStore, myid)
 
   // Update all the refs with initial values
   loggedIn.value = !!myid
@@ -225,6 +225,22 @@ export function setup(type) {
     postcodeValid,
     emailIsntOurs,
   }
+}
+
+// loadOwnActivePosts loads the member's own active posts as FULL messages into the
+// message store's `list`, so PostItem's duplicate check - which reads
+// messageStore.all and compares on item.name - can spot a repost of something still
+// open. fetchByUser only fills byUserList with lean summaries that omit item.name (a
+// slot the check never reads), so pull each active post's full record into `list`
+// (mirrors pages/myposts.vue). No-op when logged out.
+export function loadOwnActivePosts(messageStore, myid) {
+  if (!myid) {
+    return Promise.resolve()
+  }
+
+  return messageStore.fetchByUser(myid, true).then((active) => {
+    ;(active || []).forEach((p) => messageStore.fetch(p.id))
+  })
 }
 
 // makeCanSubmit returns a computed that gates the submit button on message validity.
@@ -347,7 +363,10 @@ export async function freegleIt(type, router, options = {}) {
     await Promise.all(
       results.map(async (res) => {
         console.log('Consider result', res, type)
-        if (type === 'Offer' && res.id) {
+        if (res.id) {
+          // Both types: myposts needs the ids to show what you just posted.
+          // The Offer-only consumers (donation ask, "viewed after Offer") gate
+          // on type themselves, so they're unaffected.
           params.ids.push(res.id)
         }
 

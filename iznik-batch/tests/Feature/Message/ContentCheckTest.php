@@ -261,6 +261,59 @@ class ContentCheckTest extends TestCase
         $this->assertNull($rippledRow->contentcheck_reasons, 'rippled-into group not flagged');
     }
 
+    public function test_offer_with_no_location_is_not_auto_promoted(): void
+    {
+        // An Offer/Wanted we couldn't locate (NULL lat) must NOT be auto-promoted -
+        // it would go live undiscoverable. It stays Pending for a moderator to add a
+        // postcode via the "add a postcode" prompt (Discourse #9865). An otherwise
+        // identical located post from the same unmoderated poster is auto-promoted.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $noLocId = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Dining Table (unlocatable)',
+            'textbody' => 'A dining table. Collection only.',
+            'message'  => 'A dining table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => null,
+            'lng'      => null,
+        ]);
+        $locId = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Bookshelf (SW1A)',
+            'textbody' => 'A bookshelf. Collection only.',
+            'message'  => 'A bookshelf. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
+        ]);
+        foreach ([$noLocId, $locId] as $mid) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $mid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        $this->service->processUnprocessed();
+
+        $noLocColl = DB::table('messages_groups')->where('msgid', $noLocId)->value('collection');
+        $locColl   = DB::table('messages_groups')->where('msgid', $locId)->value('collection');
+
+        $this->assertSame('Pending', $noLocColl, 'no-location Offer is kept Pending for a mod');
+        $this->assertSame('Approved', $locColl, 'located Offer is auto-promoted as normal');
+    }
+
     public function test_allowed_category_keywords_are_not_flagged(): void
     {
         // 'allowed' is a category (whitelist) in concern_keywords, not an action.
@@ -865,6 +918,8 @@ class ContentCheckTest extends TestCase
             'arrival'  => now(),
             'date'     => now(),
             'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
         ]);
         DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
         $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
@@ -1134,6 +1189,8 @@ class ContentCheckTest extends TestCase
             'arrival'  => now(),
             'date'     => now(),
             'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
         ]);
         DB::table('messages_groups')->insert([
             'msgid'   => $msgid,
@@ -1467,6 +1524,8 @@ class ContentCheckTest extends TestCase
             'arrival'  => $originalArrival,
             'date'     => $originalArrival,
             'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
         ]);
         DB::table('items')->insertOrIgnore(['name' => 'Good chair']);
         $itemId = DB::table('items')->where('name', 'Good chair')->value('id');
@@ -1950,11 +2009,10 @@ class ContentCheckTest extends TestCase
 
     public function test_french_message_returns_reason(): void
     {
-        // Inject deterministic French scores (en/fr = 0.30 — well below the 0.8 V1 threshold).
-        // At 0.8: en(0.21) >= 0.8*fr(0.70)=0.56 → false → flagged correctly.
-        // Using injection because the real library returns borderline probabilities for
-        // mixed-cognate French text, making the live-library assertion threshold-dependent.
-        $frenchDetector = static fn(string $text) => ['fr' => 0.70, 'en' => 0.21];
+        // Inject a deterministic confident-French detector result. Using injection
+        // because the real ELD library's reliability on borderline mixed-cognate
+        // French text makes a live-library assertion threshold-dependent.
+        $frenchDetector = static fn(string $text) => ['lang' => 'fr', 'reliable' => true];
         $text = 'Bonjour, je donne une belle table en chêne massif en très bon état. Venez la chercher dans le quartier.';
 
         $result = $this->service->checkLanguage('OFFER: Table', $text, $frenchDetector);
@@ -2720,6 +2778,8 @@ class ContentCheckTest extends TestCase
             'arrival'  => now(),
             'date'     => now(),
             'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
         ]);
         DB::table('messages_groups')->insert([
             'msgid'      => $msgid,

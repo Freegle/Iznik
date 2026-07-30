@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-21
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
+  - docs/ops/reference/database-index-hygiene.md
   - docs/RSPAMD.md
   - docs/developers/reference/spatial-servers.md
 ---
@@ -40,6 +41,12 @@ Production splits database **reads and writes** across hosts; the application ro
 queries accordingly. The reference is
 [./reference/database-read-write-split.md](./reference/database-read-write-split.md). The schema is
 owned by Laravel migrations (see [../developers/04-apis-and-data.md](../developers/04-apis-and-data.md)).
+
+Before adding or removing an index, and to check the migrations still describe the schema
+production actually has, see
+[./reference/database-index-hygiene.md](./reference/database-index-hygiene.md). Index read
+counters must be summed across every cluster node - one node alone makes almost everything
+look unused.
 
 ## Mail and spam filtering
 

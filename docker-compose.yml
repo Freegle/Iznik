@@ -297,6 +297,9 @@ services:
     volumes:
       - ./delivery-nginx.conf:/etc/nginx/nginx.conf:ro
       - ./delivery-imagesweserv.conf:/etc/nginx/imagesweserv.conf:ro
+      # Local dev: empty deny file (allows Docker-network fetches). Edge overrides this with the
+      # full private-range deny list (docker-compose.override.edge.yml) for SSRF protection.
+      - ./delivery-weserv-deny-private.dev.conf:/etc/nginx/weserv-deny-private.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
       interval: 10s
@@ -460,6 +463,40 @@ services:
       wiki-mysql:
         condition: service_healthy
 
+  # Elasticsearch backing the wiki's full-text search (CirrusSearch), replacing the old
+  # GoogleCustomWikiSearch. Single-node cluster on the private wikinet; wiki-media reaches it
+  # as http://wiki-elastic:9200. Edge profile only (prod wiki host) so it is inert for local
+  # dev / CI. Heap kept small (512m) as this box is shared. ES 7.10.2 matches the CirrusSearch
+  # REL1_43 that the (bind-mounted 1.43) wiki core runs.
+  wiki-elastic:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.2
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-elastic
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wiki-elastic-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
   # Grafana Alloy (edge) — ships the edge container logs (frontend-nginx
   # uploads/delivery/tiles access + tusd events) to the Loki container via Docker
   # service discovery, closing the edge log blind spot (plan §10). Distinct from
@@ -530,10 +567,41 @@ services:
       - "traefik.http.routers.ai-support-helper.entrypoints=web"
       - "traefik.http.services.ai-support-helper.loadbalancer.server.port=3000"
     environment:
-      # Anthropic API key for Claude API calls
+      # Claude auth: set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, bills to the
+      # subscription) or ANTHROPIC_API_KEY for api mode (bills to API credits). The OAuth
+      # token wins when both are set (see claude-agent-sdk/auth.js). Leave both unset and
+      # mount ~/.claude (see volumes) for session mode (local testing on the logged-in session).
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # Go API base URL used to verify the caller is an authenticated moderator
-      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2.localhost:8192}
+      # Unpinned alias, not a dated snapshot (snapshots get retired and the SDK
+      # then 404s). On the Claude subscription (session mode) Opus is available.
+      - SUPPORT_AI_MODEL=${SUPPORT_AI_MODEL:-opus}
+      # Go API: verifies the caller is a mod/support/admin AND serves get_user_dump.
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      - API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      # Read-only DB. Local: the whole-stack percona. Edge: a read-only grant on a read replica.
+      - DB_HOST=${SUPPORT_DB_HOST:-percona}
+      - DB_PORT=${SUPPORT_DB_PORT:-3306}
+      - DB_USER=${SUPPORT_DB_USER:-root}
+      - DB_PASSWORD=${SUPPORT_DB_PASSWORD:-iznik}
+      - DB_NAME=${SUPPORT_DB_NAME:-iznik}
+      # Loki. Local :3100 has null user_id (health noise); edge points at the prod tunnel.
+      - LOKI_URL=${SUPPORT_LOKI_URL:-http://loki:3100}
+      # Sentry - real errors behind "oh dear something went wrong".
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Discourse - where mods/members report bugs; fixes cite topic numbers absent from support emails.
+      - DISCOURSE_API_KEY=${DISCOURSE_API_KEY:-}
+      - DISCOURSE_API_USER=${DISCOURSE_API_USER:-Edward_Hibbert}
+      # Audit trail (who investigated whom, with what) - durable on the audit volume.
+      - AUDIT_LOG_PATH=/app/audit/audit.jsonl
+    volumes:
+      # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
+      # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This
+      # bounds what a prompt-injected read could exfiltrate. Edge/prod uses
+      # ANTHROPIC_API_KEY (api mode) and should OMIT this mount entirely.
+      - ${SUPPORT_CLAUDE_DIR:-/home/edward/.claude}/.credentials.json:/home/claude/.claude/.credentials.json:ro
+      - ai-support-audit:/app/audit
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
@@ -1551,7 +1619,7 @@ services:
       - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
       - CI=${CI:-false}
@@ -1671,7 +1739,7 @@ services:
       # Freegle Mail Configuration
       - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
       - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest,Reengage
       # Freegle Images
       - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
       - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org
@@ -1766,105 +1834,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # =========================================
-  # MCP Support Tools (Privacy-Preserving Log Analysis)
-  # =========================================
-
-  # Container 0: Query Sanitizer - Frontend-facing, extracts and tokenizes PII
-  mcp-query-sanitizer:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-sanitizer
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/query-sanitizer
-      network: host
-    networks:
-      - default
-    ports:
-      - "${PORT_MCP_SANITIZER:-8084}:8080"
-    environment:
-      - PORT=8080
-      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
-    depends_on:
-      mcp-pseudonymizer:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mcp-sanitizer.rule=Host(`mcp-sanitizer.localhost`)"
-      - "traefik.http.routers.mcp-sanitizer.entrypoints=web"
-      - "traefik.http.services.mcp-sanitizer.loadbalancer.server.port=8080"
-
-  # Container 2: MCP Interface - Stateless proxy, NO key, forwards to pseudonymizer
-  mcp-interface:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-interface
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/mcp-interface
-      network: host
-    networks:
-      - default
-    environment:
-      - PORT=8080
-      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
-    depends_on:
-      mcp-pseudonymizer:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Container 3: Pseudonymizer - Has the key, queries Loki, pseudonymizes results
-  mcp-pseudonymizer:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-pseudonymizer
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/pseudonymizer
-      network: host
-    networks:
-      - default
-    volumes:
-      - mcp-pseudonymizer-data:/data
-      - mcp-audit-logs:/var/log/mcp-audit
-    environment:
-      - PORT=8080
-      - LOKI_URL=http://loki:3100
-      - DATA_DIR=/data
-      - AUDIT_LOG_DIR=/var/log/mcp-audit
-      # Database access for pseudonymized SQL queries
-      - DB_HOST=percona
-      - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASSWORD=iznik
-      - DB_NAME=iznik
-    depends_on:
-      loki:
-        condition: service_healthy
-        required: false
-      percona:
-        condition: service_healthy
-        required: false
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
 volumes:
   rebuild-requests:
     driver: local
@@ -1889,11 +1858,7 @@ volumes:
     driver: local
   apiv2_logs:
     driver: local
-  mcp-pseudonymizer-data:
-    driver: local
   embedding_model_cache:
-    driver: local
-  mcp-audit-logs:
     driver: local
   # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
   delivery-cache:
@@ -1906,6 +1871,10 @@ volumes:
     driver: local   # tile-server rendered tiles (~44 GB)
   alloy-data:
     driver: local   # Grafana Alloy positions/WAL (edge log shipping)
+  wiki-elastic-data:
+    driver: local   # Elasticsearch index for the wiki's CirrusSearch (edge)
+  ai-support-audit:
+    driver: local   # durable audit log of AI Support Helper investigations (who queried whom)
 
 networks:
   default:

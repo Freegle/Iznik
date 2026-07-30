@@ -335,6 +335,7 @@ const test = base.test.extend({
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Failed to load resource.*yesterday\.ilovefreegle\.org/, // ModYesterday.vue polls the live Yesterday backup host directly (real prod system, not part of the CI Docker stack) — its response code depends on that system's own restore/refresh cycle, outside test control
       /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
       /Failed to load resource.*adtrafficquality\.google.*sodar/, // Google CSE script internally calls sodar (ad traffic quality) — external service, not our code
     ]

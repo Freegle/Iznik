@@ -7741,10 +7741,6 @@
           "type": "string",
           "x-go-name": "Polyofficial"
         },
-        "postvisibility": {
-          "type": "string",
-          "x-go-name": "Postvisibility"
-        },
         "profile": {
           "type": "string",
           "x-go-name": "GroupProfileStr"

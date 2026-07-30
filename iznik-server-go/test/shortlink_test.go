@@ -62,9 +62,12 @@ func TestGetShortlinkList(t *testing.T) {
 func TestPostShortlink(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkPost")
 	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_newlink","groupid":%d}`, prefix, groupID)
-	req := httptest.NewRequest("POST", "/api/shortlink", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/shortlink?jwt="+token, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -79,9 +82,12 @@ func TestPostShortlinkDuplicate(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkDup")
 	groupID := CreateTestGroup(t, prefix)
 	createTestShortlink(t, prefix+"_dup", groupID)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_dup","groupid":%d}`, prefix, groupID)
-	req := httptest.NewRequest("POST", "/api/shortlink", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/shortlink?jwt="+token, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 409, resp.StatusCode)
@@ -93,6 +99,7 @@ func TestPostShortlinkDuplicate(t *testing.T) {
 }
 
 func TestPostShortlinkMissingParams(t *testing.T) {
+	// Missing params are rejected before the auth check, so no token needed.
 	body := `{"name":"","groupid":0}`
 	req := httptest.NewRequest("POST", "/api/shortlink", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -102,6 +109,29 @@ func TestPostShortlinkMissingParams(t *testing.T) {
 	var result map[string]interface{}
 	json2.Unmarshal(rsp(resp), &result)
 	assert.Equal(t, float64(2), result["ret"])
+}
+
+func TestPostShortlinkNotLoggedIn(t *testing.T) {
+	prefix := uniquePrefix("ShortlinkAnon")
+	groupID := CreateTestGroup(t, prefix)
+	body := fmt.Sprintf(`{"name":"%s_x","groupid":%d}`, prefix, groupID)
+	req := httptest.NewRequest("POST", "/api/shortlink", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+func TestPostShortlinkNotModOfGroup(t *testing.T) {
+	prefix := uniquePrefix("ShortlinkNonMod")
+	groupID := CreateTestGroup(t, prefix)
+	uID := CreateTestUser(t, prefix+"_u", "User")
+	CreateTestMembership(t, uID, groupID, "Member")
+	_, token := CreateTestSession(t, uID)
+	body := fmt.Sprintf(`{"name":"%s_x","groupid":%d}`, prefix, groupID)
+	req := httptest.NewRequest("POST", "/api/shortlink?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
 }
 
 func TestGetShortlinkV2Path(t *testing.T) {

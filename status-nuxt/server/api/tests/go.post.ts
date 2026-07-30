@@ -37,10 +37,13 @@ export default defineEventHandler(async (event) => {
     console.log('Failed to resolve percona IP, using hostname')
   }
 
-  // Build test command
+  // Build test command. Both variants need an explicit -timeout: the big integration
+  // package normally finishes just under go test's default 10m, so under any extra DB
+  // load (e.g. the Laravel suite running concurrently) it gets killed at exactly 600s
+  // with zero test failures — a phantom red.
   const testCmd = withCoverage
     ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -timeout 30m -coverprofile=coverage.out ./... -coverpkg ./...`
-    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 ./... -v`
+    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 -timeout 30m ./... -v`
 
   // Run tests asynchronously
   const testProcess = spawn('sh', ['-c', `

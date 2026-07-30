@@ -51,6 +51,7 @@
                 :key="amount + '-fallback'"
                 :text="'Donate £' + amount"
                 :value="amount"
+                :suggest-giving-fund="false"
               />
               <p v-else-if="payPalFallback && isApp" class="text-muted">
                 Payment is temporarily unavailable. Please try again later.

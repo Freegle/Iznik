@@ -3,15 +3,18 @@ package rippling
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // Package-level analytics endpoint for the sysadmin rippling tab. Everything here is computed
@@ -47,6 +50,30 @@ var routingClient = &http.Client{Timeout: 25 * time.Second}
 // driveMaxMinutes caps the isochrone. 45 is far cheaper to compute than 60 and covers virtually
 // all real reply travel; anything beyond reads as "unreachable" and is excluded from the mean.
 const driveMaxMinutes = 45
+
+// Fixed accrual horizons for the settling-clock KPIs, measured from reach creation
+// (rippling_reach.created_at - a clock that never moves, unlike messages_groups.arrival, which
+// autorepost bumps forward). Replies settle fast, so the long-standing 36h convention fits the
+// reply-rate and mean-replies figures. TAKEN is recorded long after the event (offerers mark
+// outcomes a mean of ~19 days after the post enters rippling on prod), so a short window would
+// read near zero: the taken series uses a 14-day horizon. Without fixed horizons the trend
+// series counted replies/takes EVER, so recent days - which simply hadn't finished accruing -
+// always drew as a steep mechanical decline.
+const (
+	ReplyHorizonHours = 36
+	TakenHorizonDays  = 14
+)
+
+// trendMature reports whether every post on a trend day (YYYY-MM-DD) has had the full horizon
+// elapse by now, i.e. the day's fixed-horizon figure can no longer grow. Immature days are still
+// returned (flagged false) so the UI can draw them as provisional rather than as a decline.
+func trendMature(day string, horizon time.Duration, now time.Time) bool {
+	t, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return false
+	}
+	return !now.Before(t.AddDate(0, 0, 1).Add(horizon))
+}
 
 // envInt reads a positive int env var, falling back to def. Lets the drive-time sample size and
 // concurrency be tuned per-environment WITHOUT a rebuild - prod's routing is on the local network
@@ -300,8 +327,7 @@ func bullseyeFromObs(obs []driveObs) []BullseyeBand {
 // stratum, tagging each reply rippled-out server-side. rippled-out = the replier reached the
 // post via rippling: not an established member of an ORIGIN group before arrival, on a post that
 // had a rippled_in copy by reply time. (The same durable signal the attribution ladder uses.)
-func fetchDriveSample(start, end, stratumSQL string, sampleN int) []samplePost {
-	db := database.DBConn
+func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) []samplePost {
 	type row struct {
 		Msgid   uint64
 		Plat    float64
@@ -408,7 +434,9 @@ func analyticsWindow(c *fiber.Ctx) (stratum, start, end, stratumSQL string) {
 }
 
 func Analytics(c *fiber.Ctx) error {
-	db := database.DBConn
+	// Bound to the request context so an abandoned request (the gateway giving up, the user
+	// switching window) stops its DB work rather than running on behind a response nobody reads.
+	db := database.DBConn.WithContext(c.Context())
 	stratum, start, end, stratumSQL := analyticsWindow(c)
 
 	// Section 1 counts - pure SQL, full set. Per-post nreplies/taken/freeglers, then aggregate.
@@ -420,9 +448,22 @@ func Analytics(c *fiber.Ctx) error {
 		TotalReplies  int
 		MeanFreeglers float64
 	}
-	// replied_36h: got a reply within 36h of the settling clock (first ripple, else origin
-	// arrival) - the headline convention. replied_ever: any reply eventually - the total.
-	db.Raw(`
+	// The four query blocks below (counts, held replies, trend, section 3) are independent, and
+	// each takes seconds even with the rippling_reach(created_at, total_freeglers) index (they
+	// aggregate per-post/per-reply subqueries over the whole window). Run them concurrently so the
+	// endpoint's wall time is the slowest block, not the sum - serially they added up past the
+	// gateway timeout (504s on the sysadmin KPIs).
+	var wg sync.WaitGroup
+	wg.Add(4)
+
+	// replied_36h: got a reply within 36h of the settling clock - the headline convention. The
+	// clock is reach creation (rippling_reach.created_at), which in practice coincides with the
+	// first ripple and, unlike messages_groups.arrival, never moves: autorepost bumps arrival
+	// forward, which used to hand older posts ever-longer 36h windows. replied_ever: any reply
+	// eventually - the total.
+	go func() {
+		defer wg.Done()
+		db.Raw(fmt.Sprintf(`
 		SELECT COUNT(*) AS posts,
 		       SUM(replied_36h) AS replied36h,
 		       SUM(nreplies > 0) AS replied_ever,
@@ -433,40 +474,28 @@ func Analytics(c *fiber.Ctx) error {
 		    SELECT rr.total_freeglers AS freeglers,
 		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies,
 		           EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested'
-		                  AND c2.date <= COALESCE(
-		                       (SELECT MIN(arrival) FROM messages_groups WHERE msgid = rr.msgid AND rippled_in = 1 AND deleted = 0),
-		                       (SELECT MIN(arrival) FROM messages_groups WHERE msgid = rr.msgid AND rippled_in = 0 AND deleted = 0)
-		                  ) + INTERVAL 36 HOUR) AS replied_36h,
+		                  AND c2.date <= rr.created_at + INTERVAL %d HOUR) AS replied_36h,
 		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken
-		    FROM rippling_reach rr
+		    FROM rippling_reach rr`, ReplyHorizonHours)+`
 		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
 		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d`, start, end).Scan(&agg)
-
-	kpi := Section1KPI{Stratum: stratum, Posts: agg.Posts, Replied36h: agg.Replied36h,
-		RepliedEver: agg.RepliedEver, Taken: agg.Taken, MeanFreeglers: agg.MeanFreeglers}
-	if agg.Posts > 0 {
-		kpi.Replied36hPct = float64(agg.Replied36h) / float64(agg.Posts) * 100
-		kpi.RepliedEverPct = float64(agg.RepliedEver) / float64(agg.Posts) * 100
-		kpi.TakenPct = float64(agg.Taken) / float64(agg.Posts) * 100
-		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
-	}
+	}()
 
 	// Reply friction: held replies over the window on rippled-out offers, as a share of all
 	// replies. rippling_held_replies has msgid + created_at so it scopes by post + stratum.
 	var held int
-	db.Raw(`
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) FROM rippling_held_replies hr
 		JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0`+stratumSQL+`
 		JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'
 		WHERE hr.created_at >= ? AND hr.created_at < ?
 		  AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)`,
-		start, end).Scan(&held)
-	kpi.HeldReplies = held
-	if agg.TotalReplies > 0 {
-		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
-	}
+			start, end).Scan(&held)
+	}()
 
 	// The drive-time figures (the Section 1 overall mean, the Section 3 rippled-out mean, the
 	// per-day trend and the reliability bullseye) all come from a sampled routing pass - ~250
@@ -476,17 +505,42 @@ func Analytics(c *fiber.Ctx) error {
 	// kpi.ReplyDrive and s3.RippleDrive keep their zero value (Available:false), so the UI shows a
 	// "sampling..." placeholder until the drive-time request fills them in.
 
-	// Section 2 - trends: the SQL KPIs (reply rate, taken rate, mean replies, freeglers reached)
-	// per arrival day. The sample-based drive-time trend is merged in client-side from the
-	// separate drive-time request.
-	trend := fiber.Map{
-		"kpis":       trendSeries(start, end, stratumSQL),
-		"drive_time": []DriveTrendPoint{},
-	}
+	// Section 2 - trends: the SQL KPIs (fixed-horizon reply rate, taken rate and mean replies,
+	// plus freeglers reached) per day the post entered rippling. The sample-based drive-time
+	// trend is merged in client-side from the separate drive-time request.
+	var trendRows []TrendRow
+	go func() {
+		defer wg.Done()
+		trendRows = trendSeries(db, start, end, stratumSQL)
+	}()
 
 	// Section 3 - is rippling helping? Server-derived rippled-out shares, the rescue floor and
 	// contribution range, and the home-vs-rippled comparison. RippleDrive fills in separately.
-	s3 := rippledOutSection(start, end, stratumSQL)
+	var s3 Section3RippledOut
+	go func() {
+		defer wg.Done()
+		s3 = rippledOutSection(db, start, end, stratumSQL)
+	}()
+
+	wg.Wait()
+
+	kpi := Section1KPI{Stratum: stratum, Posts: agg.Posts, Replied36h: agg.Replied36h,
+		RepliedEver: agg.RepliedEver, Taken: agg.Taken, MeanFreeglers: agg.MeanFreeglers}
+	if agg.Posts > 0 {
+		kpi.Replied36hPct = float64(agg.Replied36h) / float64(agg.Posts) * 100
+		kpi.RepliedEverPct = float64(agg.RepliedEver) / float64(agg.Posts) * 100
+		kpi.TakenPct = float64(agg.Taken) / float64(agg.Posts) * 100
+		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
+	}
+	kpi.HeldReplies = held
+	if agg.TotalReplies > 0 {
+		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
+	}
+
+	trend := fiber.Map{
+		"kpis":       trendRows,
+		"drive_time": []DriveTrendPoint{},
+	}
 
 	return c.JSON(fiber.Map{
 		"stratum":       stratum,
@@ -530,7 +584,7 @@ func Analytics(c *fiber.Ctx) error {
 // Fast (one sampling query, no routing).
 func AnalyticsDriveTimes(c *fiber.Ctx) error {
 	stratum, start, end, stratumSQL := analyticsWindow(c)
-	posts := fetchDriveSample(start, end, stratumSQL, driveSampleSize())
+	posts := fetchDriveSample(database.DBConn.WithContext(c.Context()), start, end, stratumSQL, driveSampleSize())
 	wire := make([]samplePostWire, len(posts))
 	for i, p := range posts {
 		wire[i] = samplePostWire{Lat: p.lat, Lng: p.lng, Points: p.points, Rippled: p.rippled, Days: p.days, Takers: p.takers}
@@ -616,7 +670,10 @@ func AnalyticsDriveAggregate(c *fiber.Ctx) error {
 	})
 }
 
-// TrendRow is one arrival-day point for the Section 2 time series.
+// TrendRow is one day's point for the Section 2 time series, by the day the post entered
+// rippling. The reply/taken/mean-replies figures are FIXED-HORIZON (see ReplyHorizonHours /
+// TakenHorizonDays): every day is measured the same way, so a lower recent point is a real
+// change, not just less accrual time.
 type TrendRow struct {
 	Day           string  `json:"day"            gorm:"column:day"`
 	Posts         int     `json:"posts"          gorm:"column:posts"`
@@ -624,28 +681,44 @@ type TrendRow struct {
 	TakenPct      float64 `json:"taken_pct"      gorm:"column:taken_pct"`
 	MeanReplies   float64 `json:"mean_replies"   gorm:"column:mean_replies"`
 	MeanFreeglers float64 `json:"mean_freeglers" gorm:"column:mean_freeglers"`
+	// Whether the day is old enough for its fixed-horizon figures to be final. RepliedMature
+	// covers replied_pct + mean_replies (36h); taken_pct matures much later (14 days), so the
+	// taken trend's provisional tail is weeks long, not hours.
+	RepliedMature bool `json:"replied_mature" gorm:"-"`
+	TakenMature   bool `json:"taken_mature"   gorm:"-"`
 }
 
-// trendSeries returns per-day KPI points (ascending) over the window + stratum. Pure SQL.
-func trendSeries(start, end, stratumSQL string) []TrendRow {
+// trendSeries returns per-day KPI points (ascending) over the window + stratum. Pure SQL plus
+// the maturity flags, which depend on the wall clock, not the data.
+func trendSeries(db *gorm.DB, start, end, stratumSQL string) []TrendRow {
 	rows := []TrendRow{}
-	database.DBConn.Raw(`
-		SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day,
+	db.Raw(fmt.Sprintf(`
+		SELECT DATE_FORMAT(created, '%%Y-%%m-%%d') AS day,
 		       COUNT(*) AS posts,
-		       100 * SUM(nreplies > 0) / COUNT(*) AS replied_pct,
+		       100 * SUM(replied) / COUNT(*) AS replied_pct,
 		       100 * SUM(taken) / COUNT(*) AS taken_pct,
 		       SUM(nreplies) / COUNT(*) AS mean_replies,
 		       AVG(freeglers) AS mean_freeglers
 		FROM (
 		    SELECT rr.created_at AS created, rr.total_freeglers AS freeglers,
-		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies,
-		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken
+		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested'
+		            AND cm.date <= rr.created_at + INTERVAL %d HOUR) AS nreplies,
+		           EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested'
+		            AND c2.date <= rr.created_at + INTERVAL %d HOUR) AS replied,
+		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid
+		            AND mb.timestamp <= rr.created_at + INTERVAL %d DAY) AS taken
 		    FROM rippling_reach rr
 		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
-		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
+		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`,
+		ReplyHorizonHours, ReplyHorizonHours, TakenHorizonDays)+stratumSQL+`
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d
 		GROUP BY day ORDER BY day`, start, end).Scan(&rows)
+	now := time.Now()
+	for i := range rows {
+		rows[i].RepliedMature = trendMature(rows[i].Day, ReplyHorizonHours*time.Hour, now)
+		rows[i].TakenMature = trendMature(rows[i].Day, TakenHorizonDays*24*time.Hour, now)
+	}
 	return rows
 }
 
@@ -688,7 +761,7 @@ type Section3RippledOut struct {
 
 // rippledOutSection computes the server-derived rippled-out reply/taker shares (pure SQL) over
 // replies to rippled posts in the window + stratum.
-func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
+func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3RippledOut {
 	var raw struct {
 		Replies        int
 		RippledReplies int
@@ -696,7 +769,13 @@ func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
 		RippledTakers  int
 		ClientRippled  int
 	}
-	database.DBConn.Raw(`
+	// The shares query and the rescue-floor query are independent and both heavy (the rescue floor
+	// is the slowest single query on the tab), so run them concurrently.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) AS replies,
 		       SUM(rippled) AS rippled_replies,
 		       SUM(is_taker) AS takers,
@@ -718,11 +797,14 @@ func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
 		    WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?
 		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
 		) d`, start, end).Scan(&raw)
+	}()
 
 	// Rescue floor: DISTINCT posts that were taken AND had at least one reply AND had NO reply
 	// from an established home-group member - so the take could only have come via rippling.
 	var rescued int
-	database.DBConn.Raw(`
+	go func() {
+		defer wg.Done()
+		db.Raw(`
 		SELECT COUNT(*) FROM (
 		    SELECT rr.msgid
 		    FROM rippling_reach rr
@@ -738,6 +820,9 @@ func rippledOutSection(start, end, stratumSQL string) Section3RippledOut {
 		            AND mem.collection = 'Approved' AND mem.added < og.arrival
 		          WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')
 		) x`, start, end).Scan(&rescued)
+	}()
+
+	wg.Wait()
 
 	s := Section3RippledOut{Replies: raw.Replies, RippledReplies: raw.RippledReplies,
 		Takers: raw.Takers, RippledTakers: raw.RippledTakers, RescuedTakes: rescued}

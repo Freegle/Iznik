@@ -257,8 +257,6 @@ async function loadMore($state) {
     show.value = messages.value.length
     $state.loaded()
   } else {
-    const currentCount = Object.keys(messageStore.list).length
-
     const params = {
       groupid: groupid.value,
       collection: collection.value,
@@ -274,20 +272,21 @@ async function loadMore($state) {
     }
     context.value = messageStore.context
 
-    const newCount = Object.keys(messageStore.list).length
-    if (currentCount === newCount) {
-      console.log('InfiniteScroll complete:', {
-        collection: collection.value,
-        groupid: groupid.value,
-        currentCount,
-        newCount,
-        fetchedIds: fetchedIds?.length ?? 0,
-        contextBefore: params.context,
-        contextAfter: messageStore.context,
-        limit: params.limit,
-        shown: show.value,
-        messagesLen: messages.value.length,
-      })
+    // Whether there is more to fetch is a property of THIS request/response,
+    // not of the shared cross-group messageStore.list. Rippled/cross-posted
+    // messages mean a page's ids are often already keys in that store (e.g.
+    // fetched earlier for a sibling group this session), so comparing its
+    // size before/after used to declare "complete" on a page that was
+    // genuinely non-empty and had more pages after it (Discourse 9954/5) -
+    // a moderator scrolling one group's queue could have the scroll silently
+    // stop long before reaching an older, still-live message.
+    if (!fetchedIds || fetchedIds.length === 0) {
+      $state.complete()
+    } else if (!context.value) {
+      // Backend returned fewer than a full page, so this genuinely was the
+      // last batch. Reveal it before stopping - otherwise the newest fetch
+      // stays hidden with no further scroll trigger to show it.
+      show.value = messages.value.length
       $state.complete()
     } else {
       $state.loaded()

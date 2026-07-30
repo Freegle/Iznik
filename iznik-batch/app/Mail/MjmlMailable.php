@@ -327,8 +327,7 @@ abstract class MjmlMailable extends Mailable
         $headers = $message->getHeaders();
 
         $unsubscribeEmail = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
-        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
-        $unsubscribeUrl = "{$userSite}/unsubscribe/{$userId}";
+        $unsubscribeUrl = $this->listUnsubscribeUrl($userId);
 
         // List-Unsubscribe: RFC 2369 — mailto: and https: URLs.
         $headers->addTextHeader(
@@ -338,6 +337,19 @@ abstract class MjmlMailable extends Mailable
 
         // List-Unsubscribe-Post: RFC 8058 — enables one-click unsubscribe.
         $headers->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
+    }
+
+    /**
+     * The HTTPS URL used in the List-Unsubscribe header. Defaults to the generic
+     * account unsubscribe page; a mailable for a single email category (e.g.
+     * MatchedPosts) overrides this to a targeted, one-click opt-out for just that
+     * category instead of the whole account.
+     */
+    protected function listUnsubscribeUrl(int $userId): string
+    {
+        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
+
+        return "{$userSite}/unsubscribe/{$userId}";
     }
 
     /**

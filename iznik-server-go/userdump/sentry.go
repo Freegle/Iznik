@@ -54,10 +54,23 @@ func newSentryClient() *sentryClient {
 	}
 }
 
-func (s *sentryClient) issues(project, query string) ([]sentryIssue, error) {
+// sentryMaxRange bounds an absolute date query. Sentry's issues API rejects a
+// statsPeriod over 14d (only ”, '24h', '14d' are valid) and caps absolute
+// start/end ranges at 90 days, so we query by start/end and clamp to 90 days.
+const sentryMaxRange = 90 * 24 * time.Hour
+
+func (s *sentryClient) issues(project, query string, startNs, endNs int64) ([]sentryIssue, error) {
+	end := time.Unix(0, endNs).UTC()
+	start := time.Unix(0, startNs).UTC()
+	if !end.After(start) || end.Sub(start) > sentryMaxRange {
+		start = end.Add(-sentryMaxRange)
+	}
 	params := url.Values{}
 	params.Set("query", query)
-	params.Set("statsPeriod", "90d")
+	// Absolute range, NOT statsPeriod: statsPeriod only allows '', '24h', '14d',
+	// so "90d" 400s ("Invalid stats_period"). start/end accepts up to 90 days.
+	params.Set("start", start.Format("2006-01-02T15:04:05"))
+	params.Set("end", end.Format("2006-01-02T15:04:05"))
 	u := fmt.Sprintf("%s/projects/%s/%s/issues/?%s", sentryBase(), s.org, project, params.Encode())
 
 	req, err := http.NewRequest(http.MethodGet, u, nil)
@@ -87,7 +100,7 @@ func (s *sentryClient) issues(project, query string) ([]sentryIssue, error) {
 // each email) and writes them to sentry_issues. Missing token => error so the
 // caller records a warning. Partial per-project failures are tolerated as long
 // as something was collected.
-func collectSentry(b *Builder, s *sentryClient, userID uint64, emails []string) (int, error) {
+func collectSentry(b *Builder, s *sentryClient, userID uint64, emails []string, startNs, endNs int64) (int, error) {
 	if s.token == "" {
 		return 0, fmt.Errorf("no SENTRY_AUTH_TOKEN configured")
 	}
@@ -109,7 +122,7 @@ func collectSentry(b *Builder, s *sentryClient, userID uint64, emails []string) 
 	var firstErr error
 	for _, project := range sentryProjects {
 		for _, qy := range queries {
-			issues, err := s.issues(project, qy)
+			issues, err := s.issues(project, qy, startNs, endNs)
 			if err != nil {
 				if firstErr == nil {
 					firstErr = err

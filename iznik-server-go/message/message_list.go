@@ -50,10 +50,9 @@ type ListMessageItem struct {
 }
 
 type ListMessagesResponse struct {
-	Messages []ListMessageItem `json:"messages"`
+	Messages []ListMessageItem  `json:"messages"`
 	Context  *PaginationContext `json:"context,omitempty"`
 }
-
 
 // ListMessages handles GET /messages - list messages with moderation queue support.
 func ListMessages(c *fiber.Ctx) error {
@@ -462,6 +461,16 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		contentcheckFilter = " AND (mg.collection != 'Pending' OR mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
 	}
 
+	// 9808/638: when a mod asks for their OWN-group posts only (?originonly=true), exclude
+	// posts that rippled INTO the group (rippled_in = 1) - they otherwise dominate the
+	// Approved list and make finding a group's own members' posts hard. Folded into the
+	// per-branch filter that every query variant below already appends, using the same
+	// messages_groups.rippled_in marker the Edit branch above hardcodes (9808/633). Constant
+	// clause, so no bound parameter is added.
+	if c.Query("originonly") == "true" {
+		contentcheckFilter += " AND mg.rippled_in = 0"
+	}
+
 	if collection == "Edit" {
 		// Edit review uses messages_edits table, not messages_groups collection.
 		// Restrict to ORIGIN messages_groups rows (rippled_in = 0). A post rippled INTO a
@@ -630,4 +639,3 @@ func GetMessagesWithHistory(c *fiber.Ctx) error {
 
 	return c.JSON(messages)
 }
-

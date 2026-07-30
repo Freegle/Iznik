@@ -47,9 +47,10 @@ class RebuildReachCommandTest extends TestCase
     {
         DB::insert(
             "INSERT INTO rippling_reach
-                (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+                (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                  status, schedule, next_expansion_at, created_at, updated_at)
              VALUES (?, ?, ?, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+                     ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)),
                      ?, 'drive', ?, 3, 90, ?, NULL, NULL, NOW(), NOW())",
             [$msgid, $lat, $lng, now()->subMinutes(30), $tick, $status]
         );

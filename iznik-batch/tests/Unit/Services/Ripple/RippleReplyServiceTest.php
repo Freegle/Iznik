@@ -34,10 +34,10 @@ class RippleReplyServiceTest extends TestCase
         $message = $this->createTestMessage($user, $group);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY]
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::POLY, self::POLY]
         );
 
         return (int) $message->id;

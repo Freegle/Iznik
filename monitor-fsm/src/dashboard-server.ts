@@ -285,8 +285,7 @@ function postToDiscourse(topicId: number, raw: string, replyToPostNumber?: numbe
       path: '/posts.json',
       method: 'POST',
       headers: {
-        'User-Api-Key': apiKey,
-        'Api-Username': 'Edward_Hibbert',
+        'Api-Key': apiKey,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
       },

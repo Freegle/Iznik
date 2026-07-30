@@ -461,7 +461,7 @@ describe('message store - markSeen()', () => {
 
     await store.markSeen([1, 3])
 
-    expect(mockMarkSeen).toHaveBeenCalledWith([1, 3])
+    expect(mockMarkSeen).toHaveBeenCalledWith([1, 3], undefined)
     expect(mockNearbyMarkSeen).toHaveBeenCalledWith([1, 3])
     expect(store.list[1].unseen).toBe(false)
     expect(store.list[2].unseen).toBe(true) // untouched

@@ -41,6 +41,7 @@ import ModConfigsAPI from './ModConfigsAPI.js'
 import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
+import RecommendationsAPI from './RecommendationsAPI.js'
 import RipplingAPI from './RipplingAPI.js'
 import TownAPI from './TownAPI.js'
 import SessionAPI from './SessionAPI.js'
@@ -93,6 +94,7 @@ export default (config) => {
     news: new NewsAPI(options),
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
+    recommendations: new RecommendationsAPI(options),
     rippling: new RipplingAPI(options),
     town: new TownAPI(options),
     session: new SessionAPI(options),

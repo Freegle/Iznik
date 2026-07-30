@@ -115,12 +115,14 @@ func handleAppleLogin(c *fiber.Ctx, identityToken, appleUserID, email, firstName
 		})
 	}
 
-	// Email from JWT claims; Apple only includes it on the first sign-in.
-	// If the JWT has no email, fall back to the value the client sent (also only first sign-in).
+	// SECURITY: trust ONLY the email inside the verified Apple identity token. Never fall back
+	// to the client-supplied email. Apple omits the email claim after the first sign-in (and when
+	// the email scope is not requested), so an attacker holding any validly-signed Apple token
+	// with no email claim could otherwise put a victim's address in the request body and be
+	// matched into — and logged in as — that existing account. Returning Apple users are matched
+	// by the verified `sub` via users_logins, so dropping the client email does not break them.
 	tokenEmail, _ := claims["email"].(string)
-	if tokenEmail != "" {
-		email = tokenEmail
-	}
+	email = tokenEmail
 
 	fullName := firstName + " " + lastName
 	if firstName == "" {

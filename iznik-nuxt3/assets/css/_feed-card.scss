@@ -1,0 +1,68 @@
+@import 'assets/css/sticky-banner.scss';
+
+/* Browse-feed card sizing.
+ *
+ * At lg+ a feed card (MessageSummary, and MessageSkeleton which has to match it to
+ * avoid CLS) is a horizontal row whose photo is a square, so the square's side IS the
+ * card height. That side used to be a fixed 200px, which meant a short screen only fitted
+ * two or three posts. Instead we derive the side from the viewport height, aiming to show
+ * $feed-cards-target cards in the space between the fixed navbar and the sticky bottom ad.
+ *
+ * Clamped at both ends: never larger than the 200px it used to be, and never so small that
+ * the title, location and meta line beside the photo stop fitting. Where the clamp bites -
+ * viewports under about 710px tall - we show fewer than the target rather than render an
+ * unreadable card.
+ *
+ * The sticky ad zone grows to $sticky-banner-height-desktop-tall on tall viewports, but
+ * budgeting for that would make cards SHRINK as the window grew. We always budget the
+ * standard height, so the size only ever increases with the viewport.
+ */
+$feed-cards-target: 6;
+/* .singlecolumn margin-bottom in ScrollGrid. */
+$feed-card-gap: 8px;
+$feed-card-min: 80px;
+$feed-card-max: 200px;
+/* --header-navbar-height, as a literal because media queries can't read custom properties. */
+$feed-card-navbar: 76px;
+$feed-card-chrome: $feed-card-navbar + $sticky-banner-height-desktop +
+  ($feed-cards-target - 1) * $feed-card-gap;
+
+/* How much of the description survives depends on the row height. Beside the photo sit a
+ * header (subject + location + the gap under them, 46px at default font size), a meta line
+ * (distance + age, 17px) and whatever description fits in between. MessageSummary's vertical
+ * padding is calc((row - 64px) / 6) a side, so
+ *
+ *   description space = row - 2 x (row - 64px) / 6 - 46px - 17px = (2 x row + 64px) / 3 - 63px
+ *
+ * which reaches one 17px line at a 89px row and two at a 115px row. Turn those back into
+ * viewport heights (row x target + chrome) to get the breakpoints below.
+ *
+ * - Above $feed-card-oneline-max: two or more lines, faded out at the bottom as before.
+ * - Down to $feed-card-compact-max: exactly one line, so clamp it with an ellipsis - a fade
+ *   over the only line there is just turns it grey.
+ * - Below that: no room at all, so drop it. Subject, location, distance and age remain. */
+$feed-card-desc-oneline-row: 89px;
+$feed-card-desc-twoline-row: 115px;
+$feed-card-compact-max: $feed-cards-target * $feed-card-desc-oneline-row +
+  $feed-card-chrome - 1px;
+$feed-card-oneline-max: $feed-cards-target * $feed-card-desc-twoline-row +
+  $feed-card-chrome - 1px;
+
+/* Set --summary-row-size. Used on :root so MessageSummary and MessageSkeleton can never
+ * drift apart. Callers that render a summary in a narrow container (e.g. WantedMatches)
+ * override the photo box directly and are unaffected. */
+@mixin feed-card-size-var {
+  --summary-row-size: clamp(
+    #{$feed-card-min},
+    calc((100vh - #{$feed-card-chrome}) / #{$feed-cards-target}),
+    #{$feed-card-max}
+  );
+
+  @supports (height: 100dvh) {
+    --summary-row-size: clamp(
+      #{$feed-card-min},
+      calc((100dvh - #{$feed-card-chrome}) / #{$feed-cards-target}),
+      #{$feed-card-max}
+    );
+  }
+}

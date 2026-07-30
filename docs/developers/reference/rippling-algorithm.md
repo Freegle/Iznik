@@ -222,11 +222,99 @@ retracted, so re-approval restores the copy without re-rippling.
   own distance) and OUTBOUND (a post is only shown/mailed to people within the *poster's*
   distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
   the digest's `DistancePreferenceFilter::passesBothPreferences`).
+
+  **The viewer's own posts always come first.** A member's own open posts are included in the
+  feed regardless of reach (`isochrone/message.go` own-posts arm) and flagged with `mine`
+  (`MessageSummary.Mine`, set when `messages.fromuser` = the viewer). The client
+  (`composables/useMessageSort.js`) floats `mine` posts to the top of *every* sort order (New
+  to you / Newest / Closest), newest-first, just below any paid pinned clearance. Without this,
+  members lost their own posts among the reach-ordered feed and assumed they were not showing
+  (Discourse 9933).
+
+  The containment test itself is served through **sandwich bounds**
+  (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): the exact polygons are grid-fill
+  isochrones averaging ~11k vertices / 178 KB, so the hot queries first consult two small
+  derived polygons stored as SAME-ROW columns on `rippling_reach` — `outer_bound` (a
+  verified superset, NOT NULL and spatially indexed: outside it = definitely out) and
+  `inner_bound` (a verified subset, nullable: inside it = definitely in) — and only fetch
+  the exact polygon for the thin band between them, always via a correlated `EXISTS`
+  (MySQL's lazy BLOB fetch does not cross OR items). The browse feed and count DRIVE
+  their R-tree from the small `outer_bound` index rather than the polygon's, so completed
+  posts are pruned by the index itself. Same-row storage means every polygon write sets
+  the bounds in the SAME statement (`ExpandService`, all four write paths) — no timing
+  window can exist between polygon and bounds.
+
+  The `outer_bound` sentinel ladder every reader relies on: a real bound (cheap
+  reject/accept work) > `ST_Envelope(polygon)` (derivation failed — the MBR still finds
+  the row and the exact polygon decides) > a degenerate POINT (completed posts ONLY —
+  pruned from the browse R-tree; consumers that still serve completed posts, i.e. the
+  digest's "came and went" section and held replies, treat POINT as "no bounds info" and
+  use the exact test). The bounds preferentially come from the routing server
+  (`iznik-routing-go/bounds.go`): derived on the same rasterisation grid the exact
+  polygon is traced from (morphological dilate/erode + simplification budgeted inside
+  that margin, so superset/subset hold by construction), shipped as
+  `catchment_outer`/`catchment_inner` on point-form `/v1/catchment`, and verified against
+  the stored polygon on write (`Ripple\ReachBoundsService`); otherwise derived in SQL
+  (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). A rejection clip that
+  shrinks the polygon NULLs `inner_bound` in the same statement
+  (`ClipReachForRejectedGroup`, `reapplyClips`), since a stale inner bound would keep
+  showing the post in the just-rejected area.
+
+  The single-point gates consult the same sandwich: `ReachQueryService::isWithinReach`
+  (browse Nearby / reply-eligibility / held-reply release in batch), the message-list
+  replyeligible probe and the chat reply hold (shared Go fragments in
+  `rippling/reachbounds.go`). Being PK lookups they skip the MBR conjunct, and they
+  treat POINT bounds as absent so completed posts still resolve against the exact
+  polygon.
+
+  Production migration: a plain ALTER cannot deliver this schema on the ~10 GB hot table
+  (NOT NULL + SPATIAL index = tablespace rebuild under Galera TOI; verified on Percona
+  8.0.43 that ALGORITHM=INSTANT refuses both), so `ripple:migrate-reach-bounds-schema`
+  does a pt-online-schema-change-style shadow copy: full-schema shadow table, chunked
+  resumable copy deriving bounds per row (completed posts get the POINT sentinel),
+  `updated_at` delta catch-up, then an atomic RENAME swap. Dev/CI just run the Laravel
+  migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
 - **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
 - **Rippling Explorer (ModTools `/rippling`):** draws the exact polygon and tints groups from
   the per-tick `reachable_group_ids`.
+
+### 7a. Relevance ranking (browse feed AND digest - same engine)
+
+The browse/Nearby feed is **not** reverse-chronological. Both it and the unified digest order
+posts by a **rippling relevance score**, computed by one shared function
+(`isochrone/score.go` `Score()`; the Laravel `DigestPostScorer` mirrors it for mass mail and is
+unit-tested against the Go reference values).
+
+**Score** (per post, all terms in `[0,1]`):
+
+    Total = W_close·close + W_fresh·fresh + W_budget·budget + W_anchor·anchor
+
+- `close = 1 − distance/reachRadius` (clamped ≥0) - closeness. Uses the **blurred** great-circle
+  distance, the *same* figure the card's distance badge and the unread-count distance filter use,
+  so the viewer's slider and the server's ordering can't disagree. (Digest approximates drive-time
+  as haversine÷reach because a per-recipient isochrone on mass mail is infeasible; the `/rippling`
+  "Digest preview" uses real drive-time.)
+- `fresh = 1 − ageHours/windowHours` (clamped ≥0).
+- `budget = exp(−engagement / (budgetDecay/12))`, where `engagement = (views + 3·replies)/max(ageH,1)`
+  - an **engagement-decay** term: the more a post has already been seen/replied to, the lower it
+  ranks, spreading attention across posts.
+- `anchor = 1` for a home-group post, else 0.
+
+**Final browse order** (`isochrone/message.go`, `sort.SliceStable`): **pinned first** (a
+`messages_pinned` row - paid bulk-offer clearances floated to the top), **then Score descending**,
+**then arrival (newest)** as the tiebreak. The score is exposed as `MessageSummary.Score` and the
+`nearby` store preserves that server order.
+
+**Weights are per-consumer and env-tunable without a deploy** (defaults `close=1, fresh=0,
+budget=1, anchor=0` for both today - closeness × engagement-decay):
+- Browse: `RIPPLE_BROWSE_W_{CLOSE,FRESH,BUDGET,ANCHOR}`, `RIPPLE_BROWSE_WINDOW_HOURS`
+  (`isochrone/score.go` `LoadScoreWeights`).
+- Digest: `ripple.score.weights.*` / `RIPPLE_DIGEST_W_*`, `RIPPLE_DIGEST_WINDOW_HOURS`
+  (`config/freegle.php`).
+
+Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-design.md`.
 
 ## 8. Kill switches and key config (`config/freegle.php` `ripple.*`)
 
@@ -238,10 +326,60 @@ retracted, so re-approval restores the copy without re-rippling.
 
 ## 9. Data model
 
-- `rippling_reach` - one row per active post: origin, current `polygon` (SRID 3857), cached
-  slim `schedule` (per-tick drive-time / audience / reached-group ids, no geometry), `tick`,
-  `status` (expanding / stopped / done / held), `reachable_group_ids` (the current tick's
-  set, used by retraction).
+- `rippling_reach` - one row per active post: origin, current `polygon` (SRID 3857), the
+  `outer_bound` / `inner_bound` sandwich columns the hot read queries consult before the
+  exact polygon (see §7; `outer_bound` is NOT NULL + spatially indexed and drives the
+  browse R-tree), cached slim `schedule` (per-tick drive-time / audience / reached-group
+  ids, no geometry), `tick`, `status` (expanding / stopped / done / held),
+  `reachable_group_ids` (the current tick's set, used by retraction). Bounds maintained
+  in the same statements as the polygon writes; prod schema migrated via
+  `ripple:migrate-reach-bounds-schema` (shadow copy + swap).
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
+
+## 10. The sysadmin analytics tab
+
+One ModTools component (`modtools/components/ModSysAdminRipplingAnalytics.vue`) reads three
+apiv2 surfaces, deliberately split so no single request can exceed the production gateway's
+timeout:
+
+- `/rippling/analytics` (`rippling/analytics.go`) - the KPIs, trends and "is rippling helping?"
+  section. Every query anchors on `rippling_reach` (one row per rippled post, bounded by
+  `created_at`), which is what keeps it selective.
+
+  The trend series use **fixed accrual horizons** measured from `rippling_reach.created_at`:
+  replies and mean-replies within 36 hours (`ReplyHorizonHours`), taken within 14 days
+  (`TakenHorizonDays`). Counting replies/takes *ever* made recent days - which simply hadn't
+  finished accruing - draw as a steep mechanical decline (taken outcomes are marked a mean of
+  ~19 days after the post enters rippling, so the taken-ever line fell to near zero over the
+  trailing fortnight regardless of reality). Each trend row also carries `replied_mature` /
+  `taken_mature` flags - false until the day's whole horizon has elapsed - which the component
+  renders through a Google Charts `certainty` role, so a still-provisional tail draws dashed
+  rather than as a decline. The clock is reach creation, not `messages_groups.arrival`, because
+  autorepost bumps `arrival` forward, silently granting older posts longer windows.
+- `/rippling/metrics` (`rippling/metrics.go`) - reply attribution channels, geographic hotspots,
+  held-reply friction. Small rippling-owned tables only, plus the live-capture boundary date,
+  which is cached per process because its query ORs three unindexed nullable columns and so
+  full-scans `rippling_reply_attribution`.
+- `/rippling/analytics/drivetime[/score|/aggregate]` - the sampled routing pass, driven from the
+  client one chunk at a time.
+
+**A gateway timeout here does not look like a timeout.** The 504 carries no
+`Access-Control-Allow-Origin` header, so the browser reports a CORS policy error and the real
+cause (slow SQL) is invisible from the console. Two rules follow, both learned the hard way:
+
+1. Never add a query that scans `messages_groups` or `chat_messages` over the dashboard's window
+   to these endpoints. Rippling now writes 5-8k `rippled_in` rows a day, so ~75% of a 30-day
+   `messages_groups` slice is rippled-in rows: per-day reply-rate / taken-rate / distance KPIs
+   built that way measured 40-190s **each** on production. Anchor on `rippling_reach` instead, or
+   drive the work from the client in chunks.
+2. Bound the DB work with a deadline, not just the request context. fasthttp closes
+   `RequestCtx.Done()` only when the **server** shuts down - never on a client disconnect - so a
+   browser or gateway that gives up cancels nothing, and each retry stacks another full set of
+   queries on top of the ones still running. `/rippling/metrics` therefore wraps the request
+   context in a 20s `context.WithTimeout` and names any section that hits it in a `degraded`
+   array, so "we gave up" reaches the dashboard instead of rendering as "no data".
+
+The component loads the three surfaces independently: a failure or delay in one fills in its own
+panels late (or reports its own error there) rather than blanking the tab.

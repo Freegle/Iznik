@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
+import { isBannedFailure } from '~/api/bannedFailure'
 import {
   abortAllPendingRequests,
   enterLogoutMode,
@@ -38,6 +39,9 @@ export const useAuthStore = defineStore({
 
     loginStateKnown: false,
     forceLogin: false,
+    // When the session was last successfully fetched (ms epoch, not
+    // persisted). Lets boot code skip redundant refetches on layout swaps.
+    userFetchedAt: 0,
     user: null,
     groups: [],
     loggedInEver: false,
@@ -379,7 +383,14 @@ export const useAuthStore = defineStore({
             if (groups.length > 0) {
               const groupStore = useGroupStore()
 
-              await groupStore.fetchBatch(groups.map((g) => g.groupid))
+              // Deliberately not awaited: session resolution (and therefore
+              // first paint, which the layouts gate on fetchUser) must not
+              // wait for full group details - they fill in reactively.
+              Promise.resolve(
+                groupStore.fetchBatch(groups.map((g) => g.groupid))
+              ).catch((e) => {
+                console.log('Group batch fetch failed', e?.message)
+              })
             }
 
             // Update JWT/persistent if returned (session refresh).
@@ -420,6 +431,7 @@ export const useAuthStore = defineStore({
 
         // Set the user, which will trigger various re-rendering if we were required to be logged in.
         this.setUser(me)
+        this.userFetchedAt = Date.now()
 
         await this.savePushId() // Tell server our mobile push notification id, if available
 
@@ -525,11 +537,21 @@ export const useAuthStore = defineStore({
       return this.user
     },
     async joinGroup(userid, groupid, manual) {
-      await this.$api.memberships.joinGroup({
-        userid,
-        groupid,
-        manual,
-      })
+      try {
+        await this.$api.memberships.joinGroup({
+          userid,
+          groupid,
+          manual,
+        })
+      } catch (e) {
+        // A banned member's own join is refused server-side (403 "Failed - banned").
+        // Swallow it silently: we don't reveal the ban to them, we just don't join.
+        // Anything else is a real error and must propagate.
+        if (isBannedFailure(e)) {
+          return this.user
+        }
+        throw e
+      }
       await this.fetchUser()
       return this.user
     },

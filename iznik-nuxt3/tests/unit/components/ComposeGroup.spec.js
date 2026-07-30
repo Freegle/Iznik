@@ -29,6 +29,8 @@ const mockApi = {
 
 const mockGroupStore = {
   get: vi.fn().mockReturnValue(null),
+  // The card awaits fetch(id) and drives the profile/tagline off its resolved value.
+  fetch: vi.fn().mockResolvedValue(null),
 }
 
 vi.mock('~/stores/compose', () => ({
@@ -62,10 +64,23 @@ describe('ComposeGroup', () => {
     mockComposeStore.group = null
     mockComposeStore.setPostcode = vi.fn()
     mockGroupStore.get.mockReturnValue(null)
+    mockGroupStore.fetch = vi.fn().mockResolvedValue(null)
   })
 
   function createWrapper(props = {}) {
-    return mount(ComposeGroup, { props })
+    return mount(ComposeGroup, {
+      props,
+      global: {
+        stubs: {
+          // GroupProfileImage renders the group's profile with an @error fallback to
+          // /icon.png; stub it to a plain img so we can assert the src it receives.
+          GroupProfileImage: {
+            template: '<img :src="image" :alt="altText" />',
+            props: ['image', 'size', 'altText'],
+          },
+        },
+      },
+    })
   }
 
   it('shows the derived origin community read-only, with no picker', async () => {
@@ -146,5 +161,40 @@ describe('ComposeGroup', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Finding your local community')
     expect(mockApi.location.typeahead).not.toHaveBeenCalled()
+  })
+
+  it('shows the profile picture and tagline from the awaited fetch result', async () => {
+    // groupsnear entries are trimmed to name-only, so the card awaits the full group
+    // record (fetch) and drives the card off its result - NOT groupStore.get(), whose
+    // reactive dependency left the profile stuck on /icon.png for a logged-in member
+    // (Discourse #1170 follow-up: EH4 1HY showed the default instead of the group logo).
+    mockGroupStore.fetch.mockResolvedValue({
+      id: 1,
+      namedisplay: 'London Central',
+      profile: 'https://example.com/logo.png',
+      tagline: 'Reuse in central London',
+    })
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(mockGroupStore.fetch).toHaveBeenCalledWith(1)
+    const img = wrapper.find('.compose-group__logo')
+    expect(img.attributes('src')).toBe('https://example.com/logo.png')
+    expect(wrapper.find('.compose-group__tagline').text()).toBe(
+      'Reuse in central London'
+    )
+  })
+
+  it('uses the default icon and omits the tagline when the fetch has no profile/tagline', async () => {
+    // fetch resolves a group without profile/tagline → falls back to /icon.png, no tagline.
+    mockGroupStore.fetch.mockResolvedValue({
+      id: 1,
+      namedisplay: 'London Central',
+    })
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.find('.compose-group__logo').attributes('src')).toBe(
+      '/icon.png'
+    )
+    expect(wrapper.find('.compose-group__tagline').exists()).toBe(false)
   })
 })

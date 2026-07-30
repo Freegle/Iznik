@@ -58,7 +58,9 @@ beforeEach(() => {
     body: { style: { overflow: '' } },
     title: '',
   }
-  // Reset store state via globalThis pattern used by pre-aliased mocks
+  // Reset store state via globalThis pattern used by pre-aliased mocks. checkWork()
+  // refreshes the counts via the mocked fetchMe() (mockFetchMe), which existing tests
+  // configure to populate globalThis.__mockAuthStore.work.
   globalThis.__mockAuthStore = {
     work: null,
     user: { settings: {} },
@@ -257,5 +259,32 @@ describe('useModMe document.title refresh after mod action', () => {
     // FAILS on buggy code: guard blocks title refresh when body overflow is 'hidden'
     // and force is not passed, leaving stale '(2) ModTools' as the tab title.
     expect(global.document.title).toBe('ModTools')
+  })
+})
+
+describe('useModMe checkWork badge freshness after rapid mod actions (Discourse 9951)', () => {
+  it('refreshes work counts via fetchMe with forceServer so it cannot piggyback stale in-flight counts', async () => {
+    // A mod holds a pending message and releases it moments later. Release's
+    // checkWorkDeferGetMessages() -> checkWork() can fire while an earlier
+    // fetchMe(true) is still in flight; a plain fetchMe(true) would piggyback on
+    // that in-flight promise and resolve with counts captured BEFORE the release,
+    // leaving the blue/red badges stuck until a manual refresh. checkWork() must
+    // pass forceServer so fetchMe does a fresh (coalesced) fetch reflecting NOW.
+    // The coalescing itself is covered in useMe.spec.js; here we assert checkWork
+    // asks for it.
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = {
+        total: 0,
+        pending: 0,
+        pendingother: 0,
+      }
+    })
+
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+
+    expect(mockFetchMe).toHaveBeenCalledWith(true, true)
+    expect(globalThis.__mockAuthStore.work.pending).toBe(0)
   })
 })

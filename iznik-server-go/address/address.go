@@ -208,7 +208,6 @@ func GetAddress(c *fiber.Ctx) error {
 			"FROM users_addresses "+
 			"LEFT JOIN chat_rooms ON chat_rooms.user1 = ? OR chat_rooms.user2 = ? "+
 			"LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
-			"LEFT JOIN memberships ON memberships.groupid = chat_rooms.groupid AND memberships.userid = ? AND memberships.role IN (?, ?) "+
 			"LEFT JOIN users ON users.id = ? "+
 			"INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid "+
 			"INNER JOIN locations ON locations.id = paf_addresses.postcodeid "+
@@ -222,8 +221,12 @@ func GetAddress(c *fiber.Ctx) error {
 			"LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid "+
 			"LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid "+
 			"LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid "+
-			"WHERE users_addresses.id = ? AND (users_addresses.userid = ? OR (chat_messages.type = ? AND chat_messages.message = ?) OR memberships.id IS NOT NULL OR users.systemrole IN (?, ?)) LIMIT 1",
-			myid, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, id, myid, utils.CHAT_MESSAGE_ADDRESS, id, utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT).Scan(&r)
+			// SECURITY: access is granted to the address owner, to a party the address was
+			// shared with in a chat, or to a platform (system-role) moderator/support/admin.
+			// The previous per-group membership join was gameable (create a User2Mod chat to a
+			// group you moderate to unlock any address) and is replaced by the system-role test.
+			"WHERE users_addresses.id = ? AND (users_addresses.userid = ? OR (chat_messages.type = ? AND chat_messages.message = ?) OR users.systemrole IN (?, ?, ?)) LIMIT 1",
+			myid, myid, myid, id, myid, utils.CHAT_MESSAGE_ADDRESS, id, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT).Scan(&r)
 	}
 
 	if len(r) == 0 {

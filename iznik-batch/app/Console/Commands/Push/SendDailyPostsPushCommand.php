@@ -276,12 +276,10 @@ class SendDailyPostsPushCommand extends Command
         // Advance the cursor regardless of send count (the posts were processed).
         $this->advanceCursor($tracker, $allPosts);
 
-        $payloadImages = json_decode($pushService->buildDailyNewPostsPayload($user->id, $postsArray)['images'] ?? '[]', TRUE);
         Log::info('push:daily-posts: sent', [
-            'user_id'     => $user->id,
-            'post_count'  => count($postsArray),
-            'image_count' => is_array($payloadImages) ? count($payloadImages) : 0,
-            'tokens_hit'  => $sent,
+            'user_id'    => $user->id,
+            'post_count' => count($postsArray),
+            'tokens_hit' => $sent,
         ]);
 
         return 'pushes_sent';

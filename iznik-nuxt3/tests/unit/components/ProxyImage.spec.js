@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ProxyImage from '~/components/ProxyImage.vue'
 
@@ -89,6 +89,58 @@ describe('ProxyImage', () => {
       const wrapper = createWrapper()
       await wrapper.find('img').trigger('error')
       expect(wrapper.emitted('error')).toBeTruthy()
+    })
+  })
+
+  describe('generic broken-image placeholder (gimg_0.jpg)', () => {
+    // This branch only runs client-side and only for the specific
+    // gimg_0.jpg placeholder src, so nothing exercises it unless a test
+    // deliberately sets both up - which meant its Playwright/e2e coverage
+    // depended on incidental test data (some rendered image's src happening
+    // to contain "gimg_0.jpg") and flipped covered/uncovered run to run,
+    // repeatedly tripping Coveralls' "coverage decreased" check on unrelated
+    // PRs. Covering it deterministically here (see the matching v8-ignore in
+    // ProxyImage.vue) removes that source of jitter.
+    const originalClient = process.client
+
+    afterEach(() => {
+      process.client = originalClient
+    })
+
+    it('reports to Sentry when src is the generic broken-image placeholder', async () => {
+      process.client = true
+      const Sentry = await import('@sentry/browser')
+      Sentry.captureMessage.mockClear()
+
+      createWrapper({ src: '/uploads/gimg_0.jpg' })
+
+      await vi.waitFor(() =>
+        expect(Sentry.captureMessage).toHaveBeenCalledWith(
+          'Broken image: /uploads/gimg_0.jpg'
+        )
+      )
+    })
+
+    it('does not report to Sentry for a normal image src', async () => {
+      process.client = true
+      const Sentry = await import('@sentry/browser')
+      Sentry.captureMessage.mockClear()
+
+      createWrapper({ src: '/uploads/photo.jpg' })
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(Sentry.captureMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not report to Sentry server-side, even for the placeholder src', async () => {
+      process.client = false
+      const Sentry = await import('@sentry/browser')
+      Sentry.captureMessage.mockClear()
+
+      createWrapper({ src: '/uploads/gimg_0.jpg' })
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(Sentry.captureMessage).not.toHaveBeenCalled()
     })
   })
 

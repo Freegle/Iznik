@@ -75,7 +75,7 @@ func TestVectorSearchBasic(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
 	assert.Equal(t, uint64(1), results[0].Msgid)
@@ -101,7 +101,7 @@ func TestVectorSearchKeywordBoost(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// Sofa should be boosted to first by keyword match in subject
@@ -125,7 +125,7 @@ func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, nil, "Offer", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, nil, "Offer", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(20), results[0].Msgid)
@@ -148,7 +148,7 @@ func TestVectorSearchWithGroupFilter(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("sofa", 10, []uint64{200}, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, []uint64{200}, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(31), results[0].Msgid)
@@ -174,7 +174,7 @@ func TestVectorSearchLimit(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, _, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 3, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
 }
@@ -189,7 +189,7 @@ func TestVectorSearchStatsDiagnostics(t *testing.T) {
 	t.Cleanup(embedding.ResetQueryCache)
 
 	queryVec := makeTestVec(1.0)
-	strongMatch := makeTestVec(1.001)   // cosine ≈ 1 with queryVec → above threshold
+	strongMatch := makeTestVec(1.001)        // cosine ≈ 1 with queryVec → above threshold
 	antiparallel := makeAntiparallelVec(1.0) // cosine ≈ -1 → below threshold
 
 	embedding.Global.SetEntries([]embedding.Entry{
@@ -203,7 +203,7 @@ func TestVectorSearchStatsDiagnostics(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	_, stats, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	_, stats, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, stats.StoreSize, "StoreSize must reflect embedding.Global.Count()")
@@ -236,11 +236,11 @@ func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	_, s1, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	_, s1, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
-	_, s2, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	_, s2, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
-	_, s3, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	_, s3, err := message.VectorSearch("thing", 10, nil, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, s1.QueryVecFP, s2.QueryVecFP)
@@ -265,7 +265,7 @@ func TestVectorSearchStatsOnEmbedError(t *testing.T) {
 	embedding.SetSidecarURL(url)
 	defer embedding.SetSidecarURL("")
 
-	_, stats, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	_, stats, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
 	assert.Error(t, err)
 	assert.NotEmpty(t, stats.Error, "stats.Error must be populated when EmbedQuery fails")
 	assert.Equal(t, 1, stats.StoreSize, "StoreSize is known even when embedding fails")
@@ -288,7 +288,7 @@ func TestVectorSearchSidecarError(t *testing.T) {
 	embedding.SetSidecarURL(url)
 	defer embedding.SetSidecarURL("")
 
-	_, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	_, _, err := message.VectorSearch("sofa", 10, nil, nil, "", 0, 0, 0, 0)
 	assert.Error(t, err)
 }
 

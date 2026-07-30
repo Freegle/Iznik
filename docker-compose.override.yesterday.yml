@@ -29,18 +29,6 @@ services:
 
   # Disable MCP support tools (not needed on Yesterday, mcp-query-sanitizer uses port 8084
   # which conflicts with yesterday-2fa)
-  mcp-query-sanitizer:
-    deploy:
-      replicas: 0
-
-  mcp-interface:
-    deploy:
-      replicas: 0
-
-  mcp-pseudonymizer:
-    deploy:
-      replicas: 0
-
   # Note: batch-prod (profile: production) and postfix (profile: mail) don't start
   # because Yesterday doesn't enable those profiles.
 

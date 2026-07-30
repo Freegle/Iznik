@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -133,14 +134,32 @@ func TestLegacyImageGroupFallsBackToLogo(t *testing.T) {
 	assert.NotContains(t, loc, "/defaultprofile.png")
 }
 
-func TestLegacyImageBytesRowFallsBack(t *testing.T) {
-	// Pre-tusd rows whose bytes live in the legacy data column: V1 served the
-	// bytes; V2 deliberately sends the default profile image instead
-	// (migration plan Stage 4 decision).
+func TestLegacyImageNoBytesRowFallsBack(t *testing.T) {
+	// A row with no external upload AND no data bytes (nothing to serve) falls back
+	// to the default profile image.
 	id := insertLegacyRow(t,
 		"INSERT INTO users_images (contenttype) VALUES (?)", "image/jpeg")
 
 	status, loc := legacyImageGet(t, fmt.Sprintf("?id=%d&user=1&w=100&h=100", id))
 	assert.Equal(t, fiber.StatusFound, status)
 	assert.Contains(t, loc, "/defaultprofile.png")
+}
+
+func TestLegacyImageDataBlobServed(t *testing.T) {
+	// A pre-tusd row whose bytes live in the legacy `data` column must be SERVED
+	// from the DB, not redirected to the default. Retiring V1's image.php dropped
+	// this, leaving ~85% of group logos (still blob-stored) showing the Freegle
+	// logo. We serve the bytes with the row's content type.
+	blob := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03} // PNG magic + a few bytes
+	id := insertLegacyRow(t,
+		"INSERT INTO groups_images (contenttype, data) VALUES (?, ?)", "image/png", blob)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/image?id=%d&group=1", id), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	// Served inline (200), not a redirect to the default.
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, "image/png", resp.Header.Get("Content-Type"))
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, blob, body)
 }

@@ -21,7 +21,11 @@ export function useNuxtApp() {
   }
 }
 
+// Default mock for useRuntimeConfig - tests override via globalThis, e.g.
+// globalThis.__testRuntimeConfig = () => ({ public: { ISAPP: true } })
 export function useRuntimeConfig() {
+  if (typeof globalThis.__testRuntimeConfig === 'function')
+    return globalThis.__testRuntimeConfig()
   return {
     public: {},
   }
@@ -29,6 +33,14 @@ export function useRuntimeConfig() {
 
 // Stub for components that import useHead from #imports directly
 export function useHead() {}
+
+// Sets the HTTP status of the SSR response; a no-op on the client, and so here too.
+// Tests that care what status a page asks for can spy via globalThis. Forwards
+// exactly the arguments it was given, so a spy sees the real call shape.
+export function setResponseStatus(...args) {
+  if (typeof globalThis.__testSetResponseStatus === 'function')
+    globalThis.__testSetResponseStatus(...args)
+}
 
 // Default mock for useRouter - tests override via vi.mock('#imports') or globalThis
 export function useRouter() {

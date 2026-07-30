@@ -1,5 +1,23 @@
 User-agent: *
 Allow: /
+
+# Logged-in areas. Nothing here is useful in a search result, and crawling it burns
+# crawl budget that should be going on posts.
+Disallow: /chats
+Disallow: /chats/
+Disallow: /settings
+Disallow: /settings/
+Disallow: /myposts
+Disallow: /mypost/
+Disallow: /merge/
+Disallow: /unsubscribe
+Disallow: /one-click-unsubscribe
+Disallow: /marketing-optout
+Disallow: /shortlink/
+Disallow: /qr
+Disallow: /adtest
+Disallow: /adtest2
+
 Sitemap: https://www.ilovefreegle.org/sitemap.xml
 
 User-agent: AmazonAdBot

@@ -82,6 +82,21 @@ For each pillar: the metric, the recommended valuation method and £ proxy (with
 | Procurement-compatible scoring | National TOMs / Social Value Model (PPN 06/20) | Social Value Portal |
 | Overall headline ratio | SROI (8 principles, 4 adjustments) | Social Value International |
 
+## 4b. National TOMs expression (procurement-compatible annex)
+
+The same model, coded in National TOMs vocabulary (~1/3 of English/Welsh councils score social value this way). Full research: `plans/2026-07-20-toms-social-value-mapping.md`; draft statement: `plans/2026-07-20-freegle-social-value-statement-toms-draft.md`.
+
+| TOMs ref | Measure | Freegle source | Proxy (NT2022) |
+|---|---|---|---|
+| NT88 | Waste reduced through reuse (£ equiv) | tonnes x £1,019/t (the WRAP value) | £1/£ equiv (NT2022 pub.) |
+| NT31 | CO2e savings | tonnes x 0.51 | £244.63/tCO2e (NT2022 pub.) |
+| NT29 | Volunteering hours for community | mod actions x 1 min | **£17.48/h (live 2026)** |
+| NT28 | In-kind donations to community (incl. equipment) | Free Shop, bulk clearances | £1/£ (live 2026) |
+| NT117 | Environmental & biodiversity conservation | programme £ incl. time | £1/£ (live 2026) |
+| NT27 | Vulnerable people supported | partnership programme spend | £1/£ invested (NT2022 pub.) |
+
+Rules: (1) the framework is free ("a free resource" - Taskforce's own VCSE guide). Freegle's free Open Access account ("Freegle - Freegle Geeks", 2026-07-20) exposes ONLY the Light set (12) - **NT31/NT88/NT27 are NOT in it**; their proxies above are the published NT2022 figures (public pre-2022 PDFs are staler still - NT31 ~£67, do not use). Live-proxy extract: `plans/2026-07-20-toms-light-set-12-freegle-account.json`. (2) NT88+NT31 derive from the same tonnes - both claimable in TOMs but disclose the overlap. (3) Never add TOMs £ to the WRAP-based £ - same impact, different vocabulary. (4) Jobs theme (NT1-13) doesn't fit; keep jobs ratios as narrative. (5) Partner-claim mode is the strongest play: a council/contractor funding or routing goods through Freegle claims the units via their own (paid, full-measure-set) SVP account - each unit claimed once, and Freegle never needs the paid tier.
+
 ## 5. Assurance & credibility (what makes it critique-proof)
 
 1. **Count conservatively.** Weight is recorded only on confirmed outcomes and is a known under-estimate. Use WRAP factors, not higher in-house estimates.

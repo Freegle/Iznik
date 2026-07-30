@@ -10,6 +10,12 @@ class FetchError extends Error {
 
 export function fetchRetry(fetch) {
   const retryDelay = function (attempt, error, response) {
+    if (response?.status === 504) {
+      // A gateway timeout means the server was still working on an expensive request when the
+      // gateway gave up, so back off much harder before adding more load.
+      return 10000
+    }
+
     // Slowly back off for longer each time.
     return attempt * 1000
   }
@@ -46,6 +52,21 @@ export function fetchRetry(fetch) {
     ) {
       console.log('Load failed - retry')
       return [true, false]
+    }
+
+    // A 504 means the gateway gave up on a request the server was probably still executing -
+    // typically an expensive endpoint that is slow for everyone, not a transient blip. Each
+    // retry stacks another full copy of that work on the server (seen live on the sysadmin
+    // rippling analytics tab, where the retry loop kept ~10 heavyweight query sets running),
+    // so allow only a single retry rather than the usual ten.
+    if (response?.status === 504 && attempt >= 1) {
+      console.log('Gateway timeout persisted after retry - give up')
+      return [
+        false,
+        false,
+        null,
+        new FetchError('Request failed with ' + response.status, response),
+      ]
     }
 
     // Retry on network errors or server errors (5xx).  Don't retry client errors (4xx) - these are legitimate

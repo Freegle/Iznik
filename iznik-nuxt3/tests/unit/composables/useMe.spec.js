@@ -642,6 +642,42 @@ describe('fetchMe', () => {
     expect(mockFetchUser).toHaveBeenCalledTimes(1)
   })
 
+  it('forceServer during an in-flight fetch does ONE trailing refetch (not stale piggyback) - Discourse 9951', async () => {
+    // A plain hitServer=true piggybacks on the in-flight fetch (test above) and so can
+    // return counts captured before a mod's Hold/Release. forceServer must instead fetch
+    // AGAIN once the in-flight one completes, so the result reflects state as of now.
+    let resolveFirst
+    const firstFetch = new Promise((resolve) => {
+      resolveFirst = resolve
+    })
+    mockFetchUser.mockReturnValueOnce(firstFetch).mockResolvedValue({ id: 2 })
+    const p1 = fetchMe(true) // starts the in-flight fetch
+    const p2 = fetchMe(true, true) // arrives mid-flight, needs fresh -> trailing refetch
+    resolveFirst({ id: 1 })
+    await Promise.all([p1, p2])
+    // Once for the in-flight fetch, once for the trailing forceServer refetch.
+    expect(mockFetchUser).toHaveBeenCalledTimes(2)
+  })
+
+  it('coalesces several concurrent forceServer calls onto a SINGLE trailing refetch (no flood)', async () => {
+    // The dedup added in 53d04927d exists to avoid a flood of /session calls. A burst of
+    // mod actions must not each trigger their own refetch: they share one trailing fetch.
+    let resolveFirst
+    const firstFetch = new Promise((resolve) => {
+      resolveFirst = resolve
+    })
+    mockFetchUser.mockReturnValueOnce(firstFetch).mockResolvedValue({ id: 2 })
+    const p1 = fetchMe(true)
+    const p2 = fetchMe(true, true)
+    const p3 = fetchMe(true, true)
+    const p4 = fetchMe(true, true)
+    resolveFirst({ id: 1 })
+    await Promise.all([p1, p2, p3, p4])
+    // In-flight fetch + exactly ONE coalesced trailing refetch, regardless of how many
+    // forceServer callers arrived during it.
+    expect(mockFetchUser).toHaveBeenCalledTimes(2)
+  })
+
   it('returns immediately when hitServer=false and user already loaded', async () => {
     // Simulate user already present from a previous fetch
     mockAuthState.user = makeUser()
