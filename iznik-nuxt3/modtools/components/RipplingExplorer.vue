@@ -493,6 +493,15 @@ const props = defineProps({
   // The ACTUAL reach point (elapsed-hours equivalent), shown as a "now" marker ONLY when
   // the engine is behind the expected point. Null = up to date -> show just "up to".
   actualElapsedHours: { type: Number, default: null },
+  // The ACTUAL stored reach outline (GeoJSON Polygon string or object, from the mod-only
+  // /message/{id}/reach endpoint). Arrives after mount (fetched separately), so it's watched.
+  actualReach: { type: [String, Object], default: null },
+  // Suppress the projected (schedule-modelled) reach polygons, leaving the actual stored
+  // reach as the only reach drawn. For the per-post reach modal: once we can show where a
+  // post really got to, a model of where it should have got to is just a second, contradictory
+  // outline on the same map. The standalone explorer - which has no actual reach to show -
+  // leaves this false and keeps the projection.
+  hideProjection: { type: Boolean, default: false },
 })
 
 let cleanup = null

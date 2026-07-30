@@ -157,3 +157,27 @@ export function ringsOverlap(ring1, ring2) {
   }
   return false
 }
+
+/**
+ * Convert a GeoJSON Polygon/MultiPolygon (object, or JSON string as returned by the mod-only
+ * /message/{id}/reach endpoint) into Leaflet latlngs: an array of polygons, each an array of
+ * rings, each an array of [lat, lng]. GeoJSON stores [lng, lat], so every pair is flipped.
+ * Returns null for anything unusable (bad JSON, missing coordinates) - the caller draws
+ * nothing rather than throwing mid-render.
+ */
+export function geoJsonToLatLngs(raw) {
+  let geom = raw
+  if (typeof geom === 'string') {
+    try {
+      geom = JSON.parse(geom)
+    } catch (e) {
+      return null
+    }
+  }
+  if (!geom || !Array.isArray(geom.coordinates)) return null
+  const polys =
+    geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates]
+  return polys.map((rings) =>
+    rings.map((ring) => ring.map(([lng, lat]) => [lat, lng]))
+  )
+}
