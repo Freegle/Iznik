@@ -84,6 +84,26 @@ class EmailApiParityTest extends TestCase
         $this->assertEmpty($layers['layer1Missing'], 'Layer 1 must not flag anything when the API path covers every post the email path saw');
     }
 
+    public function test_layer1_flags_a_post_the_api_path_could_not_place_in_any_group(): void
+    {
+        // The email path resolves the group from the recipient address (a real
+        // group), so it successfully processes this post. The API path resolves
+        // the group from coordinates, and this fixture deliberately gives it
+        // coordinates far outside any seeded group's bounds, producing a
+        // [POST-SKIP] reason=not-in-any-group-bounds before ingest() is ever
+        // called. That pre-ingest skip must NOT count as "coverage" — the email
+        // path placed the post in a real group, so a placement failure on the
+        // API side is a genuine regression, not "just a non-UK post" (those
+        // never reach the email path at all, since TN only emails posts to a
+        // Freegle group address in the first place).
+        $this->seedParityGroup('9107', 25.0000, 25.0000);
+
+        $layers = $this->runScenario('layer1_out_of_bounds', from: self::WINDOW_FROM, to: self::WINDOW_TO);
+
+        $this->assertContains('tn-parity-l1oob-1', $layers['layer1Missing'], 'A post the API could not place in any group must still count as a Layer 1 miss');
+        $this->assertStringContainsString('api_status=skipped(not-in-any-group-bounds)', $layers['layer1Details']['tn-parity-l1oob-1'] ?? '');
+    }
+
     // -------------------------------------------------------------------------
     // Layer 2 — extra posts (informational)
     // -------------------------------------------------------------------------

@@ -1,0 +1,22 @@
+{
+  "num_pages": 1,
+  "posts": [
+    {
+      "post_id": "tn-parity-l1oob-1",
+      "group_id": "9107",
+      "user_id": 88020007,
+      "title": "Placed Widget",
+      "content": "A widget the email path placed in a real group, but whose API coordinates fall outside any group boundary.",
+      "date": "2026-07-10T10:00:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": -89.0000,
+      "longitude": 179.0000,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-parity-l1oob-1"
+    }
+  ]
+}

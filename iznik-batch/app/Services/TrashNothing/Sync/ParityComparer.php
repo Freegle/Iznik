@@ -17,10 +17,15 @@ namespace App\Services\TrashNothing\Sync;
  * per post. Byte-identical trace diffing can't express either of those.
  *
  * Layer 1 — coverage (hard fail): every post_id the email path produced a
- *   result for must also be covered by the API path — either via its own
- *   [POST-RESULT], or via one of its two pre-ingest [POST-SKIP] reasons
- *   (no-coordinates / not-in-any-group-bounds). A post the email path could
- *   place that the API path drops entirely is a real regression.
+ *   result for must also produce a [POST-RESULT] on the API path. The two
+ *   API-only pre-ingest [POST-SKIP] reasons (no-coordinates /
+ *   not-in-any-group-bounds) do NOT count as coverage — if the email path
+ *   placed a post in a real group but the API path's coordinate-based
+ *   Location::groupsNear() couldn't place it anywhere, that's a genuine
+ *   placement regression, not "just a non-UK post" (those never reach the
+ *   email path at all, since it only sees posts TN emailed to a Freegle
+ *   group address in the first place). The skip reason is still surfaced in
+ *   the failure detail when known, for diagnosis.
  * Layer 2 — extra posts (informational): post_ids the API path covered that
  *   the email path never saw. Expected and desirable — never a failure.
  * Layer 3 — same-group parity (hard fail): for post_ids where both paths
@@ -73,15 +78,18 @@ class ParityComparer
         $apiMessages       = $this->parseMessages($apiLines);
         $emailPostDetails  = $this->parsePostDetails($emailLines);
 
-        $emailPostIds       = array_keys($emailResults);
-        $apiResultPostIds   = array_keys($apiResults);
-        $apiCoveragePostIds = array_unique(array_merge($apiResultPostIds, array_keys($apiPreIngestSkips)));
+        $emailPostIds     = array_keys($emailResults);
+        $apiResultPostIds = array_keys($apiResults);
 
-        // Layer 1: coverage (hard fail). Report the email path's full picture of
-        // each missing post — there's nothing on the API side to show, since
-        // the whole point of a Layer 1 failure is that it never covered this
-        // post_id at all.
-        $layer1Missing = array_values(array_diff($emailPostIds, $apiCoveragePostIds));
+        // Layer 1: coverage (hard fail). Only an actual [POST-RESULT] counts as
+        // "covered" — the two API-only pre-ingest skips (no-coordinates /
+        // not-in-any-group-bounds) do NOT, even though the API path "saw" the
+        // post, because a post the email path placed in a real group that the
+        // API path couldn't place anywhere is a genuine placement regression.
+        // apiPreIngestSkips is used only to enrich the failure detail below
+        // (distinguishing "API couldn't place it" from "API never returned it
+        // in the feed at all"), never to satisfy coverage.
+        $layer1Missing = array_values(array_diff($emailPostIds, $apiResultPostIds));
         $layer1Details = [];
         foreach ($layer1Missing as $postId) {
             $layer1Details[$postId] = $this->formatLayer1Detail(
@@ -89,6 +97,7 @@ class ParityComparer
                 $emailResults[$postId] ?? '?',
                 $emailPostDetails[$postId] ?? null,
                 $emailMessages[$postId] ?? null,
+                $apiPreIngestSkips[$postId] ?? null,
             );
         }
 
@@ -115,7 +124,7 @@ class ParityComparer
 
         return [
             'emailPostIdCount'   => count($emailPostIds),
-            'apiCoveredCount'    => count($apiCoveragePostIds),
+            'apiCoveredCount'    => count($apiResultPostIds),
             'layer1Missing'      => $layer1Missing,
             'layer1Details'      => $layer1Details,
             'layer2Extra'        => $layer2Extra,
@@ -128,14 +137,17 @@ class ParityComparer
     /**
      * Builds the full-detail block printed/asserted for a single Layer 1
      * (coverage) failure: the email path's result, its [POST] summary
-     * (type/group_id/date/title — always present), and its full
-     * messages-row field set if the email path actually created a message
-     * for this post.
+     * (type/group_id/date/title — always present), its full messages-row
+     * field set if the email path actually created a message for this post,
+     * and — when known — the API-side pre-ingest skip reason
+     * (no-coordinates / not-in-any-group-bounds), distinguishing "the API
+     * saw this post but couldn't place it anywhere" from "the API never
+     * returned this post_id in its feed at all".
      *
      * @param  array{type: string, group_id: string, date: string, title: string}|null  $postDetail
      * @param  array<string, mixed>|null  $message
      */
-    private function formatLayer1Detail(string $postId, string $emailResult, ?array $postDetail, ?array $message): string
+    private function formatLayer1Detail(string $postId, string $emailResult, ?array $postDetail, ?array $message, ?string $apiSkipReason): string
     {
         $parts = ["post_id={$postId}", "email_result={$emailResult}"];
 
@@ -145,6 +157,8 @@ class ParityComparer
             $parts[] = 'date=' . $postDetail['date'];
             $parts[] = 'title=' . $postDetail['title'];
         }
+
+        $parts[] = 'api_status=' . ($apiSkipReason !== null ? "skipped({$apiSkipReason})" : 'never-in-feed');
 
         if ($message !== null) {
             $parts[] = 'message=' . json_encode($message);
