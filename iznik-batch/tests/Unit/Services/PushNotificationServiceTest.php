@@ -53,7 +53,6 @@ class PushNotificationServiceTest extends TestCase
             'arrival' => now(),
             'lat' => $group->lat,
             'lng' => $group->lng,
-            'heldby' => $mod->id,  // held — must not count
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
@@ -61,6 +60,9 @@ class PushNotificationServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_PENDING,
             'arrival' => now(),
             'deleted' => 0,
+            // A hold belongs to a (message, group) pair, so it is this row that carries
+            // it — the badge reads the copy on the group, not the post as a whole.
+            'heldby' => $mod->id,  // held — must not count
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);

@@ -464,7 +464,10 @@ class PushNotificationService
              AND mg.collection = 'Pending'
              AND mg.groupid IN ({$placeholders})
              AND mg.deleted = 0
-             AND m.heldby IS NULL",
+             -- Per-group hold: mg.heldby, not the message-wide messages.heldby mirror,
+             -- which suppressed the push for groups that had never held anything just
+             -- because another group the post rippled to had (Discourse 9970/2).
+             AND mg.heldby IS NULL",
             $pendingParams
         );
 

@@ -133,13 +133,21 @@ func GetGroupWork(c *fiber.Ctx) error {
 		defer wg.Done()
 		var rows []heldCountRow
 		// Held is per-group: a message held on one group must not show as held on
-		// another it is also pending on, so read mg.heldby (not the global
-		// messages.heldby, which is dual-written for backwards compat only).
+		// another it is also pending on, so read mg.heldby. There is no message-wide
+		// hold field - a hold belongs to a (message, group) pair.
+		//
+		// Only count a post once the content check has run on it: until then it may still
+		// be auto-approved, and counting it raises a number the moderator cannot act on
+		// (Discourse 9481/563). This mirrors the same filter in session.go, which feeds
+		// the ModTools badge - without it the two disagreed about the same queue.
+		// A HELD post is exempt: a moderator has claimed it, so it will never
+		// auto-approve and is already in their list (Discourse 9481/635).
 		db.Raw("SELECT mg.groupid, COUNT(*) as count, (mg.heldby IS NOT NULL) as held "+
 			"FROM messages_groups mg "+
 			"INNER JOIN messages m ON m.id = mg.msgid "+
 			"INNER JOIN users u ON u.id = m.fromuser "+
 			"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
+			"AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL) "+
 			"GROUP BY mg.groupid, held", allGroupIDs, utils.COLLECTION_PENDING).Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {

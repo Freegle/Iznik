@@ -187,23 +187,52 @@ describe('ModMessageButton', () => {
   })
 
   describe('confirmButton computed', () => {
+    // heldby lives per-group (messages_groups.heldby); confirmButton must look at
+    // the row for the group being administered (groupid, falling back to
+    // groups[0]), not a message-wide flag (Discourse 9970/2).
+    const heldGroup = {
+      groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
+    }
+
     it('returns true when message is held and action is not spam or delete', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent({ approve: true }, heldGroup)
       expect(wrapper.vm.confirmButton).toBe(true)
     })
 
     it('returns false when message is held but action is spam', () => {
-      const wrapper = mountComponent({ spam: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent({ spam: true }, heldGroup)
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns false when message is held but action is delete', () => {
-      const wrapper = mountComponent({ delete: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent({ delete: true }, heldGroup)
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns falsy when message is not held', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: null })
+      const wrapper = mountComponent(
+        { approve: true },
+        { groups: [{ groupid: 456, collection: 'Pending', heldby: null }] }
+      )
+      expect(wrapper.vm.confirmButton).toBeFalsy()
+    })
+
+    // Discourse 9970/2: a hold on a DIFFERENT group this rippled post is also on
+    // must not force a confirm on the copy actually being administered.
+    it('returns falsy when a DIFFERENT group on the same rippled post is held', () => {
+      const wrapper = mountComponent(
+        { approve: true, groupid: 456 },
+        {
+          // The server ORs any held group into this message-wide flag, so the
+          // pre-fix code (which read message.heldby directly) would still see
+          // this as held even though group 456 itself is not.
+          heldby: { id: 1 },
+          groups: [
+            { groupid: 456, collection: 'Pending', heldby: null },
+            { groupid: 457, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
       expect(wrapper.vm.confirmButton).toBeFalsy()
     })
   })

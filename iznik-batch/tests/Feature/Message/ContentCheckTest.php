@@ -2605,6 +2605,13 @@ class ContentCheckTest extends TestCase
         // A mod has pulled a post back to Pending and is holding it for review
         // (heldby set). The content-check job must not fight the mod by promoting
         // it straight back to Approved.
+        //
+        // It IS still checked, though. This test used to assert the post was "not
+        // processed at all", which meant contentcheck_checked_at stayed NULL for as long
+        // as the hold lasted - so the moderator holding it never got the reasons it was
+        // flagged, and surfaces gated on "has been checked" silently dropped it from
+        // their counts (Discourse 9481/635). Checking is not acting: only promoting or
+        // blocking would fight the mod, and those remain off.
         $group = $this->createTestGroup();
         $user  = $this->createTestUser();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
@@ -2637,8 +2644,10 @@ class ContentCheckTest extends TestCase
 
         $this->assertEquals('Pending', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'),
             'A held message must not be auto-promoted');
-        $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
-            'A held message must not be processed at all');
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
+            'A held message is still checked - the moderator holding it needs the result');
+        $this->assertEquals($modId, DB::table('messages_groups')->where('msgid', $msgid)->value('heldby'),
+            'The hold itself must be left alone');
     }
 
     public function test_new_approved_message_is_content_checked(): void
@@ -2808,5 +2817,89 @@ class ContentCheckTest extends TestCase
             ->count();
 
         $this->assertEquals(0, $count, 'freebie_alerts_add must not be queued for a clearance/bulk-offer post');
+    }
+
+    /**
+     * A post a moderator has HELD must still be content-checked - but never re-promoted.
+     *
+     * Holding used to exclude a post from the check entirely ("never fight a mod"), which
+     * meant contentcheck_checked_at stayed NULL for as long as the hold lasted. Two things
+     * followed: the moderator who held it never got the content reasons that would tell them
+     * why it needed a look, and the ModTools badge - which only counts checked rows - showed
+     * fewer held posts than were sitting in their list (Discourse 9481/635, seen live with a
+     * post held for two days and still unchecked).
+     *
+     * Checking is not the same as acting. The check records what it found; only promotion
+     * and blocking would fight the moderator, and those stay off for held rows.
+     */
+    public function test_held_post_is_content_checked_but_never_promoted(): void
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $holder = $this->createTestUser();
+
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testheldkw_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+            'scope'    => 'global',
+        ]);
+
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: testheldkw_cc item (TestLocation)',
+        ]);
+
+        // Pending AND held by a moderator, not yet content-checked - Derek's row.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $group->id)
+            ->update([
+                'collection'              => MessageGroup::COLLECTION_PENDING,
+                'heldby'                  => $holder->id,
+                'contentcheck_checked_at' => null,
+            ]);
+
+        $this->service->processUnprocessed();
+
+        $row = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $group->id)->first();
+
+        $this->assertNotNull($row->contentcheck_checked_at, 'a held post must still be content-checked');
+        $this->assertNotNull($row->contentcheck_reasons, 'the moderator holding it should get the reasons');
+        $this->assertStringContainsString('testheldkw_cc', $row->contentcheck_reasons);
+        $this->assertEquals(MessageGroup::COLLECTION_PENDING, $row->collection,
+            'checking must not promote a post out from under the moderator holding it');
+        $this->assertEquals($holder->id, $row->heldby, 'the hold itself must be left alone');
+    }
+
+    /**
+     * The other half: a HELD post with nothing wrong must still be recorded as checked, and
+     * still must not be auto-approved - that is the case the old skip was protecting.
+     */
+    public function test_clean_held_post_is_checked_but_not_auto_approved(): void
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $holder = $this->createTestUser();
+
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Perfectly ordinary chair (TestLocation)',
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $group->id)
+            ->update([
+                'collection'              => MessageGroup::COLLECTION_PENDING,
+                'heldby'                  => $holder->id,
+                'contentcheck_checked_at' => null,
+            ]);
+
+        $this->service->processUnprocessed();
+
+        $row = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $group->id)->first();
+
+        $this->assertNotNull($row->contentcheck_checked_at, 'a clean held post is still checked');
+        $this->assertEquals(MessageGroup::COLLECTION_PENDING, $row->collection,
+            'a clean held post must NOT be auto-approved while a moderator holds it');
     }
 }
