@@ -8,8 +8,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -310,21 +310,25 @@ func PatchTeam(c *fiber.Ctx) error {
 	}
 
 	type PatchRequest struct {
-		ID          uint64 `json:"id"`
-		Action      string `json:"action"`
-		Userid      uint64 `json:"userid"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Email       string `json:"email"`
-		Wikiurl     string `json:"wikiurl"`
+		ID          utils.FlexUint64 `json:"id"`
+		Action      string           `json:"action"`
+		Userid      utils.FlexUint64 `json:"userid"`
+		Name        string           `json:"name"`
+		Description string           `json:"description"`
+		Email       string           `json:"email"`
+		Wikiurl     string           `json:"wikiurl"`
 	}
 
 	var req PatchRequest
+	// FlexUint64 unmarshals both string and numeric JSON values, so BodyParser
+	// handles ModTools teams.vue sending userid from a <b-form-input
+	// type="number"> v-model, which yields a JSON string.
 	if strings.Contains(c.Get("Content-Type"), "application/json") {
 		c.BodyParser(&req)
 	}
 	if req.ID == 0 {
-		req.ID, _ = strconv.ParseUint(c.FormValue("id", c.Query("id", "0")), 10, 64)
+		id, _ := strconv.ParseUint(c.FormValue("id", c.Query("id", "0")), 10, 64)
+		req.ID = utils.FlexUint64(id)
 	}
 
 	if req.ID == 0 {
