@@ -223,6 +223,10 @@ describe('ModMessageButton', () => {
       const wrapper = mountComponent(
         { approve: true, groupid: 456 },
         {
+          // The server ORs any held group into this message-wide flag, so the
+          // pre-fix code (which read message.heldby directly) would still see
+          // this as held even though group 456 itself is not.
+          heldby: { id: 1 },
           groups: [
             { groupid: 456, collection: 'Pending', heldby: null },
             { groupid: 457, collection: 'Pending', heldby: { id: 1 } },

@@ -249,6 +249,10 @@ describe('ModMessageButtons', () => {
       const wrapper = mountComponent(
         { groupid: 456 },
         {
+          // The server ORs any held group into this message-wide flag, so the
+          // pre-fix code (which read message.heldby directly) would still hide
+          // Hold / show Release here even though group 456 itself is not held.
+          heldby: 1,
           groups: [
             { groupid: 456, collection: 'Pending', heldby: null },
             { groupid: 457, collection: 'Pending', heldby: 1 },
