@@ -100,9 +100,18 @@ export default class BaseAPI {
       // Store may not be initialized on server-side.
     }
 
+    // Capture store references once, synchronously, while the caller's pinia
+    // context is still active. The catch/finally blocks below run after
+    // awaits, where server-side (especially prerender) there may be no active
+    // pinia any more — a fresh useMiscStore() there throws, surfacing as an
+    // unhandledRejection or, from finally, failing an otherwise-successful
+    // request (seen as prerendered pages 500ing in Netlify builds).
+    let authStore
+    let miscStore = null
+
     try {
-      const authStore = useAuthStore()
-      const miscStore = useMiscStore()
+      authStore = useAuthStore()
+      miscStore = useMiscStore()
 
       if (authStore?.auth?.jwt) {
         // Use the JWT to authenticate the request if possible.
@@ -248,7 +257,7 @@ export default class BaseAPI {
       if (
         status === null &&
         !e.message.match(/.*unload.*/i) &&
-        useMiscStore().online
+        miscStore?.online
       ) {
         // Network failure with no HTTP response (e.g. retries exhausted) while the online
         // check believes we have connectivity.  This suggests a server-side or routing
@@ -266,7 +275,7 @@ export default class BaseAPI {
         }
       }
     } finally {
-      useMiscStore().api(-1)
+      miscStore?.api(-1)
     }
 
     // Accept all 2xx status codes as successful (200, 201, 204, etc.)
