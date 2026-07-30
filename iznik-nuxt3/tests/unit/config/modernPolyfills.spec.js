@@ -8,7 +8,9 @@ import { describe, it, expect } from 'vitest'
  *
  * These polyfills are injected into the "modern" Vite bundle on Netlify so
  * that browsers which support ES modules (and therefore receive the modern
- * chunk) but are missing newer APIs still work correctly.
+ * chunk) but are missing newer APIs still work correctly. The injection is
+ * done by @vitejs/plugin-legacy in polyfills-only mode (renderLegacyChunks:
+ * false) in vite.plugins — there is no separate legacy/ES5 build.
  *
  * If a Sentry error reports "<method> is not a function" on a browser that
  * predates that method's introduction, add the corresponding core-js feature
