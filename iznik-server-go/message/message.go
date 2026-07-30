@@ -229,26 +229,33 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	// No message-level Heldby. A hold belongs to a (message, group) pair
-	// (messages_groups.heldby, exposed as groups[].heldby); there is no correct
-	// message-wide value for a post that reached several groups, and every attempt
-	// to supply one leaked one group's hold onto the others. Consumers read the
-	// per-group row for the group they are acting on. See MessageGroup.Heldby.
-	Source             *string             `json:"source"`
-	Sourceheader       *string             `json:"sourceheader"`
-	Fromaddr           *string             `json:"fromaddr"`
-	Fromip             *string             `json:"fromip"`
-	Fromcountry        *string             `json:"fromcountry"`
-	Repostat           *time.Time          `json:"repostat"`
-	Canrepost          bool                `json:"canrepost"`
-	Deliverypossible   bool                `json:"deliverypossible"`
-	Deadline           *time.Time          `json:"deadline"`
-	Edits              []MessageEdit       `json:"edits,omitempty" gorm:"-"`
-	RawMessage         *string             `json:"message,omitempty" gorm:"column:message"`
-	Worry              []WorryMatch        `json:"worry,omitempty" gorm:"-"`
-	Postings           []MessagePosting    `json:"postings,omitempty" gorm:"-"`
-	Tnpostid           *string             `json:"tnpostid"`
-	Expiresat          *time.Time          `json:"expiresat,omitempty" gorm:"-"`
+	// DEPRECATED, for bundled app clients only. A hold belongs to a (message, group)
+	// pair (messages_groups.heldby, exposed as groups[].heldby); there is no correct
+	// message-wide value for a post that reached several groups, and supplying one
+	// leaks one group's hold onto the others (Discourse 9970/2). Up-to-date clients
+	// read the per-group row for the group they are acting on — see MessageGroup.Heldby.
+	//
+	// It stays in the payload because the ModTools app bundles its web build, so
+	// installed apps render held state from this field and lost holds entirely when it
+	// was removed (Discourse 9481/636). Computed per viewer by effectiveHeldby; there is
+	// no messages.heldby column behind it any more. Remove once the app floor has moved
+	// past the per-group frontend.
+	Heldby           *uint64          `json:"heldby"`
+	Source           *string          `json:"source"`
+	Sourceheader     *string          `json:"sourceheader"`
+	Fromaddr         *string          `json:"fromaddr"`
+	Fromip           *string          `json:"fromip"`
+	Fromcountry      *string          `json:"fromcountry"`
+	Repostat         *time.Time       `json:"repostat"`
+	Canrepost        bool             `json:"canrepost"`
+	Deliverypossible bool             `json:"deliverypossible"`
+	Deadline         *time.Time       `json:"deadline"`
+	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
+	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
+	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
+	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
+	Tnpostid         *string          `json:"tnpostid"`
+	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -636,8 +643,24 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 			message.MessageGroups = messageGroups
 
-			// Holds are carried per-group on messageGroups (groups[].heldby) — there is
-			// deliberately no message-wide hold to resolve here.
+			// Holds are carried per-group on messageGroups (groups[].heldby); that is the
+			// truth, and what up-to-date clients read. The message-level Heldby below is a
+			// compatibility value for bundled app clients that predate the per-group change
+			// — see effectiveHeldby. Resolve it to a hold on a group the viewer actually
+			// moderates; non-mods see none.
+			message.Heldby = nil
+			if isGroupMod {
+				var myModGroups []uint64
+				db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+					myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&myModGroups)
+				if len(myModGroups) > 0 {
+					viewer := make(map[uint64]bool, len(myModGroups))
+					for _, g := range myModGroups {
+						viewer[g] = true
+					}
+					message.Heldby = effectiveHeldby(messageGroups, viewer)
+				}
+			}
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
 			message.MessageReply = messageReply
@@ -2553,7 +2576,6 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group hold: set heldby on the authorized groups' rows.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
 
-
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
 		ctx.Groupid = gid
@@ -2583,7 +2605,6 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Per-group hold for re-review.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
-
 
 	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
 	// any copy back to pending takes the post off the board on EVERY community it is on

@@ -464,12 +464,15 @@ func TestCrossPost_HeldOnOneGroupReadSurface(t *testing.T) {
 	assert.Equal(t, 1, mtCount, "held cross-post should appear once in the combined pending queue")
 }
 
-// A hold belongs to a (message, group) pair, so the message payload must not carry a
-// message-level heldby at all: there is no correct value for it on a post that reached
-// several groups. A mod of BOTH groups is the case that no message-wide value can serve -
-// the old field said "held" while she was administering the unheld copy, which hid every
-// action button on it (Discourse 9970/2). Consumers read groups[].heldby for the group
-// they are acting on.
+// A hold belongs to a (message, group) pair, so groups[].heldby carries the truth: there
+// is no correct message-wide value for a post that reached several groups. A mod of BOTH
+// groups is the case no message-wide value can serve - the old field said "held" while she
+// was administering the unheld copy, which hid every action button on it (Discourse 9970/2).
+// Up-to-date consumers read groups[].heldby for the group they are acting on.
+//
+// The message-level heldby remains in the payload for BUNDLED APP CLIENTS ONLY - see
+// TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps. This test pins the per-group
+// truth, which is what the 9970/2 fix depends on.
 func TestMessagePayloadCarriesHoldPerGroupNotMessageWide(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("heldpayload")
@@ -509,10 +512,6 @@ func TestMessagePayloadCarriesHoldPerGroupNotMessageWide(t *testing.T) {
 	var payload map[string]interface{}
 	require.NoError(t, json2.Unmarshal(rsp(resp), &payload))
 
-	// No message-wide hold field: it cannot answer "is this held?" without a group.
-	_, present := payload["heldby"]
-	assert.False(t, present, "message payload must not carry a message-level heldby")
-
 	// The per-group rows carry the truth, and only the held group is held.
 	groups, ok := payload["groups"].([]interface{})
 	require.True(t, ok, "payload should carry groups[]")
@@ -525,6 +524,76 @@ func TestMessagePayloadCarriesHoldPerGroupNotMessageWide(t *testing.T) {
 	require.Contains(t, seen, groupUnheld)
 	assert.NotNil(t, seen[groupHeld], "the group the hold was placed on reports the holder")
 	assert.Nil(t, seen[groupUnheld], "the group with no hold must not report one")
+}
+
+// The ModTools app bundles its web build into the binary (capacitor.config.modtools.js
+// sets webDir with no server.url), and the production APK ships on a weekly-at-best
+// cadence, so an installed app runs frontend code that is days or weeks old. That code
+// renders held state from the MESSAGE-level heldby: `v-if="message.heldby"` for the
+// "Held by X" notice and `v-if="!message.heldby"` for the Hold button.
+//
+// When the message-level field was dropped, every installed app stopped showing holds at
+// all, and Hold appeared to do nothing: the POST succeeded, the client re-fetched, and
+// with no heldby in the payload the button never became Release (Discourse 9481/636 -
+// "I press the button, it whirls for a few seconds and doesn't hold").
+//
+// So the field stays, computed from the per-group rows, until the app floor has moved
+// past the per-group frontend. Removing it again breaks every un-updated app.
+func TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("heldcompat")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	fetch := func() map[string]interface{} {
+		resp, err := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+		var payload map[string]interface{}
+		require.NoError(t, json2.Unmarshal(rsp(resp), &payload))
+		return payload
+	}
+
+	// Before the hold the app must see an unheld post, so the Hold button shows.
+	before := fetch()
+	_, present := before["heldby"]
+	require.True(t, present, "message payload must carry a message-level heldby for bundled apps")
+	assert.Nil(t, before["heldby"], "an unheld post reports no holder")
+
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupID})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	// This is the re-fetch the client does straight after a successful hold. Without a
+	// message-level heldby here the app's UI is byte-identical to before the hold.
+	after := fetch()
+	require.NotNil(t, after["heldby"], "after a hold the app must see the post as held")
+	assert.Equal(t, float64(modID), after["heldby"], "the message-level heldby names the holder")
+
+	// Releasing clears it again, so the app returns to showing Hold.
+	releaseBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Release", "groupid": groupID})
+	releaseReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(releaseBody))
+	releaseReq.Header.Set("Content-Type", "application/json")
+	releaseResp, err := getApp().Test(releaseReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, releaseResp.StatusCode)
+
+	assert.Nil(t, fetch()["heldby"], "after a release the app must see the post as unheld again")
 }
 
 func TestMessagesByUser(t *testing.T) {
