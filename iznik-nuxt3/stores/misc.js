@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 // import api from '~/api' // REMOVE FROM MT AS GENERATES SOME CIRCULAR REFERENCE
 
-export const useMiscStore = defineStore({
-  id: 'misc',
+export const useMiscStore = defineStore('misc', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     pick: ['vals', 'source', 'marketingConsent'],

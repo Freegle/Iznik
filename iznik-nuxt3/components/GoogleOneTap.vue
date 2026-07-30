@@ -9,8 +9,7 @@
   />
 </template>
 <script setup>
-// eslint-disable-next-line camelcase
-import jwt_decode from 'jwt-decode'
+import { jwtDecode } from 'jwt-decode'
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useRuntimeConfig } from '#app'
@@ -36,7 +35,7 @@ const handleGoogleCredentialsResponse = async (response) => {
   console.log('Are we logged in', loggedIn.value)
 
   if (!loggedIn.value) {
-    const decoded = jwt_decode(response.credential)
+    const decoded = jwtDecode(response.credential)
     console.log('Decoded', decoded)
 
     // Now we can pass response.credential to the server, which can verify it to confirm our login as per

@@ -6,8 +6,7 @@ import api from '~/api'
 import { earliestDate, addStrings } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 
-export const useCommunityEventStore = defineStore({
-  id: 'communityevent',
+export const useCommunityEventStore = defineStore('communityevent', {
   state: () => ({
     list: {},
     forUser: [],

@@ -89,24 +89,24 @@ export function buildHead(
   // Pain to have to pass in runtimeConfig but you can't use that in a composable.
   const meta = [
     {
-      hid: 'description',
+      key: 'description',
       name: 'description',
       content: cleanDescription,
     },
-    { hid: 'og:title', property: 'og:title', content: title },
+    { key: 'og:title', property: 'og:title', content: title },
     {
-      hid: 'og:description',
+      key: 'og:description',
       property: 'og:description',
       content: cleanDescription,
     },
 
     {
-      hid: 'twitter:title',
+      key: 'twitter:title',
       name: 'twitter:title',
       content: title,
     },
     {
-      hid: 'twitter:description',
+      key: 'twitter:description',
       name: 'twitter:description',
       content: cleanDescription,
     },
@@ -157,7 +157,7 @@ export function buildHead(
   }
 
   meta.push({
-    hid: 'og:image',
+    key: 'og:image',
     property: 'og:image',
     content: retImage,
   })
@@ -167,14 +167,14 @@ export function buildHead(
   const canonical = canonicalUrl(route, runtimeConfig, options.canonical)
 
   meta.push({
-    hid: 'og:url',
+    key: 'og:url',
     property: 'og:url',
     content: canonical,
   })
 
   if (options.ogType) {
     meta.push({
-      hid: 'og:type',
+      key: 'og:type',
       property: 'og:type',
       content: options.ogType,
     })
@@ -182,14 +182,14 @@ export function buildHead(
 
   if (options.noindex) {
     meta.push({
-      hid: 'robots',
+      key: 'robots',
       name: 'robots',
       content: 'noindex, follow',
     })
   }
 
   meta.push({
-    hid: 'twitter:image',
+    key: 'twitter:image',
     property: 'twitter:image',
     content: retImage,
   })

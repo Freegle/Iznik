@@ -300,7 +300,11 @@ const test = base.test.extend({
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
       /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
-      /Failed to save credentials NotSupportedError: The user agent does not support public key credentials./, // Can happen in test environments
+      // Can happen in test environments. Newer headless Chromium (Playwright
+      // 1.62+) reports "Error connecting to Credential Management service"
+      // instead of "The user agent does not support public key credentials".
+      /Failed to save credentials NotSupportedError/,
+      /Error connecting to Credential Management service/,
       /Refused to frame/, // Can happen in test.
       /Failed to load resource.*sentry/, // Sentry errors can happen in test environments
       /Error in map idle TypeError: Cannot read properties of undefined \(reading '_leaflet_pos'\)/, // Leaflet map errors in test environment

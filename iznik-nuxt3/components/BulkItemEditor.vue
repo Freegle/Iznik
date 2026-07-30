@@ -52,7 +52,10 @@
             v-for="(item, idx) in items"
             :key="idx"
             class="bgrid brow"
-            :class="{ 'brow--over': dragOverIdx === idx, 'brow--drag': isDragging }"
+            :class="{
+              'brow--over': dragOverIdx === idx,
+              'brow--drag': isDragging,
+            }"
             @dragover.prevent="dragOverIdx = idx"
             @drop.prevent="onDropToItem($event, idx)"
           >
@@ -77,13 +80,13 @@
                   @click.stop="unassign(idx, pi)"
                 >
                   <OurUploadedImage
-                  v-if="p.ouruid"
-                  :src="p.ouruid"
-                  :width="56"
-                  fit="cover"
-                  alt=""
-                />
-                <img v-else :src="thumbSrc(p)" alt="" />
+                    v-if="p.ouruid"
+                    :src="p.ouruid"
+                    :width="56"
+                    fit="cover"
+                    alt=""
+                  />
+                  <img v-else :src="thumbSrc(p)" alt="" />
                 </div>
                 <div
                   v-if="!item.photos.length && item.photourl"
@@ -540,7 +543,8 @@ async function onRowFile(e) {
     if (!item.photos) item.photos = []
     item.photos.push(photo)
   } catch (err) {
-    photoError.value = "Sorry — that photo couldn't be uploaded. Please try again."
+    photoError.value =
+      "Sorry — that photo couldn't be uploaded. Please try again."
   } finally {
     item.uploading = false
   }
@@ -576,7 +580,7 @@ async function onFile(e) {
     if (/\.xlsx$/i.test(file.name)) {
       // Parse the filled .xlsx in the browser. read-excel-file is lazy-loaded so
       // it never bloats the main bundle — only fetched when someone uploads one.
-      const readXlsxFile = (await import('read-excel-file')).default
+      const readXlsxFile = (await import('read-excel-file/browser')).default
       const rows = await readXlsxFile(file)
       prependItems(parseItemsRows(rows))
     } else {

@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 
-export const useReplyStore = defineStore({
-  id: 'reply',
+export const useReplyStore = defineStore('reply', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     pick: [

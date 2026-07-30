@@ -55,7 +55,8 @@ const mockTusUpload = {
 }
 
 vi.mock('tus-js-client', () => ({
-  Upload: vi.fn((file, options) => {
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  Upload: vi.fn(function (file, options) {
     // Store options for later use
     mockTusUpload._options = options
     return mockTusUpload
@@ -74,11 +75,14 @@ const mockUppyInstance = vi.hoisted(() => ({
 }))
 
 vi.mock('@uppy/core', () => ({
-  default: vi.fn(() => mockUppyInstance),
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  default: vi.fn(function () {
+    return mockUppyInstance
+  }),
 }))
 
-vi.mock('@uppy/vue', () => ({
-  DashboardModal: {
+vi.mock('@uppy/vue/dashboard-modal', () => ({
+  default: {
     name: 'DashboardModal',
     template: '<div class="uppy-dashboard-modal" />',
     props: ['uppy', 'open', 'props'],

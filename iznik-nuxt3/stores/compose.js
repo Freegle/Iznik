@@ -20,8 +20,7 @@ const defaultWanted = {
   attachments: [],
 }
 
-export const useComposeStore = defineStore({
-  id: 'compose',
+export const useComposeStore = defineStore('compose', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     // Transient upload state must not survive a reload - see

@@ -8,13 +8,16 @@ const mockGetClusters = vi.fn().mockReturnValue([])
 const mockGetClusterExpansionZoom = vi.fn().mockReturnValue(10)
 const mockLoad = vi.fn()
 
-vi.mock('supercluster/dist/supercluster', () => {
+vi.mock('supercluster', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      load: mockLoad,
-      getClusters: mockGetClusters,
-      getClusterExpansionZoom: mockGetClusterExpansionZoom,
-    })),
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    default: vi.fn(function () {
+      return {
+        load: mockLoad,
+        getClusters: mockGetClusters,
+        getClusterExpansionZoom: mockGetClusterExpansionZoom,
+      }
+    }),
   }
 })
 

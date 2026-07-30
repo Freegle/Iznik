@@ -7,15 +7,20 @@ console.log('Building iznik-modtools', version)
 process.env.MT = 'true'
 
 export default defineNuxtConfig({
-  // target: 'static',
   ssr: false,
   extends: ['../'],
+  // Keep the flat Nuxt 3 layout (see the srcDir note in ../nuxt.config.ts);
+  // this layer has its own top-level pages/ etc. so needs its own pin.
+  srcDir: '.',
+  dir: {
+    app: 'app',
+  },
   // Explicitly declare @nuxt/image — module registration from parent layers can
   // fail to propagate to the child static build, leaving <NuxtPicture> emitting
   // no <img> tag at all (image silently missing rather than broken).
   modules: ['@nuxt/image'],
   sourcemap: { client: true },
-  compatibilityDate: '2024-11-26',
+  compatibilityDate: '2026-07-30',
   experimental: {
     // With ssr:false, vite:serverCreated never fires with ctx.isServer=true, so
     // NUXT_VITE_NODE_OPTIONS is never set and all dev requests fail. This flag
@@ -35,7 +40,7 @@ export default defineNuxtConfig({
   },
   css: [
     '@fortawesome/fontawesome-svg-core/styles.css',
-    '/assets/css/global.scss',
+    '~/assets/css/global.scss',
   ],
   runtimeConfig: {
     public: {
@@ -50,7 +55,8 @@ export default defineNuxtConfig({
       // the right value regardless of build env.
       TUS_UPLOADER: 'https://uploads.ilovefreegle.org:8080',
       IMAGE_DELIVERY: 'https://delivery.ilovefreegle.org',
-      SPATIAL_SERVER_URL: process.env.SPATIAL_SERVER_URL || 'http://localhost:8196',
+      SPATIAL_SERVER_URL:
+        process.env.SPATIAL_SERVER_URL || 'http://localhost:8196',
     },
   },
   vite: {
@@ -114,7 +120,7 @@ export default defineNuxtConfig({
       script: [
         {
           type: 'text/javascript',
-          body: true,
+          tagPosition: 'bodyClose',
           async: true,
           innerHTML: `try {
             function loadScript(url, block) {
@@ -147,7 +153,7 @@ export default defineNuxtConfig({
         { name: 'robots', content: 'noindex' },
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { hid: 'author', name: 'author', content: 'Freegle+ModTools' },
+        { key: 'author', name: 'author', content: 'Freegle+ModTools' },
         { name: 'supported-color-schemes', content: 'light' },
         { name: 'color-scheme', content: 'light' },
         { name: 'facebook-domain-verification', content: '' },

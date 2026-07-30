@@ -6,8 +6,7 @@ import { useModGroupStore } from '~/stores/modgroup'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { useModConfigStore } from '~/stores/modconfig'
 
-export const useLogsStore = defineStore({
-  id: 'logs',
+export const useLogsStore = defineStore('logs', {
   state: () => ({
     list: [],
     context: null,

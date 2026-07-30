@@ -35,8 +35,9 @@ describe('OurPlaywireDa', () => {
     window.ramp = mockRamp
     window.playwireScriptLoaded = true
 
-    // Mock IntersectionObserver
-    global.IntersectionObserver = vi.fn(() => {
+    // Mock IntersectionObserver.
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    global.IntersectionObserver = vi.fn(function () {
       return {
         observe: vi.fn(),
         disconnect: vi.fn(),

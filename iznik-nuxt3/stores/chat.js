@@ -66,8 +66,7 @@ export function dedupeRetriedChatMessages(messages) {
   return out
 }
 
-export const useChatStore = defineStore({
-  id: 'chat',
+export const useChatStore = defineStore('chat', {
   state: () => ({
     list: [],
     listByChatId: {},

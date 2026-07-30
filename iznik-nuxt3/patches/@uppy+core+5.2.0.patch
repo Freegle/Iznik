@@ -1,8 +1,8 @@
 diff --git a/node_modules/@uppy/core/lib/Uppy.js b/node_modules/@uppy/core/lib/Uppy.js
-index 9b0f095..736c929 100644
+index 1a6f541..fb2ec97 100644
 --- a/node_modules/@uppy/core/lib/Uppy.js
 +++ b/node_modules/@uppy/core/lib/Uppy.js
-@@ -1430,8 +1430,8 @@ export class Uppy {
+@@ -1441,8 +1441,8 @@ export class Uppy {
                  }
              });
              const files = currentUpload.fileIDs.map((fileID) => this.getFile(fileID));
@@ -14,10 +14,10 @@ index 9b0f095..736c929 100644
              // Update currentUpload value in case it was modified asynchronously.
              currentUpload = getCurrentUpload();
 diff --git a/node_modules/@uppy/core/src/Uppy.ts b/node_modules/@uppy/core/src/Uppy.ts
-index 85c3e49..6284e24 100644
+index 6f13065..e60c0a7 100644
 --- a/node_modules/@uppy/core/src/Uppy.ts
 +++ b/node_modules/@uppy/core/src/Uppy.ts
-@@ -2236,8 +2236,8 @@ export class Uppy<
+@@ -2282,8 +2282,8 @@ export class Uppy<
        })
  
        const files = currentUpload.fileIDs.map((fileID) => this.getFile(fileID))

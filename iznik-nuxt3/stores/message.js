@@ -11,8 +11,7 @@ import { useMiscStore } from '~/stores/misc'
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
 
-export const useMessageStore = defineStore({
-  id: 'message',
+export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
     byUserList: {},
