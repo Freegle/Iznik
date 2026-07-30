@@ -24,6 +24,7 @@ import {
   groupCentroid,
   distSq,
   homeGroupOverlapFraction,
+  geoJsonToLatLngs,
 } from './polygon.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
@@ -82,21 +83,8 @@ export async function setupRipplingExplorer({
       actualReachLayer = null
     }
     if (!raw || !map) return
-    let geom = raw
-    if (typeof geom === 'string') {
-      try {
-        geom = JSON.parse(geom)
-      } catch (e) {
-        return
-      }
-    }
-    if (!geom || !geom.coordinates) return
-    const polys =
-      geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates]
-    // GeoJSON rings are [lng, lat]; Leaflet wants [lat, lng].
-    const latlngs = polys.map((rings) =>
-      rings.map((ring) => ring.map(([lng, lat]) => [lat, lng]))
-    )
+    const latlngs = geoJsonToLatLngs(raw)
+    if (!latlngs) return
     // Dashed outline, no fill, so it reads against the filled red projection.
     actualReachLayer = L.polygon(latlngs, {
       color: '#0055cc',

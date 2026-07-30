@@ -6,6 +6,7 @@ import {
   distSq,
   ringsOverlap,
   homeGroupOverlapFraction,
+  geoJsonToLatLngs,
 } from '~/modtools/composables/rippling/polygon.js'
 
 // A minimal GeoJSON-shaped polygon wrapper.
@@ -316,5 +317,61 @@ describe('rippling/polygon', () => {
       const frac = homeGroupOverlapFraction(nearlyAllIso, groupRing)
       expect(frac).toBeGreaterThanOrEqual(0.9)
     })
+  })
+})
+
+// geoJsonToLatLngs feeds the mod reach modal's ACTUAL-reach overlay: the /message/{id}/reach
+// endpoint returns the stored reach as a GeoJSON string, Leaflet wants [lat, lng] rings.
+describe('geoJsonToLatLngs', () => {
+  const RING = [
+    [-0.2, 51.4],
+    [0, 51.4],
+    [0, 51.6],
+    [-0.2, 51.4],
+  ]
+
+  it('parses a GeoJSON Polygon string and flips [lng, lat] to [lat, lng]', () => {
+    const out = geoJsonToLatLngs(
+      JSON.stringify({ type: 'Polygon', coordinates: [RING] })
+    )
+    expect(out).toEqual([[RING.map(([lng, lat]) => [lat, lng])]])
+    expect(out[0][0][0]).toEqual([51.4, -0.2])
+  })
+
+  it('accepts an already-parsed object', () => {
+    const out = geoJsonToLatLngs({ type: 'Polygon', coordinates: [RING] })
+    expect(out[0][0]).toHaveLength(RING.length)
+  })
+
+  it('wraps each MultiPolygon part as its own polygon', () => {
+    const out = geoJsonToLatLngs({
+      type: 'MultiPolygon',
+      coordinates: [[RING], [RING]],
+    })
+    expect(out).toHaveLength(2)
+    expect(out[1][0][0]).toEqual([51.4, -0.2])
+  })
+
+  it('keeps holes (inner rings) with their polygon', () => {
+    const hole = [
+      [-0.1, 51.45],
+      [-0.05, 51.45],
+      [-0.05, 51.5],
+      [-0.1, 51.45],
+    ]
+    const out = geoJsonToLatLngs({
+      type: 'Polygon',
+      coordinates: [RING, hole],
+    })
+    expect(out[0]).toHaveLength(2)
+    expect(out[0][1][0]).toEqual([51.45, -0.1])
+  })
+
+  it('returns null rather than throwing for unusable input', () => {
+    expect(geoJsonToLatLngs('not json')).toBeNull()
+    expect(geoJsonToLatLngs('')).toBeNull()
+    expect(geoJsonToLatLngs(null)).toBeNull()
+    expect(geoJsonToLatLngs({})).toBeNull()
+    expect(geoJsonToLatLngs({ type: 'Polygon' })).toBeNull()
   })
 })
