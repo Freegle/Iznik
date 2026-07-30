@@ -26,6 +26,15 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
   // startup and on every resume, then starts an OFFER with them pre-attached.
   private final ArrayList<String> pendingSharedImages = new ArrayList<>();
 
+  // Marks an intent whose images we have already copied. On a cold-start share the
+  // same intent arrives twice: Capacitor's BridgeActivity.load() (reached from
+  // super.onCreate) hands the launch intent to onNewIntent() itself, and then our
+  // own onCreate calls handleSendIntent(getIntent()) as well. Without this flag the
+  // image was copied twice and the Offer opened with two identical photos. We keep
+  // both call sites - a future Capacitor may stop re-delivering the launch intent -
+  // and make the handling idempotent instead.
+  private static final String EXTRA_SHARE_HANDLED = "org.ilovefreegle.direct.SHARE_HANDLED";
+
   public void onCreate(Bundle savedInstanceState) {
     //Log.e("PHDCC","org.ilovefreegle.direct onCreate A");
     super.onCreate(savedInstanceState);
@@ -63,6 +72,11 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     String action = intent.getAction();
     String type = intent.getType();
     if (action == null || type == null || !type.startsWith("image/")) return;
+
+    // Copy each shared intent's images exactly once, however many times the intent
+    // is delivered to us (see EXTRA_SHARE_HANDLED).
+    if (intent.getBooleanExtra(EXTRA_SHARE_HANDLED, false)) return;
+    intent.putExtra(EXTRA_SHARE_HANDLED, true);
 
     try {
       if (Intent.ACTION_SEND.equals(action)) {
