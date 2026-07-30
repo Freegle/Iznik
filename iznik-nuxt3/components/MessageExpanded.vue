@@ -678,14 +678,14 @@ import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
 
 const MessageMap = defineAsyncComponent(() => import('~/components/MessageMap'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
-const MessageShareModal = defineAsyncComponent(() =>
-  import('~/components/MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('~/components/MessageShareModal')
 )
-const MessageReportModal = defineAsyncComponent(() =>
-  import('~/components/MessageReportModal')
+const MessageReportModal = defineAsyncComponent(
+  () => import('~/components/MessageReportModal')
 )
 
 const props = defineProps({
@@ -1583,7 +1583,8 @@ onUnmounted(() => {
   overflow: hidden;
   border: 2px solid $color-white-opacity-50;
   cursor: pointer;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     transform var(--transition-normal);
 
   &.active {

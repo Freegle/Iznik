@@ -20,8 +20,8 @@
 import { useUserStore } from '~/stores/user'
 import { useOurModal } from '~/composables/useOurModal'
 
-const ProfileInfo = defineAsyncComponent(() =>
-  import('~/components/ProfileInfo')
+const ProfileInfo = defineAsyncComponent(
+  () => import('~/components/ProfileInfo')
 )
 
 const userStore = useUserStore()

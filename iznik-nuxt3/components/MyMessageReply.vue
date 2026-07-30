@@ -134,8 +134,8 @@ import { timeagoShort } from '~/composables/useTimeFormat'
 import ProfileImage from '~/components/ProfileImage'
 import SupporterInfo from '~/components/SupporterInfo'
 
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
 const props = defineProps({

@@ -339,11 +339,11 @@ console.log('ChatHeader: Script setup executing')
 
 const ChatBlockModal = defineAsyncComponent(() => import('./ChatBlockModal'))
 const ChatHideModal = defineAsyncComponent(() => import('./ChatHideModal'))
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
 const props = defineProps({
   id: {

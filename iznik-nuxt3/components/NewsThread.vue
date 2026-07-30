@@ -379,14 +379,14 @@ const emit = defineEmits(['rendered', 'expand-duplicates'])
 const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
 
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
-const NewsConvertModal = defineAsyncComponent(() =>
-  import('./NewsConvertModal')
+const NewsConvertModal = defineAsyncComponent(
+  () => import('./NewsConvertModal')
 )
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const OurAtTa = defineAsyncComponent(() => import('~/components/OurAtTa'))
 

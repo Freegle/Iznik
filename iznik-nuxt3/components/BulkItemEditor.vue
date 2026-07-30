@@ -723,7 +723,9 @@ defineExpose({
 .brow {
   padding: 0.35rem 0;
   border-bottom: 1px solid $color-gray--lighter;
-  transition: background-color 0.12s ease, outline-color 0.12s ease,
+  transition:
+    background-color 0.12s ease,
+    outline-color 0.12s ease,
     padding 0.12s ease;
 }
 

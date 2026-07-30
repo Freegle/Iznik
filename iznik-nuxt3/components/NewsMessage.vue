@@ -98,8 +98,8 @@ import NewsUserIntro from '~/components/NewsUserIntro'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const NewsShareModal = defineAsyncComponent(() =>
-  import('~/components/NewsShareModal')
+const NewsShareModal = defineAsyncComponent(
+  () => import('~/components/NewsShareModal')
 )
 
 const props = defineProps({

@@ -521,7 +521,9 @@ $charity-blue-light: #eff6ff;
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s;
 
   &:hover {
     transform: translateY(-1px);
@@ -564,7 +566,9 @@ $charity-blue-light: #eff6ff;
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
   text-align: center;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s;
 
   &:hover {
     transform: translateY(-2px);

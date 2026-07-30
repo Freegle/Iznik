@@ -260,13 +260,13 @@ function openPost(p, rank, memberLat, memberLng) {
         <tr><td style="color:#888;padding:4px 6px">Eyeballs so far</td><td style="padding:4px 6px">${
           p.views
         } view${p.views === 1 ? '' : 's'} · ${p.replies} ${
-    p.replies === 1 ? 'reply' : 'replies'
-  }</td></tr>
+          p.replies === 1 ? 'reply' : 'replies'
+        }</td></tr>
         <tr><td style="color:#888;padding:4px 6px">Score</td><td style="padding:4px 6px"><strong>${fmt(
           p.score
         )}</strong> = close ${fmt(p.score_close)} + budget ${fmt(
-    p.score_budget
-  )} + anchor ${fmt(p.score_anchor)}</td></tr>
+          p.score_budget
+        )} + anchor ${fmt(p.score_anchor)}</td></tr>
       </table>
     </div>`
   headerText.value = `Post #${rank + 1}`

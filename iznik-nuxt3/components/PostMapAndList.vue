@@ -277,7 +277,7 @@ const loading = ref(false)
 const bounds = ref(null)
 const zoom = ref(null)
 const centre = ref(null)
-const mapready = ref(process.server)
+const mapready = ref(import.meta.server)
 const mapVisible = ref(true)
 const postsVisible = ref(true)
 const mapMoved = ref(false)
@@ -434,13 +434,13 @@ const sortedMessagesOnMap = computed(() => {
 
 const showRegions = computed(() => {
   // We want to show the regions if we're zoomed out, or for SSR = SEO.
-  return process.server || zoom.value < 7
+  return import.meta.server || zoom.value < 7
 })
 
 const showGroupList = computed(() => {
   // We want to show the list of groups for SSR = SEO, or if we are not showing the regions (because we're
   // zoomed out)
-  return process.server || !showRegions.value
+  return import.meta.server || !showRegions.value
 })
 
 const closestGroups = computed(() => {

@@ -18,10 +18,10 @@ export default defineNuxtPlugin(() => {
             ? el.id
               ? '#' + el.id
               : el.className && el.tagName
-              ? el.tagName.toLowerCase() +
-                '.' +
-                String(el.className).split(' ').slice(0, 2).join('.')
-              : (el.tagName || 'unknown').toLowerCase()
+                ? el.tagName.toLowerCase() +
+                  '.' +
+                  String(el.className).split(' ').slice(0, 2).join('.')
+                : (el.tagName || 'unknown').toLowerCase()
             : '(removed)'
           return {
             selector,

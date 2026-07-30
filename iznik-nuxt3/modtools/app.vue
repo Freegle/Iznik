@@ -187,7 +187,7 @@ mobileStore.init(runtimeConfig)
 // The previous reloadNuxtApp mechanism caused race conditions with Playwright
 // navigation because the async reload fired after waitForLoadState('load').
 
-if (process.client) {
+if (import.meta.client) {
   if (typeof window !== 'undefined') {
     // There's a bug https://github.com/nuxt/framework/issues/3141 which causes route to stop working.
     const messages = [

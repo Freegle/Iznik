@@ -77,9 +77,8 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
         mockStoreContext.value = null
       })
 
-    const { setupModMembers } = await import(
-      '~/modtools/composables/useModMembers'
-    )
+    const { setupModMembers } =
+      await import('~/modtools/composables/useModMembers')
     const { loadMore, groupid, collection, context, show, members } =
       setupModMembers(true)
 
@@ -123,9 +122,8 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
       mockStoreContext.value = null
     })
 
-    const { setupModMembers } = await import(
-      '~/modtools/composables/useModMembers'
-    )
+    const { setupModMembers } =
+      await import('~/modtools/composables/useModMembers')
     const { loadMore, groupid, collection, show } = setupModMembers(true)
 
     groupid.value = 1
@@ -161,9 +159,8 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
       mockStoreContext.value = null
     })
 
-    const { setupModMembers } = await import(
-      '~/modtools/composables/useModMembers'
-    )
+    const { setupModMembers } =
+      await import('~/modtools/composables/useModMembers')
     const { loadMore, groupid, collection, show, members } =
       setupModMembers(true)
 

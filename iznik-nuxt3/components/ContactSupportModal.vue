@@ -85,7 +85,7 @@ const mailtoHref = computed(() => {
 
 async function submit(callback) {
   if (!emailValid.value || !email.value) {
-    callback && callback()
+    if (callback) callback()
     return
   }
   errored.value = false
@@ -103,7 +103,7 @@ async function submit(callback) {
     errored.value = true
     showMailto.value = true
   }
-  callback && callback()
+  if (callback) callback()
 }
 
 function show() {

@@ -75,7 +75,7 @@ function b64decode(s) {
 const rawData = computed(() => {
   const q = route?.query?.data
   if (q) return Array.isArray(q) ? q[0] : q
-  if (process.client && typeof window !== 'undefined') {
+  if (import.meta.client && typeof window !== 'undefined') {
     return new URLSearchParams(window.location.search).get('data')
   }
   return null

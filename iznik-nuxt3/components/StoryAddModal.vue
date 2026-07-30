@@ -147,8 +147,8 @@ import { useComposeStore } from '~/stores/compose'
 import { useOurModal } from '~/composables/useOurModal'
 import { useImageStore } from '~/stores/image'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 
 // Store instances

@@ -265,7 +265,7 @@ async function explorePlace(place) {
 
 // Lifecycle hooks
 onMounted(() => {
-  if (process.client) {
+  if (import.meta.client) {
     if (me.value) {
       goHome()
     }
@@ -372,7 +372,9 @@ onBeforeUnmount(() => {
   font-size: clamp(0.95rem, 2.5vw, 1.15rem);
   font-weight: 600;
   text-decoration: none;
-  transition: transform 0.1s, box-shadow var(--transition-fast),
+  transition:
+    transform 0.1s,
+    box-shadow var(--transition-fast),
     background var(--transition-fast);
   min-width: clamp(90px, 22vw, 150px);
   border-radius: var(--radius-md, 0.375rem);

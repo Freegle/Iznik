@@ -38,8 +38,8 @@
   </div>
 </template>
 <script setup>
-const CharityInfoModal = defineAsyncComponent(() =>
-  import('~/components/CharityInfoModal.vue')
+const CharityInfoModal = defineAsyncComponent(
+  () => import('~/components/CharityInfoModal.vue')
 )
 
 defineProps({

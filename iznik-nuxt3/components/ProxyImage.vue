@@ -111,7 +111,7 @@ const imgAttrsComputed = computed(() => {
 // coverage only; vitest (istanbul, which ignores v8 comments) still counts
 // it, and ProxyImage.spec.js covers it deterministically.
 /* v8 ignore next 5 */
-if (process.client && props.src.includes('gimg_0.jpg')) {
+if (import.meta.client && props.src.includes('gimg_0.jpg')) {
   import('@sentry/browser').then((Sentry) => {
     Sentry.captureMessage('Broken image: ' + props.src)
   })

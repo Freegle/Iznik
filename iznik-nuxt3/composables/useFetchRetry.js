@@ -125,9 +125,9 @@ export function fetchRetry(fetch) {
       const wrappedFetch = async function (attempt) {
         let response = null
         let error = null
-        let doRetry = false
-        let success = false
-        let data = null
+        let doRetry
+        let success
+        let data
 
         try {
           response = await fetch(input, init)

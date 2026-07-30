@@ -118,7 +118,7 @@ function findLongest(str1, str2) {
   const removeDistinct = (a, b) =>
     a
       .split('')
-      // eslint-disable-next-line array-callback-return
+
       .filter((c) => {
         ;(b + '').includes(c)
       })

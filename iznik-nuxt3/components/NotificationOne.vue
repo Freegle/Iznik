@@ -43,32 +43,32 @@ import { defineAsyncComponent } from 'vue'
 import { useRouter } from '#imports'
 import { setupNotification } from '~/composables/useNotification'
 
-const NotificationGiftAid = defineAsyncComponent(() =>
-  import('~/components/NotificationGiftAid')
+const NotificationGiftAid = defineAsyncComponent(
+  () => import('~/components/NotificationGiftAid')
 )
-const NotificationLovedPost = defineAsyncComponent(() =>
-  import('~/components/NotificationLovedPost')
+const NotificationLovedPost = defineAsyncComponent(
+  () => import('~/components/NotificationLovedPost')
 )
-const NotificationLovedComment = defineAsyncComponent(() =>
-  import('~/components/NotificationLovedComment')
+const NotificationLovedComment = defineAsyncComponent(
+  () => import('~/components/NotificationLovedComment')
 )
-const NotificationCommentOnPost = defineAsyncComponent(() =>
-  import('~/components/NotificationCommentOnPost')
+const NotificationCommentOnPost = defineAsyncComponent(
+  () => import('~/components/NotificationCommentOnPost')
 )
-const NotificationCommentOnComment = defineAsyncComponent(() =>
-  import('~/components/NotificationCommentOnComment')
+const NotificationCommentOnComment = defineAsyncComponent(
+  () => import('~/components/NotificationCommentOnComment')
 )
-const NotificationExhort = defineAsyncComponent(() =>
-  import('~/components/NotificationExhort')
+const NotificationExhort = defineAsyncComponent(
+  () => import('~/components/NotificationExhort')
 )
-const NotificationAboutMe = defineAsyncComponent(() =>
-  import('~/components/NotificationAboutMe')
+const NotificationAboutMe = defineAsyncComponent(
+  () => import('~/components/NotificationAboutMe')
 )
-const NotificationOpenPosts = defineAsyncComponent(() =>
-  import('~/components/NotificationOpenPosts')
+const NotificationOpenPosts = defineAsyncComponent(
+  () => import('~/components/NotificationOpenPosts')
 )
-const NotificationMatchedPost = defineAsyncComponent(() =>
-  import('~/components/NotificationMatchedPost')
+const NotificationMatchedPost = defineAsyncComponent(
+  () => import('~/components/NotificationMatchedPost')
 )
 
 const props = defineProps({

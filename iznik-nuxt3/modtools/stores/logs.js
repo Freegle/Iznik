@@ -42,7 +42,7 @@ export const useLogsStore = defineStore('logs', {
         return null
       }
 
-      let logs = []
+      let logs
 
       if (params && params.id) {
         logs = data.log || []

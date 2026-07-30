@@ -48,7 +48,7 @@ const stories = computed(() => {
 })
 
 onMounted(() => {
-  if (process.client) {
+  if (import.meta.client) {
     const scr = document.createElement('script')
     scr.setAttribute(
       'src',

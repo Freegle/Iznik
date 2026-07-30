@@ -1,6 +1,6 @@
 import eslintPlugin from 'vite-plugin-eslint2'
 import { VitePWA } from 'vite-plugin-pwa'
-// eslint-disable-next-line import/named -- the export exists (verified at runtime); eslint-plugin-import can't read @sentry/vite-plugin v5's exports map
+
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
 import { branding } from './branding.config'
@@ -68,7 +68,6 @@ console.log('prerenderRoutes:', prerenderRoutes)
 } else { console.error('config.COOKIEYES not set') }
  */
 
-// @ts-ignore
 export default defineNuxtConfig({
   devtools: { enabled: true },
 
@@ -145,8 +144,8 @@ export default defineNuxtConfig({
         process.env.CONTEXT === 'production'
           ? process.env.URL
           : process.env.DEPLOY_URL
-          ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
-          : '',
+            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
+            : '',
     },
   },
 
@@ -527,16 +526,72 @@ export default defineNuxtConfig({
       config.NODE_ENV === 'test'
         ? []
         : config.ISAPP && production
-        ? [
-            sentryVitePlugin({
-              org: 'freegle',
-              project: 'capacitor',
-              authToken: config.SENTRY_AUTH_TOKEN,
-              // Never fail the build on Sentry API errors (502/504/bad gateway) —
-              // the app binary is the critical artifact; release creation is supplementary.
-              // In strict mode, still throw on non-API errors (wrong auth token, etc.).
-              errorHandler: config.SENTRY_STRICT
-                ? (err) => {
+          ? [
+              sentryVitePlugin({
+                org: 'freegle',
+                project: 'capacitor',
+                authToken: config.SENTRY_AUTH_TOKEN,
+                // Never fail the build on Sentry API errors (502/504/bad gateway) —
+                // the app binary is the critical artifact; release creation is supplementary.
+                // In strict mode, still throw on non-API errors (wrong auth token, etc.).
+                errorHandler: config.SENTRY_STRICT
+                  ? (err) => {
+                      const msg = err.message || ''
+                      if (
+                        msg.includes('502') ||
+                        msg.includes('504') ||
+                        msg.includes('bad gateway') ||
+                        msg.includes('API request failed')
+                      ) {
+                        console.warn(
+                          '⚠️ Sentry API error (non-fatal) - release creation skipped:',
+                          msg
+                        )
+                      } else {
+                        throw err
+                      }
+                    }
+                  : (err) => {
+                      console.warn(
+                        '⚠️ Sentry error (non-fatal in debug mode):',
+                        err.message
+                      )
+                    },
+                // Disable release management for non-strict mode to avoid API timeouts
+                release: config.SENTRY_STRICT
+                  ? undefined // Use default release management
+                  : { create: false, finalize: false },
+              }),
+            ]
+          : config.ISAPP
+            ? []
+            : [
+                VitePWA({
+                  registerType: 'autoUpdate',
+                  workbox: {
+                    maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
+                  },
+                }),
+                ...(!production
+                  ? [
+                      eslintPlugin({
+                        exclude: [
+                          '**/node_modules/**',
+                          '**/dist/**',
+                          '**/.nuxt/**',
+                        ],
+                      }),
+                    ]
+                  : []),
+                sentryVitePlugin({
+                  org: 'freegle',
+                  // ModTools layer overrides this to 'modtools', base config uses 'nuxt3'
+                  project: config.IS_MT ? 'modtools' : 'nuxt3',
+                  // Handle Sentry API errors (502/504/bad gateway) gracefully — sourcemaps
+                  // upload is the critical artifact; release creation is supplementary.
+                  // Still throw for non-API errors (wrong auth token, etc.) so real
+                  // misconfigurations remain fatal.
+                  errorHandler: (err) => {
                     const msg = err.message || ''
                     if (
                       msg.includes('502') ||
@@ -551,65 +606,9 @@ export default defineNuxtConfig({
                     } else {
                       throw err
                     }
-                  }
-                : (err) => {
-                    console.warn(
-                      '⚠️ Sentry error (non-fatal in debug mode):',
-                      err.message
-                    )
                   },
-              // Disable release management for non-strict mode to avoid API timeouts
-              release: config.SENTRY_STRICT
-                ? undefined // Use default release management
-                : { create: false, finalize: false },
-            }),
-          ]
-        : config.ISAPP
-        ? []
-        : [
-            VitePWA({
-              registerType: 'autoUpdate',
-              workbox: {
-                maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
-              },
-            }),
-            ...(!production
-              ? [
-                  eslintPlugin({
-                    exclude: [
-                      '**/node_modules/**',
-                      '**/dist/**',
-                      '**/.nuxt/**',
-                    ],
-                  }),
-                ]
-              : []),
-            sentryVitePlugin({
-              org: 'freegle',
-              // ModTools layer overrides this to 'modtools', base config uses 'nuxt3'
-              project: config.IS_MT ? 'modtools' : 'nuxt3',
-              // Handle Sentry API errors (502/504/bad gateway) gracefully — sourcemaps
-              // upload is the critical artifact; release creation is supplementary.
-              // Still throw for non-API errors (wrong auth token, etc.) so real
-              // misconfigurations remain fatal.
-              errorHandler: (err) => {
-                const msg = err.message || ''
-                if (
-                  msg.includes('502') ||
-                  msg.includes('504') ||
-                  msg.includes('bad gateway') ||
-                  msg.includes('API request failed')
-                ) {
-                  console.warn(
-                    '⚠️ Sentry API error (non-fatal) - release creation skipped:',
-                    msg
-                  )
-                } else {
-                  throw err
-                }
-              },
-            }),
-          ],
+                }),
+              ],
   },
 
   // Note that this is not the standard @vitejs/plugin-legacy, but https://www.npmjs.com/package/nuxt-vite-legacy

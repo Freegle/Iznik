@@ -223,7 +223,8 @@ function goToMessage() {
   overflow: hidden;
 
   &.offer-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 30% 20%,
         rgba(129, 199, 132, 0.9) 0%,
         transparent 50%
@@ -242,7 +243,8 @@ function goToMessage() {
   }
 
   &.wanted-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 25% 25%,
         rgba(144, 202, 249, 0.9) 0%,
         transparent 45%

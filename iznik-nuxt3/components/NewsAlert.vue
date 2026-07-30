@@ -64,11 +64,11 @@ import { URL_REGEX } from '~/constants'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import ProfileImage from '~/components/ProfileImage'
 
-const NewsShareModal = defineAsyncComponent(() =>
-  import('~/components/NewsShareModal')
+const NewsShareModal = defineAsyncComponent(
+  () => import('~/components/NewsShareModal')
 )
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('~/components/NewsPhotoModal.vue')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('~/components/NewsPhotoModal.vue')
 )
 
 const props = defineProps({

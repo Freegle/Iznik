@@ -58,8 +58,8 @@ import { useJobStore } from '~/stores/job'
 import { useAuthStore } from '~/stores/auth'
 import { useJobsFollowUpModal } from '~/composables/useJobsFollowUpModal'
 const JobOne = defineAsyncComponent(() => import('./JobOne'))
-const JobsFollowUpModal = defineAsyncComponent(() =>
-  import('./JobsFollowUpModal')
+const JobsFollowUpModal = defineAsyncComponent(
+  () => import('./JobsFollowUpModal')
 )
 const NoticeMessage = defineAsyncComponent(() => import('./NoticeMessage'))
 const DonationButton = defineAsyncComponent(() => import('./DonationButton'))

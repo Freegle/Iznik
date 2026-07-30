@@ -149,26 +149,26 @@ import { useReplyToPost } from '~/composables/useReplyToPost'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '@/stores/mobile'
 import ChatButton from '~/components/ChatButton'
-const InterestedInOthersModal = defineAsyncComponent(() =>
-  import('~/components/InterestedInOthersModal.vue')
+const InterestedInOthersModal = defineAsyncComponent(
+  () => import('~/components/InterestedInOthersModal.vue')
 )
-const DeletedRestore = defineAsyncComponent(() =>
-  import('~/components/DeletedRestore.vue')
+const DeletedRestore = defineAsyncComponent(
+  () => import('~/components/DeletedRestore.vue')
 ) // APP
 
 const { replyToSend, replyToUser, replyToPost } = useReplyToPost()
 
-const SupportLink = defineAsyncComponent(() =>
-  import('~/components/SupportLink')
+const SupportLink = defineAsyncComponent(
+  () => import('~/components/SupportLink')
 )
-const BouncingEmail = defineAsyncComponent(() =>
-  import('~/components/BouncingEmail')
+const BouncingEmail = defineAsyncComponent(
+  () => import('~/components/BouncingEmail')
 )
-const BreakpointFettler = defineAsyncComponent(() =>
-  import('~/components/BreakpointFettler')
+const BreakpointFettler = defineAsyncComponent(
+  () => import('~/components/BreakpointFettler')
 )
-const OrientationFettler = defineAsyncComponent(() =>
-  import('~/components/OrientationFettler')
+const OrientationFettler = defineAsyncComponent(
+  () => import('~/components/OrientationFettler')
 )
 const ExternalDa = defineAsyncComponent(() => import('~/components/ExternalDa'))
 
@@ -218,7 +218,7 @@ function updateTime() {
 }
 
 function monitorTabVisibility() {
-  if (process.client) {
+  if (import.meta.client) {
     document.addEventListener('visibilitychange', async () => {
       miscStore.visible = !document.hidden
 
@@ -270,13 +270,13 @@ const replyToPostChatButton = ref(null)
 const windowHeight = ref(0)
 
 function updateWindowHeight() {
-  if (process.client) {
+  if (import.meta.client) {
     windowHeight.value = window.innerHeight
   }
 }
 
 onMounted(async () => {
-  if (process.client) {
+  if (import.meta.client) {
     // Start our timer. Holding the time in the store allows us to update the time regularly and have reactivity
     // cause displayed fromNow() values to change, rather than starting a timer for each of them.
     updateTime()
@@ -323,7 +323,6 @@ onMounted(async () => {
       $sentrySetUser({ id: myid.value })
 
       if (typeof __insp !== 'undefined') {
-        // eslint-disable-next-line no-undef
         __insp.push([
           'tagSession',
           {
@@ -333,9 +332,7 @@ onMounted(async () => {
         ])
       }
     } else {
-      // eslint-disable-next-line no-lonely-if
       if (typeof __insp !== 'undefined') {
-        // eslint-disable-next-line no-undef
         __insp.push([
           'tagSession',
           {
@@ -349,7 +346,7 @@ onMounted(async () => {
     console.log('Failed to set context', e)
   }
 
-  if (process.client) {
+  if (import.meta.client) {
     if (replyToSend.value?.replyMsgId) {
       // We have loaded the site with a reply that needs sending. This happens if we force login in a way that
       // causes us to navigate away and back again. Fetch the relevant message.
@@ -406,7 +403,7 @@ const desktopTallDetector = ref(null)
 const desktopMaxHeight = computed(() => {
   // Use windowHeight to trigger reactivity on resize
   // Check if desktop tall detector is visible (using CSS media queries)
-  if (windowHeight.value && process.client && desktopTallDetector.value) {
+  if (windowHeight.value && import.meta.client && desktopTallDetector.value) {
     const computed = window.getComputedStyle(desktopTallDetector.value)
     return computed.display === 'block' ? '250px' : '90px'
   }
@@ -416,7 +413,7 @@ const desktopMaxHeight = computed(() => {
 const mobileMaxHeight = computed(() => {
   // Use windowHeight to trigger reactivity on resize
   // Check if mobile tall detector is visible (using CSS media queries)
-  if (windowHeight.value && process.client && mobileTallDetector.value) {
+  if (windowHeight.value && import.meta.client && mobileTallDetector.value) {
     const computed = window.getComputedStyle(mobileTallDetector.value)
     return computed.display === 'block' ? '100px' : '50px'
   }
@@ -424,7 +421,7 @@ const mobileMaxHeight = computed(() => {
 })
 
 onBeforeUnmount(() => {
-  if (process.client) {
+  if (import.meta.client) {
     clearTimeout(timeTimer)
     window.removeEventListener('resize', updateWindowHeight)
   }

@@ -347,9 +347,9 @@ const configid = computed({
 const locked = computed(() => {
   return Boolean(
     config.value &&
-      config.value.protected &&
-      config.value.createdby &&
-      parseInt(config.value.createdby) !== myid.value
+    config.value.protected &&
+    config.value.createdby &&
+    parseInt(config.value.createdby) !== myid.value
   )
 })
 

@@ -43,8 +43,7 @@ const {
   visibleMessages,
 } = modMessages
 
-// eslint-disable-next-line no-unused-vars
-const props = defineProps({
+defineProps({
   editreview: { type: Boolean, required: false, default: false },
 })
 
@@ -52,7 +51,7 @@ onMounted(async () => {
   // Ensure we have no cached messages for other searches/groups
   messageStore.clear()
 
-  if (process.client && groupid.value) {
+  if (import.meta.client && groupid.value) {
     groupStore.fetch(groupid.value)
   }
 

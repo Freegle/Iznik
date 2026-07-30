@@ -1589,23 +1589,19 @@ const testWithFixtures = test.extend({
           const debugExists = (await debugElement.count()) > 0
           console.log('Debug element exists:', debugExists)
           if (debugExists) {
-            const messageCount = await debugElement.getAttribute(
-              'data-message-count'
-            )
+            const messageCount =
+              await debugElement.getAttribute('data-message-count')
             const hasApi = await debugElement.getAttribute('data-has-api')
-            const postcodeId = await debugElement.getAttribute(
-              'data-postcode-id'
-            )
-            const messageValid = await debugElement.getAttribute(
-              'data-message-valid'
-            )
+            const postcodeId =
+              await debugElement.getAttribute('data-postcode-id')
+            const messageValid =
+              await debugElement.getAttribute('data-message-valid')
             const postcodeValid = await debugElement.getAttribute(
               'data-postcode-valid'
             )
             const loggedIn = await debugElement.getAttribute('data-logged-in')
-            const emailValid = await debugElement.getAttribute(
-              'data-email-valid'
-            )
+            const emailValid =
+              await debugElement.getAttribute('data-email-valid')
             console.log('=== COMPOSE STORE DEBUG ===')
             console.log('Message count:', messageCount)
             console.log('Has $api:', hasApi)

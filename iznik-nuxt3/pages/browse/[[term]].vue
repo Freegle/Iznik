@@ -158,23 +158,23 @@ import {
 } from '#imports'
 
 // Async components
-const MicroVolunteering = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteering.vue')
+const MicroVolunteering = defineAsyncComponent(
+  () => import('~/components/MicroVolunteering.vue')
 )
-const PostMapAndList = defineAsyncComponent(() =>
-  import('~/components/PostMapAndList')
+const PostMapAndList = defineAsyncComponent(
+  () => import('~/components/PostMapAndList')
 )
-const GlobalMessage = defineAsyncComponent(() =>
-  import('~/components/GlobalMessage')
+const GlobalMessage = defineAsyncComponent(
+  () => import('~/components/GlobalMessage')
 )
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
-const ExpectedRepliesWarning = defineAsyncComponent(() =>
-  import('~/components/ExpectedRepliesWarning')
+const ExpectedRepliesWarning = defineAsyncComponent(
+  () => import('~/components/ExpectedRepliesWarning')
 )
-const BirthdayModal = defineAsyncComponent(() =>
-  import('~/components/BirthdayModal')
+const BirthdayModal = defineAsyncComponent(
+  () => import('~/components/BirthdayModal')
 )
 
 // Page meta
@@ -284,7 +284,7 @@ function myGroup(id) {
 }
 
 async function calculateInitialMapBounds() {
-  if (process.client) {
+  if (import.meta.client) {
     if (browseView.value === 'nearby') {
       if (me.value) {
         // The initial bounds for the map are determined from the nearby messages once
@@ -603,7 +603,7 @@ async function onBirthdayDonationClick(amount) {
 watch(
   me,
   async (newVal, oldVal) => {
-    if (newVal && !oldVal && process.client) {
+    if (newVal && !oldVal && import.meta.client) {
       await loadLeaflet()
       calculateInitialMapBounds()
       bump.value++

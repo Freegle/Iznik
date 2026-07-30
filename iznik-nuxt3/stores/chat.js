@@ -258,7 +258,7 @@ export const useChatStore = defineStore('chat', {
         since = dayjs(this.searchSince).toISOString()
       }
 
-      let chats = []
+      let chats
       const miscStore = useMiscStore() // MT
       if (miscStore.modtools) {
         const { chatrooms } = await api(this.config).chat.listChatsMT({

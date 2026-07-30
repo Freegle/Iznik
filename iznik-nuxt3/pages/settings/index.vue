@@ -112,17 +112,17 @@ onMounted(async () => {
 })
 
 // Define async components for modals to improve performance
-const EmailConfirmModal = defineAsyncComponent(() =>
-  import('~/components/EmailConfirmModal')
+const EmailConfirmModal = defineAsyncComponent(
+  () => import('~/components/EmailConfirmModal')
 )
-const AddressModal = defineAsyncComponent(() =>
-  import('~/components/AddressModal')
+const AddressModal = defineAsyncComponent(
+  () => import('~/components/AddressModal')
 )
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
+const ProfileModal = defineAsyncComponent(
+  () => import('~/components/ProfileModal')
 )
 </script>
 

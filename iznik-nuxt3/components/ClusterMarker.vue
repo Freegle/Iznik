@@ -185,7 +185,7 @@ const index = computed(() => {
 
 const clusters = computed(() => {
   // Reading mapEpoch makes this recompute on map zoom/pan (see above).
-  // eslint-disable-next-line no-unused-expressions
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- deliberate reactive-dependency read
   mapEpoch.value
 
   let clustersList = []

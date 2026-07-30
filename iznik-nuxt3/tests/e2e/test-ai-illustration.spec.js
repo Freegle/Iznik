@@ -147,9 +147,8 @@ test.describe('AI Illustration Tests - Give Flow', () => {
     await takeScreenshot('Give Mobile - After item blur')
 
     // Check if an AI illustration appeared
-    const { hasAiIllustration, hasPhotoSummary } = await checkForAiIllustration(
-      page
-    )
+    const { hasAiIllustration, hasPhotoSummary } =
+      await checkForAiIllustration(page)
 
     if (hasPhotoSummary && hasAiIllustration) {
       console.log('AI illustration successfully displayed')
@@ -266,9 +265,8 @@ test.describe('AI Illustration Tests - Find Flow', () => {
     await takeScreenshot('Find Mobile - After item blur')
 
     // Check if an AI illustration appeared
-    const { hasAiIllustration, hasPhotoSummary } = await checkForAiIllustration(
-      page
-    )
+    const { hasAiIllustration, hasPhotoSummary } =
+      await checkForAiIllustration(page)
 
     if (hasPhotoSummary && hasAiIllustration) {
       console.log('AI illustration successfully displayed')

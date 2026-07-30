@@ -352,11 +352,11 @@ import {
   DISTANCE_TOOLTIP,
 } from '~/constants'
 
-const NewFreegler = defineAsyncComponent(() =>
-  import('~/components/NewFreegler')
+const NewFreegler = defineAsyncComponent(
+  () => import('~/components/NewFreegler')
 )
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
@@ -905,7 +905,9 @@ $reply-border: #cdcdcd;
   font-size: 0.95rem;
   background: $reply-input-bg;
   resize: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease,
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
     background 0.15s ease;
 
   &::placeholder {

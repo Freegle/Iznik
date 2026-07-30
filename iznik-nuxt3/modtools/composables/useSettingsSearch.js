@@ -144,7 +144,7 @@ export async function revealSetting(id) {
   // Restart the animation if the same setting is picked twice in a row -
   // reading offsetWidth forces the reflow that makes the browser notice.
   el.classList.remove(HIGHLIGHT_CLASS)
-  el.offsetWidth // eslint-disable-line no-unused-expressions
+  el.offsetWidth
   el.classList.add(HIGHLIGHT_CLASS)
 
   setTimeout(() => el.classList.remove(HIGHLIGHT_CLASS), HIGHLIGHT_MS)

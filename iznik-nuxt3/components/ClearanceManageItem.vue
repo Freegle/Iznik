@@ -171,8 +171,8 @@ import {
   isNeedsYouState,
 } from '~/composables/useClearance'
 
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
