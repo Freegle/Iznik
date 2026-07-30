@@ -24,8 +24,8 @@ import {
   groupCentroid,
   distSq,
   homeGroupOverlapFraction,
-  geoJsonToLatLngs,
 } from './polygon.js'
+import { updateActualReachLayer } from './actualreach.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 import { driveMinForAudience, clampAudienceMinutes } from './audience.js'
@@ -75,36 +75,20 @@ export async function setupRipplingExplorer({
   // which is why the modal draws this instead of the projection. The host modal fetches it
   // separately, so it arrives after mount: watch, and redraw on change.
   let actualReachLayer = null
-  function drawActualReach(raw) {
-    if (actualReachLayer) {
-      if (map && map.hasLayer(actualReachLayer)) {
-        map.removeLayer(actualReachLayer)
-      }
-      actualReachLayer = null
-    }
-    if (!raw || !map) return
-    const latlngs = geoJsonToLatLngs(raw)
-    if (!latlngs) return
-    // With the projection suppressed this is the only reach on the map, so fill it and
-    // drop the dashes - it's the subject, not an annotation over something else. Alongside
-    // a projection it stays a dashed outline so the filled red area still reads through.
-    actualReachLayer = L.polygon(
-      latlngs,
-      props.hideProjection
-        ? {
-            color: '#0055cc',
-            weight: 2,
-            fill: true,
-            fillColor: '#0055cc',
-            fillOpacity: 0.18,
-          }
-        : { color: '#0055cc', weight: 2, dashArray: '6 4', fill: false }
-    )
-      .bindTooltip('Actual reach right now (from the engine)', { sticky: true })
-      .addTo(map)
-  }
   cleanupFns.push(
-    watch(() => props.actualReach, drawActualReach, { immediate: true })
+    watch(
+      () => props.actualReach,
+      (raw) => {
+        actualReachLayer = updateActualReachLayer(
+          L,
+          map,
+          actualReachLayer,
+          raw,
+          props.hideProjection
+        )
+      },
+      { immediate: true }
+    )
   )
 
   let currentLat = null
