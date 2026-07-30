@@ -134,7 +134,10 @@ function idle(themap) {
       new L.marker([props.position.lat, props.position.lng]),
     ])
 
-    themap.fitBounds(fg.getBounds().pad(0.1))
+    const fitTo = fg.getBounds().pad(0.1)
+    if (fitTo.isValid()) {
+      themap.fitBounds(fitTo)
+    }
     themap.setZoom(MAX_MAP_ZOOM)
   }
 
