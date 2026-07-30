@@ -19,6 +19,113 @@ class ChatProcessServiceTest extends TestCase
         $this->service = new ChatProcessService();
     }
 
+
+    // --- Ban handling (Discourse: replies silently destroyed) ---
+
+    /**
+     * A ban belongs to the relationship between the two people, not to every community a
+     * post happens to be on. Rippling puts a post on communities the poster never chose,
+     * so asking "is the sender banned on ANY group this post is on?" silently destroyed
+     * replies from members in good standing wherever they were talking.
+     *
+     * Live example: a Battersea member 410m from the poster, a member of her own community
+     * and never banned there, had his reply thrown away because the post had rippled into a
+     * community he happened to be banned on. The offerer was never told, and he had no idea
+     * he had been ignored.
+     */
+    public function test_reply_delivered_when_sender_banned_only_on_an_unrelated_group_the_post_reached(): void
+    {
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($poster, $replier);
+
+        $shared = $this->createTestGroup();      // both belong here, replier in good standing
+        $elsewhere = $this->createTestGroup();   // replier banned here; poster has no part in it
+        $this->createMembership($poster, $shared);
+        $this->createMembership($replier, $shared);
+
+        // The post is on both: its own community, plus one it rippled into.
+        $message = $this->createTestMessage($poster, $shared);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id, 'groupid' => $elsewhere->id,
+            'collection' => 'Approved', 'arrival' => now(), 'deleted' => 0, 'rippled_in' => 1,
+        ]);
+
+        DB::table('users_banned')->insert([
+            'userid' => $replier->id, 'groupid' => $elsewhere->id, 'byuser' => $poster->id,
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $replier, [
+            'processingrequired' => 1, 'processingsuccessful' => 0,
+            'platform' => 1, 'refmsgid' => $message->id,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->processingsuccessful,
+            'a reply from someone in good standing where they are both members must be delivered');
+    }
+
+    /**
+     * The protection that must survive: someone banned everywhere the two of them share is
+     * blocked. That is a fact about the two people, so it holds regardless of which
+     * communities the post reached or how it got there.
+     */
+    public function test_reply_suppressed_when_sender_banned_on_every_group_they_share(): void
+    {
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($poster, $replier);
+
+        $shared = $this->createTestGroup();
+        $this->createMembership($poster, $shared);
+        $this->createMembership($replier, $shared);
+
+        $message = $this->createTestMessage($poster, $shared);
+
+        DB::table('users_banned')->insert([
+            'userid' => $replier->id, 'groupid' => $shared->id, 'byuser' => $poster->id,
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $replier, [
+            'processingrequired' => 1, 'processingsuccessful' => 0,
+            'platform' => 1, 'refmsgid' => $message->id,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->processingsuccessful,
+            'someone banned everywhere they share a community with the poster stays blocked');
+        $this->assertEquals(ChatMessage::PROCESSFAIL_BANNED_IN_COMMON, $updated->processingfailreason,
+            'support tools must be able to see WHY the reply never arrived');
+    }
+
+    /**
+     * The silence was the worst part: a suppressed reply looked identical to one that was
+     * never written, so it got misdiagnosed. Record why on the message itself.
+     */
+    public function test_spam_suppression_records_a_reason_for_support(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        DB::table('spam_users')->insert([
+            'userid' => $user1->id, 'collection' => 'Spammer', 'added' => now(),
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(ChatMessage::PROCESSFAIL_SPAMMER, $updated->processingfailreason);
+    }
+
     // --- Basic processing ---
 
     public function test_message_with_processingrequired_gets_marked_processed(): void

@@ -80,9 +80,29 @@
           data-testid="rippling-held-notice"
         >
           <v-icon icon="pause-circle" class="me-1" />
-          Held: rippling out - this reply arrived before the post's reach grew to
-          cover the sender's location. It will be delivered automatically once the
-          reach expands far enough.
+          Held: rippling out - this reply arrived before the post's reach grew
+          to cover the sender's location. It will be delivered automatically
+          once the reach expands far enough.
+        </NoticeMessage>
+        <NoticeMessage
+          v-if="message.processingfailreason"
+          class="mb-2"
+          variant="danger"
+          data-testid="processing-suppressed-notice"
+        >
+          <v-icon icon="ban" class="me-1" />
+          <span v-if="message.processingfailreason === 'BannedInCommonGroups'">
+            Not delivered: the sender is banned on every community they and the
+            recipient share, so this never reached them and never will.
+          </span>
+          <span v-else-if="message.processingfailreason === 'Spammer'">
+            Not delivered: the sender was flagged as a spammer when this was
+            processed, so it never reached the recipient.
+          </span>
+          <span v-else>
+            Not delivered ({{ message.processingfailreason }}) - this never
+            reached the recipient.
+          </span>
         </NoticeMessage>
         <div class="rounded bg-white p-2 fw-bold border border-warning mb-2">
           <ChatMessage

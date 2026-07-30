@@ -46,6 +46,17 @@ type ChatMessage struct {
 	Reviewrejected       bool            `json:"reviewrejected"`
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
+	// Processingfailreason says WHY a message was dropped during processing
+	// (processingsuccessful = 0). A dropped message is never notified to the recipient and
+	// is filtered out of their chat fetch, so without this a support volunteer sees a
+	// message the recipient swears never arrived and has no way to explain it - which is
+	// how a run of suppressed replies got put down to a rippling delay. Values come from
+	// ChatMessage::PROCESSFAIL_* in the batch app.
+	//
+	// Read-only here (`gorm:"->"`): only the batch processor ever sets it, and without
+	// this GORM adds it to every chat_messages INSERT, which fails outright on a database
+	// that has the code but not yet the migration.
+	Processingfailreason *string `json:"processingfailreason,omitempty" gorm:"->"`
 	// HeldByRippling is true when this message is held by the rippling reply-hold engine
 	// (a non-released row exists in rippling_held_replies). Populated for moderators (any
 	// message) and for a normal caller on their OWN held reply, so the sender can show a
