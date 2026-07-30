@@ -25,8 +25,8 @@ export function normalizeAuthoritySearch(results, limit = 5) {
   const list = Array.isArray(results)
     ? results
     : Array.isArray(results?.authorities)
-    ? results.authorities
-    : []
+      ? results.authorities
+      : []
 
   const trimmed = list.slice(0, limit)
   const ret = []

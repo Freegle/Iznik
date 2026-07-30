@@ -265,11 +265,11 @@ import { useChatStore } from '~/stores/chat'
 import { useMe } from '~/composables/useMe'
 import { useMiscStore } from '~/stores/misc'
 
-const OutcomeModal = defineAsyncComponent(() =>
-  import('~/components/OutcomeModal')
+const OutcomeModal = defineAsyncComponent(
+  () => import('~/components/OutcomeModal')
 )
-const BulkInterestEditor = defineAsyncComponent(() =>
-  import('~/components/BulkInterestEditor')
+const BulkInterestEditor = defineAsyncComponent(
+  () => import('~/components/BulkInterestEditor')
 )
 const props = defineProps({
   chatid: {

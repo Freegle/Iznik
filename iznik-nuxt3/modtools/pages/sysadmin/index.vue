@@ -305,7 +305,9 @@ onMounted(() => {
   padding: 0.4rem 1.1rem;
   border-radius: 2rem;
   border: 1px solid transparent;
-  transition: color 0.12s ease, background-color 0.12s ease,
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease,
     box-shadow 0.12s ease;
 }
 

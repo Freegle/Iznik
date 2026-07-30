@@ -211,8 +211,8 @@ export async function setupRipplingExplorer({
     legendMode.value = outbound
       ? 'outbound'
       : catchment
-      ? 'catchment'
-      : 'inbound'
+        ? 'catchment'
+        : 'inbound'
     // Search-by-location box: not relevant in catchment (group picker is used instead).
     const searchWrap = document.getElementById('rippling-search-wrap')
     if (searchWrap) searchWrap.style.display = catchment ? 'none' : ''
@@ -1459,9 +1459,8 @@ export async function setupRipplingExplorer({
       })
       .catch((err) => {
         showStatus('Error: ' + err.message, false)
-        document.getElementById(
-          'rippling-stats'
-        ).innerHTML = `<div class="rpl-tip" style="color:#c00">${err.message}</div>`
+        document.getElementById('rippling-stats').innerHTML =
+          `<div class="rpl-tip" style="color:#c00">${err.message}</div>`
       })
   }
 
@@ -1708,8 +1707,8 @@ export async function setupRipplingExplorer({
       <span style="color:${
         s.aboveBaseline ? '#1a9850' : '#d73027'
       };font-weight:600">${s.aboveBaseline ? '▲' : '▼'} ${s.diff}% ${
-      s.aboveBaseline ? 'above' : 'below'
-    } proportionate for this area (${localBaseline}%)</span>`
+        s.aboveBaseline ? 'above' : 'below'
+      } proportionate for this area (${localBaseline}%)</span>`
   }
 
   function updateStats(data) {
@@ -2288,7 +2287,7 @@ export async function setupRipplingExplorer({
     const esc = (s) =>
       String(s).replace(
         /[&<>]/g,
-        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]
       )
     const hits = groupFeatures
       .filter((f) => reached.has(f.properties.id))
@@ -2350,8 +2349,8 @@ export async function setupRipplingExplorer({
       pct < 15
         ? 'translateX(0)'
         : pct > 80
-        ? 'translateX(-100%)'
-        : 'translateX(-50%)'
+          ? 'translateX(-100%)'
+          : 'translateX(-50%)'
     label.style.cssText = `position:absolute;left:${pct}%;top:-22px;color:#e07000;font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = '⚡'
     layer.appendChild(label)
@@ -2417,8 +2416,8 @@ export async function setupRipplingExplorer({
       pct < 15
         ? 'translateX(0)'
         : pct > 80
-        ? 'translateX(-100%)'
-        : 'translateX(-50%)'
+          ? 'translateX(-100%)'
+          : 'translateX(-50%)'
     label.style.cssText = `position:absolute;left:${pct}%;top:-22px;color:#e07000;font-size:11px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = '⚡'
     layer.appendChild(label)
@@ -2509,8 +2508,8 @@ export async function setupRipplingExplorer({
       pct < 12
         ? 'translateX(0)'
         : pct > 88
-        ? 'translateX(-100%)'
-        : 'translateX(-50%)'
+          ? 'translateX(-100%)'
+          : 'translateX(-50%)'
     const top = where === 'top' ? '-28px' : '16px'
     label.style.cssText = `position:absolute;left:${pct}%;top:${top};color:${color};font-size:10px;font-weight:700;white-space:nowrap;transform:${xform}`
     label.textContent = text
@@ -2831,9 +2830,8 @@ export async function setupRipplingExplorer({
   function prepareRippleUI(btn) {
     btn.disabled = true
     btn.textContent = '⏳ Loading…'
-    document.getElementById(
-      'rippling-info'
-    ).textContent = `Fetching ${RIPPLE_FRAMES} frames (drive)…`
+    document.getElementById('rippling-info').textContent =
+      `Fetching ${RIPPLE_FRAMES} frames (drive)…`
 
     clearLayers()
     timelineBuilt = false
@@ -2979,9 +2977,8 @@ export async function setupRipplingExplorer({
     const btn = document.getElementById('rippling-btn')
     btn.textContent = '▶ Animate ripple'
     btn.classList.remove('rpl-stop')
-    document.getElementById(
-      'rippling-info'
-    ).textContent = `by ${currentMode} · ${RIPPLE_STEP_MINS}–${RIPPLE_FRAMES} min`
+    document.getElementById('rippling-info').textContent =
+      `by ${currentMode} · ${RIPPLE_STEP_MINS}–${RIPPLE_FRAMES} min`
     document.getElementById('rippling-freegler-bar').style.display = 'none'
     document.getElementById('rippling-timeline').style.display = 'none'
     if (currentLat !== null) fetchAndDrawGroups(currentLat, currentLng)
@@ -3080,9 +3077,8 @@ export async function setupRipplingExplorer({
       data && data.cumulative_users !== undefined
         ? ` · ${data.cumulative_users.toLocaleString()} reached`
         : ''
-    document.getElementById(
-      'rippling-info'
-    ).textContent = `${tickLabel} · ${minuteLabel} drive-min${usersLabel}`
+    document.getElementById('rippling-info').textContent =
+      `${tickLabel} · ${minuteLabel} drive-min${usersLabel}`
     updateTimeline(frameA, rippleFrames.length)
     timeSlider.value = Math.min(30, Math.round(mDrive))
   }

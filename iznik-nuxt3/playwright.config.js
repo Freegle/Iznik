@@ -36,8 +36,8 @@ module.exports = defineConfig({
   workers: process.env.PW_WORKERS
     ? Number(process.env.PW_WORKERS)
     : process.env.SELF_HOSTED_RUNNER === 'true'
-    ? 11
-    : 6,
+      ? 11
+      : 6,
   maxFailures: 0,
   reporter: [
     ['list'],

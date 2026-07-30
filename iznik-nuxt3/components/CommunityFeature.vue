@@ -49,14 +49,14 @@
 import { ref, defineAsyncComponent } from 'vue'
 
 const CommunityEvent = defineAsyncComponent(() => import('./CommunityEvent'))
-const VolunteerOpportunity = defineAsyncComponent(() =>
-  import('./VolunteerOpportunity')
+const VolunteerOpportunity = defineAsyncComponent(
+  () => import('./VolunteerOpportunity')
 )
-const CommunityEventModal = defineAsyncComponent(() =>
-  import('./CommunityEventModal')
+const CommunityEventModal = defineAsyncComponent(
+  () => import('./CommunityEventModal')
 )
-const VolunteerOpportunityModal = defineAsyncComponent(() =>
-  import('./VolunteerOpportunityModal')
+const VolunteerOpportunityModal = defineAsyncComponent(
+  () => import('./VolunteerOpportunityModal')
 )
 
 defineProps({

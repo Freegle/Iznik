@@ -154,8 +154,8 @@ import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import ChatButton from '~/components/ChatButton'
 
-const MessageList = defineAsyncComponent(() =>
-  import('~/components/MessageList.vue')
+const MessageList = defineAsyncComponent(
+  () => import('~/components/MessageList.vue')
 )
 
 const props = defineProps({

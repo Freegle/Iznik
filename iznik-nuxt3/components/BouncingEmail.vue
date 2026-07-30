@@ -27,8 +27,8 @@
 <script setup>
 import { useMe } from '~/composables/useMe'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 
 const { me } = useMe()

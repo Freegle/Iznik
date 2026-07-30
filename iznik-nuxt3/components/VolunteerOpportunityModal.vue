@@ -443,23 +443,23 @@ import { useOurModal } from '~/composables/useOurModal'
 import { useImageStore } from '~/stores/image'
 import { useMe } from '~/composables/useMe'
 
-const GroupSelect = defineAsyncComponent(() =>
-  import('~/components/GroupSelect')
+const GroupSelect = defineAsyncComponent(
+  () => import('~/components/GroupSelect')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const StartEndCollection = defineAsyncComponent(() =>
-  import('~/components/StartEndCollection')
+const StartEndCollection = defineAsyncComponent(
+  () => import('~/components/StartEndCollection')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const DonationButton = defineAsyncComponent(() =>
-  import('~/components/DonationButton')
+const DonationButton = defineAsyncComponent(
+  () => import('~/components/DonationButton')
 )
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
 
 defineRule('required', required)

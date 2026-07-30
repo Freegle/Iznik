@@ -52,11 +52,11 @@ import {
 } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
-const SupportLink = defineAsyncComponent(() =>
-  import('~/components/SupportLink')
+const SupportLink = defineAsyncComponent(
+  () => import('~/components/SupportLink')
 )
 
 const runtimeConfig = useRuntimeConfig()

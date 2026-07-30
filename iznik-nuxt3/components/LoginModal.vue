@@ -213,11 +213,11 @@ import { useMe } from '~/composables/useMe'
 import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const PasswordEntry = defineAsyncComponent(() =>
-  import('~/components/PasswordEntry')
+const PasswordEntry = defineAsyncComponent(
+  () => import('~/components/PasswordEntry')
 )
 
 // Setup

@@ -63,8 +63,8 @@ import { setup, clearItem } from '~/composables/useCompose'
 import { onMounted, computed, watch, nextTick, useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 
-const PostMessageTablet = defineAsyncComponent(() =>
-  import('~/components/PostMessageTablet')
+const PostMessageTablet = defineAsyncComponent(
+  () => import('~/components/PostMessageTablet')
 )
 
 const runtimeConfig = useRuntimeConfig()
@@ -90,7 +90,7 @@ const showDesktopLayout = computed(
 // forwards the voice cohort to /voicepost and everyone else on to /give/mobile/photos.
 // Redirecting directly to photos bypassed the experiment, so no user was ever enrolled.
 async function redirectToMobileIfNeeded() {
-  if (breakpointReady.value && isMobile.value && process.client) {
+  if (breakpointReady.value && isMobile.value && import.meta.client) {
     await navigateTo('/give/mobile', { replace: true })
   }
 }
@@ -106,7 +106,7 @@ onMounted(async () => {
 watch(
   () => ({ ready: breakpointReady.value, mobile: isMobile.value }),
   async ({ ready, mobile }) => {
-    if (ready && mobile && process.client) {
+    if (ready && mobile && import.meta.client) {
       await navigateTo('/give/mobile', { replace: true })
     }
   }

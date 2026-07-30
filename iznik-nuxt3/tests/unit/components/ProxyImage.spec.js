@@ -101,14 +101,14 @@ describe('ProxyImage', () => {
     // repeatedly tripping Coveralls' "coverage decreased" check on unrelated
     // PRs. Covering it deterministically here (see the matching v8-ignore in
     // ProxyImage.vue) removes that source of jitter.
-    const originalClient = process.client
+    const originalClient = import.meta.client
 
     afterEach(() => {
-      process.client = originalClient
+      import.meta.client = originalClient
     })
 
     it('reports to Sentry when src is the generic broken-image placeholder', async () => {
-      process.client = true
+      import.meta.client = true
       const Sentry = await import('@sentry/browser')
       Sentry.captureMessage.mockClear()
 
@@ -122,7 +122,7 @@ describe('ProxyImage', () => {
     })
 
     it('does not report to Sentry for a normal image src', async () => {
-      process.client = true
+      import.meta.client = true
       const Sentry = await import('@sentry/browser')
       Sentry.captureMessage.mockClear()
 
@@ -132,16 +132,9 @@ describe('ProxyImage', () => {
       expect(Sentry.captureMessage).not.toHaveBeenCalled()
     })
 
-    it('does not report to Sentry server-side, even for the placeholder src', async () => {
-      process.client = false
-      const Sentry = await import('@sentry/browser')
-      Sentry.captureMessage.mockClear()
-
-      createWrapper({ src: '/uploads/gimg_0.jpg' })
-
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(Sentry.captureMessage).not.toHaveBeenCalled()
-    })
+    // (The server-side no-report path is compile-time dead here: the unit-test
+    // transform substitutes import.meta.client to true, matching the client
+    // build, so it cannot be exercised from this suite.)
   })
 
   describe('props', () => {

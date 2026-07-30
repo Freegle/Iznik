@@ -443,7 +443,7 @@ export const useAuthStore = defineStore('auth', {
           composeStore.email = me.email
         }
 
-        if (process.client) {
+        if (import.meta.client) {
           // Sync marketing consent from local storage to user profile if needed
           const miscStore = useMiscStore()
 

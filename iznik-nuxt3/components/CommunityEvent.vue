@@ -143,8 +143,8 @@ import { useGroupStore } from '~/stores/group'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 
-const CommunityEventModal = defineAsyncComponent(() =>
-  import('./CommunityEventModal')
+const CommunityEventModal = defineAsyncComponent(
+  () => import('./CommunityEventModal')
 )
 
 const props = defineProps({

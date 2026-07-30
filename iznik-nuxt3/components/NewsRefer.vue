@@ -61,8 +61,8 @@ import NoticeMessage from './NoticeMessage'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMe } from '~/composables/useMe'
 
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
 
 const props = defineProps({

@@ -598,11 +598,11 @@ describe('mobile store', () => {
         }),
       }
       // initDeepLinks guards with `if (process.client)`; enable it for tests.
-      process.client = true
+      import.meta.client = true
     })
 
     afterEach(() => {
-      delete process.client
+      delete import.meta.client
     })
 
     async function triggerDeepLink(url) {
@@ -658,11 +658,11 @@ describe('mobile store', () => {
       // reRegisterPush guards with `if (!process.client ...)`; enable the
       // client environment so the checkPermissions/register path runs (same
       // pattern as the initDeepLinks and other native-guarded blocks above).
-      process.client = true
+      import.meta.client = true
     })
 
     afterEach(() => {
-      delete process.client
+      delete import.meta.client
     })
 
     it('calls register() on a native app with a stored plugin and granted permission', async () => {
@@ -735,11 +735,11 @@ describe('mobile store', () => {
           if (event === 'resume') capturedListener = fn
         }),
       }
-      process.client = true
+      import.meta.client = true
     })
 
     afterEach(() => {
-      delete process.client
+      delete import.meta.client
     })
 
     it('re-registers push on resume when on a native app', async () => {

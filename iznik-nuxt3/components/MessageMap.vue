@@ -65,7 +65,7 @@ const props = defineProps({
 const map = ref(null)
 let L = null
 
-if (process.client) {
+if (import.meta.client) {
   L = await import('leaflet/dist/leaflet-src.esm')
 }
 
@@ -115,11 +115,10 @@ const boundaryJSON = computed(() => {
 function idle(themap) {
   if (props.home?.lat || props.home?.lng) {
     // We want to show both the centre and the marker.
-    // eslint-disable-next-line new-cap
+
     const fg = new L.featureGroup([
-      // eslint-disable-next-line new-cap
       new L.marker([props.position.lat, props.position.lng]),
-      // eslint-disable-next-line new-cap
+
       new L.marker([props.home.lat, props.home.lng]),
     ])
 
@@ -128,9 +127,7 @@ function idle(themap) {
       themap.fitBounds(fitTo)
     }
   } else {
-    // eslint-disable-next-line new-cap
     const fg = new L.featureGroup([
-      // eslint-disable-next-line new-cap
       new L.marker([props.position.lat, props.position.lng]),
     ])
 

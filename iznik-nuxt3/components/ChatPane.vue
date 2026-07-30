@@ -218,14 +218,14 @@ import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ChatBlockModal = defineAsyncComponent(() =>
-  import('~/components/ChatBlockModal')
+const ChatBlockModal = defineAsyncComponent(
+  () => import('~/components/ChatBlockModal')
 )
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal')
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
 
 const chatStore = useChatStore()
@@ -246,8 +246,8 @@ function resize() {
 // Pre-reserve sticky-ad height for non-donors so chatHolder doesn't shrink when the ad renders.
 const allowAd = computed(() => !recentDonor.value)
 
-const ChatNotVisible = defineAsyncComponent(() =>
-  import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(
+  () => import('~/components/ChatNotVisible.vue')
 )
 
 const { chat, otheruser, milesaway, unseen } = await setupChat(props.id)

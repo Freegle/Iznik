@@ -393,26 +393,26 @@ const props = defineProps({
 const emit = defineEmits(['typing', 'scrollbottom'])
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const AddressModal = defineAsyncComponent(() =>
-  import('~/components/AddressModal')
+const AddressModal = defineAsyncComponent(
+  () => import('~/components/AddressModal')
 )
-const ChatRSVPModal = defineAsyncComponent(() =>
-  import('~/components/ChatRSVPModal')
+const ChatRSVPModal = defineAsyncComponent(
+  () => import('~/components/ChatRSVPModal')
 )
-const NudgeWarningModal = defineAsyncComponent(() =>
-  import('~/components/NudgeWarningModal')
+const NudgeWarningModal = defineAsyncComponent(
+  () => import('~/components/NudgeWarningModal')
 )
-const NudgeTooSoonWarningModal = defineAsyncComponent(() =>
-  import('~/components/NudgeTooSoonWarningModal')
+const NudgeTooSoonWarningModal = defineAsyncComponent(
+  () => import('~/components/NudgeTooSoonWarningModal')
 )
-const MicroVolunteering = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteering')
+const MicroVolunteering = defineAsyncComponent(
+  () => import('~/components/MicroVolunteering')
 )
 
 const { me, myid } = useMe()

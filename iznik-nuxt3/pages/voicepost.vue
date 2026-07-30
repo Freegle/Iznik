@@ -807,7 +807,9 @@ onBeforeUnmount(() => {
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 8px 24px rgba(13, 51, 17, 0.35);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 
   &:hover {
     transform: translateY(-2px);

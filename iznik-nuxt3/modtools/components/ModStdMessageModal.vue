@@ -701,7 +701,7 @@ async function substitutionStrings(text) {
 
   if (group && text) {
     text = text.replace(/\$networkname/g, 'Freegle')
-    // eslint-disable-next-line prefer-regex-literals
+
     const re = new RegExp('Freegle', 'ig')
     text = text.replace(/\$groupnonetwork/g, group.namedisplay.replace(re, ''))
 
@@ -800,7 +800,7 @@ async function substitutionStrings(text) {
     if (user.value && user.value.joined) {
       text = text.replace(
         /\$membersubdate/g,
-        // eslint-disable-next-line new-cap
+
         new dayjs(user.value.joined).format('lll')
       )
     }
@@ -827,11 +827,9 @@ async function substitutionStrings(text) {
 
     if (message.value && message.value.duplicates) {
       message.value.duplicates.forEach((m) => {
-        // eslint-disable-next-line new-cap
         summ += new dayjs(m.date).format('lll') + ' - ' + m.subject + '\n'
       })
 
-      // eslint-disable-next-line prefer-regex-literals
       const regex = new RegExp('\\$duplicatemessages', 'gim')
       text = text.replace(regex, summ)
     }

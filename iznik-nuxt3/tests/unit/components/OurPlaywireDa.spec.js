@@ -50,7 +50,19 @@ describe('OurPlaywireDa', () => {
     vi.useRealTimers()
     delete window.ramp
     delete window.playwireScriptLoaded
-    delete global.IntersectionObserver
+    // Restore the setup.ts stub rather than deleting: deferred component
+    // callbacks can run after this hook.
+    global.IntersectionObserver = class {
+      observe() {}
+
+      unobserve() {}
+
+      disconnect() {}
+
+      takeRecords() {
+        return []
+      }
+    }
   })
 
   function createWrapper(props = {}) {

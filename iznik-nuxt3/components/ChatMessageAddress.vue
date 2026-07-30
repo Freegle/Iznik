@@ -14,8 +14,7 @@
                     v-if="address"
                     :class="address.instructions ? '' : 'mb-2'"
                     style="text-wrap: wrap"
-                    >{{ multiline }}</pre
-                  >
+                    >{{ multiline }}</pre>
                   <pre v-else>This address has been deleted.</pre>
                   <hr v-if="address?.instructions" />
                   <div v-if="address?.instructions" class="mb-2">
@@ -70,8 +69,7 @@
                     <pre
                       :class="address.instructions ? '' : 'mb-2'"
                       style="text-wrap: wrap"
-                      >{{ multiline }}</pre
-                    >
+                      >{{ multiline }}</pre>
                     <div>
                       <b-button
                         variant="white"
@@ -202,7 +200,7 @@ const sendAddress = async (id) => {
 
 // Setup
 onMounted(async () => {
-  if (process.client) {
+  if (import.meta.client) {
     await import('leaflet/dist/leaflet-src.esm')
   }
 

@@ -165,8 +165,8 @@ import {
   hasChartDataRows,
 } from '~/composables/useAuthoritySearch'
 
-const GroupHeader = defineAsyncComponent(() =>
-  import('~/components/GroupHeader.vue')
+const GroupHeader = defineAsyncComponent(
+  () => import('~/components/GroupHeader.vue')
 )
 
 // Setup stores and route
@@ -348,7 +348,7 @@ const offerOutcomeData = computed(() => {
   let withdrawnOffer = 0
 
   if (breakdown?.Offer) {
-    for (const d of breakdown?.Offer) {
+    for (const d of breakdown.Offer) {
       totalOffer += d.count
 
       if (d.outcome === 'Taken') {
@@ -375,7 +375,7 @@ const wantedOutcomeData = computed(() => {
   let withdrawnWanted = 0
 
   if (breakdown?.Wanted) {
-    for (const d of breakdown?.Wanted) {
+    for (const d of breakdown.Wanted) {
       totalWanted += d.count
 
       if (d.outcome === 'Received') {

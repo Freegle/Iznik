@@ -190,10 +190,7 @@ beforeEach(() => {
     }),
   }
 
-  // Mock process.client without replacing process entirely
-  if (typeof process !== 'undefined') {
-    process.client = true
-  }
+  // import.meta.client is substituted globally via the vitest config define.
 })
 
 describe('PostMap', () => {
@@ -561,7 +558,7 @@ describe('PostMap', () => {
       // We reach into the component's isochroneGEOJSONs computed to assert
       // smoothing happened.  The Wicket mock returns a Polygon geometry whose
       // coordinates array we check.
-      let capturedGeoJSON = null
+      let capturedGeoJSON
       const { smoothGeoJSON } = await import('~/composables/useReachPolygon')
 
       // Build the minimal GeoJSON that Wicket.toJson() would produce for the square.

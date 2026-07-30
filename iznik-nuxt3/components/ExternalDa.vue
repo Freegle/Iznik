@@ -211,7 +211,7 @@ function visibilityChanged(visible) {
   // Check the status here rather than on component load, as it might not be available yet.
   visibleAndScriptsLoadedTimer = null
 
-  if (process.client) {
+  if (import.meta.client) {
     const runtimeConfig = useRuntimeConfig()
 
     if (

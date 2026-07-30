@@ -11,6 +11,23 @@ import {
 } from 'vue'
 
 // ============================================
+// BROWSER API STUBS
+// ============================================
+// happy-dom lacks IntersectionObserver; components run their client-only
+// observer setup now that import.meta.client substitutes to true. Specs that
+// need to assert observer behaviour install their own richer mocks over this.
+if (!(globalThis as Record<string, unknown>).IntersectionObserver) {
+  ;(globalThis as Record<string, unknown>).IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return []
+    }
+  }
+}
+
+// ============================================
 // VUE COMPOSITION API GLOBALS (for Nuxt auto-imports)
 // ============================================
 // Nuxt auto-imports Vue composition API functions. In tests, components that

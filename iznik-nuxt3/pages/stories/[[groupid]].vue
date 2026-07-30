@@ -72,8 +72,8 @@ import StoryOne from '~/components/StoryOne'
 import ScrollGrid from '~/components/ScrollGrid'
 import { useRoute, useRouter, computed } from '#imports'
 
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
 
 const LIMIT = 100

@@ -330,11 +330,11 @@ const props = defineProps({
 const emit = defineEmits(['rendered', 'expand-duplicates'])
 
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const OurAtTa = defineAsyncComponent(() => import('~/components/OurAtTa'))
 

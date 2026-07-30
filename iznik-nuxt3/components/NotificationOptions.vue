@@ -66,11 +66,11 @@ import { ref, watch, computed, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useNotificationStore } from '~/stores/notification'
 
-const InfiniteLoading = defineAsyncComponent(() =>
-  import('~/components/InfiniteLoading')
+const InfiniteLoading = defineAsyncComponent(
+  () => import('~/components/InfiniteLoading')
 )
-const NotificationOne = defineAsyncComponent(() =>
-  import('~/components/NotificationOne')
+const NotificationOne = defineAsyncComponent(
+  () => import('~/components/NotificationOne')
 )
 
 const notificationStore = useNotificationStore()

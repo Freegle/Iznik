@@ -535,22 +535,22 @@ import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const MyMessageReply = defineAsyncComponent(() =>
-  import('./MyMessageReply.vue')
+const MyMessageReply = defineAsyncComponent(
+  () => import('./MyMessageReply.vue')
 )
-const MessageShareModal = defineAsyncComponent(() =>
-  import('./MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('./MessageShareModal')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
-const MessageEditModal = defineAsyncComponent(() =>
-  import('./MessageEditModal')
+const MessageEditModal = defineAsyncComponent(
+  () => import('./MessageEditModal')
 )
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
@@ -1258,7 +1258,8 @@ onMounted(async () => {
   justify-content: center;
 
   &.offer-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 30% 20%,
         rgba(129, 199, 132, 0.9) 0%,
         transparent 50%
@@ -1277,7 +1278,8 @@ onMounted(async () => {
   }
 
   &.wanted-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 25% 25%,
         rgba(144, 202, 249, 0.9) 0%,
         transparent 45%

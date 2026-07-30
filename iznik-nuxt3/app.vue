@@ -302,7 +302,7 @@ onMounted(async () => {
   }
 })
 
-if (process.client) {
+if (import.meta.client) {
   if (typeof window !== 'undefined') {
     // There's a bug https://github.com/nuxt/framework/issues/3141 which causes route to stop working.
     const messages = [

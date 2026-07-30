@@ -194,12 +194,12 @@ const {
   backButton,
 } = useNavbar()
 
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
 
-const NotificationOptions = defineAsyncComponent(() =>
-  import('~/components/NotificationOptions')
+const NotificationOptions = defineAsyncComponent(
+  () => import('~/components/NotificationOptions')
 )
 
 const mobileNav = ref(null)

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import {
   toRadian,
   getDistance,
@@ -8,6 +8,19 @@ import {
   loadLeaflet,
   nearbyGroups,
 } from '~/composables/useMap'
+
+// Keep loadLeaflet's dynamic imports away from the real bundles. wicket's
+// leaflet plugin extends real Leaflet classes at import time.
+vi.mock('wicket', () => ({ default: {} }))
+vi.mock('wicket/wicket-leaflet', () => ({}))
+// The leaflet mock carries just enough surface for registerGestureHandling().
+vi.mock('leaflet/dist/leaflet-src.esm', () => ({
+  __mockLeaflet: true,
+  Map: { mergeOptions: vi.fn(), addInitHook: vi.fn() },
+  Handler: { extend: vi.fn(() => class {}) },
+  DomEvent: { on: vi.fn(), off: vi.fn() },
+  DomUtil: { addClass: vi.fn(), removeClass: vi.fn(), hasClass: vi.fn() },
+}))
 
 // ============================================================
 // toRadian
@@ -183,44 +196,11 @@ describe('osmtile', () => {
 // calculateMapHeight
 // ============================================================
 describe('calculateMapHeight', () => {
-  afterEach(() => {
-    // Remove any process.client stub we set
-    try {
-      delete process.client
-    } catch {
-      // Some environments may not allow deletion
-    }
-  })
-
-  it('returns 0 when process.client is falsy (server-side render)', () => {
-    // In Node.js / vitest, process.client is undefined → falsy
-    // The function guard prevents window access entirely
-    expect(calculateMapHeight(4)).toBe(0)
-    expect(calculateMapHeight(2)).toBe(0)
-    expect(calculateMapHeight(1)).toBe(0)
-  })
-
-  describe('client-side behaviour (process.client = true)', () => {
-    beforeEach(() => {
-      Object.defineProperty(process, 'client', {
-        value: true,
-        configurable: true,
-        writable: true,
-      })
-    })
-
-    afterEach(() => {
-      try {
-        delete process.client
-      } catch {
-        Object.defineProperty(process, 'client', {
-          value: undefined,
-          configurable: true,
-          writable: true,
-        })
-      }
-    })
-
+  // import.meta.client is substituted to true in source under the unit-test
+  // transform (see nuxt-import-meta-flags in the config), matching the client
+  // build — only client behaviour is testable; the server branch is
+  // compile-time dead here.
+  describe('client-side behaviour', () => {
     it('computes height as (window.innerHeight / fraction) - 70', () => {
       // Set innerHeight to a value that produces a height > 200
       Object.defineProperty(window, 'innerHeight', {
@@ -422,27 +402,26 @@ describe('nearbyGroups', () => {
   })
 })
 
-// loadLeaflet — async; only test the server-side (process.client=false) path
-//               to avoid pulling in real dynamic imports in vitest
+// loadLeaflet — the unit-test transform substitutes the client flag, so the
+// client path runs; the leaflet module is mocked at the top of this file so no
+// real bundle loads.
 // ---------------------------------------------------------------------------
 describe('loadLeaflet', () => {
-  const originalClientFlag = process.client
-
   afterEach(() => {
-    process.client = originalClientFlag
+    delete window.L
   })
 
-  it('does nothing and resolves when process.client is false', async () => {
-    process.client = false
-    // Should resolve without throwing
-    await expect(loadLeaflet()).resolves.toBeUndefined()
+  it('sets window.L from the leaflet module when unset', async () => {
+    delete window.L
+    await loadLeaflet()
+    expect(window.L).toBeTruthy()
+    expect(window.L.__mockLeaflet).toBe(true)
   })
 
-  it('does nothing when process.client is false even if window.L exists', async () => {
-    process.client = false
-    // Ensure window.L presence doesn't cause issues in SSR path
-    global.L = {}
-    await expect(loadLeaflet()).resolves.toBeUndefined()
-    delete global.L
+  it('does not replace an existing window.L', async () => {
+    const existing = { existing: true }
+    window.L = existing
+    await loadLeaflet()
+    expect(window.L).toBe(existing)
   })
 })

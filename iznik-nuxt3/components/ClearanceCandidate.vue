@@ -316,7 +316,9 @@ defineExpose({
 
 .cand {
   display: grid;
-  grid-template-columns: 3.2rem minmax(9rem, 1fr) auto minmax(7rem, 12rem) auto auto;
+  grid-template-columns:
+    3.2rem minmax(9rem, 1fr) auto minmax(7rem, 12rem)
+    auto auto;
   align-items: center;
   column-gap: 0.75rem;
   row-gap: 0.25rem;

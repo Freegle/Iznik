@@ -3,7 +3,7 @@
 
 export default defineNuxtPlugin(() => {
   // Only run on client-side
-  if (process.client) {
+  if (import.meta.client) {
     // Store the original observe method
     const originalObserve = MutationObserver.prototype.observe
 

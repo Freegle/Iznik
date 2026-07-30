@@ -204,20 +204,20 @@ import MessageListUpToDate from '~/components/MessageListUpToDate.vue'
 import { untwem } from '~/composables/useTwem'
 import { useRoute } from '#imports'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const SidebarLeft = defineAsyncComponent(() =>
-  import('~/components/SidebarLeft')
+const SidebarLeft = defineAsyncComponent(
+  () => import('~/components/SidebarLeft')
 )
-const SidebarRight = defineAsyncComponent(() =>
-  import('~/components/SidebarRight')
+const SidebarRight = defineAsyncComponent(
+  () => import('~/components/SidebarRight')
 )
-const ExpectedRepliesWarning = defineAsyncComponent(() =>
-  import('~/components/ExpectedRepliesWarning')
+const ExpectedRepliesWarning = defineAsyncComponent(
+  () => import('~/components/ExpectedRepliesWarning')
 )
-const OurUploadedImage = defineAsyncComponent(() =>
-  import('~/components/OurUploadedImage')
+const OurUploadedImage = defineAsyncComponent(
+  () => import('~/components/OurUploadedImage')
 )
 
 // Route validation
@@ -753,7 +753,8 @@ if (me.value) {
   padding: 0.875rem;
   font-size: 1rem;
   resize: none;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     box-shadow var(--transition-normal);
 
   &:focus {

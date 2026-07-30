@@ -62,9 +62,8 @@ describe('useModMessages getMessages', () => {
   })
 
   it('resolves without throwing when fetchMessagesMT returns data', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection } = setupModMessages()
     collection.value = 'Pending'
 
@@ -79,9 +78,8 @@ describe('useModMessages getMessages', () => {
       )
     )
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection } = setupModMessages()
     collection.value = 'Pending'
 
@@ -96,9 +94,8 @@ describe('useModMessages getMessages', () => {
     })
     mockAll.value = [{ id: 1 }, { id: 2 }, { id: 3 }]
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, context } = setupModMessages()
     collection.value = 'Approved'
     await getMessages()
@@ -111,9 +108,8 @@ describe('useModMessages getMessages', () => {
     mockFetchMessagesMT.mockResolvedValue([1, 2, 3])
     mockAll.value = [{ id: 1 }, { id: 2 }, { id: 3 }]
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, show } = setupModMessages()
     collection.value = 'Pending'
     await getMessages()
@@ -163,9 +159,8 @@ describe('useModMessages sorting with getContextArrival', () => {
     mockAll.value = [msgA, msgB]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, groupid, messages } =
       setupModMessages(true)
     collection.value = 'Pending'
@@ -193,9 +188,8 @@ describe('useModMessages sorting with getContextArrival', () => {
     mockAll.value = [msgA, msgB]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
     // No groupid set — should use groups[0].arrival
@@ -213,9 +207,8 @@ describe('useModMessages sorting with getContextArrival', () => {
     mockAll.value = [msgA, msgB]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
     await getMessages()
@@ -245,9 +238,8 @@ describe('useModMessages vector search (listingIdOrder) sorting', () => {
     mockAll.value = [msgA, msgB, msgC]
     mockFetchMessagesMT.mockResolvedValue([1, 2, 3])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages, listingIdOrder } =
       setupModMessages(true)
     collection.value = 'Approved'
@@ -268,9 +260,8 @@ describe('useModMessages vector search (listingIdOrder) sorting', () => {
     mockAll.value = [msgA, msgB, msgC]
     mockFetchMessagesMT.mockResolvedValue([1, 2, 99])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages, listingIdOrder } =
       setupModMessages(true)
     collection.value = 'Approved'
@@ -304,9 +295,8 @@ describe('useModMessages visibleMessages computed', () => {
     ]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { collection, visibleMessages } = setupModMessages(true)
     collection.value = 'Pending'
     // show defaults to 0 after reset — do NOT call getMessages()
@@ -323,9 +313,8 @@ describe('useModMessages visibleMessages computed', () => {
     ]
     mockFetchMessagesMT.mockResolvedValue([1, 2, 3, 4, 5])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, show, visibleMessages } =
       setupModMessages(true)
     collection.value = 'Pending'
@@ -352,9 +341,8 @@ describe('useModMessages work computed', () => {
   it('returns 0 when auth work is null', async () => {
     mockAuthWork = null
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { work, workType } = setupModMessages(true)
     workType.value = 'Pending'
 
@@ -364,9 +352,8 @@ describe('useModMessages work computed', () => {
   it('returns 0 when workType is not set', async () => {
     mockAuthWork = { Pending: 7 }
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { work } = setupModMessages(true)
     // workType defaults to null after reset
 
@@ -376,9 +363,8 @@ describe('useModMessages work computed', () => {
   it('returns single work count for a string workType', async () => {
     mockAuthWork = { Pending: 12, PendingOther: 3 }
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { work, workType } = setupModMessages(true)
     workType.value = 'Pending'
 
@@ -388,9 +374,8 @@ describe('useModMessages work computed', () => {
   it('sums across multiple workTypes when workType is an array', async () => {
     mockAuthWork = { Pending: 5, PendingOther: 8 }
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { work, workType } = setupModMessages(true)
     workType.value = ['Pending', 'PendingOther']
 
@@ -426,9 +411,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     mockAll.value = [msgPending, msgApprovedRace]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
     await getMessages()
@@ -455,9 +439,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     mockAll.value = [msgPending, msgPendingOther]
     mockFetchMessagesMT.mockResolvedValue([1, 2])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
     await getMessages()
@@ -482,9 +465,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     mockAll.value = [msg]
     mockFetchMessagesMT.mockResolvedValue([1])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, groupid, messages } =
       setupModMessages(true)
     collection.value = 'Pending'
@@ -506,9 +488,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     mockAll.value = [msg]
     mockFetchMessagesMT.mockResolvedValue([1])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, groupid, messages } =
       setupModMessages(true)
     collection.value = 'Pending'
@@ -533,9 +514,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     mockAll.value = [msg]
     mockFetchMessagesMT.mockResolvedValue([1])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, groupid, messages } =
       setupModMessages(true)
     collection.value = 'Edit'
@@ -559,9 +539,8 @@ describe('useModMessages collection filter (approve-race defence)', () => {
     mockAll.value = [msgSpam]
     mockFetchMessagesMT.mockResolvedValue([1])
 
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { getMessages, collection, messages } = setupModMessages(true)
     collection.value = 'Pending'
     await getMessages()

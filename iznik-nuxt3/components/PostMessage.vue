@@ -108,8 +108,8 @@ import {
   invalidBodyMessage,
 } from '~/composables/useItemValidation'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const PostItem = defineAsyncComponent(() => import('~/components/PostItem'))
 const draggable = defineAsyncComponent(() => import('vuedraggable'))

@@ -42,7 +42,19 @@ describe('BirthdayHero', () => {
   })
 
   afterEach(() => {
-    delete global.IntersectionObserver
+    // Restore the setup.ts stub rather than deleting: the component defers
+    // observer setup via setTimeout, which can fire after this hook runs.
+    global.IntersectionObserver = class {
+      observe() {}
+
+      unobserve() {}
+
+      disconnect() {}
+
+      takeRecords() {
+        return []
+      }
+    }
   })
 
   function createWrapper(props = {}) {

@@ -109,7 +109,7 @@ export function nearbyGroups(point, groups, options = {}) {
 export function calculateMapHeight(heightFraction) {
   let height = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     height = window.innerHeight / heightFraction - 70
     height = height < 200 ? 200 : height
   }
@@ -118,7 +118,7 @@ export function calculateMapHeight(heightFraction) {
 }
 
 export async function loadLeaflet() {
-  if (process.client && !window.L) {
+  if (import.meta.client && !window.L) {
     // Load Leaflet CSS alongside the JS (lazy-loaded so non-map pages skip it)
     await import('leaflet/dist/leaflet.css')
 
@@ -127,9 +127,8 @@ export async function loadLeaflet() {
 
     // Use our own ESM gesture handler instead of the npm package which accesses
     // global L at module-evaluation time and breaks bundler optimisations.
-    const { registerGestureHandling } = await import(
-      '~/composables/gestureHandling'
-    )
+    const { registerGestureHandling } =
+      await import('~/composables/gestureHandling')
     registerGestureHandling(window.L)
 
     window.Wkt = await import('wicket')

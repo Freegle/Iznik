@@ -21,8 +21,8 @@
 import { ref, computed, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
 
-const PostPhoto = defineAsyncComponent(() =>
-  import('../../components/PostPhoto')
+const PostPhoto = defineAsyncComponent(
+  () => import('../../components/PostPhoto')
 )
 
 const props = defineProps({

@@ -111,8 +111,8 @@ const props = defineProps({
 
 const emit = defineEmits(['focus-comment', 'hide'])
 
-const VolunteerOpportunityModal = defineAsyncComponent(() =>
-  import('./VolunteerOpportunityModal')
+const VolunteerOpportunityModal = defineAsyncComponent(
+  () => import('./VolunteerOpportunityModal')
 )
 
 // Store setup

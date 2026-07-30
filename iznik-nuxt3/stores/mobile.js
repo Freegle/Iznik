@@ -86,9 +86,8 @@ export const useMobileStore = defineStore('mobile', {
       // Import app-specific modules dynamically to avoid issues in web build
       const { Device } = await import('@capacitor/device')
       const { Badge } = await import('@capawesome/capacitor-badge')
-      const { PushNotifications } = await import(
-        '@freegle/capacitor-push-notifications-cap7'
-      )
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap7')
       const { AppLauncher } = await import('@capacitor/app-launcher')
       const { App } = await import('@capacitor/app')
 
@@ -211,7 +210,7 @@ export const useMobileStore = defineStore('mobile', {
     },
 
     initWakeUpActions(App) {
-      if (process.client) {
+      if (import.meta.client) {
         App.addListener('resume', (event) => {
           try {
             const notificationStore = useNotificationStore()
@@ -235,7 +234,7 @@ export const useMobileStore = defineStore('mobile', {
     // it does NOT re-add listeners, re-create channels or re-request
     // permissions. No-op on web or before push has been initialised.
     async reRegisterPush() {
-      if (!process.client || !this.isApp || !this.pushPlugin) {
+      if (!import.meta.client || !this.isApp || !this.pushPlugin) {
         return
       }
 
@@ -255,7 +254,7 @@ export const useMobileStore = defineStore('mobile', {
     },
 
     initDeepLinks(App) {
-      if (process.client) {
+      if (import.meta.client) {
         App.addListener('appUrlOpen', async (event) => {
           console.log('appUrlOpen', event.url)
           // "Share an image into Freegle" on iOS: the Share Extension opens
@@ -319,7 +318,7 @@ export const useMobileStore = defineStore('mobile', {
     // on every resume (warm share), then route into the give flow with the photos
     // pre-attached. No-op unless the native bridge is present.
     initShareIntent(App) {
-      if (process.client) {
+      if (import.meta.client) {
         this.checkSharedIntent()
         App.addListener('resume', () => {
           this.checkSharedIntent()
@@ -328,7 +327,7 @@ export const useMobileStore = defineStore('mobile', {
     },
 
     checkSharedIntent() {
-      if (!process.client || !this.isApp) return
+      if (!import.meta.client || !this.isApp) return
       try {
         const bridge = window.FreegleShare
         if (!bridge || typeof bridge.consume !== 'function') return
@@ -762,9 +761,8 @@ export const useMobileStore = defineStore('mobile', {
         console.log('handleReplyAction: message sent successfully')
         // Confirm the reply with a success haptic (best-effort; in-app only).
         try {
-          const { Haptics, NotificationType } = await import(
-            '@capacitor/haptics'
-          )
+          const { Haptics, NotificationType } =
+            await import('@capacitor/haptics')
           await Haptics.notification({ type: NotificationType.Success })
         } catch (he) {
           dbg()?.debug('haptic not available', he?.message)

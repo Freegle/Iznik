@@ -931,7 +931,8 @@ defineExpose({ processPhoto })
   overflow: hidden;
   border: 2px solid $color-black-opacity-15;
   cursor: pointer;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     transform var(--transition-normal);
   position: relative;
 

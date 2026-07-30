@@ -106,7 +106,7 @@ export const useMiscStore = defineStore('misc', {
 
       const p = fetch(url, options)
       let timedout = false
-      let ret = null
+      let ret
 
       let timer = setTimeout(() => {
         console.log('Request timed out', url)
@@ -126,7 +126,6 @@ export const useMiscStore = defineStore('misc', {
       } catch (e) {
         if (timer) {
           clearTimeout(timer)
-          timer = null
         }
 
         if (timedout) {

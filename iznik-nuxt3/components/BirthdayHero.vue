@@ -295,7 +295,7 @@ onMounted(async () => {
 })
 
 function setupDonationVisibilityObserver() {
-  if (process.client && donationSectionRef.value) {
+  if (import.meta.client && donationSectionRef.value) {
     intersectionObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {

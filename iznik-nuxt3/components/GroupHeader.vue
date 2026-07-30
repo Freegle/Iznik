@@ -688,7 +688,9 @@ async function join(callback) {
   font-size: 0.9rem;
   font-weight: 600;
   text-decoration: none;
-  transition: transform 0.1s, background var(--transition-fast);
+  transition:
+    transform 0.1s,
+    background var(--transition-fast);
 
   &:active {
     transform: scale(0.98);

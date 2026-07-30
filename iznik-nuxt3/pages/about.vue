@@ -124,8 +124,8 @@
                         boardmember?.profile?.default
                           ? null
                           : boardmember?.profile?.url
-                          ? boardmember.profile.url
-                          : boardmember?.profile?.turl
+                            ? boardmember.profile.url
+                            : boardmember?.profile?.turl
                       "
                       class="me-2"
                       size="lg"
