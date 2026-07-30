@@ -45,9 +45,6 @@
     "vue-mention": {
       "floating-vue": "^5.2.2"
     },
-    "@zadigetvoltaire/nuxt-gtm": {
-      "nuxt": "^4.5.1"
-    },
     "sharp": "^0.33.5",
     "ignore": "4.0.6",
     "vite": "^8.1.5",
@@ -79,7 +76,6 @@
     "@vitest/coverage-v8": "^4.1.10",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "@vue/test-utils": "^2.4.11",
-    "@zadigetvoltaire/nuxt-gtm": "^0.0.13",
     "baseline-browser-mapping": "^2.11.7",
     "coveralls": "^3.1.1",
     "eslint": "^8.57.1",
@@ -204,7 +200,8 @@
     "vue3-popper": "^1.5.0",
     "vuedraggable": "^4.1.0",
     "wicket": "^1.3.8",
-    "zoompinch": "^0.0.52"
+    "zoompinch": "^0.0.52",
+    "@gtm-support/vue-gtm": "^3.2.0"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "4.62.3"
