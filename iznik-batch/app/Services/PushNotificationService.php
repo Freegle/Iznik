@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ChatRoom;
+use App\Models\User;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
@@ -1154,8 +1155,6 @@ class PushNotificationService
      */
     private function resolveChatPushTitle(object $row): string
     {
-        $senderName = $row->sender_name ?: 'Someone';
-
         if ($row->chattype === ChatRoom::TYPE_USER2MOD
             && (int) $row->sender_id !== (int) $row->user1
             && $row->groupid) {
@@ -1168,7 +1167,15 @@ class PushNotificationService
             return 'Freegle Volunteers';
         }
 
-        return $senderName;
+        // Use the display name the rest of the site uses rather than the raw
+        // users.fullname: it strips the TrashNothing "-gNNN" suffix from imported
+        // names (which was showing up in the push banner as "alice-g3486") and
+        // rewrites misleading brand/authority names. See
+        // User::getDisplayNameAttribute, which the chat notification email
+        // already goes through.
+        $sender = $row->sender_id ? User::find((int) $row->sender_id) : null;
+
+        return $sender?->display_name ?: ($row->sender_name ?: 'Someone');
     }
 
     // -------------------------------------------------------------------------

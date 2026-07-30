@@ -1119,6 +1119,28 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * TrashNothing-imported members have fullnames like "alice-g3486", taken from
+     * their -gNNN@user.trashnothing.com address. Every other surface hides that
+     * suffix via User::getDisplayNameAttribute (the chat notification email uses
+     * it), so the push banner must not show the raw users.fullname.
+     */
+    public function test_chat_payload_title_strips_trashnothing_group_suffix(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'alice-g3486']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('alice', $payload['title'],
+            'Push title must use the display name, which drops the TrashNothing -gNNN suffix');
+    }
+
+    /**
      * Image messages have no text — the push body must fall back to a
      * descriptive label ("Sent an image"), not repeat the sender name.
      *
