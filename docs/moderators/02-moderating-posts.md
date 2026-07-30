@@ -35,6 +35,13 @@ For each post you can:
   moderator who tries to approve, reject, delete or spam it is told you are holding it and
   the action does not happen. If they need to act anyway - say you are away - they can
   **Release** it first, which is always allowed.
+
+  A hold applies to **your community's copy of the post, not the post everywhere**. A post
+  that has rippled out to neighbouring communities has a separate copy on each, and each
+  community moderates its own: holding it on yours does not lock, hide the buttons for, or
+  remove from anyone else's pending count the copy on theirs. If you moderate several
+  communities the same post reached, you will see it held only on the one where the hold
+  was placed.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 If a post only breaks a small rule, prefer **editing it with a note** over rejecting it.

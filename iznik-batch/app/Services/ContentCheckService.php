@@ -256,7 +256,8 @@ class ContentCheckService
      * are checked too but never auto-demoted; problems are surfaced to mods.
      *
      * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int,
-     *                 'checked_approved' => int, 'flagged_approved' => int, 'errors' => int]
+     *                 'checked_approved' => int, 'flagged_approved' => int,
+     *                 'checked_held' => int, 'flagged_held' => int, 'errors' => int]
      */
     public function processUnprocessed(bool $dryRun = false): array
     {
@@ -266,6 +267,8 @@ class ContentCheckService
             'blocked'          => 0,
             'checked_approved' => 0,
             'flagged_approved' => 0,
+            'checked_held'     => 0,
+            'flagged_held'     => 0,
             'errors'           => 0,
         ];
 
@@ -275,11 +278,19 @@ class ContentCheckService
                     try {
                         $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
 
+                        // A moderator is holding this copy: record what the check found so
+                        // they get the reasons, but never promote or block it - that would
+                        // take the post out from under them (9816/9815).
+                        if ($row->heldby !== null) {
+                            $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
+                            continue;
+                        }
+
                         // Already-live (Approved-on-arrival) posts: content-check them but
                         // never auto-demote a post members can already see. Clean -> just
                         // record the check; any reasons -> store them and notify mods.
                         if ($row->collection === MessageGroup::COLLECTION_APPROVED) {
-                            $this->recordApprovedCheck($row, $reasons, $dryRun, $stats);
+                            $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'approved');
                             continue;
                         }
 
@@ -387,12 +398,16 @@ class ContentCheckService
         $base = fn () => DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'mg.collection', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
             ->whereNull('mg.contentcheck_checked_at')
             ->where('mg.deleted', 0)
-            // Never fight a mod: a held message has been deliberately pulled back /
-            // is under review, so leave it alone rather than re-promoting it (9816/9815).
-            ->whereNull('mg.heldby')
+            // Held messages ARE checked - checking is not acting. Skipping them entirely
+            // (the old "never fight a mod" rule, 9816/9815) left contentcheck_checked_at
+            // NULL for as long as the hold lasted, so the moderator holding the post never
+            // saw why it needed a look, and surfaces that count only checked rows reported
+            // fewer held posts than were in front of them (Discourse 9481/635). What must
+            // not happen is re-promoting or blocking it out from under them - see the
+            // heldby branch in the processing loop, which records the result and stops.
             ->whereNull('m.deleted')
             ->whereNotNull('m.fromuser')
             ->whereNull('u.deleted')
@@ -419,22 +434,31 @@ class ContentCheckService
     }
 
     /**
-     * Record the content check for an already-Approved (live) post. We never demote a
-     * post members can already see: a clean post is simply stamped as checked; a post
-     * with reasons keeps its reasons stored and notifies the group's mods so a human
-     * can review it. Bounded to new arrivals by the caller.
+     * Record the content check WITHOUT acting on the post - used where changing the
+     * collection would be wrong:
+     *   'approved' - already live, and we never demote a post members can already see;
+     *   'held'     - a moderator has claimed it, and promoting or blocking it would take
+     *                it out from under them (9816/9815).
+     * Either way a clean post is simply stamped as checked, and a post with reasons keeps
+     * its reasons stored and notifies the group's mods so a human can review it. Storing
+     * the reasons is the point for a held post: it is what tells the moderator holding it
+     * why it needed a look (Discourse 9481/635).
+     *
+     * @param string $kind 'approved' or 'held' - selects which stats counters to bump.
      */
-    private function recordApprovedCheck(object $row, array $reasons, bool $dryRun, array &$stats): void
+    private function recordCheckOnly(object $row, array $reasons, bool $dryRun, array &$stats, string $kind = 'approved'): void
     {
         $hasReasons = !empty($reasons);
+        $flaggedKey = 'flagged_' . $kind;
+        $checkedKey = 'checked_' . $kind;
 
         if ($dryRun) {
-            $stats[$hasReasons ? 'flagged_approved' : 'checked_approved']++;
+            $stats[$hasReasons ? $flaggedKey : $checkedKey]++;
             return;
         }
 
         if ($hasReasons) {
-            DB::transaction(function () use ($row, $reasons, &$stats) {
+            DB::transaction(function () use ($row, $reasons, &$stats, $flaggedKey) {
                 DB::table('messages_groups')
                     ->where('msgid', $row->msgid)
                     ->where('groupid', $row->groupid)
@@ -448,10 +472,10 @@ class ContentCheckService
                     'data'      => json_encode(['group_id' => (int) $row->groupid]),
                 ]);
 
-                $stats['flagged_approved']++;
+                $stats[$flaggedKey]++;
             });
 
-            Log::info("ContentCheck: flagged already-approved message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+            Log::info("ContentCheck: flagged {$kind} message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
             return;
         }
 
@@ -463,7 +487,7 @@ class ContentCheckService
                 'contentcheck_reasons'    => null,
             ]);
 
-        $stats['checked_approved']++;
+        $stats[$checkedKey]++;
     }
 
     /**

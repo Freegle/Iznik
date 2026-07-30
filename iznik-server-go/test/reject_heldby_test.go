@@ -4,13 +4,15 @@ package test
 // message must clear heldby.
 //
 // Bug: a mod held a rippled post on its origin group, then rejected it. handleReject
-// moves the row to the Rejected collection but never clears `heldby`, so the rejected
-// row (deleted=0, heldby still set) keeps the message-level `messages.heldby` pinned
-// (the release handler's "still held on any group?" check counts a rejected-but-held
-// row). A mod on ANOTHER group the post rippled into then sees a "Held" banner + a
-// Release button, is blocked from rejecting their own copy, and Release cannot clear
-// it. A rejected post is no longer held, so reject must clear heldby on the rejected
-// rows and, if that was the last held copy, clear messages.heldby too.
+// moved the row to the Rejected collection but never cleared `heldby`, so the rejected
+// row (deleted=0, heldby still set) left the post looking held. A mod on ANOTHER group
+// the post rippled into then saw a "Held" banner + a Release button, was blocked from
+// rejecting their own copy, and Release could not clear it.
+//
+// Holds are per-group (messages_groups.heldby); there is no longer a message-level
+// mirror, so one group's stale hold can no longer describe the post as a whole. What
+// remains worth pinning is the per-group behaviour: reject clears the hold on the rows
+// it rejects, and leaves other groups' copies alone.
 
 import (
 	"bytes"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRejectClearsHeldby(t *testing.T) {
@@ -46,12 +49,12 @@ func TestRejectClearsHeldby(t *testing.T) {
 		assert.Equal(t, 200, resp.StatusCode)
 	}
 
-	// Hold the pending message: sets messages_groups.heldby + messages.heldby.
+	// Hold the pending message: sets messages_groups.heldby on this group's row.
 	postAction(map[string]interface{}{"id": msgID, "action": "Hold"})
 
 	var heldbyAfterHold *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&heldbyAfterHold)
-	assert.NotNil(t, heldbyAfterHold, "precondition: message should be held after Hold")
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldbyAfterHold)
+	require.NotNil(t, heldbyAfterHold, "precondition: this group's copy should be held after Hold")
 
 	// Reject with an explanation (moves the Pending row to Rejected, deleted stays 0).
 	postAction(map[string]interface{}{
@@ -60,12 +63,7 @@ func TestRejectClearsHeldby(t *testing.T) {
 		"subject": prefix + " rejected: breaks the rules",
 	})
 
-	// A rejected post is no longer held - heldby must be cleared at both levels so it
-	// stops showing "Held" and never blocks a mod on another group (Discourse 9894).
-	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
-	assert.Nil(t, msgHeldby, "messages.heldby must be NULL after rejecting a held message")
-
+	// A rejected copy is no longer held (Discourse 9894).
 	var groupHeldby *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&groupHeldby)
 	assert.Nil(t, groupHeldby, "messages_groups.heldby must be NULL after rejecting a held message")
@@ -74,4 +72,57 @@ func TestRejectClearsHeldby(t *testing.T) {
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
 	assert.Equal(t, "Rejected", collection, "the copy should be Rejected")
+}
+
+// The cross-group half of 9894: rejecting a held copy on one group must not leave a
+// phantom hold on the copy another group is still working. The two used to be coupled
+// through the message-level mirror, which is exactly what stranded the other group.
+func TestRejectHeldCopyLeavesOtherGroupUnheld(t *testing.T) {
+	prefix := uniquePrefix("RejectHeldOtherGroup")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modA := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modA, groupA, "Moderator")
+	_, modAToken := CreateTestSession(t, modA)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
+		msgID, groupB)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	postAction := func(body map[string]interface{}) {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST",
+			fmt.Sprintf("/api/message?jwt=%s", modAToken), bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	postAction(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupA})
+	postAction(map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupA,
+		"subject": prefix + " rejected: breaks the rules",
+	})
+
+	var heldA, heldB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
+	assert.Nil(t, heldA, "the rejected copy must not stay held")
+	assert.Nil(t, heldB, "group B's copy was never held and must not appear held")
+
+	var collB string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collB)
+	assert.Equal(t, "Pending", collB, "group B still has its own copy to moderate")
 }

@@ -913,6 +913,42 @@ describe('ModMessage', () => {
       expect(wrapper.find('.mod-message-buttons').exists()).toBe(true)
       expect(wrapper.text()).not.toContain('held by someone else')
     })
+
+    // The API no longer sends a message-level heldby at all - a hold belongs to a
+    // (message, group) pair, so there was never a correct message-wide value. These pin
+    // the component to the per-group rows alone, so it cannot regress to reading a
+    // message-wide field if one ever reappears in a payload or a cached response.
+    it('shows the hold from the context group when the payload has no message-level heldby', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, collection: 'Pending', heldby: 888 },
+            { groupid: 790, collection: 'Pending', heldby: null },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('held by someone else')
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(false)
+    })
+
+    it('leaves actions available when no group on the post is held', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, collection: 'Pending', heldby: null },
+            { groupid: 790, collection: 'Pending', heldby: null },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('held by someone else')
+    })
   })
 
   describe('Spammer indicator', () => {

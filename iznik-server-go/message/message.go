@@ -229,7 +229,11 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby             *uint64             `json:"heldby"`
+	// No message-level Heldby. A hold belongs to a (message, group) pair
+	// (messages_groups.heldby, exposed as groups[].heldby); there is no correct
+	// message-wide value for a post that reached several groups, and every attempt
+	// to supply one leaked one group's hold onto the others. Consumers read the
+	// per-group row for the group they are acting on. See MessageGroup.Heldby.
 	Source             *string             `json:"source"`
 	Sourceheader       *string             `json:"sourceheader"`
 	Fromaddr           *string             `json:"fromaddr"`
@@ -632,24 +636,8 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 			message.MessageGroups = messageGroups
 
-			// Per-group hold visibility. The message-level messages.heldby mirror
-			// (set globally by Hold / Back-to-Pending) selected into Heldby above
-			// leaks one group's hold to mods of every OTHER group the post rippled
-			// to ("posts held by mods not on my team"). Resolve the hold the viewer
-			// should actually see: one on a group THEY moderate. Non-mods see none.
-			message.Heldby = nil
-			if isGroupMod {
-				var myModGroups []uint64
-				db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
-					myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&myModGroups)
-				if len(myModGroups) > 0 {
-					viewer := make(map[uint64]bool, len(myModGroups))
-					for _, g := range myModGroups {
-						viewer[g] = true
-					}
-					message.Heldby = effectiveHeldby(messageGroups, viewer)
-				}
-			}
+			// Holds are carried per-group on messageGroups (groups[].heldby) — there is
+			// deliberately no message-wide hold to resolve here.
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
 			message.MessageReply = messageReply
@@ -2187,17 +2175,8 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Release hold on the same authorised groups.
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
-	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
-	// would pin messages.heldby forever, leaving the message stuck showing "Held".
-	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
-	// read the source rather than a possibly-lagging replica.
-	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing this group's messages_groups.heldby above is the whole job: holds are
+	// per-group, so there is no message-wide flag to recompute and clear.
 
 	// Now Approved — add to the spatial index so the post appears in browse/search
 	// immediately rather than waiting for the periodic reconciler.
@@ -2363,16 +2342,10 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// A rejected or deleted copy is no longer held. If that cleared the last held copy,
-	// clear the message-level heldby too - otherwise a rejected-but-heldby row (deleted=0)
-	// keeps the whole post showing "Held", blocking a mod on another group the post rippled
-	// into from acting on their copy and leaving them unable to clear it via Release
-	// (Discourse 9894). Mirrors the recompute in handleReleaseHeld.
-	var stillHeld int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeld)
-	if stillHeld == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// A rejected or deleted copy is no longer held, and the UPDATEs above clear its
+	// per-group heldby. Holds being per-group, a stale hold on one copy can no longer
+	// keep the whole post showing "Held" and strand a mod on another group the post
+	// rippled into (Discourse 9894).
 
 	// Determine the message's ORIGIN group — the first group it was posted to (the
 	// earliest messages_groups arrival). With rippling-out, a post is added to nearby
@@ -2580,8 +2553,6 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group hold: set heldby on the authorized groups' rows.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
 
-	// Also update messages.heldby for backwards compatibility during migration.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2613,8 +2584,6 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Per-group hold for re-review.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
 
-	// Also update messages.heldby for backwards compatibility.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
 	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
 	// any copy back to pending takes the post off the board on EVERY community it is on
@@ -2661,17 +2630,8 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group release.
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
-	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
-	// would pin messages.heldby forever, leaving the message stuck showing "Held".
-	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
-	// read the source rather than a possibly-lagging replica.
-	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing the per-group heldby above is the whole job: a hold belongs to a
+	// (message, group) pair, so there is no message-wide flag left to recompute.
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -4420,9 +4380,8 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 		return 0, ""
 	}
 
-	// Read the per-group hold, not the message-level messages.heldby mirror: a
-	// message held on one group must not block moderation on another group it is
-	// also pending on.
+	// Holds are per-group: a message held on one group must not block moderation on
+	// another group it is also pending on.
 	var holder uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? "+
 		"AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",
