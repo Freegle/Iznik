@@ -3,6 +3,7 @@
 namespace App\Services\CommunityNews;
 
 use App\Models\CommunityNewsArea;
+use App\Models\CommunityNewsItem;
 use App\Models\Group;
 use Illuminate\Support\Collection;
 
@@ -68,12 +69,33 @@ class CommunityNewsAreaService
             $areas->push($area);
         }
 
-        // Drop areas that no longer correspond to a live cluster (items cascade).
+        // Re-home history from areas whose cluster changed shape: when an old
+        // area's anchor group now lives inside a different cluster (a mass
+        // enablement can merge neighbours under a new, lower anchor id), move
+        // its items across and carry its cadence stamps forward. Without this,
+        // the FK cascade silently destroys posted/emailed bookkeeping and the
+        // engagement linkage, and the reset cadences re-mail members early.
+        // An area whose groups left the feature entirely still deletes (with
+        // its items) — that removal is genuine.
         $stale = CommunityNewsArea::query();
         if (!empty($seenAnchors)) {
             $stale->whereNotIn('anchorgroupid', $seenAnchors);
         }
-        $stale->delete();
+
+        foreach ($stale->get() as $old) {
+            $new = $areas->first(fn ($a) => in_array((int) $old->anchorgroupid, array_map('intval', $a->groupids ?? []), true));
+
+            if ($new) {
+                CommunityNewsItem::where('areaid', $old->id)->update(['areaid' => $new->id]);
+
+                foreach (['lastresearched', 'lastposted', 'lastemailed'] as $stamp) {
+                    $new->{$stamp} = collect([$new->{$stamp}, $old->{$stamp}])->filter()->max();
+                }
+                $new->save();
+            }
+
+            $old->delete();
+        }
 
         return $areas;
     }

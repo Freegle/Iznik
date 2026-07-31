@@ -58,6 +58,50 @@ class CommunityNewsAreaServiceTest extends TestCase
         $this->assertSame(0, CommunityNewsArea::count());
     }
 
+    public function test_merge_recluster_rehomes_items_and_carries_stamps(): void
+    {
+        // Two enabled groups too far apart to cluster: two areas. gLow gets the
+        // lower id so a merged cluster will anchor on it, replacing gHigh's area.
+        $gLow = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $gHigh = $this->createTestGroup(['lat' => 51.90, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $svc = $this->svc();
+
+        $svc->rebuildAreas();
+        $this->assertSame(2, CommunityNewsArea::count());
+
+        // Give gHigh's area history: an item linked to a ChitChat post, and stamps.
+        $oldArea = CommunityNewsArea::where('anchorgroupid', $gHigh->id)->firstOrFail();
+        $oldArea->update([
+            'lastresearched' => now()->subHours(2),
+            'lastposted' => now()->subHour(),
+            'lastemailed' => now()->subDay(),
+        ]);
+        $item = \App\Models\CommunityNewsItem::create([
+            'areaid' => $oldArea->id, 'title' => 'History', 'snippet' => 'Keep me.',
+            'url' => 'https://example.org/h', 'researched_at' => now()->subHours(2),
+            'newsfeedid' => 12345, 'posted_at' => now()->subHour(),
+        ]);
+
+        // A new group in between chains the two into one cluster (union-find).
+        $this->createTestGroup(['lat' => 51.70, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $svc->rebuildAreas();
+
+        $this->assertSame(1, CommunityNewsArea::count());
+        $merged = CommunityNewsArea::firstOrFail();
+        $this->assertSame($gLow->id, (int) $merged->anchorgroupid);
+
+        // The item survived, re-homed to the merged area, still linked to its post.
+        $item->refresh();
+        $this->assertSame($merged->id, (int) $item->areaid);
+        $this->assertSame(12345, (int) $item->newsfeedid);
+
+        // Cadence stamps carried forward (max of constituents), so the merged
+        // area can't re-post or re-mail its members prematurely.
+        $this->assertNotNull($merged->lastresearched);
+        $this->assertNotNull($merged->lastposted);
+        $this->assertNotNull($merged->lastemailed);
+    }
+
     public function test_area_name_strips_freegle_and_tags_multi(): void
     {
         $a = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
