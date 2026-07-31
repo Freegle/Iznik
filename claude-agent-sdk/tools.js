@@ -58,7 +58,10 @@ async function dbSelect(sql, maxRows = 500) {
   // BEFORE running the query; if that can't be set, abort rather than run writable.
   const conn = await getPool().getConnection()
   try {
-    await conn.query('SET SESSION TRANSACTION READ ONLY, SESSION max_execution_time = 15000')
+    // Two statements: SET TRANSACTION and SET <variable> are different SET
+    // forms and cannot be comma-combined (syntax error on MySQL/Percona).
+    await conn.query('SET SESSION TRANSACTION READ ONLY')
+    await conn.query('SET SESSION max_execution_time = 15000')
     const [rows] = await conn.query(guarded)
     return rows
   } finally {
