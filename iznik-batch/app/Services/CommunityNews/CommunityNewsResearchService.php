@@ -369,6 +369,7 @@ class CommunityNewsResearchService
         - Keep everything genuinely LOCAL to {$name} (or clearly within it). If you can't find enough real local material, return fewer items — quality over quantity.
         - Do NOT include repair cafés or Restart/Fixit-style repair events — Freegle already lists these separately (synced from the Restart Project and Repair Café Wales), so they would be duplicates.
         - UK English. Light, second-person, roughly 40-60 words per item: what it is and why someone might fancy it. No hashtags, no marketing-speak, at most the occasional emoji.
+        - Where it fits NATURALLY, end an item with a short, playful Freegle tie-in — one sentence linking the story to giving or asking for things on your local Freegle community ("Need dancing shoes? Ask on Freegle", "Got records gathering dust? Someone nearby would love them"). Skip it where it would feel forced; never salesy.
         - Give dates ABSOLUTELY ("Saturday 2 August", "until 14 September"), never relatively ("this Saturday", "tomorrow", "next week") — items may be published up to a couple of weeks after you write them, so relative dates go stale.
         - Don't plug Freegle itself unless a Freegle event genuinely comes up.
         SYS;
