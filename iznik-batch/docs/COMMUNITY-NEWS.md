@@ -213,11 +213,16 @@ Went live 2026-07-31 for Edinburgh, Oxford and Ribble Valley.
 
 ## Measuring the trial
 
-`community-news:engagement` reports **loves** (`newsfeed_likes`) and **replies**
-(child `newsfeed` rows) per trial post. Note: the newsfeed has **no per-post view
-counter** (unlike classified messages), so views aren't available without new
-instrumentation — judge the trial on loves + replies (and, if needed, Loki
-`page_view` events for `/chitchat/<id>` in production).
+`community-news:engagement` reports both channels:
+
+- **ChitChat**: **loves** (`newsfeed_likes`) and **replies** (child `newsfeed`
+  rows) per trial post. The newsfeed has **no per-post view counter** (unlike
+  classified messages), so views aren't available without new instrumentation.
+- **Email**: the mailable uses the standard `TrackableEmail` machinery
+  (`email_type=CommunityNews`, area in metadata) — an **open pixel** and
+  **click redirects** on every link, with items coded `item_1…item_N` so the
+  per-link table shows which stories pull. Opens/clicks apply to sends after
+  2026-07-31 (the first launch send predated the wiring).
 
 ## Schema
 

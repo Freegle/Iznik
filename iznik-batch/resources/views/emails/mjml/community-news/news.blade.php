@@ -101,6 +101,9 @@
           {{ config('freegle.branding.name') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.<br/>
           Registered address: {{ config('freegle.branding.registered_address') }}
         </mj-text>
+        @if(!empty($trackingPixelMjml))
+        {!! $trackingPixelMjml !!}
+        @endif
       </mj-column>
     </mj-section>
 

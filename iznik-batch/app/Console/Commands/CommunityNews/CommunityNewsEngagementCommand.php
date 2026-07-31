@@ -4,13 +4,14 @@ namespace App\Console\Commands\CommunityNews;
 
 use App\Services\CommunityNews\CommunityNewsChitChatService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 class CommunityNewsEngagementCommand extends Command
 {
     protected $signature = 'community-news:engagement
                             {--area= : Only this area id}';
 
-    protected $description = 'Report engagement (loves + replies) on the Community News ChitChat trial posts';
+    protected $description = 'Report engagement on the Community News trial: ChitChat loves + replies, and weekly email opens + clicks';
 
     public function handle(CommunityNewsChitChatService $service): int
     {
@@ -45,6 +46,50 @@ class CommunityNewsEngagementCommand extends Command
             $totalReplies
         ));
 
+        $this->reportEmail();
+
         return self::SUCCESS;
+    }
+
+    /**
+     * Weekly-email engagement from email_tracking (open pixel + click
+     * redirects; only mails sent after tracking was wired carry these).
+     * Grouped by the area stored in the tracking metadata.
+     */
+    private function reportEmail(): void
+    {
+        $byArea = DB::table('email_tracking')
+            ->where('email_type', 'CommunityNews')
+            ->selectRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.area')), '?') AS area")
+            ->selectRaw('COUNT(*) AS sent')
+            ->selectRaw('SUM(opened_at IS NOT NULL) AS opened')
+            ->selectRaw('SUM(clicked_at IS NOT NULL) AS clicked')
+            ->groupBy('area')
+            ->get();
+
+        if ($byArea->isEmpty()) {
+            $this->info('No tracked Community News emails yet (tracking applies to sends after it was wired in).');
+
+            return;
+        }
+
+        $this->newLine();
+        $this->table(
+            ['Area', 'Sent', 'Opened', 'Clicked'],
+            $byArea->map(fn ($r) => [$r->area, $r->sent, (int) $r->opened, (int) $r->clicked])->all()
+        );
+
+        $topLinks = DB::table('email_tracking_clicks')
+            ->join('email_tracking', 'email_tracking.id', '=', 'email_tracking_clicks.email_tracking_id')
+            ->where('email_tracking.email_type', 'CommunityNews')
+            ->select('email_tracking_clicks.link_position', DB::raw('COUNT(*) AS clicks'))
+            ->groupBy('email_tracking_clicks.link_position')
+            ->orderByDesc('clicks')
+            ->limit(10)
+            ->get();
+
+        if ($topLinks->isNotEmpty()) {
+            $this->table(['Link', 'Clicks'], $topLinks->map(fn ($r) => [$r->link_position, $r->clicks])->all());
+        }
     }
 }
