@@ -3162,7 +3162,7 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 
 // applyPatchMessageCore performs the edit on a message without writing the HTTP response.
 // Returns non-nil on failure. Callers are responsible for writing the success response.
-func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
 
 	// Editing a clearance (bulk offer) is gated on the Clearance permission.
@@ -3271,7 +3271,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// edit — uncorrectable, because every subsequent TN edit repeats the same gap
 	// (Discourse 9908). Re-derive the nearest postcode from the new coordinates,
 	// mirroring the same lat/lng fallback already used when reading a message back.
-	if req.Lat != nil && req.Lng != nil && (req.Locationid == nil || *req.Locationid == 0) {
+	// Scoped to partner callers. The Freegle web client resolves its postcode
+	// picker to a locationid before submitting, and ModTools edits a location by
+	// name, so an unscoped derivation would only fire for a caller that sent
+	// coordinates and no location at all - silently overwriting what they meant.
+	if fromPartner && req.Lat != nil && req.Lng != nil && (req.Locationid == nil || *req.Locationid == 0) {
 		nearest := location.ClosestPostcode(float32(*req.Lat), float32(*req.Lng))
 		if nearest.ID > 0 {
 			req.Locationid = &nearest.ID
@@ -3648,7 +3652,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 
 // applyPatchMessage performs the edit on a message after auth and ID are resolved.
 func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
-	if err := applyPatchMessageCore(c, myid, req); err != nil {
+	if err := applyPatchMessageCore(c, myid, req, false); err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3792,7 +3796,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			TNPhotoScrapeRunner(db, msgID, picPageURLs)
 		}
 
-		if err := applyPatchMessageCore(c, myid, req); err != nil {
+		if err := applyPatchMessageCore(c, myid, req, true); err != nil {
 			return err
 		}
 	}
