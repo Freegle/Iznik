@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-31
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -37,13 +37,17 @@ At an architecture level:
 - **Loki** aggregates logs; **Sentry** tracks errors. See
   [Monitoring and logging](03-monitoring-and-logging.md).
 
-## Direction of travel: the "edge" tier
+The machine-level view — which physical roles exist and what routes where — is in
+[Production topology](production.md).
 
-There is an ongoing consolidation of the production-facing "edge" services (things like
-map tiles, the wiki and image delivery) onto the same Compose stack as batch processing,
-with resource prioritisation between them (cgroup-based slices) rather than separate
-machines. This is a direction, described here only at that level; the specific host
-details are operational and not reproduced in these docs.
+## The "edge" tier
+
+The production-facing "edge" services (map tiles, the wiki, image uploads and delivery)
+have been consolidated onto the same Compose stack as batch processing — a Compose
+profile on one host rather than separate frontend machines. The old frontend server
+remains only as a warm backup pending decommission. See
+[Production topology](production.md); host-specific detail stays in the ops team's
+internal notes.
 
 ## Profiles
 

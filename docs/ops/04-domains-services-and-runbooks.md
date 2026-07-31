@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-21
+last_reviewed: 2026-07-31
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -17,9 +17,13 @@ covers:
 | **ilovefreegle.org** | The member site (Nuxt build, served from Netlify). |
 | **modtools.org** | The moderator app (Nuxt build from the same repo, `modtools/`). |
 | **v2 API (Go)** | The application API. |
+| **uploads / delivery** | Image upload (tusd) and resizing/delivery (weserv) — the edge tier. |
+| **tiles / geocode / wiki** | Map tiles (OSM), the Photon geocoder, and the volunteer wiki. |
 
-The local development equivalents (the `*.localhost` domains) are listed in the root
-[../../README.md](../../README.md) and are development-only.
+Which machine serves each of these, and how requests are routed to them, is in
+[Production topology](production.md). The local development equivalents (the
+`*.localhost` domains) are listed in the root [../../README.md](../../README.md) and
+are development-only.
 
 ## Spatial and routing services
 
