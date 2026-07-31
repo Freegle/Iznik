@@ -18,6 +18,21 @@ use Illuminate\Support\Facades\Log;
 class CommunityNewsChitChatService
 {
     /**
+     * Posted as type Alert, not Message: the clients render Alert posts with a
+     * hard-coded Freegle logo and "Freegle" byline (NewsAlert.vue), which makes
+     * the provenance unmistakable — the system account's own avatar is just a
+     * gravatar identicon. Alerts get the same MBRContains position filtering in
+     * the feed query as Messages, so the local targeting is unchanged, and they
+     * are excluded from the nearby-distance calculation so they can't stretch
+     * anyone's feed radius.
+     */
+    public const POST_TYPE = 'Alert';
+
+    public function __construct(private CommunityNewsImageService $images)
+    {
+    }
+
+    /**
      * Resolve the "Freegle" system user id to post as (idle noreply account).
      */
     public function systemUserId(): ?int
@@ -102,13 +117,13 @@ class CommunityNewsChitChatService
         $message = $this->composeMessage($item);
 
         // Duplicate guard (mirrors the Go createPost check): skip if this author's
-        // most recent newsfeed row is an identical top-level Message. Guards the
+        // most recent newsfeed row is an identical top-level post. Guards the
         // unattended "every few days" cadence against re-posting the same text.
         $last = DB::table('newsfeed')
             ->where('userid', $systemUserId)
             ->orderByDesc('id')
             ->first(['type', 'message', 'replyto']);
-        if ($last && $last->type === 'Message' && $last->replyto === null && $last->message === $message) {
+        if ($last && $last->type === self::POST_TYPE && $last->replyto === null && $last->message === $message) {
             Log::info('CommunityNews ChitChat: duplicate skipped', ['area' => $area->id, 'item' => $item->id]);
             return null;
         }
@@ -122,7 +137,7 @@ class CommunityNewsChitChatService
         $lat = (float) $area->lat;
 
         $newsfeed = new Newsfeed();
-        $newsfeed->type = 'Message';
+        $newsfeed->type = self::POST_TYPE;
         $newsfeed->userid = $systemUserId;
         $newsfeed->message = $message;
         $newsfeed->html = $this->composeHtml($item);
@@ -130,6 +145,20 @@ class CommunityNewsChitChatService
         // Geometry via a raw expression, exactly like Group::boot() sets polyindex.
         $newsfeed->position = DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)");
         $newsfeed->save();
+
+        // Best-effort picture from the source page's og:image; a post without a
+        // picture is fine, so failures only log.
+        $image = $this->images->uploadItemImage($item);
+        if ($image) {
+            $imageid = DB::table('newsfeed_images')->insertGetId([
+                'newsfeedid' => $newsfeed->id,
+                'externaluid' => $image['externaluid'],
+                'contenttype' => $image['contenttype'],
+                'archived' => 0,
+            ]);
+            $newsfeed->imageid = $imageid;
+            $newsfeed->save();
+        }
 
         return (int) $newsfeed->id;
     }

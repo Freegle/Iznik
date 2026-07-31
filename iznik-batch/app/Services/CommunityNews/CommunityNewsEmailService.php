@@ -9,6 +9,7 @@ use App\Models\CommunityNewsItem;
 use App\Models\Group;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
+use App\Services\GeminiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -27,6 +28,12 @@ class CommunityNewsEmailService
 
     /** Email type gate (FREEGLE_MAIL_ENABLED_TYPES) + X-Freegle-Email-Type. */
     public const EMAIL_TYPE = 'CommunityNews';
+
+    public function __construct(
+        private CommunityNewsImageService $images,
+        private GeminiService $gemini,
+    ) {
+    }
 
     /**
      * Send the weekly digest for each due area to its members.
@@ -73,14 +80,20 @@ class CommunityNewsEmailService
                 continue;
             }
 
-            $itemData = $items->map(fn ($i) => [
-                'title' => $i->title,
-                'blurb' => $i->snippet,
-                'url' => $i->url,
-                'source' => $i->source,
-            ])->all();
+            $itemData = $items->map(function ($i) {
+                $uploaded = $this->images->uploadItemImage($i);
+
+                return [
+                    'title' => $i->title,
+                    'blurb' => $i->snippet,
+                    'url' => $i->url,
+                    'source' => $i->source,
+                    'image' => $uploaded ? $this->images->deliveryUrl($uploaded['externaluid']) : null,
+                ];
+            })->all();
 
             $intro = $area->intro ?: "Here's a little round-up of what's going on around {$area->name}.";
+            $story = $this->pickStory($groupIds, $area);
 
             $sentForArea = 0;
             foreach ($this->eligibleMembers($groupIds)->lazyById(1000, 'users.id', 'id') as $member) {
@@ -107,8 +120,8 @@ class CommunityNewsEmailService
                         intro: $intro,
                         items: $itemData,
                         findUrl: "{$userSite}/find?src=communitynews",
-                        unsubscribeUrl: "{$userSite}/unsubscribe",
                         settingsUrl: "{$userSite}/settings",
+                        story: $story,
                     ));
                 }
 
@@ -126,6 +139,75 @@ class CommunityNewsEmailService
         }
 
         return $stats;
+    }
+
+    /**
+     * One member story from the area's groups to warm the email up, if a good
+     * one was told since the last mail.
+     *
+     * Candidates must already carry the moderator "suitable for newsletter"
+     * flags (public + newsletterreviewed + newsletter — the same bar the
+     * Stories Newsletter uses). On top of that, Gemini picks at most one that
+     * is genuinely positive in tone and clearly written; if the AI is
+     * unavailable or unconvinced, the email simply goes out without a story.
+     *
+     * @return array{headline:string, story:string, name:string}|null
+     */
+    public function pickStory(array $groupIds, CommunityNewsArea $area): ?array
+    {
+        $minDays = (int) config('freegle.communitynews.email_min_days', 7);
+        $since = $area->lastemailed ?: now()->subDays($minDays);
+
+        $candidates = DB::table('users_stories')
+            ->join('users', 'users.id', '=', 'users_stories.userid')
+            ->join('memberships', 'memberships.userid', '=', 'users_stories.userid')
+            ->whereIn('memberships.groupid', array_map('intval', $groupIds))
+            ->where('memberships.collection', 'Approved')
+            ->where('users_stories.public', 1)
+            ->where('users_stories.newsletterreviewed', 1)
+            ->where('users_stories.newsletter', 1)
+            ->where('users_stories.date', '>=', $since)
+            ->whereNull('users.deleted')
+            ->orderByDesc('users_stories.date')
+            ->distinct()
+            ->limit(10)
+            ->get(['users_stories.id', 'users_stories.headline', 'users_stories.story', 'users.firstname', 'users.fullname']);
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $numbered = $candidates->values()->map(function ($s, $i) {
+            $n = $i + 1;
+            $text = mb_substr(trim((string) $s->story), 0, 800);
+
+            return "{$n}. \"{$s->headline}\" — {$text}";
+        })->implode("\n\n");
+
+        $verdict = $this->gemini->generateJson(
+            "These are stories Freegle members told about giving or receiving things in {$area->name}. " .
+            "Pick the ONE best suited to a cheery local email round-up: it must be genuinely positive in tone, " .
+            "clearly written, and make sense on its own. If none qualifies, choose null.\n\n{$numbered}\n\n" .
+            'Reply with JSON only: {"choice": <story number or null>}'
+        );
+
+        $choice = $verdict['choice'] ?? null;
+        if (!is_int($choice) && !ctype_digit((string) $choice)) {
+            return null;
+        }
+
+        $picked = $candidates->values()->get((int) $choice - 1);
+        if (!$picked) {
+            return null;
+        }
+
+        $name = trim((string) ($picked->fullname ?? '')) ?: trim((string) ($picked->firstname ?? '')) ?: 'A Freegle member';
+
+        return [
+            'headline' => (string) $picked->headline,
+            'story' => trim((string) $picked->story),
+            'name' => $name,
+        ];
     }
 
     /**

@@ -18,7 +18,8 @@ use Illuminate\Support\Str;
 class CommunityNewsMail extends MjmlMailable
 {
     /**
-     * @param  array<int, array{title:string, blurb:string, url:?string, source:?string}>  $items
+     * @param  array<int, array{title:string, blurb:string, url:?string, source:?string, image:?string}>  $items
+     * @param  array{headline:string, story:string, name:string}|null  $story
      */
     public function __construct(
         public readonly int    $userId,
@@ -28,8 +29,8 @@ class CommunityNewsMail extends MjmlMailable
         public readonly string $intro,
         public readonly array  $items,
         public readonly string $findUrl,
-        public readonly string $unsubscribeUrl,
         public readonly string $settingsUrl,
+        public readonly ?array $story = null,
     ) {
         parent::__construct();
     }
@@ -61,15 +62,15 @@ class CommunityNewsMail extends MjmlMailable
         $preview = Str::limit(trim(strip_tags($this->intro)), 90);
 
         return $this->mjmlView('emails.mjml.community-news.news', [
-            'name'           => $this->recipientName,
-            'email'          => $this->recipientEmail,
-            'areaName'       => $this->areaName,
-            'intro'          => $this->intro,
-            'items'          => $this->items,
-            'findUrl'        => $this->findUrl,
-            'unsubscribeUrl' => $this->unsubscribeUrl,
-            'settingsUrl'    => $this->settingsUrl,
-            'preview'        => $preview,
+            'name'        => $this->recipientName,
+            'email'       => $this->recipientEmail,
+            'areaName'    => $this->areaName,
+            'intro'       => $this->intro,
+            'items'       => $this->items,
+            'findUrl'     => $this->findUrl,
+            'settingsUrl' => $this->settingsUrl,
+            'story'       => $this->story,
+            'preview'     => $preview,
         ], 'emails.text.community-news.news');
     }
 }

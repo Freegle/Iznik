@@ -6,6 +6,7 @@ use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
 use App\Models\User;
 use App\Services\CommunityNews\CommunityNewsChitChatService;
+use App\Services\CommunityNews\CommunityNewsImageService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -47,6 +48,14 @@ class CommunityNewsChitChatServiceTest extends TestCase
         return app(CommunityNewsChitChatService::class);
     }
 
+    /** Image fetching is network-bound; stub it out (no image) unless a test opts in. */
+    private function withoutImages(): void
+    {
+        $this->mock(CommunityNewsImageService::class, function ($mock) {
+            $mock->shouldReceive('uploadItemImage')->andReturnNull();
+        });
+    }
+
     public function test_system_user_id_resolves_from_email(): void
     {
         $user = $this->systemUser();
@@ -55,6 +64,7 @@ class CommunityNewsChitChatServiceTest extends TestCase
 
     public function test_drip_posts_newsfeed_and_marks_item(): void
     {
+        $this->withoutImages();
         $sys = $this->systemUser();
         $area = $this->area();
         $item = $this->item($area);
@@ -71,7 +81,10 @@ class CommunityNewsChitChatServiceTest extends TestCase
         $nf = DB::table('newsfeed')->where('id', $item->newsfeedid)
             ->selectRaw('type, userid, location, ST_AsText(position) AS pos, message, html')
             ->first();
-        $this->assertSame('Message', $nf->type);
+        // Alert type: clients render Alerts with the hard-coded Freegle logo +
+        // "Freegle" byline, making provenance obvious.
+        $this->assertSame(CommunityNewsChitChatService::POST_TYPE, $nf->type);
+        $this->assertSame('Alert', $nf->type);
         $this->assertSame($sys->id, (int) $nf->userid);
         $this->assertStringContainsString('POINT', $nf->pos);
         $this->assertStringContainsString('Repair Café', $nf->message);
@@ -115,6 +128,7 @@ class CommunityNewsChitChatServiceTest extends TestCase
 
     public function test_dup_guard_skips_identical_repeat(): void
     {
+        $this->withoutImages();
         $sys = $this->systemUser();
         $area = $this->area();
         $item1 = $this->item($area);
@@ -130,6 +144,7 @@ class CommunityNewsChitChatServiceTest extends TestCase
 
     public function test_drip_respects_cadence(): void
     {
+        $this->withoutImages();
         $this->systemUser();
         config(['freegle.communitynews.chitchat_min_days' => 3]);
         $area = $this->area(['lastposted' => now()->subDay()]); // posted 1 day ago
@@ -141,6 +156,7 @@ class CommunityNewsChitChatServiceTest extends TestCase
 
     public function test_force_bypasses_cadence(): void
     {
+        $this->withoutImages();
         $this->systemUser();
         config(['freegle.communitynews.chitchat_min_days' => 3]);
         $area = $this->area(['lastposted' => now()->subDay()]); // posted 1 day ago
@@ -152,6 +168,7 @@ class CommunityNewsChitChatServiceTest extends TestCase
 
     public function test_count_override_posts_multiple(): void
     {
+        $this->withoutImages();
         $this->systemUser();
         $area = $this->area();
         // Distinct items so the dup-guard doesn't skip them.
@@ -163,8 +180,31 @@ class CommunityNewsChitChatServiceTest extends TestCase
         $this->assertSame(2, $result['posts']);
     }
 
+    public function test_post_attaches_image_when_available(): void
+    {
+        $this->mock(CommunityNewsImageService::class, function ($mock) {
+            $mock->shouldReceive('uploadItemImage')->andReturn([
+                'externaluid' => 'freegletusd-testimg123',
+                'contenttype' => 'image/jpeg',
+            ]);
+        });
+        $sys = $this->systemUser();
+        $area = $this->area();
+        $item = $this->item($area);
+
+        $nfid = $this->svc()->postItem($area, $item, $sys->id, false);
+
+        $nf = DB::table('newsfeed')->where('id', $nfid)->first(['imageid']);
+        $this->assertNotNull($nf->imageid);
+        $img = DB::table('newsfeed_images')->where('id', $nf->imageid)->first();
+        $this->assertSame((int) $nfid, (int) $img->newsfeedid);
+        $this->assertSame('freegletusd-testimg123', $img->externaluid);
+        $this->assertSame('image/jpeg', $img->contenttype);
+    }
+
     public function test_engagement_counts_loves_and_replies(): void
     {
+        $this->withoutImages();
         $sys = $this->systemUser();
         $area = $this->area();
         $item = $this->item($area);

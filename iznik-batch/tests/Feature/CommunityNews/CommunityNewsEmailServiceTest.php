@@ -6,6 +6,9 @@ use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
 use App\Services\CommunityNews\CommunityNewsEmailService;
+use App\Services\CommunityNews\CommunityNewsImageService;
+use App\Services\GeminiService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -15,6 +18,23 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         parent::setUp();
         Mail::fake();
+
+        // Network-bound collaborators are stubbed by default: no item images,
+        // and the AI story filter picks nothing. Tests opt in via geminiPicks().
+        $this->mock(CommunityNewsImageService::class, function ($mock) {
+            $mock->shouldReceive('uploadItemImage')->andReturnNull();
+            $mock->shouldReceive('deliveryUrl')->andReturnNull();
+        });
+        $this->mock(GeminiService::class, function ($mock) {
+            $mock->shouldReceive('generateJson')->andReturnNull()->byDefault();
+        });
+    }
+
+    private function geminiPicks(?int $choice): void
+    {
+        $this->mock(GeminiService::class, function ($mock) use ($choice) {
+            $mock->shouldReceive('generateJson')->andReturn(['choice' => $choice]);
+        });
     }
 
     private function svc(): CommunityNewsEmailService
@@ -112,5 +132,78 @@ class CommunityNewsEmailServiceTest extends TestCase
 
         $this->assertSame(0, $result['sent']); // too soon
         Mail::assertNothingSent();
+    }
+
+    public function test_pick_story_uses_flags_window_and_ai(): void
+    {
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $author = $this->createTestUser(['email_preferred' => 'story@test.com', 'fullname' => 'Storyteller Sam']);
+        $this->createMembership($author, $g1);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+        ]);
+
+        $mk = function (array $attrs) use ($author) {
+            return DB::table('users_stories')->insertGetId(array_merge([
+                'userid' => $author->id,
+                'date' => now()->subDays(2),
+                'public' => 1,
+                'reviewed' => 1,
+                'newsletterreviewed' => 1,
+                'newsletter' => 1,
+                'headline' => 'A lovely give',
+                'story' => 'Someone collected my old sofa and was thrilled.',
+            ], $attrs));
+        };
+
+        // Candidate that qualifies on every flag.
+        $mk([]);
+        // Not newsletter-flagged -> never a candidate.
+        $mk(['newsletter' => 0, 'headline' => 'Not for newsletter']);
+        // Too old (before the window) -> never a candidate.
+        $mk(['date' => now()->subDays(30), 'headline' => 'Ancient story']);
+
+        // AI picks candidate 1.
+        $this->geminiPicks(1);
+        $story = $this->svc()->pickStory([$g1->id], $area);
+        $this->assertNotNull($story);
+        $this->assertSame('A lovely give', $story['headline']);
+        $this->assertSame('Storyteller Sam', $story['name']);
+
+        // AI unconvinced (null) -> no story rather than an unvetted one.
+        $this->geminiPicks(null);
+        $this->assertNull($this->svc()->pickStory([$g1->id], $area));
+    }
+
+    public function test_email_includes_story_when_picked(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->createMembership($u1, $g1);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g1->id, 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
+            'url' => 'https://x.org', 'researched_at' => now(),
+        ]);
+        DB::table('users_stories')->insert([
+            'userid' => $u1->id, 'date' => now()->subDay(),
+            'public' => 1, 'reviewed' => 1, 'newsletterreviewed' => 1, 'newsletter' => 1,
+            'headline' => 'Sofa so good', 'story' => 'Gave away a sofa, made a friend.',
+        ]);
+        $this->geminiPicks(1);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertSame('Sofa so good', $sent->first()->story['headline']);
     }
 }

@@ -13,18 +13,30 @@ including them here would duplicate.
 
 It has **two delivery channels that share one research core**:
 
-1. **ChitChat trial** — drip individual items onto the newsfeed (a "ChitChat"
-   post) as the **Freegle** account, placed at the area centre so members nearby
-   see them, every few days. This is the cheap engagement signal we watch before
-   committing to email. Each post sets **both** newsfeed columns: plain
-   `message` (read by the newsfeed digest email, notifications and the
-   duplicate guard) and `html` (an escaped, title-hyperlinked rendering that
-   clients display in preference, suppressing their stacked link-preview
-   cards). The `html` column is not settable through the public API, so it
-   stays trusted; `composeHtml()` escapes everything and only links http(s)
-   URLs.
-2. **Weekly email** — a Freegle-branded MJML digest bundling the recent items for
-   an area, sent to deduplicated, opted-in members.
+1. **ChitChat trial** — drip individual items onto the newsfeed, placed at the
+   area centre so members nearby see them, every few days. This is the cheap
+   engagement signal we watch before committing to email. Posts are **type
+   `Alert`**, which the clients render with a hard-coded Freegle logo and
+   "Freegle" byline (`NewsAlert.vue`) so provenance is unmistakable — Alerts
+   get the same position filtering as Messages, so targeting is unchanged.
+   Each post sets **both** content columns: plain `message` (read by the
+   newsfeed digest email, notifications and the duplicate guard) and `html`
+   (an escaped, title-hyperlinked rendering that clients display in
+   preference, suppressing their stacked link-preview cards). `html` is not
+   settable through the public API, so it stays trusted; `composeHtml()`
+   escapes everything and only links http(s) URLs. Where the source page has
+   an og:image, it is re-hosted through TUS/delivery
+   (`CommunityNewsImageService`) and attached as the post picture.
+2. **Weekly email** — a Freegle-branded MJML digest bundling the recent items
+   for an area (each with its re-hosted og:image where available), plus at
+   most **one member story** from the area's groups told since the last mail:
+   candidates must carry the moderator newsletter flags (`public` +
+   `newsletterreviewed` + `newsletter`, the Stories Newsletter bar) and Gemini
+   then picks one that is genuinely positive and clearly written — or none.
+   Sent to deduplicated, opted-in members. The footer deliberately does NOT
+   carry the generic "Unsubscribe" link (that leaves Freegle completely);
+   it names the one relevant control — "Newsletters &amp; stories" in
+   Settings — and links there.
 
 (The design is a "rip-off" of the zeitgeist-tape digest: gather locality content →
 one model call writes the friendly briefing → deliver. Everything else is
@@ -40,8 +52,9 @@ communitynews-enabled groups
         │                                                          │
         │ post-chitchat (every few days)                           │ email (weekly)
         ▼                                                          ▼
-   newsfeed 'Message' as Freegle           Freegle-branded MJML digest to members
-   (engagement: loves + replies)           (opt-out = newslettersallowed)
+   newsfeed 'Alert' as Freegle             Freegle-branded MJML digest to members
+   (logo byline; loves + replies)          (+1 AI-picked member story; opt-out =
+                                            newslettersallowed via Settings)
 ```
 
 ## Per-community opt-in
