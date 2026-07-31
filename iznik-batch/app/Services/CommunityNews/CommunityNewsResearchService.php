@@ -246,7 +246,10 @@ class CommunityNewsResearchService
         ];
 
         try {
-            $result = Process::timeout(240)
+            // A full Opus research run (several web searches + writing) can
+            // comfortably exceed 4 minutes; the API path effectively gets
+            // 180s × max_search_iterations, so give the one-shot CLI similar room.
+            $result = Process::timeout(600)
                 ->env([
                     'CLAUDE_CODE_OAUTH_TOKEN' => $token,
                     'CLAUDE_CONFIG_DIR' => $configDir,

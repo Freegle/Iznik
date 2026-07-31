@@ -93,7 +93,7 @@ export const SETTINGS_INDEX = [
     sectionLabel: 'Features for Members',
     label: 'Community News',
     description:
-      'Whether this community takes part in Community News — a friendly local round-up sent by email and trialled on ChitChat.',
+      'Whether this community takes part in Community News — a friendly local round-up posted on ChitChat, with a weekly email to follow later.',
   },
   {
     id: 'settings.allowedits.moderated',
