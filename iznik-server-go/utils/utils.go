@@ -160,6 +160,13 @@ const NEWSFEED_TYPE_ALERT = "Alert"
 const NEWSFEED_TYPE_COMMUNITY_EVENT = "CommunityEvent"
 const NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY = "VolunteerOpportunity"
 const NEWSFEED_EVENTS_PER_FEED = 20
+
+// Alerts are capped the same way events are, and for the same reason: Community
+// News drip-posts to the feed as type Alert (CommunityNewsChitChatService), so
+// without a cap a busy news run would crowd out members' own ChitChat. Only
+// PINNED alerts - central Freegle announcements - escape the geographic filter;
+// everything else stays local to the poster's area like any other post.
+const NEWSFEED_ALERTS_PER_FEED = 5
 const NEWSFEED_MODSTATUS_SUPPRESSED = "Suppressed"
 
 const NEARBY = 50

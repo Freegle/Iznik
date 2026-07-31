@@ -21,10 +21,14 @@ class CommunityNewsChitChatService
      * Posted as type Alert, not Message: the clients render Alert posts with a
      * hard-coded Freegle logo and "Freegle" byline (NewsAlert.vue), which makes
      * the provenance unmistakable — the system account's own avatar is just a
-     * gravatar identicon. Alerts get the same MBRContains position filtering in
-     * the feed query as Messages, so the local targeting is unchanged, and they
-     * are excluded from the nearby-distance calculation so they can't stretch
-     * anyone's feed radius.
+     * gravatar identicon. They are excluded from the nearby-distance calculation
+     * so they can't stretch anyone's feed radius.
+     *
+     * These posts are left UNPINNED deliberately. The feed query serves pinned
+     * alerts from any location (they are central Freegle announcements) but
+     * filters unpinned ones by MBRContains like any other post, and caps them at
+     * NEWSFEED_ALERTS_PER_FEED so a news run cannot crowd out members' own
+     * ChitChat. Pinning one of these would push it nationwide.
      */
     public const POST_TYPE = 'Alert';
 
