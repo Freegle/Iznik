@@ -1652,6 +1652,53 @@ class IncomingMailServiceTest extends TestCase
         $this->assertStringContainsString('score', $message->spamreason);
     }
 
+    public function test_fromcountry_not_populated_for_private_ip_sender(): void
+    {
+        // Regression test for Discourse topic 9865 post 11: a post submitted by
+        // email whose only header IP is 172.20.0.1 (RFC1918, an internal relay
+        // hop - e.g. docker.local in a Received: header) must never end up with
+        // a geolocated fromcountry, since that field drives the ModTools
+        // "different country" warning in MessageHistory.vue. The mock below
+        // simulates a GeoIP backend that (incorrectly) resolves a country for
+        // the private IP, so the test proves an explicit guard - not incidental
+        // GeoIP failure - is what keeps fromcountry null.
+        $spamCheckMock = \Mockery::mock(\App\Services\Mail\Incoming\SpamCheckService::class)->makePartial();
+        $spamCheckMock->shouldReceive('checkMessage')->andReturn(null);
+        $spamCheckMock->shouldReceive('checkSpamAssassin')->andReturn([0, false]);
+        $spamCheckMock->shouldReceive('lookupIPCountryCode')->andReturn('US');
+
+        $this->service = new IncomingMailService(spamCheck: $spamCheckMock);
+
+        [$user, $group, $userEmail] = $this->createPostableUser();
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'X-Originating-IP' => '[172.20.0.1]',
+            'Subject' => 'OFFER: Test item (London)',
+        ], 'Test body');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'@groups.ilovefreegle.org'
+        );
+
+        $this->service->route($parsed);
+
+        $message = DB::table('messages')
+            ->where('fromuser', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($message, 'Message should be created in database');
+        $this->assertEquals('172.20.0.1', $message->fromip);
+        $this->assertNull(
+            $message->fromcountry,
+            'A private/reserved sender IP must never populate fromcountry'
+        );
+    }
+
     public function test_routing_context_includes_spam_info(): void
     {
         $group = $this->createTestGroup();

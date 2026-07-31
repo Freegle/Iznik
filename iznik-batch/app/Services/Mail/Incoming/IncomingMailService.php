@@ -2850,7 +2850,13 @@ class IncomingMailService
                 // Geolocate the sender IP so ModTools can flag posts from
                 // outside the UK (MessageHistory.vue). V1 (Message.php/Spam.php)
                 // stored the ISO code here; store NULL when it can't be resolved.
-                'fromcountry' => $email->senderIp ? $this->spamCheck->lookupIPCountryCode($email->senderIp) : null,
+                // Private/reserved IPs (e.g. an internal relay hop picked up
+                // from a Received: header) are never geolocated - see
+                // Discourse topic 9865, where 172.20.0.1 (RFC1918) was the
+                // only IP in the headers of a legitimate email post.
+                'fromcountry' => ($email->senderIp && ! SpamCheckService::isPrivateOrReservedIp($email->senderIp))
+                    ? $this->spamCheck->lookupIPCountryCode($email->senderIp)
+                    : null,
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,

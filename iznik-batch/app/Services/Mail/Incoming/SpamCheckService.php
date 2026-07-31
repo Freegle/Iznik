@@ -144,8 +144,12 @@ class SpamCheckService
         $fromTN = $email->isFromTrashNothing();
 
         if ($ip && ! $fromTN) {
-            // Skip internal IPs
-            if (str_starts_with($ip, '10.')) {
+            // Skip private/reserved IPs (RFC1918 10.0.0.0/8, 172.16.0.0/12,
+            // 192.168.0.0/16, loopback, link-local, etc.) - these are internal
+            // relay hops (e.g. a mail server's own Docker gateway address
+            // appearing in a Received: header), never the sender's real
+            // location, so they must never reach the country-block/GeoIP check.
+            if (self::isPrivateOrReservedIp($ip)) {
                 $ip = null;
             } else {
                 // Check IP whitelist
@@ -376,6 +380,24 @@ class SpamCheckService
         return DB::table('spam_whitelist_ips')
             ->where('ip', $ip)
             ->exists();
+    }
+
+    /**
+     * True if $ip is a private (RFC1918/RFC4193) or otherwise reserved
+     * (loopback, link-local, documentation ranges, etc.) address.
+     *
+     * These addresses can never be a genuine sender location - they show up
+     * here as internal relay hops (e.g. a mail server's own Docker gateway
+     * address leaking into a Received: header), so they must never be used
+     * for country/GeoIP-based decisions. See Discourse topic 9865.
+     */
+    public static function isPrivateOrReservedIp(string $ip): bool
+    {
+        return filter_var(
+            $ip,
+            FILTER_VALIDATE_IP,
+            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+        ) === false;
     }
 
     /**

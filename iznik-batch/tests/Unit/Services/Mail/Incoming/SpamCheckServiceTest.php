@@ -611,6 +611,52 @@ class SpamCheckServiceTest extends TestCase
         $this->assertNull($service->checkMessage($email));
     }
 
+    /**
+     * Regression test for Discourse topic 9865: an email post whose only
+     * header IP was 172.20.0.1 (RFC1918, 172.16.0.0/12 - an internal relay
+     * hop, e.g. a mail server's own Docker gateway address in a Received:
+     * header) was treated as a real sender IP because the old "internal IP"
+     * check only recognised the 10.0.0.0/8 range.
+     *
+     * @dataProvider privateAndReservedIpProvider
+     */
+    public function test_check_message_skips_ip_checks_for_private_and_reserved_ips(string $ip): void
+    {
+        DB::table('spam_countries')->insert(['country' => 'TestCountry']);
+
+        $service = $this->createServiceWithMockedGeoIP('TestCountry');
+
+        $email = $this->createParsedEmailForSpamTest([
+            'senderIp' => $ip,
+        ]);
+
+        $this->assertNull($service->checkMessage($email), "Expected IP {$ip} to be skipped as private/reserved");
+    }
+
+    public static function privateAndReservedIpProvider(): array
+    {
+        return [
+            '172.16.0.0/12 (reported IP, Discourse 9865)' => ['172.20.0.1'],
+            '192.168.0.0/16' => ['192.168.1.1'],
+            'loopback 127.0.0.0/8' => ['127.0.0.1'],
+        ];
+    }
+
+    /**
+     * @dataProvider privateAndReservedIpProvider
+     */
+    public function test_is_private_or_reserved_ip_true_for_private_ranges(string $ip): void
+    {
+        $this->assertTrue(SpamCheckService::isPrivateOrReservedIp($ip), "Expected {$ip} to be private/reserved");
+    }
+
+    public function test_is_private_or_reserved_ip_false_for_public_ips(): void
+    {
+        foreach (['8.8.8.8', '1.2.3.4', '81.158.135.133'] as $ip) {
+            $this->assertFalse(SpamCheckService::isPrivateOrReservedIp($ip), "Expected {$ip} to be a public IP");
+        }
+    }
+
     public function test_check_message_for_chat_reply_skips_subject_reuse(): void
     {
         // A common post subject like "Washing Machine" legitimately appears on many
