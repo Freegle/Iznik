@@ -43,6 +43,9 @@ class SetCommunityNewsCommand extends Command
 
         $state = $on ? 'enabled' : 'disabled';
         $this->info("Community News {$state} for {$groupName} (#{$group->id})");
+        if ($this->option('on')) {
+            $this->line('The hourly research run will pick this up within the hour, with the first ChitChat post at the next drip slot (xx:45, 08:00-21:00).');
+        }
 
         return self::SUCCESS;
     }

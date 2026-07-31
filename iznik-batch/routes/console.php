@@ -1376,15 +1376,21 @@ Schedule::command('eee:sync-mv-labels')
 //     php artisan community-news:post-chitchat --area=<id> --force [--count=N]
 //     php artisan community-news:engagement
 
+// Hourly, not daily: the commands self-gate per area (research and the drip
+// each skip areas acted on within their cadence), so the steady-state cost of
+// an hourly run is a few queries — but a group that enables Community News
+// gets researched within the hour and its first ChitChat post shortly after,
+// instead of waiting for tomorrow's run. Posts are kept to waking hours.
 Schedule::command('community-news:research')
-    ->dailyAt('06:30')
+    ->hourlyAt(30)
     ->when(fn () => config('freegle.communitynews.enabled', false))
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('community-news:research'))
     ->runInBackground();
 
 Schedule::command('community-news:post-chitchat')
-    ->dailyAt('09:15')
+    ->hourlyAt(45)
+    ->between('08:00', '21:00')
     ->when(fn () => config('freegle.communitynews.enabled', false))
     ->withoutOverlapping(30)
     ->sendOutputTo(cronLog('community-news:post-chitchat'))

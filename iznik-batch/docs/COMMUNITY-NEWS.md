@@ -194,11 +194,15 @@ predictable.
 ## Scheduling: both channels live
 
 `routes/console.php` schedules the whole pipeline — `community-news:research`
-(daily 06:30), `:post-chitchat` (daily 09:15), `:email` (**Fridays 11:00**) and
-`:discover-sources` (quarterly) — each gated on `communitynews.enabled`
-(`COMMUNITY_NEWS_ENABLED`). The commands self-gate per area, so the daily
-cadences just top up / drip as each area falls due. The research credential on
-live is the Claude subscription token (via the bundled `claude` CLI).
+(hourly at xx:30), `:post-chitchat` (hourly at xx:45, 08:00–21:00 only),
+`:email` (**Fridays 11:00**) and `:discover-sources` (quarterly) — each gated
+on `communitynews.enabled` (`COMMUNITY_NEWS_ENABLED`). The commands self-gate
+per area, so hourly runs are near-free no-ops until an area falls due — the
+point of the hourly cadence is that **a group which enables the feature starts
+immediately**: its new area is researched within the hour and gets its first
+ChitChat post at the next drip slot, instead of waiting for a next-day run.
+The research credential on live is the Claude subscription token (via the
+bundled `claude` CLI).
 
 The email additionally requires `CommunityNews` in `FREEGLE_MAIL_ENABLED_TYPES`
 (feature-flag gated on top of the kill switch). Live sets
