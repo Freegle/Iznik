@@ -4,7 +4,8 @@
       {{ datetimeshort(alert.created) }}
     </b-col>
     <b-col cols="6" lg="2">
-      {{ datetimeshort(alert.complete) }}
+      <span v-if="completed">{{ completed }}</span>
+      <span v-else class="text-muted fst-italic">In progress</span>
     </b-col>
     <b-col cols="6" lg="2">
       <div v-if="alert.group">
@@ -36,6 +37,7 @@
 </template>
 <script setup>
 import { ref, computed } from 'vue'
+import { datetimeshort } from '~/composables/useTimeFormat'
 import { useAlertStore } from '~/stores/alert'
 
 const alertStore = useAlertStore()
@@ -48,6 +50,22 @@ const props = defineProps({
 })
 
 const alert = computed(() => alertStore.get(props.alertid))
+
+// An alert stays incomplete until the batch job has fanned it out to every group, and the API
+// serialises that NULL `complete` timestamp as an empty string. Feeding that to datetimeshort()
+// renders the literal "Invalid Date" in the history table, which reads like a bug rather than
+// "this mailing is still going out" - so only format a value we actually have.
+const completed = computed(() => {
+  const val = alert.value?.complete
+
+  if (!val) {
+    return null
+  }
+
+  const formatted = datetimeshort(val)
+
+  return formatted === 'Invalid Date' ? null : formatted
+})
 
 const showDetails = ref(false)
 const showStats = ref(false)
