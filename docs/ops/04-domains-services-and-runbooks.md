@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-31
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
+  - docs/ops/reference/database-index-hygiene.md
   - docs/RSPAMD.md
   - docs/developers/reference/spatial-servers.md
 ---
@@ -16,9 +17,13 @@ covers:
 | **ilovefreegle.org** | The member site (Nuxt build, served from Netlify). |
 | **modtools.org** | The moderator app (Nuxt build from the same repo, `modtools/`). |
 | **v2 API (Go)** | The application API. |
+| **uploads / delivery** | Image upload (tusd) and resizing/delivery (weserv) — the edge tier. |
+| **tiles / geocode / wiki** | Map tiles (OSM), the Photon geocoder, and the volunteer wiki. |
 
-The local development equivalents (the `*.localhost` domains) are listed in the root
-[../../README.md](../../README.md) and are development-only.
+Which machine serves each of these, and how requests are routed to them, is in
+[Production topology](production.md). The local development equivalents (the
+`*.localhost` domains) are listed in the root [../../README.md](../../README.md) and
+are development-only.
 
 ## Spatial and routing services
 
@@ -40,6 +45,12 @@ Production splits database **reads and writes** across hosts; the application ro
 queries accordingly. The reference is
 [./reference/database-read-write-split.md](./reference/database-read-write-split.md). The schema is
 owned by Laravel migrations (see [../developers/04-apis-and-data.md](../developers/04-apis-and-data.md)).
+
+Before adding or removing an index, and to check the migrations still describe the schema
+production actually has, see
+[./reference/database-index-hygiene.md](./reference/database-index-hygiene.md). Index read
+counters must be summed across every cluster node - one node alone makes almost everything
+look unused.
 
 ## Mail and spam filtering
 

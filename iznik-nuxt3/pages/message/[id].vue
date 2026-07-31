@@ -23,20 +23,7 @@
         </client-only>
       </b-col>
       <b-col cols="12" lg="6" class="p-0">
-        <div
-          v-if="
-            !showtaken &&
-            (failed ||
-              !message ||
-              (message &&
-                (message.outcomes?.length > 0 ||
-                  message.deleted ||
-                  (message.groups &&
-                    message.groups.length &&
-                    message.groups.every((g) => g.collection === 'Rejected')))))
-          "
-          class="error-page"
-        >
+        <div v-if="gone" class="error-page">
           <div class="error-content">
             <div class="error-card">
               <v-icon icon="heart" class="error-icon" />
@@ -98,25 +85,27 @@
         </div>
         <div v-else class="botpad">
           <GlobalMessage />
+          <!-- The post subject is the page's heading. It's visually handled inside
+          MessageExpanded, so keep this out of the way but present for crawlers and
+          screen readers, which otherwise find no heading at all on this page. -->
+          <h1 class="visually-hidden">{{ message?.subject }}</h1>
           <OurMessage
             :id="id"
             class="mt-3"
             :start-expanded="true"
-            :view-source="$route.query.src || 'message_page'"
+            :view-source="viewSource"
             hide-close
             record-view
             @not-found="error = true"
+            @replied="onReplied"
           />
         </div>
-        <client-only>
-          <SimilarPosts v-if="message && !showtaken" :msgid="id" />
-        </client-only>
       </b-col>
       <b-col cols="0" lg="3" class="d-none d-lg-flex justify-content-end">
         <client-only>
           <VisibleWhen
             :not="['xs', 'sm', 'md']"
-            class="position-fixed"
+            class="position-fixed similar-posts-sidebar"
             style="width: 300px"
           >
             <ExternalDa
@@ -127,14 +116,46 @@
               show-logged-out
               :jobs="false"
             />
+            <!-- Desktop: similar posts live in the sidebar so they never push
+                 the post itself around. On mobile they'd just be clutter, so
+                 there they're shown as a modal after the user replies (see the
+                 SimilarPostsModal wiring below). -->
+            <SimilarPosts
+              v-if="message && !showtaken"
+              :msgid="id"
+              variant="sidebar"
+              :max="6"
+              class="mt-3"
+            />
           </VisibleWhen>
         </client-only>
       </b-col>
     </b-row>
+    <!-- Mobile only: after a reply, surface the recommendations as a modal so
+         they never clutter the post itself on a small screen (on desktop they
+         live in the sidebar instead). -->
+    <client-only>
+      <b-modal
+        v-model="showSimilarModal"
+        title="More like this nearby"
+        size="md"
+        ok-only
+        ok-title="Close"
+      >
+        <SimilarPosts
+          v-if="showSimilarModal && message"
+          :msgid="id"
+          variant="modal"
+          eager
+          :max="6"
+        />
+      </b-modal>
+    </client-only>
   </b-col>
 </template>
 <script setup>
-import { buildHead } from '~/composables/useBuildHead'
+import { buildHead, seoDescription } from '~/composables/useBuildHead'
+import { messageJsonLd } from '~/composables/useMessageJsonLd'
 import {
   ref,
   computed,
@@ -142,6 +163,7 @@ import {
   useHead,
   useRuntimeConfig,
   useRoute,
+  setResponseStatus,
 } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
@@ -166,9 +188,28 @@ const id = route?.params?.id ? parseInt(route.params.id) : 0
 // Get showtaken query parameter
 const showtaken = route?.query?.showtaken
 
+/* Read through the same optional chaining the rest of this file uses. The template
+used to reach for `$route.query.src` directly, which throws during the SSR hydration
+race where route is briefly undefined - the very case the guards above exist for. */
+const viewSource = route?.query?.src || 'message_page'
+
 const failed = ref(false)
 const error = ref(false)
 const mountComplete = ref(false)
+
+// After a reply, surface the "more like this" recommendations as a modal on
+// mobile only. On desktop they already live in the sidebar, so opening a modal
+// there would be redundant.
+const showSimilarModal = ref(false)
+function onReplied() {
+  if (
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(max-width: 991.98px)').matches
+  ) {
+    showSimilarModal.value = true
+  }
+}
 
 const myid = computed(() => authStore.user?.id)
 
@@ -190,15 +231,44 @@ const message = computed(() => {
   return messageStore.byId(id)
 })
 
-if (message.value) {
-  let snip = null
+/* Has this post finished its life - taken, received, withdrawn, deleted or rejected
+everywhere? Roughly 8.3m of our message URLs are in this state against ~42k live ones,
+and they used to answer 200 with the item's subject as the title, which reads to a
+crawler as millions of near-identical thin pages. */
+const gone = computed(() => {
+  if (showtaken) {
+    /* Someone followed a deliberate "show me it anyway" link. */
+    return false
+  }
 
+  if (failed.value || !message.value) {
+    return true
+  }
+
+  const m = message.value
+
+  return Boolean(
+    m.outcomes?.length > 0 ||
+      m.deleted ||
+      (m.groups?.length && m.groups.every((g) => g.collection === 'Rejected'))
+  )
+})
+
+if (gone.value) {
+  /* 410 rather than 404: these are posts that genuinely existed and are deliberately
+  and permanently finished, which is exactly what Gone means. No-op on the client. */
+  setResponseStatus(410)
+}
+
+if (message.value) {
   try {
-    if (message.value.snippet) {
-      snip = twem(message.value.snippet) + '...'
-    } else {
-      snip = 'Click for more details'
-    }
+    /* The API doesn't return a `snippet` field, so this used to fall through to the
+    literal "Click for more details" on every post page on the site - telling Google
+    that every post was a duplicate of every other one. Derive it from the body. */
+    const snip = message.value.snippet
+      ? twem(message.value.snippet) + '...'
+      : seoDescription(twem(message.value.textbody || '')) ||
+        'Click for more details'
 
     const headData = buildHead(
       route,
@@ -207,14 +277,42 @@ if (message.value) {
       snip,
       message.value.attachments && message.value.attachments?.length > 0
         ? message.value.attachments[0].path
-        : null
+        : null,
+      {},
+      {
+        /* Always the bare post URL: a post is reached with all sorts of ?src=
+        tracking on it, and from the group pages too. */
+        canonical: '/message/' + id,
+        ogType: gone.value ? 'website' : 'product',
+        /* A post that's been taken, withdrawn or deleted is not something we want
+        in the index - there are millions of them and only tens of thousands live. */
+        noindex: gone.value,
+      }
     )
+    const ld = messageJsonLd(message.value, runtimeConfig.public.USER_SITE, {
+      gone: gone.value,
+    })
+
+    if (ld) {
+      headData.script = [
+        {
+          type: 'application/ld+json',
+          innerHTML: JSON.stringify(ld),
+        },
+      ]
+    }
+
     useHead(headData)
   } catch (e) {
     console.error('Error in head setup', e)
     // Fallback to basic head
     useHead({ title: message.value.subject || 'Message' })
   }
+} else if (gone.value) {
+  /* Nothing to describe, but still keep it out of the index. */
+  useHead({
+    meta: [{ hid: 'robots', name: 'robots', content: 'noindex, follow' }],
+  })
 }
 
 /* We want to delay render of MyMessage until the mount fetch is complete, as it would otherwise not
@@ -235,6 +333,14 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+
+/* The fixed sidebar holds the ad and the similar-posts list stacked; cap its
+   height to the viewport and let it scroll internally so a tall list never
+   runs off the bottom of the screen. */
+.similar-posts-sidebar {
+  max-height: calc(100vh - 5rem);
+  overflow-y: auto;
+}
 
 .error-page {
   min-height: 60vh;

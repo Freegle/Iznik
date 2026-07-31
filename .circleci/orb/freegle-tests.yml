@@ -764,10 +764,28 @@ commands:
             rm -rf ./iznik-batch/vendor/
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
-            docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
-              spamassassin-app reverse-proxy tusd delivery loki mjml \
-              batch status host-scripts
+            # Retry the bringup. On Katapult cloud instances the Docker Hub pull-through
+            # mirror (185.44.254.6:5000) is sometimes not loaded by the running dockerd (see
+            # the mirror setup above), so :latest image pulls (mjml, percona, ...) hit Docker
+            # Hub's anonymous rate limit (toomanyrequests) and this up fails. That is a
+            # transient, per-instance flake — the same commit passes on a healthy instance —
+            # so retry, nudging the mirror back between attempts, rather than failing the
+            # whole run on one 429.
+            for attempt in 1 2 3; do
+              if docker-compose up -d \
+                percona postgres redis beanstalkd mailpit \
+                spamassassin-app reverse-proxy tusd delivery loki mjml \
+                batch status host-scripts; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 1 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the pull-through mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for percona to be healthy..."
             for i in $(seq 1 60); do
@@ -822,7 +840,16 @@ commands:
             fi
 
             echo "=== Phase 2: Starting all remaining containers ==="
-            docker-compose up -d
+            for attempt in 1 2 3; do
+              if docker-compose up -d; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 2 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for application services to start..."
             sleep 30
@@ -941,10 +968,23 @@ commands:
             # Phase 2: All remaining containers (databases already waiting for them)
 
             echo "=== Phase 1: Infrastructure + migrations ==="
-            docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
-              spamassassin-app reverse-proxy tusd delivery loki mjml \
-              batch status host-scripts
+            # Retry the bringup — a transient Docker Hub 429 (pull-through mirror not loaded
+            # on this instance) must not fail the whole run. See start-docker-services.
+            for attempt in 1 2 3; do
+              if docker-compose up -d \
+                percona postgres redis beanstalkd mailpit \
+                spamassassin-app reverse-proxy tusd delivery loki mjml \
+                batch status host-scripts; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 1 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for percona to be healthy..."
             for i in $(seq 1 60); do
@@ -996,7 +1036,16 @@ commands:
             fi
 
             echo "=== Phase 2: Starting all remaining containers ==="
-            docker-compose up -d
+            for attempt in 1 2 3; do
+              if docker-compose up -d; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 2 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for application services to start..."
             sleep 30
@@ -1369,8 +1418,19 @@ commands:
               exit 0
             fi
             echo "📦 Installing Node.js 22..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # deb.nodesource.com is Cloudflare-fronted and 403s datacenter/CI IPs; fall back to
+            # nodejs.org's official tarball (a separate CDN) into /usr/local when NodeSource fails.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
             echo "✅ Node.js $(node --version) installed"
       - run:
           name: Run Vitest unit tests
@@ -2677,21 +2737,28 @@ jobs:
             wait $PLAYWRIGHT_PID 2>/dev/null || true
             [ -n "${VITEST_PID:-}" ] && wait $VITEST_PID 2>/dev/null || true
 
-            # For killed tests, fetch final logs from the status API
-            if [ "$TESTS_KILLED_EARLY" = "true" ]; then
-              echo "📋 Capturing final logs for killed tests..."
-              for test_type in laravel go playwright; do
-                outfile=~/test-output/${test_type}.out
-                result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
-                if [ "$result" = "running" ] || [ "$result" = "unknown" ]; then
-                  echo "📋 Fetching final logs for $test_type..."
-                  status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/${test_type}/status || echo '{}')
-                  echo "" >> "$outfile"
-                  echo "=== Test killed by fail-fast ===" >> "$outfile"
-                  echo "$status_response" | jq -r '.logs // "No logs available"' >> "$outfile" 2>/dev/null || true
-                fi
-              done
-            fi
+            # Ensure each suite's output file actually has content, then fall
+            # back to the status API otherwise. Playwright runs via a backgrounded
+            # status-API poller whose buffered stdout is torn down (unflushed)
+            # when the monitoring loop breaks — on fail-fast OR when all suites
+            # complete — so on a Playwright failure playwright.out was left EMPTY,
+            # hiding the failing spec (the artifact uploaded 0 bytes). Re-fetch the
+            # logs from the status API for any suite that did not pass or whose
+            # .out file is empty. Runs unconditionally now (was gated on
+            # TESTS_KILLED_EARLY and only captured 'running'/'unknown', which
+            # skipped a Playwright 'fail').
+            echo "📋 Ensuring final test logs are captured..."
+            for test_type in laravel go playwright; do
+              outfile=~/test-output/${test_type}.out
+              result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
+              if [ "$result" != "pass" ] || [ ! -s "$outfile" ]; then
+                echo "📋 Fetching final logs for $test_type (result=$result)..."
+                status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/${test_type}/status || echo '{}')
+                echo "" >> "$outfile"
+                echo "=== Final status-API logs (result=$result) ===" >> "$outfile"
+                echo "$status_response" | jq -r '.logs // "No logs available"' >> "$outfile" 2>/dev/null || true
+              fi
+            done
 
             # Check results from files
             LARAVEL_RESULT=$(cat /tmp/laravel-result 2>/dev/null || echo "fail")
@@ -3248,8 +3315,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3385,8 +3469,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - restore_cache:
@@ -3625,8 +3726,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - restore_cache:
@@ -3884,11 +4002,27 @@ jobs:
             curl -X DELETE \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST \
+            # Verify the write landed. This used to print a ✅ regardless of what the API
+            # said, so an expired CIRCLECI_API_TOKEN ("Invalid token provided.") left the
+            # variable stuck at an old version while the job stayed green. Every later
+            # release then recomputed the SAME next version, and iOS failed with
+            # "Invalid Pre-Release Train ... is closed for new build submissions" once that
+            # version had been released — silently unshippable on iOS.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "The version variable is now STALE. The next ModTools release will rebuild"
+              echo "${NEW_VERSION} instead of moving on, and iOS will be rejected once that"
+              echo "version is released. Fix CIRCLECI_API_TOKEN, then set the variable to"
+              echo "${NEW_VERSION} before the next release."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - store_artifacts:
           path: android/app/build/outputs/bundle/release/
@@ -3908,8 +4042,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4206,10 +4357,21 @@ jobs:
             NEW_VERSION=$(cat .new_version)
             curl -X DELETE -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+            # Fail loudly rather than printing a ✅ the API never earned — see the matching
+            # step in build-android-modtools for what a silent failure here costs.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "Fix CIRCLECI_API_TOKEN, then set the variable to ${NEW_VERSION}"
+              echo "before the next release, or iOS will retry a closed version train."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - run:
           name: Collect Xcode build logs
@@ -4475,6 +4637,24 @@ jobs:
           name: Auto-release Apps from Pending Developer Release
           command: bundle exec fastlane ios auto_release
 
+  # Cross-platform release-divergence guard: fails (red CI + failure notification) when the
+  # iOS App Store and Google Play live releases have drifted apart for over a week — e.g. an
+  # iOS version stuck in Prepare for Submission / Apple review while Play keeps shipping.
+  check-release-divergence:
+    executor: android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - bundle-v1-{{ checksum "Gemfile.lock" }}
+            - bundle-v1-
+      - setup-android-fastlane
+      - run:
+          name: Check iOS App Store vs Google Play release divergence
+          command: bundle exec fastlane ios check_release_divergence
+
   check-hotfix-promote:
     docker:
       - image: cimg/base:stable
@@ -4515,8 +4695,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:

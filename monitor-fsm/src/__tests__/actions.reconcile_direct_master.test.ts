@@ -79,6 +79,34 @@ describe('matchDirectMasterFixCommits', () => {
     ])
   })
 
+  it('does NOT match a scoped topic ref to an unrelated post via the single-bug fallback', () => {
+    // Regression: a reach-slider commit that referenced Neville's OTHER posts
+    // "(9808 #585/#600)" and "(Neville, 9808 #584)" was matched to the only open
+    // 9808 bug at the time (9808/633, a different problem), falsely marking it
+    // fixed and auto-posting "please retest" — which Neville rejected (2026-07-22).
+    const m = matchDirectMasterFixCommits(
+      [
+        {
+          sha: '0370f67',
+          subj: "fix(reach-slider): show the rippling explainer at all widths + 'Close to' wording",
+          body: 'Un-hide the line Neville reported missing (9808 #585/#600). Wording per (Neville, 9808 #584).',
+        },
+      ],
+      [{ topic: 9808, post: 633 }],
+    )
+    expect(m).toEqual([])
+  })
+
+  it('still matches the exact scoped post it does reference', () => {
+    const m = matchDirectMasterFixCommits(
+      [{ sha: 'abc1234', subj: 'fix(reach): explainer', body: 'the missing line (9808 #585)' }],
+      [{ topic: 9808, post: 585 }],
+    )
+    expect(m).toEqual([
+      { topic: 9808, post: 585, sha: 'abc1234', subj: 'fix(reach): explainer' },
+    ])
+  })
+
   it('returns nothing when no commit references the bug', () => {
     const m = matchDirectMasterFixCommits(
       [{ sha: 'iii9999', subj: 'fix(x): unrelated', body: '' }],

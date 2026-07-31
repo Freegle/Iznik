@@ -18,6 +18,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
 import { useDebugStore } from '~/stores/debug'
+import { setAppVersion } from '~/composables/useClientLog'
 import api from '~/api'
 
 // Helper to get debug store safely (may not be initialized early)
@@ -35,6 +36,12 @@ export const useMobileStore = defineStore({
     config: null,
     isApp: false,
     mobileVersion: false,
+    // Native app version + build number from Capacitor App.getInfo() — the REAL
+    // installed-app version (unlike mobileVersion, which is the web build
+    // constant). Null on the website. Sent to the server on /session and logged
+    // so support can see which app version a member is actually running.
+    appVersion: null,
+    appBuild: null,
     deviceinfo: null,
     deviceuserinfo: '',
     isiOS: false,
@@ -89,8 +96,16 @@ export const useMobileStore = defineStore({
       // Log app and plugin versions for debugging
       const runtimeConfig = useRuntimeConfig()
       const appInfo = await App.getInfo()
+      // Keep the native version/build so the session call and client logs can
+      // report the REAL installed-app version (not the mobileVersion constant).
+      this.appVersion = appInfo.version || null
+      this.appBuild = appInfo.build || null
+      // Make it available to client logs (session_start) so support sees the
+      // real app version a member is running.
+      setAppVersion(this.appVersion)
       dbg()?.info('=== APP STARTUP ===')
       dbg()?.info('App version', runtimeConfig.public.MOBILE_VERSION)
+      dbg()?.info('Native app version', appInfo.version)
       dbg()?.info('App build', appInfo.build)
       dbg()?.info('App bundle', appInfo.id)
       dbg()?.info('Platform', Capacitor.getPlatform())
@@ -352,7 +367,10 @@ export const useMobileStore = defineStore({
           .filter(Boolean)
         if (!paths.length) return
         this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
-        console.log('Shared images received (iOS)', this.pendingSharedImages.length)
+        console.log(
+          'Shared images received (iOS)',
+          this.pendingSharedImages.length
+        )
         const router = useRouter()
         router.push('/give/mobile/photos')
       } catch (e) {

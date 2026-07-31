@@ -51,8 +51,12 @@ func GetGiftAid(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Get user ID from JWT
-	userID, _, _ := user.GetJWTFromRequest(c)
+	// Get the logged-in user. Use WhoAmI (not GetJWTFromRequest) so that
+	// c.Locals("authUsed") is set: that is what makes the global auth middleware
+	// enforce server-side session revocation. Reading the JWT directly would let a
+	// captured-but-logged-out token keep returning Gift Aid PII (name/address/
+	// postcode) until it expires. The other giftaid handlers already use WhoAmI.
+	userID := user.WhoAmI(c)
 	if userID == 0 {
 		return c.Status(401).JSON(fiber.Map{
 			"error": "Not logged in",

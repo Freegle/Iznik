@@ -73,6 +73,12 @@ export const useEmailTrackingStore = defineStore({
     digestPositions: [],
     digestPositionsLoading: false,
     digestPositionsError: null,
+
+    // Reengagement effectiveness: send/open/click/reengage funnel, plus
+    // breakdowns by stage, experiment arm, and post segment.
+    reengageStats: null,
+    reengageLoading: false,
+    reengageError: null,
   }),
   actions: {
     init(config) {
@@ -94,6 +100,8 @@ export const useEmailTrackingStore = defineStore({
       this.aggregateClickedLinks = true
       this.digestPositions = []
       this.digestPositionsError = null
+      this.reengageStats = null
+      this.reengageError = null
       this.userEmails = []
       this.userEmailsTotal = 0
       this.userEmailsError = null
@@ -228,6 +236,32 @@ export const useEmailTrackingStore = defineStore({
         console.error('Digest positions fetch error:', e)
       } finally {
         this.digestPositionsLoading = false
+      }
+    },
+
+    async fetchReengageEffectiveness({ start, end } = {}) {
+      this.reengageLoading = true
+      this.reengageError = null
+
+      try {
+        const params = {}
+        if (start) {
+          params.start = start
+        }
+        if (end) {
+          params.end = end
+        }
+
+        const response = await api(
+          this.config
+        ).emailtracking.fetchReengageEffectiveness(params)
+        this.reengageStats = response || null
+      } catch (e) {
+        this.reengageError =
+          e.message || 'Failed to fetch reengagement effectiveness stats'
+        console.error('Reengagement effectiveness fetch error:', e)
+      } finally {
+        this.reengageLoading = false
       }
     },
 
@@ -727,6 +761,8 @@ export const useEmailTrackingStore = defineStore({
     },
 
     hasDigestPositions: (state) => state.digestPositions.length > 0,
+
+    hasReengageStats: (state) => state.reengageStats !== null,
 
     // Digest position data formatted for Google Charts (ComboChart). Bars show
     // the click-through rate at each position; the line shows the sample size

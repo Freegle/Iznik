@@ -1051,26 +1051,33 @@ func GetSession(c *fiber.Ctx) error {
 					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL "+
 					"AND mg.contentcheck_checked_at IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&pending)
-				// Held pending in active groups → pendingother (blue).
+				// Held pending in active groups → pendingother (blue). No
+				// contentcheck_checked_at filter here: that filter exists so a post which
+				// might still auto-approve does not raise a phantom badge, which only
+				// applies while nobody has claimed it. A held post has been claimed by a
+				// moderator, will never auto-approve, and is already showing in their list
+				// as "Held by ..." — dropping it left mods with a badge lower than the
+				// number of held posts in front of them (Discourse 9481/635).
 				var heldActive int64
 				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL "+
-					"AND mg.contentcheck_checked_at IS NOT NULL",
+					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL",
 					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&heldActive)
 				pendingother += heldActive
 			}
 			if len(inactiveGroupIDs) > 0 {
-				// All pending in inactive groups → pendingother (blue).
+				// All pending in inactive groups → pendingother (blue). Same rule as
+				// above: an unchecked post might still auto-approve so it waits for the
+				// content check, but a held one is claimed work and always counts.
 				var inact int64
 				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
 					"INNER JOIN messages m ON m.id = mg.msgid "+
 					"INNER JOIN users u ON u.id = m.fromuser "+
 					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
 					"AND m.deleted IS NULL AND u.deleted IS NULL "+
-					"AND mg.contentcheck_checked_at IS NOT NULL",
+					"AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
 					inactiveGroupIDs, utils.COLLECTION_PENDING).Scan(&inact)
 				pendingother += inact
 			}
@@ -1354,6 +1361,10 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
 					"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
 					"AND mg.groupid IN ? "+
+					// rippled_in = 0: the aggregate Feedback work count must match
+					// the per-group badge (groupWork.go) and the list — only posts
+					// that originated on the group, not rippled-in copies. 9808/633.
+					"AND mg.rippled_in = 0 "+
 					"AND mo.comments IS NOT NULL "+
 					"AND mo.comments != 'Sorry, this is no longer available.' "+
 					"AND mo.comments != 'Thanks, this has now been taken.' "+
@@ -1714,7 +1725,10 @@ func PatchSession(c *fiber.Ctx) error {
 		}
 
 		var emails []EmailRecord
-		db.Raw("SELECT id, userid, email FROM users_emails WHERE validatekey = ?", *req.Key).Scan(&emails)
+		// SECURITY: reject keys older than 7 days so a validatekey is not an indefinitely-valid
+		// bearer credential (it can trigger an account merge below). NULL validatetime (legacy rows
+		// predating this) stays accepted for compatibility; new keys always set it.
+		db.Raw("SELECT id, userid, email FROM users_emails WHERE validatekey = ? AND (validatetime IS NULL OR validatetime > NOW() - INTERVAL 7 DAY)", *req.Key).Scan(&emails)
 
 		if len(emails) == 0 {
 			return c.JSON(fiber.Map{

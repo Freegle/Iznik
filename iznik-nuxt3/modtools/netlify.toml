@@ -5,6 +5,11 @@
 [build.environment]
 NODE_VERSION = "22"
 NPM_FLAGS = "--legacy-peer-deps"
+# AI support helper, same-origin path per config.js's AI_SUPPORT_URL contract:
+# HAProxy routes modtools.org/api/ai-support/* to the helper and strips the
+# prefix. Same-origin means no CORS and no separate DNS/cert; access control is
+# the helper's own Support/Admin JWT gate.
+AI_SUPPORT_URL = "/api/ai-support"
 
 [build]
 command = "export NODE_OPTIONS=--max_old_space_size=6000 && cd .. && npm ci --legacy-peer-deps && npx nuxi prepare && cd modtools && npm run build"

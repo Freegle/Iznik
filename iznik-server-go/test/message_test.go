@@ -464,6 +464,138 @@ func TestCrossPost_HeldOnOneGroupReadSurface(t *testing.T) {
 	assert.Equal(t, 1, mtCount, "held cross-post should appear once in the combined pending queue")
 }
 
+// A hold belongs to a (message, group) pair, so groups[].heldby carries the truth: there
+// is no correct message-wide value for a post that reached several groups. A mod of BOTH
+// groups is the case no message-wide value can serve - the old field said "held" while she
+// was administering the unheld copy, which hid every action button on it (Discourse 9970/2).
+// Up-to-date consumers read groups[].heldby for the group they are acting on.
+//
+// The message-level heldby remains in the payload for BUNDLED APP CLIENTS ONLY - see
+// TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps. This test pins the per-group
+// truth, which is what the 9970/2 fix depends on.
+func TestMessagePayloadCarriesHoldPerGroupNotMessageWide(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("heldpayload")
+
+	groupHeld := CreateTestGroup(t, prefix+"_held")
+	groupUnheld := CreateTestGroup(t, prefix+"_unheld")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupHeld, "Member")
+	CreateTestMembership(t, posterID, groupUnheld, "Member")
+	// The mod moderates BOTH groups — the multi-group mod this bug is about.
+	CreateTestMembership(t, modID, groupHeld, "Moderator")
+	CreateTestMembership(t, modID, groupUnheld, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupHeld, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
+		msgID, groupUnheld)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	// Hold on one group only, through the real endpoint.
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupHeld})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var payload map[string]interface{}
+	require.NoError(t, json2.Unmarshal(rsp(resp), &payload))
+
+	// The per-group rows carry the truth, and only the held group is held.
+	groups, ok := payload["groups"].([]interface{})
+	require.True(t, ok, "payload should carry groups[]")
+	seen := map[uint64]interface{}{}
+	for _, g := range groups {
+		gm := g.(map[string]interface{})
+		seen[uint64(gm["groupid"].(float64))] = gm["heldby"]
+	}
+	require.Contains(t, seen, groupHeld)
+	require.Contains(t, seen, groupUnheld)
+	assert.NotNil(t, seen[groupHeld], "the group the hold was placed on reports the holder")
+	assert.Nil(t, seen[groupUnheld], "the group with no hold must not report one")
+}
+
+// The ModTools app bundles its web build into the binary (capacitor.config.modtools.js
+// sets webDir with no server.url), and the production APK ships on a weekly-at-best
+// cadence, so an installed app runs frontend code that is days or weeks old. That code
+// renders held state from the MESSAGE-level heldby: `v-if="message.heldby"` for the
+// "Held by X" notice and `v-if="!message.heldby"` for the Hold button.
+//
+// When the message-level field was dropped, every installed app stopped showing holds at
+// all, and Hold appeared to do nothing: the POST succeeded, the client re-fetched, and
+// with no heldby in the payload the button never became Release (Discourse 9481/636 -
+// "I press the button, it whirls for a few seconds and doesn't hold").
+//
+// So the field stays, computed from the per-group rows, until the app floor has moved
+// past the per-group frontend. Removing it again breaks every un-updated app.
+func TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("heldcompat")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	fetch := func() map[string]interface{} {
+		resp, err := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+		var payload map[string]interface{}
+		require.NoError(t, json2.Unmarshal(rsp(resp), &payload))
+		return payload
+	}
+
+	// Before the hold the app must see an unheld post, so the Hold button shows.
+	before := fetch()
+	_, present := before["heldby"]
+	require.True(t, present, "message payload must carry a message-level heldby for bundled apps")
+	assert.Nil(t, before["heldby"], "an unheld post reports no holder")
+
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupID})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	// This is the re-fetch the client does straight after a successful hold. Without a
+	// message-level heldby here the app's UI is byte-identical to before the hold.
+	after := fetch()
+	require.NotNil(t, after["heldby"], "after a hold the app must see the post as held")
+	assert.Equal(t, float64(modID), after["heldby"], "the message-level heldby names the holder")
+
+	// Releasing clears it again, so the app returns to showing Hold.
+	releaseBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Release", "groupid": groupID})
+	releaseReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(releaseBody))
+	releaseReq.Header.Set("Content-Type", "application/json")
+	releaseResp, err := getApp().Test(releaseReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, releaseResp.StatusCode)
+
+	assert.Nil(t, fetch()["heldby"], "after a release the app must see the post as unheld again")
+}
+
 func TestMessagesByUser(t *testing.T) {
 	// Create a user with a message
 	prefix := uniquePrefix("usermsg")
@@ -1192,9 +1324,9 @@ func TestPostMessageApprove(t *testing.T) {
 	db.Raw("SELECT COALESCE(approvedby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&approvedby)
 	assert.Equal(t, modID, approvedby)
 
-	// Verify heldby cleared.
+	// Verify the hold on this group's copy is cleared (holds are per-group).
 	var heldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&heldby)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
 	assert.Nil(t, heldby)
 
 	// Verify background task queued.
@@ -1482,8 +1614,10 @@ func TestPostMessageApproveMarksHam(t *testing.T) {
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
-	// Set spamtype on message to simulate it being flagged.
-	db.Exec("UPDATE messages SET spamtype = 'Spam' WHERE id = ?", msgID)
+	// Set spamtype on message to simulate it being flagged. Must be a value from
+	// the production ENUM - 'Spam' is not one of them, and only worked while the
+	// migrations declared this column as a varchar.
+	db.Exec("UPDATE messages SET spamtype = 'SpamAssassin' WHERE id = ?", msgID)
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -1862,9 +1996,9 @@ func TestPostMessageHold(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify heldby set to mod.
+	// Verify this group's copy is held by the mod (holds are per-group).
 	var heldby uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM messages WHERE id = ?", msgID).Scan(&heldby)
+	db.Raw("SELECT COALESCE(heldby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
 	assert.Equal(t, modID, heldby)
 
 	// Verify push_notify_group_mods background task was queued.
@@ -1890,7 +2024,6 @@ func TestPostMessageRelease(t *testing.T) {
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
 	// First hold the message.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -1904,9 +2037,9 @@ func TestPostMessageRelease(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify heldby cleared.
+	// Verify the hold on this group's copy is cleared (holds are per-group).
 	var heldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&heldby)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
 	assert.Nil(t, heldby)
 
 	// Verify push_notify_group_mods background task was queued.
@@ -3604,10 +3737,10 @@ func TestPostMessageBackToPending(t *testing.T) {
 	db.Raw("SELECT approvedby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&approvedby)
 	assert.Nil(t, approvedby)
 
-	// Verify heldby is set to the mod before moving to Pending).
+	// Verify this group's copy is held by the mod before moving to Pending.
 	var heldby uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM messages WHERE id = ?", msgID).Scan(&heldby)
-	assert.Equal(t, modID, heldby, "BackToPending should set heldby to the mod")
+	db.Raw("SELECT COALESCE(heldby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
+	assert.Equal(t, modID, heldby, "BackToPending should set heldby to the mod on this group's copy")
 
 	// Verify a log entry was created.
 	var logCount int64
@@ -8061,7 +8194,11 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
+	// tnuserid is UNIQUE in production. 77710 is not used by any other test -
+	// 77701-77704, 77801-77804 and 77901-77903 all are. Release it from any user
+	// left by an earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77710)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77710, ownerID)
 
 	// Create message at original lat/lng.
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8076,7 +8213,7 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 		"lng": newLng,
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77701&email=%s@test.com", key, prefix)
+	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77710&email=%s@test.com", key, prefix)
 	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
@@ -8158,7 +8295,6 @@ func TestPostMessageReleasePerGroup(t *testing.T) {
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	// Release on group A only.
 	body := map[string]interface{}{
@@ -8185,10 +8321,11 @@ func TestPostMessageReleasePerGroup(t *testing.T) {
 	assert.NotNil(t, heldbyB)
 	assert.Equal(t, modID, *heldbyB)
 
-	// messages.heldby should still be set (still held on group B).
-	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
-	assert.NotNil(t, msgHeldby)
+	// Group A's copy is released; B's stays held. There is no message-wide hold to
+	// check - that is the point: releasing A cannot describe B.
+	var heldbyAAfter *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldbyAAfter)
+	assert.Nil(t, heldbyAAfter)
 }
 
 func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
@@ -8204,7 +8341,6 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	// Release on the only group.
 	body := map[string]interface{}{
@@ -8220,17 +8356,18 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 	assert.NoError(t, err2)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	// messages.heldby should be cleared (no groups still held).
+	// The released group's copy is no longer held.
 	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&msgHeldby)
 	assert.Nil(t, msgHeldby)
 }
 
 // Regression: a soft-deleted crosspost copy that still carries a stale heldby (e.g. the
-// member withdrew the message from another group while it was held there) must NOT keep
-// messages.heldby pinned. Before the fix, the "still held on any group?" count ignored
-// deleted rows, so Release returned Success but the message stayed stuck showing "Held"
-// and no number of retries could clear it. See prod msg 120888286 ("Fob Watch").
+// member withdrew the message from another group while it was held there) must not stop
+// the live group being released. Originally the stale row pinned a message-wide hold, so
+// Release returned Success but the message stayed stuck showing "Held" and no number of
+// retries could clear it (prod msg 120888286, "Fob Watch"). Holds are now per-group, so
+// the deleted row cannot reach the live copy at all - pinned here so it stays that way.
 func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
 	prefix := uniquePrefix("rel_deleted_hold")
 	db := database.DBConn
@@ -8249,8 +8386,6 @@ func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
 	// Orphaned hold: a soft-deleted messages_groups row on groupB still carrying heldby,
 	// set by a mod (otherModID) on a group our releasing mod has no rights to.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, heldby, deleted) VALUES (?, ?, NOW(), 'Pending', 0, ?, 1)", msgID, groupB, otherModID)
-	// The message-level hold that mirrors it (as handleHold would have set).
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", otherModID, msgID)
 
 	// Release on the live group.
 	body := map[string]interface{}{
@@ -8266,11 +8401,11 @@ func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
 	assert.NoError(t, err2)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	// messages.heldby must be cleared: the only row that still holds it is soft-deleted,
-	// so it must not count towards "still held".
+	// The live group's copy is released. A stale hold on the soft-deleted row cannot
+	// affect it: holds are per-group, so there is nothing for it to pin.
 	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
-	assert.Nil(t, msgHeldby, "deleted group's stale hold must not keep messages.heldby pinned")
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&msgHeldby)
+	assert.Nil(t, msgHeldby, "the live group's copy must be released")
 }
 
 func TestPostMessageDeletePerGroup(t *testing.T) {
@@ -8514,7 +8649,6 @@ func TestPostMessageApproveAllGroupsReleasesAllHolds(t *testing.T) {
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	// Approve WITHOUT specifying a groupid (global approve).
 	body := map[string]interface{}{
@@ -8537,11 +8671,6 @@ func TestPostMessageApproveAllGroupsReleasesAllHolds(t *testing.T) {
 	var heldbyB *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
 	assert.Nil(t, heldbyB, "Group B hold should be released on global approve")
-
-	// messages.heldby should also be cleared.
-	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
-	assert.Nil(t, msgHeldby, "messages.heldby should be cleared")
 }
 
 func TestPostMessageDeleteAfterSpamExcludesSoftDeleted(t *testing.T) {
@@ -9361,6 +9490,9 @@ func TestPostMessagePartnerAuthPromise(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77701)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -9387,6 +9519,9 @@ func TestPostMessagePartnerAuthByTnPostid(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77702)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77702, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10674,7 +10809,6 @@ func heldByOtherSetup(t *testing.T, prefix string) (uint64, uint64, uint64, stri
 
 	// Mod A holds it.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modA, msgID, group)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modA, msgID)
 
 	return group, msgID, modA, tokenA, tokenB
 }

@@ -106,21 +106,14 @@ class ChatProcessService
         $chattype = $message->chattype;
         $platform = (bool) $message->platform;
 
-        // --- Ban check for messages with a refmsgid ---
-        if (!empty($message->refmsgid)) {
-            $banned = DB::table('messages_groups')
-                ->join('users_banned', function ($join) use ($userid) {
-                    $join->on('messages_groups.groupid', '=', 'users_banned.groupid')
-                        ->where('users_banned.userid', '=', $userid);
-                })
-                ->where('messages_groups.msgid', $message->refmsgid)
-                ->exists();
-
-            if ($banned) {
-                $this->processFailed($id);
-                return true;
-            }
-        }
+        // A ban is a fact about the sender's standing with the communities they share with
+        // the person they are writing to - see isBannedInCommonGroups below, which is the
+        // check that applies. It deliberately does NOT look at which communities the post
+        // reached: rippling puts a post on communities the poster never chose, so asking
+        // "is the sender banned anywhere this post landed?" threw away replies from members
+        // in good standing wherever they and the poster actually talk (one live example was
+        // 410m away, on the poster's own community, banned only on a community the post had
+        // rippled into and that neither of them was conversing on).
 
         // --- User2User spam and review checks ---
         $review = 0;
@@ -135,7 +128,7 @@ class ChatProcessService
                 ->exists();
 
             if ($isSpammer) {
-                $this->processFailed($id);
+                $this->processFailed($id, ChatMessage::PROCESSFAIL_SPAMMER);
                 return true;
             }
 
@@ -145,7 +138,7 @@ class ChatProcessService
             $bannedInCommon = $this->isBannedInCommonGroups($userid, $otherId);
 
             if ($bannedInCommon) {
-                $this->processFailed($id);
+                $this->processFailed($id, ChatMessage::PROCESSFAIL_BANNED_IN_COMMON);
                 return true;
             }
 
@@ -227,6 +220,22 @@ class ChatProcessService
                 'created_at' => now(),
                 'attempts' => 0,
             ]);
+
+            // Surface the room in recipients' chat list now the message is deliverable.
+            // ListForUser filters chat_rooms.latestmessage >= now - CHAT_ACTIVE_LIMIT (31d),
+            // and neither CreateChatMessage nor this service bumped latestmessage - only the
+            // hourly chats:update-counts recompute did. So a reply landing in a room dormant
+            // for >31 days (Freegle keeps one User2User room per pair, reused across items)
+            // stayed out of the recipient's list until that hourly cron ran, even though the
+            // notification email fired immediately - up to ~1h of "email arrived but the chat
+            // isn't showing". Bump here, gated on the same deliverability the email/in-app
+            // fetch use (not held for review, not spam), so list visibility tracks delivery.
+            // GREATEST guards against moving latestmessage backwards when a burst is processed
+            // out of natural order; the hourly recompute remains as a backfill.
+            DB::update(
+                'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
+                [$message->date, $message->date, $chatid]
+            );
         }
 
         return true;
@@ -249,15 +258,26 @@ class ChatProcessService
 
     /**
      * Mark a message as failed processing.
+     *
+     * A failed message is never notified to the recipient (ChatNotificationService only
+     * takes processingsuccessful = 1), so record WHY. Without this a suppressed reply is
+     * indistinguishable from one that was never sent, which is how a batch of dropped
+     * replies got misdiagnosed as a rippling delay.
      */
-    private function processFailed(int $messageId): void
+    private function processFailed(int $messageId, ?string $reason = null): void
     {
         DB::table('chat_messages')
             ->where('id', $messageId)
             ->update([
                 'processingrequired' => 0,
                 'processingsuccessful' => 0,
+                'processingfailreason' => $reason,
             ]);
+
+        Log::info('ChatProcess: message suppressed', [
+            'chatmsgid' => $messageId,
+            'reason' => $reason,
+        ]);
     }
 
     /**

@@ -84,6 +84,8 @@ const FULL = {
         taken_pct: 45.3,
         mean_replies: 1.23,
         mean_freeglers: 2547,
+        replied_mature: true,
+        taken_mature: true,
       },
       {
         day: '2026-06-25',
@@ -92,6 +94,8 @@ const FULL = {
         taken_pct: 30.0,
         mean_replies: 1.3,
         mean_freeglers: 2600,
+        replied_mature: true,
+        taken_mature: false,
       },
     ],
     drive_time: [
@@ -218,6 +222,8 @@ describe('ModSysAdminRipplingAnalytics', () => {
     mockFetchAnalyticsDriveTimes.mockReset()
     mockScoreAnalyticsDriveTimes.mockReset()
     mockAggregateAnalyticsDriveTimes.mockReset()
+    mockFetchMetrics.mockReset()
+    mockFetchMetrics.mockResolvedValue({})
     mockFetchAnalyticsDriveTimes.mockResolvedValue({
       posts: [DRIVE_SAMPLE_POST],
       total: 1,
@@ -283,6 +289,38 @@ describe('ModSysAdminRipplingAnalytics', () => {
     wrapper.unmount()
   })
 
+  // The reply/taken/mean-replies trends are fixed-horizon figures with a per-day maturity flag.
+  // Immature days ride into the chart as a Google Charts 'certainty' role column (drawn dashed/
+  // pale) so a still-accruing tail reads as provisional, never as a decline. Freeglers-reached
+  // has no accrual window, so it stays a plain two-column series.
+  it('marks immature trend days uncertain so they draw dashed, not as a decline', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    const wrapper = mountComponent()
+    await flushPromises()
+    const areas = wrapper
+      .findAllComponents({ name: 'GChart' })
+      .filter((c) => c.props('type') === 'AreaChart')
+    // Order matches trendCharts: reply rate, taken rate, mean replies, freeglers, drive-time.
+    const [reply, taken, meanReplies, freeglers] = areas.map((a) =>
+      a.props('data')
+    )
+    for (const data of [reply, taken, meanReplies]) {
+      expect(data[0][2]).toEqual({ type: 'boolean', role: 'certainty' })
+    }
+    // Both fixture days are reply-mature; only the first is taken-mature (14-day window).
+    expect(reply[1][2]).toBe(true)
+    expect(reply[2][2]).toBe(true)
+    expect(taken[1][2]).toBe(true)
+    expect(taken[2][2]).toBe(false)
+    expect(freeglers[0]).toHaveLength(2)
+    // The titles say what the fixed windows are.
+    const html = wrapper.html()
+    expect(html).toContain('Reply rate within 36h (%)')
+    expect(html).toContain('Taken within 14 days (%)')
+    expect(html).toContain('Mean replies within 36h / offer')
+    wrapper.unmount()
+  })
+
   it('answers "is rippling helping?" as a contribution range with a rescue floor', async () => {
     mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
@@ -327,6 +365,78 @@ describe('ModSysAdminRipplingAnalytics', () => {
     wrapper.unmount()
   })
 
+  // The metrics endpoint feeds only the attribution + hotspot panels. It used to be awaited in the
+  // same Promise.all as the KPIs, so when it 504'd on production (its heavy KPI queries ran for
+  // minutes, and a gateway timeout reads to the browser as a CORS failure) the whole tab showed
+  // "Failed to load" and the drive-time pass never started.
+  it('still renders the KPIs when the metrics request fails, and says so in its panels', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    mockFetchMetrics.mockRejectedValue(new Error('Network Error'))
+    const wrapper = mountComponent()
+    await flushPromises()
+    const html = wrapper.html()
+
+    expect(html).toContain('51.2%') // Section 1 KPI still rendered
+    expect(html).not.toContain('Failed to load:') // the tab-level error banner stays away
+    // The panels that DID depend on it report the failure rather than reading as "no data".
+    expect(html).toContain("Couldn't load reply attribution")
+    expect(html).toContain("Couldn't load hotspots")
+    // ...and the slow drive-time pass still ran.
+    expect(mockFetchAnalyticsDriveTimes).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  // The server names any section whose query hit its deadline, so an empty panel is not passed
+  // off as "nothing to show" when it means "we gave up".
+  it('distinguishes a section the server gave up on from one with no data', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    mockFetchMetrics.mockResolvedValue({
+      reply_source_split: [],
+      hotspots: [],
+      degraded: ['reply_source_split', 'hotspots'],
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('Reply attribution timed out on the server')
+    expect(html).toContain('Hotspots timed out on the server')
+    expect(html).not.toContain('No attribution data yet')
+    expect(html).not.toContain('No hotspots flagged')
+    wrapper.unmount()
+  })
+
+  it('renders the KPIs before the metrics request has resolved', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    let resolveMetrics
+    mockFetchMetrics.mockReturnValue(
+      new Promise((resolve) => {
+        resolveMetrics = resolve
+      })
+    )
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    // KPIs are on screen with the metrics call still in flight.
+    expect(wrapper.html()).toContain('51.2%')
+    expect(wrapper.html()).not.toContain('Anomaly Town')
+
+    resolveMetrics({
+      hotspots: [
+        {
+          area_name: 'Anomaly Town',
+          metric: 'secondary_reject_rate',
+          value: 0.9,
+          baseline: 0.1,
+          deviation: 12.3,
+          severity: 'alert',
+        },
+      ],
+    })
+    await flushPromises()
+    expect(wrapper.html()).toContain('Anomaly Town')
+    wrapper.unmount()
+  })
+
   it('draws the reliability bullseye: a ring per drive-time band, empty rings greyed', async () => {
     mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
     const wrapper = mountComponent()
@@ -364,6 +474,7 @@ describe('ModSysAdminRipplingAnalytics', () => {
     expect(buttons[1].classes()).not.toContain('active')
 
     mockFetchAnalytics.mockClear()
+    mockFetchMetrics.mockClear()
     await buttons[1].trigger('click') // Rural
     await flushPromises()
     expect(mockFetchAnalytics).toHaveBeenCalledWith(
@@ -371,7 +482,22 @@ describe('ModSysAdminRipplingAnalytics', () => {
       '2026-06-24',
       '2026-07-08'
     )
+    // The metrics sections vary by window, not density, so they are not refetched (and the
+    // panels don't blank) just because the density changed.
+    expect(mockFetchMetrics).not.toHaveBeenCalled()
     expect(wrapper.findAll('.seg-btn')[1].classes()).toContain('active')
+    wrapper.unmount()
+  })
+
+  it('refetches the metrics sections when the date window changes', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    mockFetchMetrics.mockClear()
+    wrapper.vm.onFilterFetch({ start: '2026-05-01', end: '2026-05-31' })
+    await flushPromises()
+    expect(mockFetchMetrics).toHaveBeenCalledWith(0, '2026-05-01', '2026-05-31')
     wrapper.unmount()
   })
 

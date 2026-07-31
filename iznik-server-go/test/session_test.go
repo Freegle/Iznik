@@ -1941,6 +1941,41 @@ func TestWorkCountPendingHeldPerGroup(t *testing.T) {
 	assert.GreaterOrEqual(t, work["pending"].(float64), float64(1), "unheld-on-B copy must count as pending")
 }
 
+// A HELD pending message counts towards the badge even if the content check has not run
+// on it yet (Discourse 9481/635: a mod had two posts held by another moderator across his
+// communities but the blue badge showed 1 — the one whose contentcheck_checked_at was
+// still NULL was silently dropped).
+//
+// The contentcheck_checked_at filter exists so posts that might still auto-approve do not
+// raise a phantom badge (9481/563). That reasoning only covers UNHELD posts: once a
+// moderator has held one it is claimed work, it will never auto-approve, and it is sitting
+// in their list saying "Held by ...". So the filter must apply to the unheld count only.
+func TestWorkCountHeldPendingCountsBeforeContentCheck(t *testing.T) {
+	prefix := uniquePrefix("wc_heldnocheck")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Held before content check', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	// Held, but the content check has not run yet — exactly the row that vanished.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, ?, NULL)", msgID, groupA, holderID)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	work := getSessionWork(t, token)
+	assert.GreaterOrEqual(t, work["pendingother"].(float64), float64(1),
+		"a held post counts as pendingother even before the content check has run")
+	assert.Equal(t, float64(0), work["pending"].(float64),
+		"it is held, so it must not also show in the unheld count")
+}
+
 func TestWorkCountStoriesDateFilter(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_date")
 	db := database.DBConn

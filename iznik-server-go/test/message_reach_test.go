@@ -59,6 +59,52 @@ func TestMessageReachAsMod(t *testing.T) {
 	assert.Equal(t, true, result["rippling"], "post has a reach row")
 	assert.Equal(t, float64(3), result["tick"], "actual tick surfaced")
 	assert.Equal(t, float64(9), result["totalticks"], "total ticks surfaced")
+
+	// The ACTUAL stored reach outline crosses as GeoJSON - it is what the reach modal draws,
+	// since held/clipped/capped reaches are invisible to a schedule-based projection.
+	polyStr, ok := result["polygon"].(string)
+	assert.True(t, ok, "polygon returned as a GeoJSON string")
+	var geo struct {
+		Type        string         `json:"type"`
+		Coordinates [][][2]float64 `json:"coordinates"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(polyStr), &geo), "polygon parses as GeoJSON")
+	assert.Equal(t, "Polygon", geo.Type)
+	assert.NotEmpty(t, geo.Coordinates, "polygon has at least one ring")
+	// Coordinates are [lng, lat] in degrees, matching how the reach geometry is stored.
+	assert.InDelta(t, -0.2, geo.Coordinates[0][0][0], 0.001)
+	assert.InDelta(t, 51.4, geo.Coordinates[0][0][1], 0.001)
+}
+
+// A moderator of some OTHER group can still see a post's reach. Rippling carries posts to
+// groups beyond the one they were posted on, so the mods asking "how far did this get?" are
+// usually not mods of its origin group - gating on mod-of-this-post's-group hid reach from
+// exactly the people it is for. Reach carries no member data, so there is nothing to scope.
+func TestMessageReachAsModOfDifferentGroup(t *testing.T) {
+	ensureRippleReachTable()
+	db := database.DBConn
+
+	prefix := uniquePrefix("reachothermod")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	group := CreateTestGroup(t, prefix)
+	mid := CreateTestMessage(t, posterID, group, "OFFER: reach other-group mod", 51.5, -0.1)
+
+	// A mod of an unrelated group, with no membership at all of the post's group.
+	otherGroup := CreateTestGroup(t, prefix+"_other")
+	modID := CreateTestUser(t, prefix+"_othermod", "User")
+	CreateTestMembership(t, modID, otherGroup, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	insertReach(mid, 3, 9)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d/reach?jwt=%s", mid, token), nil))
+	assert.Equal(t, 200, resp.StatusCode, "any moderator may view reach, not just mods of the post's group")
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, true, result["rippling"], "post has a reach row")
+	assert.Equal(t, float64(3), result["tick"], "actual tick surfaced to an other-group mod")
 }
 
 // A non-moderator is forbidden.

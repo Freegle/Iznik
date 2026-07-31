@@ -37,3 +37,54 @@ func GetGroupMessages(c *fiber.Ctx) error {
 
 	return c.JSON(ret)
 }
+
+// GroupMessageSummary is just enough of a post to render a crawlable link to it.
+type GroupMessageSummary struct {
+	ID      uint64    `json:"id"`
+	Subject string    `json:"subject"`
+	Arrival time.Time `json:"arrival"`
+}
+
+// The community page renders this list server-side, so keep it to a page's worth.
+const groupMessageSummaryLimit = 200
+
+// GetGroupMessageSummaries returns id + subject for a community's live posts.
+//
+// This backs the server-rendered list of posts on /explore/<group>. That page's
+// interactive content is all inside <client-only>, so the HTML a crawler receives
+// used to contain no links to posts at all - which meant Google could only find a
+// post by running our JavaScript, on a delayed second pass, and not for every
+// community every time. A post could therefore surface under some communities and
+// not the one it was actually posted to.
+//
+// Unlike GetGroupMessages this is anonymous: it never includes the caller's own
+// pending posts, because it is rendered into a page that gets cached and served to
+// everyone.
+func GetGroupMessageSummaries(c *fiber.Ctx) error {
+	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
+
+	db := database.DBConn
+
+	ret := []GroupMessageSummary{}
+
+	now := time.Now()
+	then := now.AddDate(0, 0, -31)
+
+	db.Raw("SELECT messages.id, messages.subject, messages_groups.arrival FROM messages_groups "+
+		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid "+
+		"INNER JOIN messages ON messages.id = messages_groups.msgid "+
+		"INNER JOIN users ON users.id = messages.fromuser "+
+		"WHERE groupid = ? AND messages_groups.arrival >= ? AND collection = ? AND messages_groups.deleted = 0 "+
+		"AND users.deleted IS NULL AND messages.deleted IS NULL AND messages_outcomes.id IS NULL "+
+		"AND messages.type IN (?, ?) "+
+		"ORDER BY messages_groups.arrival DESC LIMIT ?",
+		id, then.Format(time.RFC3339), utils.COLLECTION_APPROVED,
+		utils.OFFER, utils.WANTED, groupMessageSummaryLimit,
+	).Scan(&ret)
+
+	if ret == nil {
+		ret = make([]GroupMessageSummary, 0)
+	}
+
+	return c.JSON(ret)
+}

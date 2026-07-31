@@ -85,14 +85,62 @@ class ModNotifServiceTest extends TestCase
         $author = $this->createTestUser();
         $holder = $this->createTestUser();
 
+        // A hold writes the per-group row (the source of truth) as well as the legacy
+        // message-wide mirror; set both so this reflects a real hold on this group.
         $message = $this->createTestMessage($author, $group, ['heldby' => $holder->id]);
         MessageGroup::where('msgid', $message->id)->update([
             'collection' => MessageGroup::COLLECTION_PENDING,
+            'heldby' => $holder->id,
         ]);
 
         $work = $this->service->getPendingWork($mod->id, $group->id, 0);
 
         $this->assertEquals(0, $work['Pending Messages']);
+    }
+
+    /**
+     * A hold is per-group (messages_groups.heldby). A post that rippled to two groups and
+     * was held on only one of them must still count as pending work on the OTHER group -
+     * the mods there have a copy nobody has claimed.
+     *
+     * Reproduces what a real Hold writes: the per-group row on the held group AND the
+     * legacy cross-group messages.heldby mirror, which the count used to read. Reported
+     * as moderators seeing pending counts that did not match their pending list
+     * (Discourse 9970/2, 9951).
+     */
+    public function test_pending_work_counts_message_held_on_a_different_group(): void
+    {
+        $mod = $this->createTestUser();
+        $heldGroup = $this->createTestGroup();
+        $otherGroup = $this->createTestGroup();
+        $author = $this->createTestUser();
+        $holder = $this->createTestUser();
+
+        // Held on $heldGroup, so the mirror is set message-wide, exactly as Hold does.
+        $message = $this->createTestMessage($author, $heldGroup, ['heldby' => $holder->id]);
+        MessageGroup::where('msgid', $message->id)->update([
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'heldby' => $holder->id,
+        ]);
+
+        // The same post, pending and NOT held, on a second group.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $otherGroup->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+        ]);
+
+        $this->assertEquals(
+            1,
+            $this->service->getPendingWork($mod->id, $otherGroup->id, 0)['Pending Messages'],
+            'an unheld copy on another group is still pending work for that group'
+        );
+        $this->assertEquals(
+            0,
+            $this->service->getPendingWork($mod->id, $heldGroup->id, 0)['Pending Messages'],
+            'the group where the hold was placed still excludes it'
+        );
     }
 
     public function test_pending_work_counts_members_to_review(): void

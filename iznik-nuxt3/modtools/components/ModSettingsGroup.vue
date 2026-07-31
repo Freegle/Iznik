@@ -711,49 +711,6 @@
           class="me-2"
         />
       </ModSettingsSection>
-      <ModSettingsSection id="accordion-social" title="Social Media">
-        <b-form-text class="mb-2">
-          You can link to a group Facebook page to attract more people to your
-          group.
-        </b-form-text>
-
-        <div v-if="group.facebook && group.facebook.length">
-          <div
-            v-for="facebook in group.facebook"
-            :key="'facebookvalid-' + facebook.id"
-          >
-            <NoticeMessage
-              v-if="!facebook.valid"
-              variant="warning"
-              class="mt-1"
-            >
-              <p>
-                This group is linked to Facebook, but there's an error. This
-                might help:
-              </p>
-              <p>{{ facebook.lasterror }}</p>
-              <p>
-                Depending on the problem, unlinking and relinking might help.
-              </p>
-            </NoticeMessage>
-          </div>
-        </div>
-        <NoticeMessage v-else variant="warning">
-          <p>
-            This group is not linked to Facebook. Please link it to get more
-            publicity.
-          </p>
-          <ExternalLink
-            class="btn btn-white mt-2"
-            :href="
-              'https://modtools.org/facebook/facebook_request.php?type=Page&groupid=' +
-              group.id
-            "
-          >
-            Link to Facebook
-          </ExternalLink>
-        </NoticeMessage>
-      </ModSettingsSection>
       <ModSettingsSection id="accordion-stats" title="Status">
         <template #prebody>
           <p v-if="readonly" class="text-info">

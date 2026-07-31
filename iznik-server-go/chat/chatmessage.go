@@ -46,6 +46,17 @@ type ChatMessage struct {
 	Reviewrejected       bool            `json:"reviewrejected"`
 	Processingrequired   bool            `json:"processingrequired"`
 	Processingsuccessful bool            `json:"processingsuccessful"`
+	// Processingfailreason says WHY a message was dropped during processing
+	// (processingsuccessful = 0). A dropped message is never notified to the recipient and
+	// is filtered out of their chat fetch, so without this a support volunteer sees a
+	// message the recipient swears never arrived and has no way to explain it - which is
+	// how a run of suppressed replies got put down to a rippling delay. Values come from
+	// ChatMessage::PROCESSFAIL_* in the batch app.
+	//
+	// Read-only here (`gorm:"->"`): only the batch processor ever sets it, and without
+	// this GORM adds it to every chat_messages INSERT, which fails outright on a database
+	// that has the code but not yet the migration.
+	Processingfailreason *string `json:"processingfailreason,omitempty" gorm:"->"`
 	// HeldByRippling is true when this message is held by the rippling reply-hold engine
 	// (a non-released row exists in rippling_held_replies). Populated for moderators (any
 	// message) and for a normal caller on their OWN held reply, so the sender can show a
@@ -649,6 +660,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// a reply, and must not pollute the reply-source metric. Best-effort: never blocks the reply.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER {
 		recordReplyAttribution(db, myid, *payload.Refmsgid, reach, payload.Replysource)
+	}
+
+	// Replying to a post joins the replier to its group. This is meant to happen in the Nuxt reply
+	// flow (useReplyStateMachine handleJoinGroup) via PUT /memberships, but a stale/racy client
+	// isMember check can skip it, leaving a replier with a chat but NO group membership and no
+	// location — the "member with no groups & no location" a mod flagged (Discourse #9969; ~2/day in
+	// prod). Enforce it here, atomic with the reply, so it can't be skipped by any client. Held
+	// (out-of-reach) replies are excluded: the post hasn't reached the replier yet. AddMembership is
+	// the same idempotent join the LoveJunk path and the /memberships endpoint use — it skips
+	// banned/already-member and writes the memberships_history processingrequired row that drives the
+	// welcome email + spam check. Params mirror a normal web join's DB defaults (emailfrequency
+	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
+	// hiccup must never fail the reply.
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+		var refGroup uint64
+		db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY groupid LIMIT 1", *payload.Refmsgid).Scan(&refGroup)
+		if refGroup > 0 {
+			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+		}
 	}
 
 	// A report from the website is a User2Mod chat message referencing the reported

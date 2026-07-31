@@ -91,6 +91,11 @@ export default defineConfig({
         'tests/unit/mocks/quill-html-edit-button.js'
       ),
       papaparse: path.join(rootDir, 'tests/unit/mocks/papaparse.js'),
+      // isomorphic-dompurify drags in jsdom (awkward under happy-dom); stub it.
+      'isomorphic-dompurify': path.join(
+        rootDir,
+        'tests/unit/mocks/isomorphic-dompurify.js'
+      ),
       'vue-letter': path.join(rootDir, 'tests/unit/mocks/vue-letter.js'),
       letterparser: path.join(rootDir, 'tests/unit/mocks/letterparser.js'),
       // Handsontable mocks

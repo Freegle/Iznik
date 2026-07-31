@@ -197,6 +197,26 @@ describe('useClientLog', () => {
       expect(() => mod.sessionStart()).not.toThrow()
     })
 
+    it('sessionStart() does not throw when navigator.languages is not an array', () => {
+      // Regression: some environments expose navigator.languages as a non-array
+      // (e.g. a spoofed string). getEnvironmentInfo did `navigator.languages
+      // ?.join(',')`, whose optional chaining still reached a .join that is not a
+      // function, throwing "e.languages?.join is not a function" and crashing the
+      // page render into a 500.
+      const original = Object.getOwnPropertyDescriptor(navigator, 'languages')
+      Object.defineProperty(navigator, 'languages', {
+        value: 'en-GB',
+        configurable: true,
+      })
+      try {
+        expect(() => mod.sessionStart()).not.toThrow()
+      } finally {
+        if (original) {
+          Object.defineProperty(navigator, 'languages', original)
+        }
+      }
+    })
+
     it('sessionStart() queues without throwing (with appDeviceInfo)', () => {
       const appDeviceInfo = {
         manufacturer: 'Apple',

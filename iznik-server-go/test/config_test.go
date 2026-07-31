@@ -12,12 +12,9 @@ import (
 )
 
 func TestConfig(t *testing.T) {
+	// A non-allowlisted config key is not publicly readable.
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/config/wibble", nil))
-	assert.Equal(t, 200, resp.StatusCode)
-
-	var results []config.ConfigItem
-	json2.Unmarshal(rsp(resp), &results)
-	assert.Equal(t, len(results), 0)
+	assert.Equal(t, 403, resp.StatusCode)
 }
 
 func stringPtr(s string) *string {

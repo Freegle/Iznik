@@ -2905,7 +2905,8 @@ func TestGetUserFetchMT_MessageHistoryForMod(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	CreateTestMembership(t, posterID, groupID, "Member")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)
@@ -4304,7 +4305,8 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	CreateTestMembership(t, posterID, groupID, "Member")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)
@@ -4462,7 +4464,8 @@ func TestGetUserMessageHistory_IncludesPending(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	CreateTestMembership(t, posterID, groupID, "Member")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)

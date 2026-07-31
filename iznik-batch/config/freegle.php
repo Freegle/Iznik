@@ -187,6 +187,53 @@ return [
         'zip_url' => env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
     ],
 
+    // First-week ONBOARDING tip sequence (mail:reengage). One short tip a day
+    // for a new member's first five days, after the welcome mail. Kept under the
+    // "reengage" key/table/dashboard name; the trigger and content are onboarding.
+    'reengage' => [
+        // Dark-ship gate (mirrors FREEGLE_DIGEST_DAILY_ALLOWLIST):
+        //   ''            → send to nobody (default — feature is dark)
+        //   '*'           → send to everyone eligible
+        //   'a@x,b@y'     → only these recipient addresses (rollout pilot)
+        'allowlist' => env('FREEGLE_REENGAGE_ALLOWLIST', ''),
+        // Day the FIRST tip lands (account age in days). 1 leaves day 0 for the
+        // welcome mail, so tip 1 arrives the day after joining.
+        'start_day' => (int) env('FREEGLE_ONBOARD_START_DAY', 1),
+        // Gap between tips — one a day. Tip N lands on day start_day+(N-1)*gap,
+        // i.e. days 1..5 with the defaults.
+        'stage_gap_days' => (int) env('FREEGLE_ONBOARD_STAGE_GAP_DAYS', 1),
+        // Never START the sequence for an account already older than this. Stops
+        // a first enable from back-blasting everyone who joined recently; a member
+        // mid-sequence keeps getting the rest regardless.
+        'max_start_days' => (int) env('FREEGLE_ONBOARD_MAX_START_DAYS', 7),
+
+        // A/B experiment layer. Stays inert by default: rollout_pct=0 means
+        // nobody is in the experiment, everyone eligible falls through to the
+        // single current 'a' template with NO control holdout — i.e. exactly the
+        // pre-experiment behaviour. Ramp with FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT
+        // (0 → 10 → 50 → 100) *on top of* the allowlist gate above, so two
+        // independent knobs must both be opened.
+        'experiment' => [
+            // Salts the deterministic per-user bucket; bump to reshuffle arms
+            // for a brand-new experiment (do NOT bump mid-experiment).
+            'name' => env('FREEGLE_REENGAGE_EXPERIMENT', 'reengage-v1'),
+            // Fraction of eligible users pulled into the experiment (0-100).
+            // Those outside it get the default 'a' arm with no holdout.
+            'rollout_pct' => (int) env('FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT', 0),
+            // Arm split over the 0-99 bucket space (inclusive, must tile 0-99).
+            // 'control' is a REAL holdout: recorded but never mailed, so lift is
+            // measurable. 'a' = current copy, 'b' = alternate copy variant.
+            'arms' => [
+                'control' => ['from' => 0, 'to' => 19],   // 20% holdout
+                'a' => ['from' => 20, 'to' => 59],        // 40% current copy
+                'b' => ['from' => 60, 'to' => 99],        // 40% alternate copy
+            ],
+            // Window (days after a send) in which a login/reply/post counts as
+            // re-engagement caused by the mail, written by mail:reengage-outcomes.
+            'outcome_window_days' => (int) env('FREEGLE_REENGAGE_OUTCOME_WINDOW_DAYS', 14),
+        ],
+    ],
+
     'digest' => [
         // Safety gate for the unified-digest IMMEDIATE mode.
         //   ''  or '*'      → allow all users (the normal production state)

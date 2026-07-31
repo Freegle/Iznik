@@ -5,6 +5,7 @@ namespace Tests\Feature\Monitor;
 use App\Monitoring\OutcomeCheck;
 use App\Monitoring\OutcomeResult;
 use App\Monitoring\ScheduledOutcomeRegistry;
+use App\Models\MessageGroup;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -155,5 +156,59 @@ class ScheduledOutcomeRegistryTest extends TestCase
 
         // No rows in jobs -> breach ("no rows"), proving the seenat query ran.
         $this->assertTrue($result->isBreach(), $result->message);
+    }
+
+    /**
+     * The contentcheck worker deliberately skips held-by-a-mod rows
+     * (->whereNull('mg.heldby')): a held post is pulled back for review and is
+     * never auto-checked until the mod releases it, so it can sit indefinitely
+     * without ever getting contentcheck_checked_at stamped. The backlog check
+     * must mirror that skip, otherwise every held post false-alarms as a stalled
+     * moderation pipeline. A non-held stale post, by contrast, must still breach.
+     */
+    public function test_contentcheck_check_ignores_held_pending_but_flags_unheld(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+
+        $seedStalePending = function (?int $heldby) use ($group, $user): void {
+            $msgid = DB::table('messages')->insertGetId([
+                'fromuser' => $user->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Stale post',
+                'textbody' => 'A stale post. Collection only.',
+                'message'  => 'A stale post. Collection only.',
+                'arrival'  => Carbon::now()->subHour(),
+                'date'     => Carbon::now()->subHour(),
+                'source'   => 'Platform',
+            ]);
+            DB::table('messages_groups')->insert([
+                'msgid'                   => $msgid,
+                'groupid'                 => $group->id,
+                'collection'              => MessageGroup::COLLECTION_PENDING,
+                'arrival'                 => Carbon::now()->subHour(),
+                'deleted'                 => 0,
+                'heldby'                  => $heldby,
+                'contentcheck_checked_at' => null,
+            ]);
+        };
+
+        $check = $this->check('messages:contentcheck');
+
+        // Only a held stale post exists -> the worker skips it, so no breach.
+        $seedStalePending($user->id);
+        $this->assertTrue(
+            $check->evaluate(Carbon::now())->isOk(),
+            'A held Pending post must not count as a contentcheck backlog'
+        );
+
+        // Add an unheld stale post -> worker would have checked it, so breach.
+        $seedStalePending(null);
+        $this->assertTrue(
+            $check->evaluate(Carbon::now())->isBreach(),
+            'An unheld stale Pending post must breach the contentcheck backlog'
+        );
     }
 }

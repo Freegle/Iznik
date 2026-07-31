@@ -53,7 +53,6 @@ class PushNotificationServiceTest extends TestCase
             'arrival' => now(),
             'lat' => $group->lat,
             'lng' => $group->lng,
-            'heldby' => $mod->id,  // held — must not count
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
@@ -61,6 +60,9 @@ class PushNotificationServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_PENDING,
             'arrival' => now(),
             'deleted' => 0,
+            // A hold belongs to a (message, group) pair, so it is this row that carries
+            // it — the badge reads the copy on the group, not the post as a whole.
+            'heldby' => $mod->id,  // held — must not count
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -1117,6 +1119,28 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * TrashNothing-imported members have fullnames like "alice-g3486", taken from
+     * their -gNNN@user.trashnothing.com address. Every other surface hides that
+     * suffix via User::getDisplayNameAttribute (the chat notification email uses
+     * it), so the push banner must not show the raw users.fullname.
+     */
+    public function test_chat_payload_title_strips_trashnothing_group_suffix(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'alice-g3486']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('alice', $payload['title'],
+            'Push title must use the display name, which drops the TrashNothing -gNNN suffix');
+    }
+
+    /**
      * Image messages have no text — the push body must fall back to a
      * descriptive label ("Sent an image"), not repeat the sender name.
      *
@@ -1222,5 +1246,50 @@ class PushNotificationServiceTest extends TestCase
             'Mod sender to member in U2M must show "{Group} Volunteers" as title');
         $this->assertStringNotContainsString('ModBob', $payload['title'],
             'Individual mod name must NOT leak to the member in push title');
+    }
+
+    /**
+     * The app pushes the payload route into vue-router, so it must be a path.
+     * The stories exhort is scheduled with a full URL in users_notifications.url,
+     * which would otherwise be routed to verbatim and land on a 404.
+     */
+    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'title' => 'Tell us your Freegle story!',
+            'text' => 'We love to hear why people Freegle.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/stories', $payload['route'],
+            'Absolute notification URLs on our own site must become a router path');
+    }
+
+    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => '/microvolunteering/message/123',
+            'title' => 'Can you help?',
+            'text' => 'Check this post.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/microvolunteering/message/123', $payload['route'],
+            'Relative notification URLs must be passed through unchanged');
     }
 }

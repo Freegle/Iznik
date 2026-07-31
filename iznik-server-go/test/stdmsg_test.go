@@ -25,11 +25,12 @@ func createTestStdMsg(t *testing.T, configID uint64, title string) uint64 {
 func TestGetStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsg")
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/stdmsg?id=%d", msgID), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/stdmsg?id=%d&jwt=%s", msgID, token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -168,8 +169,26 @@ func TestDeleteStdMsgNotFound(t *testing.T) {
 	assert.Equal(t, float64(2), result["ret"])
 }
 
+func TestGetStdMsgNotLoggedIn(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/modtools/stdmsg?id=1", nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+func TestGetStdMsgNotMod(t *testing.T) {
+	prefix := uniquePrefix("StdMsgNonMod")
+	uID := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, uID)
+	req := httptest.NewRequest("GET", "/api/modtools/stdmsg?id=1&jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
 func TestGetStdMsgV2Path(t *testing.T) {
-	req := httptest.NewRequest("GET", "/apiv2/modtools/stdmsg?id=0", nil)
+	prefix := uniquePrefix("StdMsgV2")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, token := CreateTestSession(t, modID)
+	req := httptest.NewRequest("GET", "/apiv2/modtools/stdmsg?id=0&jwt="+token, nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 404, resp.StatusCode)
 }

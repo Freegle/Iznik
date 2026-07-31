@@ -33,16 +33,17 @@ const ExplorerStub = {
   name: 'RipplingExplorer',
   props: {
     minimal: { type: Boolean, default: false },
+    hideProjection: { type: Boolean, default: false },
     initialLat: { default: null },
     initialLng: { default: null },
     initialView: { default: null },
     initialElapsedHours: { default: null },
-    actualElapsedHours: { default: null },
+    actualReach: { default: null },
     spatialUrl: { default: null },
     jwt: { default: null },
   },
   template:
-    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" :data-actual="actualElapsedHours" />',
+    '<div class="explorer-stub" :data-lat="initialLat" :data-lng="initialLng" :data-view="initialView" :data-minimal="minimal" :data-spatial="spatialUrl" :data-hideprojection="hideProjection" :data-reach="actualReach" />',
 }
 
 // arrival N hours ago, as an ISO string.
@@ -97,9 +98,35 @@ describe('ModMessageReachMap', () => {
     expect(explorer.attributes('data-spatial')).toBe('http://spatial.test')
   })
 
-  it('passes a "now" (actual) point only when the engine is behind expected', async () => {
-    // Post ~14h old -> expected tick 4 (12h band). Actual tick 2 (3h) = behind.
-    mockFetchReach.mockResolvedValueOnce({ rippling: true, tick: 2, totalticks: 9 })
+  // Once the endpoint can tell us where a post REALLY got to, drawing a schedule-modelled
+  // projection beside it just puts two contradictory outlines on one map, so the modal
+  // suppresses the projection and the actual reach is the only thing drawn.
+  it('tells the explorer to suppress the projected reach', async () => {
+    const wrapper = mountComponent({
+      messageid: 42,
+      lat: 55.95,
+      lng: -3.19,
+      arrival: hoursAgo(14),
+    })
+    await wrapper.vm.show()
+    await flushPromises()
+    expect(
+      wrapper.find('.explorer-stub').attributes('data-hideprojection')
+    ).toBeTruthy()
+  })
+
+  // The mod-only reach endpoint returns the ACTUAL stored outline as GeoJSON; the modal
+  // hands it to the explorer to draw, and says what the shape means.
+  it('passes the actual stored reach outline through to the explorer', async () => {
+    const POLY =
+      '{"type":"Polygon","coordinates":[[[-0.2,51.4],[0,51.4],[0,51.6],[-0.2,51.4]]]}'
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: true,
+      tick: 4,
+      totalticks: 9,
+      status: 'expanding',
+      polygon: POLY,
+    })
     const wrapper = mountComponent({
       messageid: 42,
       lat: 55.95,
@@ -109,13 +136,14 @@ describe('ModMessageReachMap', () => {
     await wrapper.vm.show()
     await flushPromises()
     expect(mockFetchReach).toHaveBeenCalledWith(42, false)
-    // actual = HAZARD_HOURS[tick-1] = HAZARD_HOURS[1] = 3
-    expect(wrapper.find('.explorer-stub').attributes('data-actual')).toBe('3')
+    expect(wrapper.find('.explorer-stub').attributes('data-reach')).toBe(POLY)
+    expect(wrapper.text()).toContain('actually rippled out')
   })
 
-  it('does NOT pass a "now" point when the engine is up to date', async () => {
-    // Post ~14h old -> expected tick 4. Actual tick 4 = caught up.
-    mockFetchReach.mockResolvedValueOnce({ rippling: true, tick: 4, totalticks: 9 })
+  // With no projection to fall back on, a post that hasn't rippled would otherwise show a
+  // bare map with no explanation of why nothing is drawn.
+  it('explains when the post has not rippled out', async () => {
+    mockFetchReach.mockResolvedValueOnce({ rippling: false, reason: 'pending' })
     const wrapper = mountComponent({
       messageid: 42,
       lat: 55.95,
@@ -124,12 +152,19 @@ describe('ModMessageReachMap', () => {
     })
     await wrapper.vm.show()
     await flushPromises()
-    const a = wrapper.find('.explorer-stub').attributes('data-actual')
-    expect(a === undefined || a === '').toBe(true)
+    expect(wrapper.text()).toContain("hasn't rippled out yet")
   })
 
-  it('does NOT pass a "now" point when the post is not rippling (dark)', async () => {
-    mockFetchReach.mockResolvedValueOnce({ rippling: false, reason: 'disabled' })
+  // A held reach is frozen short of where the post is still listed - the modal must say so.
+  it('flags a held (frozen) reach above the map', async () => {
+    mockFetchReach.mockResolvedValueOnce({
+      rippling: true,
+      tick: 3,
+      totalticks: 9,
+      status: 'held',
+      polygon:
+        '{"type":"Polygon","coordinates":[[[-0.2,51.4],[0,51.4],[0,51.6],[-0.2,51.4]]]}',
+    })
     const wrapper = mountComponent({
       messageid: 42,
       lat: 55.95,
@@ -138,8 +173,7 @@ describe('ModMessageReachMap', () => {
     })
     await wrapper.vm.show()
     await flushPromises()
-    const a = wrapper.find('.explorer-stub').attributes('data-actual')
-    expect(a === undefined || a === '').toBe(true)
+    expect(wrapper.text()).toContain('frozen (held)')
   })
 
   it('shows a no-location message instead of the map when the post has no location', async () => {

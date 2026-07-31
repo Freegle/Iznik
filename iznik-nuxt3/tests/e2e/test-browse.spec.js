@@ -6,6 +6,50 @@
 const { test, expect } = require('./fixtures')
 const { timeouts } = require('./config')
 const { signUpViaHomepage, loginViaHomepage } = require('./utils/user')
+const { dismissLoginModalIfPresent } = require('./utils/reply-helpers')
+
+// Measure the first feed card, the square photo in it, and the chrome above and below the
+// feed, so a test can work out how many cards actually fit on screen.
+async function measureFeedCard(page) {
+  return await page.evaluate(() => {
+    const card = document.querySelector('.message-summary-mobile')
+    const photo = card.querySelector('.photo-area')
+    const navbar = document.querySelector('nav.fixed-top')
+    const stickyAd = document.querySelector('.sticky')
+    const cardBox = card.getBoundingClientRect()
+    const photoBox = photo.getBoundingClientRect()
+
+    return {
+      viewportHeight: window.innerHeight,
+      cardHeight: cardBox.height,
+      photoWidth: photoBox.width,
+      photoHeight: photoBox.height,
+      navbarHeight: navbar ? navbar.getBoundingClientRect().height : 0,
+      stickyAdHeight: stickyAd ? stickyAd.getBoundingClientRect().height : 0,
+    }
+  })
+}
+
+// Wait for the desktop row layout, then measure. The card appears before VisibleWhen has
+// settled on the breakpoint, and until it does the card is still in the portrait grid
+// layout with a taller-than-wide photo, so wait for the photo to be square first.
+async function measureDesktopFeedCard(page) {
+  await page.waitForSelector('.message-summary-mobile', {
+    timeout: timeouts.ui.appearance,
+  })
+
+  await expect
+    .poll(
+      async () => {
+        const { photoWidth, photoHeight } = await measureFeedCard(page)
+        return Math.round(photoWidth) === Math.round(photoHeight)
+      },
+      { timeout: timeouts.ui.appearance }
+    )
+    .toBe(true)
+
+  return await measureFeedCard(page)
+}
 
 // Helper: sign up and join a group.
 async function signUpAndJoinGroup(page, testEmail, userName, groupName) {
@@ -273,6 +317,56 @@ test.describe('Browse Page Tests', () => {
         await container.waitFor({ state: 'attached', timeout: 5000 })
       }
     }
+  })
+
+  test('should size feed photos from the screen height so six posts fit', async ({
+    page,
+    testEnv,
+  }) => {
+    // The lg+ feed card is a row whose photo is a square, so the square's side is the
+    // card's height. It used to be a fixed 200px, which put only two or three posts on a
+    // short screen; it now comes from the viewport height so six fit. Uses /explore, which
+    // shows the same cards and reliably has the seeded posts on it.
+    const CARDS_WANTED = 6
+    const CARD_GAP = 8 // .singlecolumn margin-bottom in ScrollGrid
+    const MAX_PHOTO = 200 // what the size used to be fixed at, and still caps at
+
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.gotoAndVerify(`/explore/${testEnv.group.name}`, {
+      timeout: timeouts.navigation.default,
+    })
+    await dismissLoginModalIfPresent(page)
+
+    const short = await measureDesktopFeedCard(page)
+    console.log('Short screen card:', JSON.stringify(short))
+
+    // The photo is square, so its side really is the row height.
+    expect(Math.abs(short.photoWidth - short.photoHeight)).toBeLessThan(1)
+    expect(Math.abs(short.cardHeight - short.photoHeight)).toBeLessThan(1)
+
+    // It has reacted to the short screen rather than staying at the old fixed size.
+    expect(short.photoHeight).toBeLessThan(MAX_PHOTO)
+
+    // Six cards and the gaps between them fit between the navbar and the sticky ad.
+    const usable =
+      short.viewportHeight - short.navbarHeight - short.stickyAdHeight
+    const needed =
+      CARDS_WANTED * short.cardHeight + (CARDS_WANTED - 1) * CARD_GAP
+    console.log(`Six cards need ${needed}px, ${usable}px available`)
+    expect(needed).toBeLessThanOrEqual(usable + 1)
+
+    // A taller screen gets a bigger photo, but never bigger than it used to be.
+    await page.setViewportSize({ width: 1280, height: 1200 })
+    await page.gotoAndVerify(`/explore/${testEnv.group.name}`, {
+      timeout: timeouts.navigation.default,
+    })
+    await dismissLoginModalIfPresent(page)
+
+    const tall = await measureDesktopFeedCard(page)
+    console.log('Tall screen card:', JSON.stringify(tall))
+    expect(tall.photoHeight).toBeGreaterThan(short.photoHeight)
+    expect(tall.photoHeight).toBeLessThanOrEqual(MAX_PHOTO)
+    expect(Math.abs(tall.photoWidth - tall.photoHeight)).toBeLessThan(1)
   })
 
   test('should load browse page with existing messages', async ({

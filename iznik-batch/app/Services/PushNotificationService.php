@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ChatRoom;
+use App\Models\User;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
@@ -350,7 +351,7 @@ class PushNotificationService
 
             $title = ($latest->title ?? '') ?: 'You have a new notification';
             $message = $latest->text ?? '';
-            $route = ($latest->url ?? '') ?: '/';
+            $route = $this->notificationRoute($latest->url ?? '');
 
             if (($latest->type ?? '') === 'Exhort') {
                 $category = self::CATEGORY_EXHORT;
@@ -380,6 +381,31 @@ class PushNotificationService
             'threadId' => $threadId,
             'notId' => (string) $userId,
         ];
+    }
+
+    /**
+     * Turn a users_notifications.url into an in-app route.
+     *
+     * The app feeds this straight to vue-router, which needs a path. Some
+     * notifications store a full URL rather than a path (the stories exhort is
+     * scheduled with https://www.ilovefreegle.org/stories), so strip our own
+     * site off the front.
+     */
+    private function notificationRoute(?string $url): string
+    {
+        $url = trim((string) $url);
+
+        if ($url === '') {
+            return '/';
+        }
+
+        $userSite = rtrim((string) config('freegle.sites.user'), '/');
+
+        if ($userSite !== '' && str_starts_with($url, $userSite)) {
+            $url = substr($url, strlen($userSite));
+        }
+
+        return $url === '' ? '/' : $url;
     }
 
     /**
@@ -464,7 +490,10 @@ class PushNotificationService
              AND mg.collection = 'Pending'
              AND mg.groupid IN ({$placeholders})
              AND mg.deleted = 0
-             AND m.heldby IS NULL",
+             -- Per-group hold: mg.heldby, not the message-wide messages.heldby mirror,
+             -- which suppressed the push for groups that had never held anything just
+             -- because another group the post rippled to had (Discourse 9970/2).
+             AND mg.heldby IS NULL",
             $pendingParams
         );
 
@@ -1151,8 +1180,6 @@ class PushNotificationService
      */
     private function resolveChatPushTitle(object $row): string
     {
-        $senderName = $row->sender_name ?: 'Someone';
-
         if ($row->chattype === ChatRoom::TYPE_USER2MOD
             && (int) $row->sender_id !== (int) $row->user1
             && $row->groupid) {
@@ -1165,7 +1192,15 @@ class PushNotificationService
             return 'Freegle Volunteers';
         }
 
-        return $senderName;
+        // Use the display name the rest of the site uses rather than the raw
+        // users.fullname: it strips the TrashNothing "-gNNN" suffix from imported
+        // names (which was showing up in the push banner as "alice-g3486") and
+        // rewrites misleading brand/authority names. See
+        // User::getDisplayNameAttribute, which the chat notification email
+        // already goes through.
+        $sender = $row->sender_id ? User::find((int) $row->sender_id) : null;
+
+        return $sender?->display_name ?: ($row->sender_name ?: 'Someone');
     }
 
     // -------------------------------------------------------------------------
@@ -1305,7 +1340,7 @@ class PushNotificationService
             // Single post: title is the item name itself (BigPictureStyle).
             $title = $this->nameWithBulk($posts[0]['message']);
         } else {
-            $title = $count . ' new freegles near you';
+            $title = $count . ' new things near you';
         }
 
         // ---- Photo URLs ----

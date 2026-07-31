@@ -11,6 +11,7 @@
 //   props        — { spatialUrl, jwt } from the host component
 //   digestModal  — ref to <RipplingDigestModal>; modal opening is delegated
 //   legendMode   — ref ('outbound' | 'inbound') flipped by view-toggle
+import { watch } from 'vue'
 import {
   chaikinSmooth,
   geoToLeaflet,
@@ -24,6 +25,7 @@ import {
   distSq,
   homeGroupOverlapFraction,
 } from './polygon.js'
+import { updateActualReachLayer } from './actualreach.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 import { driveMinForAudience, clampAudienceMinutes } from './audience.js'
@@ -66,6 +68,28 @@ export async function setupRipplingExplorer({
       maxZoom: 19,
     }
   ).addTo(map)
+
+  // The ACTUAL stored reach outline (per-post reach modal only): what the engine actually
+  // holds, as opposed to what the schedule says it should - the two diverge when a reach is
+  // held, clipped where members left a group, or capped by the poster's distance preference,
+  // which is why the modal draws this instead of the projection. The host modal fetches it
+  // separately, so it arrives after mount: watch, and redraw on change.
+  let actualReachLayer = null
+  cleanupFns.push(
+    watch(
+      () => props.actualReach,
+      (raw) => {
+        actualReachLayer = updateActualReachLayer(
+          L,
+          map,
+          actualReachLayer,
+          raw,
+          props.hideProjection
+        )
+      },
+      { immediate: true }
+    )
+  )
 
   let currentLat = null
   let currentLng = null
@@ -1554,6 +1578,16 @@ export async function setupRipplingExplorer({
 
   function drawPolygons(data, transitionMs, skipStandard = false) {
     lastIsoData = data
+    // Projection suppressed (per-post reach modal): the actual stored reach is drawn
+    // instead, so don't put a modelled outline on the same map to argue with it. Clear
+    // anything already drawn - a pin move must not strand the previous projection.
+    if (props.hideProjection) {
+      Object.keys(layers).forEach((k) => {
+        if (map && map.hasLayer(layers[k])) map.removeLayer(layers[k])
+        delete layers[k]
+      })
+      return
+    }
     const dur = transitionMs || 0
     const outgoing = Object.assign({}, layers)
     const newLayers = {}

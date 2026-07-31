@@ -155,7 +155,7 @@ jobs:
             if [ "${RUNNER_PROVIDER:-katapult}" = "hetzner" ]; then
               HTOKEN="${HETZNER_API_TOKEN:?HETZNER_API_TOKEN env var not set}"
               HAPI="https://api.hetzner.cloud/v1"
-              RUNNER_LAUNCH_TOKEN="${RUNNER_LAUNCH_TOKEN:-ac43519948448b967b504c5e97e6dc552fa403b4ea259713dfe1973d3db391ae2cc6b794ed974d2e}"
+              RUNNER_LAUNCH_TOKEN="${RUNNER_LAUNCH_TOKEN:-DUMMY_RUNNER_LAUNCH_TOKEN_ROTATE_AND_SET_ENV}"
               MAX_RUNNERS=2
               EXISTING=$(curl -sf -H "Authorization: Bearer $HTOKEN" "$HAPI/servers?per_page=50" 2>/dev/null | jq '[.servers[]|select(.name|startswith("hetzner-runner-"))]|length' 2>/dev/null || echo 0)
               echo "Hetzner runners: $EXISTING / $MAX_RUNNERS"
@@ -183,7 +183,7 @@ jobs:
             fi
 
             # Katapult is the default runner for all CI builds.
-            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
+            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-DUMMY_KATAPULT_API_TOKEN_ROTATE_AND_SET_ENV}"
             KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
             KATAPULT_API="https://api.katapult.io/core/v1"
             MAX_VMS=2
@@ -306,13 +306,69 @@ jobs:
               exit 0
             fi
 
+            BRANCH="<< pipeline.git.branch >>"
+            THIS_NUMBER="<< pipeline.number >>"
+            THIS_REVISION="<< pipeline.git.revision >>"
+            THIS_ID="<< pipeline.id >>"
+            PROJECT_SLUG="gh/Freegle/Iznik"
+
             # Don't cancel older pipelines when THIS is a manual API trigger (same
             # guard as the first cancel step — manual workflows must not disrupt
-            # already-running automatic deploy-apps builds).
+            # already-running automatic deploy-apps builds). BUT: CircleCI's own
+            # built-in "auto-cancel redundant workflows" project setting is NOT
+            # scoped by trigger type or workflow name — it cancels every other
+            # running workflow on the branch the instant this pipeline is created,
+            # regardless of what our own script decides. That silently killed the
+            # required freegle/build-and-test check on PR #1136 (job 28075, pipeline
+            # #9671) within seconds of a build_testflight pipeline (#9672) being
+            # triggered for the same commit, even though this guard correctly made
+            # #9672 skip cancelling anything itself. Since that's a platform-level
+            # side effect we cannot suppress from config, detect it after the fact
+            # and self-heal: if a sibling pipeline for this exact commit has a
+            # canceled freegle/build-and-test job and none has a running/successful
+            # one, re-trigger a plain (non-manual) pipeline so the check gets a
+            # clean, uncontested run.
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
                [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
               echo "Manual workflow trigger — skipping pipeline cancellation"
+
+              SIBLINGS=$(curl -sf \
+                -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline?branch=${BRANCH}" 2>/dev/null) || true
+
+              BUILD_TEST_STATE="none"
+              if [ -n "$SIBLINGS" ]; then
+                SIBLING_IDS=$(echo "$SIBLINGS" | jq -r --arg rev "$THIS_REVISION" --arg self "$THIS_ID" \
+                  '.items[] | select(.vcs.revision == $rev) | select(.id != $self) | .id')
+                for SIB_ID in $SIBLING_IDS; do
+                  WORKFLOWS=$(curl -sf -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                    "https://circleci.com/api/v2/pipeline/${SIB_ID}/workflow" 2>/dev/null) || continue
+                  WF_IDS=$(echo "$WORKFLOWS" | jq -r '.items[].id')
+                  for WF_ID in $WF_IDS; do
+                    STATE=$(curl -sf -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                      "https://circleci.com/api/v2/workflow/${WF_ID}/job" 2>/dev/null | \
+                      jq -r '.items[] | select(.name == "freegle/build-and-test") | .status' | head -1)
+                    if [ "$STATE" = "success" ] || [ "$STATE" = "running" ] || [ "$STATE" = "queued" ] || [ "$STATE" = "blocked" ]; then
+                      BUILD_TEST_STATE="alive"
+                    elif [ "$STATE" = "canceled" ] && [ "$BUILD_TEST_STATE" = "none" ]; then
+                      BUILD_TEST_STATE="canceled"
+                    fi
+                  done
+                done
+              fi
+
+              if [ "$BUILD_TEST_STATE" = "canceled" ]; then
+                echo "This manual trigger's pipeline creation appears to have caused CircleCI's built-in auto-cancel to kill the required freegle/build-and-test check for commit ${THIS_REVISION}. Re-triggering a plain pipeline so the check runs cleanly."
+                curl -sf -X POST \
+                  -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"branch\": \"${BRANCH}\"}" \
+                  "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline" 2>/dev/null || true
+              else
+                echo "No canceled freegle/build-and-test check found for commit ${THIS_REVISION} — nothing to re-trigger."
+              fi
+
               exit 0
             fi
 
@@ -328,10 +384,6 @@ jobs:
               echo "This commit changes only plans/, yesterday/ or docs/ — skipping cancellation so the older real build survives."
               exit 0
             fi
-
-            BRANCH="<< pipeline.git.branch >>"
-            THIS_NUMBER="<< pipeline.number >>"
-            PROJECT_SLUG="gh/Freegle/Iznik"
 
             echo "Pre-continuation cancel pass for pipeline #${THIS_NUMBER} on ${BRANCH}"
 

@@ -771,6 +771,27 @@ Schedule::command('mail:engage')
     ->sendOutputTo(cronLog('mail:engage'))
     ->runInBackground();
 
+// First-week onboarding tip sequence for new members: one short tip a day for
+// the first five days, after the welcome mail. Dark by default: inert unless
+// FREEGLE_REENGAGE_ALLOWLIST is set AND "Reengage" is in
+// FREEGLE_MAIL_ENABLED_TYPES. Runs daily so members get the next due tip as they
+// cross each day threshold; one-a-day spacing is enforced in the service, and
+// TrashNothing/LoveJunk accounts are excluded there.
+Schedule::command('mail:reengage')
+    ->dailyAt('15:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('mail:reengage'))
+    ->runInBackground();
+
+// Record whether a tip drove a real action (login/reply/post within the window)
+// for onboarding sends, so per-tip/arm/segment effectiveness and control-arm
+// lift can be graphed in the sysadmin dashboard. Runs after the day's sends.
+Schedule::command('mail:reengage-outcomes')
+    ->dailyAt('16:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('mail:reengage-outcomes'))
+    ->runInBackground();
+
 // Ask eligible users with outcomes/offers to share their Freegle story.
 // V1: cron/stories.php (weekly Saturday 11:00)
 Schedule::command('stories:ask')

@@ -229,22 +229,33 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby             *uint64             `json:"heldby"`
-	Source             *string             `json:"source"`
-	Sourceheader       *string             `json:"sourceheader"`
-	Fromaddr           *string             `json:"fromaddr"`
-	Fromip             *string             `json:"fromip"`
-	Fromcountry        *string             `json:"fromcountry"`
-	Repostat           *time.Time          `json:"repostat"`
-	Canrepost          bool                `json:"canrepost"`
-	Deliverypossible   bool                `json:"deliverypossible"`
-	Deadline           *time.Time          `json:"deadline"`
-	Edits              []MessageEdit       `json:"edits,omitempty" gorm:"-"`
-	RawMessage         *string             `json:"message,omitempty" gorm:"column:message"`
-	Worry              []WorryMatch        `json:"worry,omitempty" gorm:"-"`
-	Postings           []MessagePosting    `json:"postings,omitempty" gorm:"-"`
-	Tnpostid           *string             `json:"tnpostid"`
-	Expiresat          *time.Time          `json:"expiresat,omitempty" gorm:"-"`
+	// DEPRECATED, for bundled app clients only. A hold belongs to a (message, group)
+	// pair (messages_groups.heldby, exposed as groups[].heldby); there is no correct
+	// message-wide value for a post that reached several groups, and supplying one
+	// leaks one group's hold onto the others (Discourse 9970/2). Up-to-date clients
+	// read the per-group row for the group they are acting on — see MessageGroup.Heldby.
+	//
+	// It stays in the payload because the ModTools app bundles its web build, so
+	// installed apps render held state from this field and lost holds entirely when it
+	// was removed (Discourse 9481/636). Computed per viewer by effectiveHeldby; there is
+	// no messages.heldby column behind it any more. Remove once the app floor has moved
+	// past the per-group frontend.
+	Heldby           *uint64          `json:"heldby"`
+	Source           *string          `json:"source"`
+	Sourceheader     *string          `json:"sourceheader"`
+	Fromaddr         *string          `json:"fromaddr"`
+	Fromip           *string          `json:"fromip"`
+	Fromcountry      *string          `json:"fromcountry"`
+	Repostat         *time.Time       `json:"repostat"`
+	Canrepost        bool             `json:"canrepost"`
+	Deliverypossible bool             `json:"deliverypossible"`
+	Deadline         *time.Time       `json:"deadline"`
+	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
+	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
+	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
+	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
+	Tnpostid         *string          `json:"tnpostid"`
+	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -545,6 +556,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				//
 				// Check that the reply isn't too long ago compared to the most recent post of it.  That can happen
 				// very occasionally if someone posts, an item for a long time, and there is a reply
+				//
+				// Gate rippling held replies: an email/TN reply from outside the post's current reach is
+				// held (rippling_held_replies, status <> 'released') so it doesn't reach the poster before
+				// the post ripples to the replier. Every delivery channel honours this - the in-app chat
+				// list/count and message fetch (chat/chatmessage.go), the poster-notification email and
+				// push, and the chat-list badge/snippet/roster (PR #927). This own-posts reply list feeds
+				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
+				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
+				// (no mod exemption), matching the #927 count-surface gates.
 				db.Raw("SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 					"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname "+
 					"FROM chat_messages "+
@@ -553,6 +573,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"INNER JOIN users ON users.id = chat_messages.userid "+
 					"WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 					"AND reviewrequired = 0 AND reviewrejected = 0 "+
+					"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
 					"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ? "+
 					"GROUP BY userid;", id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).Scan(&messageReply)
 
@@ -621,6 +642,25 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
+
+			// Holds are carried per-group on messageGroups (groups[].heldby); that is the
+			// truth, and what up-to-date clients read. The message-level Heldby below is a
+			// compatibility value for bundled app clients that predate the per-group change
+			// — see effectiveHeldby. Resolve it to a hold on a group the viewer actually
+			// moderates; non-mods see none.
+			message.Heldby = nil
+			if isGroupMod {
+				var myModGroups []uint64
+				db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+					myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&myModGroups)
+				if len(myModGroups) > 0 {
+					viewer := make(map[uint64]bool, len(myModGroups))
+					for _, g := range myModGroups {
+						viewer[g] = true
+					}
+					message.Heldby = effectiveHeldby(messageGroups, viewer)
+				}
+			}
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
 			message.MessageReply = messageReply
@@ -2096,6 +2136,37 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	}
 }
 
+// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and/or vector
+// embedding (messages_embeddings) rows for a message whose subject/body has just changed.
+// Both are populated ONCE for messages "missing" from those tables
+// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
+// refreshed on edit, so a search for a term the edit introduced would never match.
+// Deleting the stale rows lets those background jobs re-index and re-embed from the new
+// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
+//
+// The two stores are driven by different fields, so they take independent invalidation
+// flags: messages_index is derived from the message SUBJECT only (indexString is only ever
+// called with subject text), while messages_embeddings is derived from subject+textbody. A
+// body-only edit must not drop the keyword index - those rows still accurately reflect the
+// unchanged subject, and dropping them would make the message unsearchable by keyword for
+// no reason until the next background run.
+//
+// Deleting the messages_embeddings row is necessary but not sufficient for vector search:
+// apiv2 serves vector search entirely from an in-process store (embedding.Global) that
+// Refresh()es every ~2 min and is presence-keyed, so a delete+re-embed landing between two
+// ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
+// We therefore also Evict the msgid from that store so the next Refresh reloads the
+// regenerated blob.
+func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
+	if subjectChanged {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgid)
+	}
+	if subjectChanged || textChanged {
+		db.Exec("DELETE FROM messages_embeddings WHERE msgid = ?", msgid)
+		embedding.Global.Evict(msgid)
+	}
+}
+
 // handleApprove approves a pending message.
 func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -2127,17 +2198,8 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Release hold on the same authorised groups.
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
-	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
-	// would pin messages.heldby forever, leaving the message stuck showing "Held".
-	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
-	// read the source rather than a possibly-lagging replica.
-	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing this group's messages_groups.heldby above is the whole job: holds are
+	// per-group, so there is no message-wide flag to recompute and clear.
 
 	// Now Approved — add to the spatial index so the post appears in browse/search
 	// immediately rather than waiting for the periodic reconciler.
@@ -2303,16 +2365,10 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// A rejected or deleted copy is no longer held. If that cleared the last held copy,
-	// clear the message-level heldby too - otherwise a rejected-but-heldby row (deleted=0)
-	// keeps the whole post showing "Held", blocking a mod on another group the post rippled
-	// into from acting on their copy and leaving them unable to clear it via Release
-	// (Discourse 9894). Mirrors the recompute in handleReleaseHeld.
-	var stillHeld int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeld)
-	if stillHeld == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// A rejected or deleted copy is no longer held, and the UPDATEs above clear its
+	// per-group heldby. Holds being per-group, a stale hold on one copy can no longer
+	// keep the whole post showing "Held" and strand a mod on another group the post
+	// rippled into (Discourse 9894).
 
 	// Determine the message's ORIGIN group — the first group it was posted to (the
 	// earliest messages_groups arrival). With rippling-out, a post is added to nearby
@@ -2520,9 +2576,6 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group hold: set heldby on the authorized groups' rows.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
 
-	// Also update messages.heldby for backwards compatibility during migration.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
-
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
 		ctx.Groupid = gid
@@ -2552,9 +2605,6 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Per-group hold for re-review.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
-
-	// Also update messages.heldby for backwards compatibility.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
 	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
 	// any copy back to pending takes the post off the board on EVERY community it is on
@@ -2601,17 +2651,8 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group release.
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
-	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
-	// would pin messages.heldby forever, leaving the message stuck showing "Held".
-	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
-	// read the source rather than a possibly-lagging replica.
-	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing the per-group heldby above is the whole job: a hold belongs to a
+	// (message, group) pair, so there is no message-wide flag left to recompute.
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2651,6 +2692,9 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		if edit.Newtext != nil {
 			db.Exec("UPDATE messages SET textbody = ? WHERE id = ?", *edit.Newtext, req.ID)
 		}
+		// Applied an edit → whichever of the keyword index / vector embedding depend on
+		// the field(s) just written are now stale.
+		invalidateMessageSearchIndexes(db, req.ID, edit.Newsubject != nil, edit.Newtext != nil)
 	}
 
 	// Mark ALL pending edits as approved.
@@ -2690,6 +2734,11 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+
+		// Reverting restored the previous subject/body, so whichever of the keyword index
+		// / vector embedding depend on the restored field(s) are out of sync again - drop
+		// them to be rebuilt.
+		invalidateMessageSearchIndexes(db, req.ID, old.Oldsubject != nil, old.Oldtext != nil)
 	} else {
 		// No recorded old values — just clear the editedby flag.
 		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
@@ -3455,6 +3504,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// flag also need the clean edit re-verified.
 	if subjectChanged || textChanged || itemsChanged {
 		db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?", req.ID)
+	}
+
+	// The subject/body drive the search indexes (messages_index keyword search and
+	// messages_embeddings vector search), which are each populated once for "missing"
+	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
+	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	if subjectChanged || textChanged {
+		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
 	}
 
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
@@ -4344,9 +4401,8 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 		return 0, ""
 	}
 
-	// Read the per-group hold, not the message-level messages.heldby mirror: a
-	// message held on one group must not block moderation on another group it is
-	// also pending on.
+	// Holds are per-group: a message held on one group must not block moderation on
+	// another group it is also pending on.
 	var holder uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? "+
 		"AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",

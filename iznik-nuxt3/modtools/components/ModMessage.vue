@@ -323,7 +323,7 @@
                 at
                 {{ datetimeshort(message.outcomes[0].timestamp) }}
               </NoticeMessage>
-              <div v-if="message.heldby">
+              <div v-if="contextGroup?.heldby">
                 <NoticeMessage variant="warning" class="mb-2">
                   <p v-if="me.id === heldbyId">
                     You held this. Other people will see a warning to check with
@@ -727,7 +727,7 @@
         </b-row>
       </b-card-body>
       <b-card-footer v-if="!noactions && expanded">
-        <div v-if="message.heldby && heldbyId !== myid">
+        <div v-if="contextGroup?.heldby && heldbyId !== myid">
           This message is held by someone else. The buttons are hidden so you
           don't click them by accident. Please check with them before releasing
           the message.
@@ -740,11 +740,7 @@
           This message needs editing so that we know where it is.
         </NoticeMessage>
         <div
-          v-if="
-            pending &&
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="pending && (!contextGroup?.heldby || heldbyId === myid) && !editing"
           class="text-end mb-1"
         >
           <b-button variant="danger" @click="spamReport">
@@ -752,10 +748,7 @@
           </b-button>
         </div>
         <ModMessageButtons
-          v-if="
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="(!contextGroup?.heldby || heldbyId === myid) && !editing"
           :messageid="message.id"
           :groupid="currentGroupid"
           :modconfigid="configid"
@@ -1194,17 +1187,20 @@ const eBody = computed(() => {
   return twem(message.value.textbody)
 })
 
-// Handle heldby as either numeric ID (Go API) or object (PHP API).
+// heldby is per-group (messages_groups.heldby): a hold set by another team on a
+// group this post also rippled to must not block action on the copy being
+// administered here, so this reads contextGroup - the group behind currentGroupid -
+// rather than any message-wide flag (Discourse 9970/2, mods with several nearby
+// groups saw posts stuck "held" that were only held on a DIFFERENT one of their
+// groups). Handle heldby as either numeric ID (Go API) or object (PHP API).
 const heldbyId = computed(() => {
-  if (!message.value) return null
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return null
   return Number.isInteger(h) ? h : h.id
 })
 
 const heldbyName = computed(() => {
-  if (!message.value) return ''
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return ''
   if (Number.isInteger(h)) {
     const user = userStore.byId(h)
@@ -1466,9 +1462,9 @@ onMounted(() => {
       : []
     findHomeGroup()
 
-    // Fetch heldby user if message is held (Go API returns numeric ID).
-    if (message.value.heldby && Number.isInteger(message.value.heldby)) {
-      userStore.fetch(message.value.heldby)
+    // Fetch heldby user if the copy on the context group is held (Go API returns numeric ID).
+    if (heldbyId.value && Number.isInteger(heldbyId.value)) {
+      userStore.fetch(heldbyId.value)
     }
   }
 })

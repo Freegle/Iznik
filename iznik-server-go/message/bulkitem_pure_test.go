@@ -71,6 +71,9 @@ func TestFetchRemoteImage_RejectsNonHTTPURL(t *testing.T) {
 }
 
 func TestFetchRemoteImage_Non200IsError(t *testing.T) {
+	// Allow the loopback httptest server so we test the non-200 handling, not the SSRF block.
+	allowLoopbackFetch = true
+	defer func() { allowLoopbackFetch = false }()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -81,6 +84,9 @@ func TestFetchRemoteImage_Non200IsError(t *testing.T) {
 }
 
 func TestFetchRemoteImage_NonImageContentIsError(t *testing.T) {
+	// Allow the loopback httptest server so we test the content-type check, not the SSRF block.
+	allowLoopbackFetch = true
+	defer func() { allowLoopbackFetch = false }()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("this is definitely not an image, just some plain text body"))
@@ -92,6 +98,10 @@ func TestFetchRemoteImage_NonImageContentIsError(t *testing.T) {
 }
 
 func TestFetchRemoteImage_DetectsImageWhenContentTypeMissing(t *testing.T) {
+	// httptest listens on loopback, which the SSRF dialer blocks in production; allow it here.
+	allowLoopbackFetch = true
+	defer func() { allowLoopbackFetch = false }()
+
 	// PNG signature; with no Content-Type header the fetcher must sniff the bytes.
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

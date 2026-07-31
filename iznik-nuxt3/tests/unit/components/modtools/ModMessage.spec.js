@@ -852,7 +852,13 @@ describe('ModMessage', () => {
           summary: false,
         },
         {
-          heldby: { id: 999, displayname: 'Test Mod' },
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              heldby: { id: 999, displayname: 'Test Mod' },
+            },
+          ],
         }
       )
       await wrapper1.vm.$nextTick()
@@ -863,11 +869,85 @@ describe('ModMessage', () => {
           summary: false,
         },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()
       expect(wrapper2.text()).toContain('Held by')
+    })
+
+    // Discourse 9970/2: a mod who moderates several nearby groups had a post that
+    // rippled to more than one of them show as "held by another moderator" -
+    // hiding every action button - even though the hold was only on a DIFFERENT
+    // one of her groups, not the copy she was actually trying to act on. heldby is
+    // per-group (messages_groups.heldby), so the copy on the group being
+    // administered (contextGroupid) must only be treated as held when THAT
+    // group's row carries a hold, not because some other group of hers happens to
+    // be held.
+    it('does not hide actions for a copy on an unheld group, even when another of the mod-owned groups on the same rippled post is held by someone else', async () => {
+      const wrapper = mountComponent(
+        {
+          summary: false,
+          contextGroupid: 789,
+        },
+        {
+          // The server's message-level heldby mirrors "held on ANY group I moderate",
+          // so it is truthy here purely because group 790 is held - exactly what a
+          // real API response looks like for a multi-group mod. The fix must ignore
+          // this and look at the per-group row for the context group (789) instead.
+          heldby: 888,
+          groups: [
+            { groupid: 789, collection: 'Pending', heldby: null },
+            { groupid: 790, collection: 'Pending', heldby: 888 },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('held by someone else')
+    })
+
+    // The API no longer sends a message-level heldby at all - a hold belongs to a
+    // (message, group) pair, so there was never a correct message-wide value. These pin
+    // the component to the per-group rows alone, so it cannot regress to reading a
+    // message-wide field if one ever reappears in a payload or a cached response.
+    it('shows the hold from the context group when the payload has no message-level heldby', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, collection: 'Pending', heldby: 888 },
+            { groupid: 790, collection: 'Pending', heldby: null },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('held by someone else')
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(false)
+    })
+
+    it('leaves actions available when no group on the post is held', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, collection: 'Pending', heldby: null },
+            { groupid: 790, collection: 'Pending', heldby: null },
+          ],
+        }
+      )
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('.mod-message-buttons').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('held by someone else')
     })
   })
 
@@ -1259,7 +1339,13 @@ describe('ModMessage', () => {
       const wrapper2 = mountComponent(
         { summary: false },
         {
-          heldby: { id: 888, displayname: 'Other Mod' },
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              heldby: { id: 888, displayname: 'Other Mod' },
+            },
+          ],
         }
       )
       await wrapper2.vm.$nextTick()

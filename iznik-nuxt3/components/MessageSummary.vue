@@ -40,7 +40,7 @@
           v-if="message.attachments[0]?.ouruid"
           :src="message.attachments[0].ouruid"
           :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
+          :alt="photoAlt"
           class="photo-image"
           :width="400"
           fit="inside"
@@ -53,7 +53,7 @@
           provider="uploadcare"
           :src="message.attachments[0].externaluid"
           :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
+          :alt="photoAlt"
           class="photo-image"
           :width="400"
           fit="inside"
@@ -64,7 +64,7 @@
         <ProxyImage
           v-else-if="message.attachments[0]?.path"
           class-name="photo-image"
-          alt="Item picture"
+          :alt="photoAlt"
           :src="message.attachments[0].path"
           :width="400"
           fit="inside"
@@ -194,6 +194,10 @@ const {
   categoryIcon,
 } = useMessageDisplay(idRef)
 
+/* Name the item in the alt text rather than the literal "Item Photo" that used to be
+on every photo on the site. */
+const photoAlt = computed(() => subjectItemName.value || 'Item photo')
+
 // Bulk offer ("clearance") indicator. bulkCount only gates the badge (is this a
 // bulk offer?); the badge itself shows the TOTAL quantity available, matching the
 // post's "N available" (message.availablenow), not the number of catalogue rows.
@@ -281,6 +285,7 @@ function expand(e) {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/_feed-card.scss';
 
 /* Use very specific selectors to override MessageList.vue's deep selectors */
 .message-summary-mobile {
@@ -299,7 +304,8 @@ function expand(e) {
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    max-height: 200px;
+    /* The square photo sets the row height - see assets/css/_feed-card.scss. */
+    max-height: var(--summary-row-size, #{$feed-card-max});
     border: 1px solid $color-gray--light;
     box-shadow: var(
       --shadow-md,
@@ -340,10 +346,11 @@ function expand(e) {
     padding-bottom: 75%;
   }
 
-  /* Horizontal layout on lg+ - fixed square photo */
+  /* Horizontal layout on lg+ - square photo sized from the viewport height so that a
+     short screen still shows a useful number of posts. */
   @include media-breakpoint-up(lg) {
-    width: 200px;
-    height: 200px;
+    width: var(--summary-row-size, #{$feed-card-max});
+    height: var(--summary-row-size, #{$feed-card-max});
     padding-bottom: 0;
     flex-shrink: 0;
   }
@@ -446,11 +453,12 @@ function expand(e) {
   pointer-events: none;
   height: auto;
 
-  /* In list view (lg+), photo is 200px wide on left - position badge within that area */
+  /* In list view (lg+) the photo is a square on the left whose side varies with the
+     viewport height, so centre the stamp on that square rather than on a fixed 200px. */
   @include media-breakpoint-up(lg) {
-    left: 100px; /* Center of 200px photo area */
-    top: 100px; /* Center of 200px photo area */
-    width: 120px;
+    left: calc(var(--summary-row-size, #{$feed-card-max}) / 2);
+    top: calc(var(--summary-row-size, #{$feed-card-max}) / 2);
+    width: calc(var(--summary-row-size, #{$feed-card-max}) * 0.6);
     max-width: 120px;
   }
 
@@ -582,7 +590,18 @@ function expand(e) {
   }
 
   @include media-breakpoint-up(lg) {
-    padding: 1rem 1.5rem;
+    /* Padding shrinks with the row so that the title, location and meta line still fit
+       beside a small photo; at the 200px maximum it lands back on 1rem 1.5rem. */
+    padding: clamp(
+        0.25rem,
+        calc((var(--summary-row-size, #{$feed-card-max}) - 64px) / 6),
+        1rem
+      )
+      clamp(
+        0.75rem,
+        calc(var(--summary-row-size, #{$feed-card-max}) * 0.12),
+        1.5rem
+      );
     border: none;
     border-left: 1px solid $color-gray--light;
     box-shadow: none;
@@ -610,6 +629,13 @@ function expand(e) {
   gap: 0.5rem;
   margin-bottom: 0.35rem;
   align-items: center;
+
+  /* Compact rows have no description underneath, so don't reserve the gap for one. */
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-compact-max) {
+      margin-bottom: 0;
+    }
+  }
 }
 
 .content-tag {
@@ -695,6 +721,30 @@ function expand(e) {
       height: 1.5em;
       background: linear-gradient(transparent, $color-white);
       pointer-events: none;
+    }
+  }
+
+  /* Only one line fits, so ellipsise it - the fade would just grey out the only line there
+     is. Line clamping can't be used here because flex: 1 stretches the box past the line it
+     is meant to cap, so this is a plain single-line ellipsis with the box sized to its
+     content. See assets/css/_feed-card.scss for where these heights come from. */
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-oneline-max) {
+      display: block;
+      flex: 0 0 auto;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+
+      &::after {
+        content: none;
+      }
+    }
+  }
+
+  /* Not even one line fits, so drop it. Subject, location, distance and age all stay. */
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-compact-max) {
+      display: none;
     }
   }
 }

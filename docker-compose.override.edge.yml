@@ -90,6 +90,13 @@ services:
     deploy:
       replicas: 1
     cgroup_parent: interactive.slice
+    # Production SSRF protection: replace the base's empty dev deny file with the full private-range
+    # deny list so the public image proxy cannot be pointed at internal hosts. (All base volumes are
+    # re-listed because compose merges by mount target, and this must win at that path.)
+    volumes:
+      - ./delivery-nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./delivery-imagesweserv.conf:/etc/nginx/imagesweserv.conf:ro
+      - ./delivery-weserv-deny-private.edge.conf:/etc/nginx/weserv-deny-private.conf:ro
 
   tusd:
     deploy:

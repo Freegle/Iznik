@@ -121,8 +121,10 @@ var CoinFlip = func() int { return rand.Intn(2) }
 func GetChallenge(c *fiber.Ctx) error {
 	db := database.DBConn
 
-	// Get user ID from JWT
-	userID, _, _ := user.GetJWTFromRequest(c)
+	// Use WhoAmI (not GetJWTFromRequest) so the auth middleware enforces server-side
+	// session revocation: a logged-out-but-unexpired JWT should not still be handed a
+	// microvolunteering challenge. Same pattern as the giftaid handlers.
+	userID := user.WhoAmI(c)
 	if userID == 0 {
 		return c.Status(401).JSON(fiber.Map{
 			"error": "Not logged in",
@@ -692,6 +694,24 @@ func PostResponse(c *fiber.Ctx) error {
 		response := *req.Response
 
 		if response == "Approve" || response == "Reject" {
+			// SECURITY: only accept a verdict for a message the user could
+			// legitimately have been challenged with — one posted to a group they
+			// belong to, and not their own post. Without this any logged-in account
+			// (no group membership, any trust level) could vote on arbitrary live
+			// posts across the whole site, and at quorum force them back to Pending
+			// (a platform-wide content-takedown). Mirrors GetChallenge's own
+			// group-membership scoping on the read side.
+			var eligible int64
+			db.Raw(`SELECT COUNT(*) FROM messages_groups
+				INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?
+				INNER JOIN messages ON messages.id = messages_groups.msgid
+				WHERE messages_groups.msgid = ? AND messages_groups.deleted = 0
+					AND COALESCE(messages.fromuser, 0) != ? AND messages.deleted IS NULL`,
+				myid, req.Msgid, myid).Scan(&eligible)
+			if eligible == 0 {
+				return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this message")
+			}
+
 			// Mark any notifications regarding this message as read
 			db.Exec(`UPDATE users_notifications SET seen = 1
 				WHERE touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'`,
@@ -751,6 +771,22 @@ func PostResponse(c *fiber.Ctx) error {
 		var response interface{}
 		if req.Response != nil {
 			response = *req.Response
+		}
+
+		// SECURITY: the photo must belong to a message still live on a group the user
+		// is a member of. At quorum a Reject drives an automatic rotation, so an
+		// arbitrary attachment id must not be votable by an unrelated account. Unlike
+		// CheckMessage there is deliberately no author exclusion: getPhotoRotateChallenge
+		// can legitimately serve a user their own freshly-posted photo to review.
+		var eligible int64
+		db.Raw(`SELECT COUNT(*) FROM messages_attachments
+			INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0
+			INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?
+			INNER JOIN messages ON messages.id = messages_attachments.msgid
+			WHERE messages_attachments.id = ? AND messages.deleted IS NULL`,
+			myid, req.Photoid).Scan(&eligible)
+		if eligible == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this photo")
 		}
 
 		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, rotatedimage, result, version, score_negative)

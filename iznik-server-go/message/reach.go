@@ -73,6 +73,15 @@ type ReachResponse struct {
 	Status          string  `json:"status"`
 	Arrival         *string `json:"arrival"`
 	NextExpansionAt *string `json:"nextexpansionat"`
+	// Polygon is the ACTUAL stored reach (rippling_reach.polygon) as GeoJSON, and is what the
+	// reach modal draws - a reach is held, clipped where members left a group, or capped by the
+	// poster's distance preference, none of which a client-side projection of the schedule
+	// knows about, so the projection was dropped in favour of this. This is the ONE place the
+	// stored polygon crosses the API: mod-only, one post per request, so the payload
+	// (~300KB typical / ~850KB worst on prod at 5 decimal places, well-compressed on the wire
+	// - the grid-fill polygons are highly repetitive) is a deliberate exception to the "never
+	// ship reach polygons" rule that governs the member-facing feed.
+	Polygon string `json:"polygon,omitempty"`
 }
 
 type reachRow struct {
@@ -81,11 +90,12 @@ type reachRow struct {
 	Status          string
 	Arrival         *string
 	NextExpansionAt *string
+	Polygon         *string
 }
 
 // Reach returns a post's current ACTUAL rippling-out progress (the hazard-schedule tick it has
-// really reached), for moderators to compare with the expected progress on the reach map.
-// Mod-of-group (or Admin/Support) only; returns rippling:false (not 404) with a reason when the
+// really reached), which is what the moderation reach map draws.
+// Any moderator (or Admin/Support); returns rippling:false (not 404) with a reason when the
 // post has no reach row.
 //
 // @Router /message/{id}/reach [get]
@@ -95,7 +105,7 @@ type reachRow struct {
 // @Param id path int true "Message ID"
 // @Security BearerAuth
 // @Success 200 {object} message.ReachResponse
-// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
+// @Failure 403 {object} fiber.Error "Moderator required"
 func Reach(c *fiber.Ctx) error {
 	db := database.DBConn
 
@@ -109,28 +119,29 @@ func Reach(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid message id")
 	}
 
-	// The groups the post is on, for the mod-of-group authorisation and to confirm it exists.
+	// Confirm the post exists (and is on a group at all).
 	var groupids []uint64
 	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&groupids)
 	if len(groupids) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
 
-	allowed := user.IsAdminOrSupport(myid)
-	if !allowed {
-		for _, gid := range groupids {
-			if user.IsModOfGroup(myid, gid) {
-				allowed = true
-				break
-			}
-		}
-	}
-	if !allowed {
-		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this post's group")
+	// Any moderator may look at reach, not only mods of the groups this post is on.
+	// Rippling deliberately carries posts to OTHER groups, so the mods who most need
+	// to see how far one has travelled are usually not mods of its origin group -
+	// gating on mod-of-this-post's-group hid reach from exactly them. Reach exposes
+	// no member data, so there is nothing here to scope per group.
+	if !user.IsModOfAnyGroup(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Moderator required")
 	}
 
+	// 5 decimal places ≈ 1m - plenty for a map overlay, and it keeps the grid-fill polygons
+	// (~11k vertices) to a fraction of their full-precision WKT size. The stored geometry's
+	// coordinates are lng/lat degrees (the SRID label notwithstanding), which is exactly
+	// GeoJSON's [lng, lat] order, so no transform is needed.
 	var row reachRow
-	found := db.Raw("SELECT tick, total_ticks, status, arrival, next_expansion_at "+
+	found := db.Raw("SELECT tick, total_ticks, status, arrival, next_expansion_at, "+
+		"ST_AsGeoJSON(polygon, 5) AS polygon "+
 		"FROM rippling_reach WHERE msgid = ?", id).Scan(&row)
 
 	if found.RowsAffected == 0 {
@@ -149,6 +160,10 @@ func Reach(c *fiber.Ctx) error {
 		return c.JSON(ReachResponse{Rippling: false, Reason: reason, Msgid: id})
 	}
 
+	polygon := ""
+	if row.Polygon != nil {
+		polygon = *row.Polygon
+	}
 	return c.JSON(ReachResponse{
 		Rippling:        true,
 		Msgid:           id,
@@ -157,5 +172,6 @@ func Reach(c *fiber.Ctx) error {
 		Status:          row.Status,
 		Arrival:         row.Arrival,
 		NextExpansionAt: row.NextExpansionAt,
+		Polygon:         polygon,
 	})
 }

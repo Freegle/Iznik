@@ -236,6 +236,24 @@ class RippleReplyService
             'status' => 'released',
             'releasedat' => now(),
         ]);
+
+        // Surface the room in the poster's chat list now the held reply is deliverable.
+        // Same dormant-room trap as ChatProcessService: ListForUser filters
+        // latestmessage >= now - 31d, and a held reply's chat_messages.date is the
+        // (old) reply time, which for a post rippling over hours/days can already be
+        // outside the window - so the released reply's email fires (keyed on releasedat)
+        // but the chat never appears in the list until the hourly recompute. Bump on
+        // release, keyed off the message's own date via GREATEST so we never move
+        // latestmessage backwards.
+        DB::update(
+            'UPDATE chat_rooms cr ' .
+            'JOIN rippling_held_replies rhr ON rhr.id = ? ' .
+            'JOIN chat_messages cm ON cm.id = rhr.chatmsgid ' .
+            'SET cr.latestmessage = GREATEST(COALESCE(cr.latestmessage, cm.date), cm.date) ' .
+            'WHERE cr.id = rhr.chatid',
+            [$ripplingRowId]
+        );
+
         $this->recordEvent('released');
     }
 

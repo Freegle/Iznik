@@ -27,7 +27,6 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property int|null $reviewedby User id of volunteer who reviewed it
  * @property bool $reviewrejected
  * @property int|null $spamscore SpamAssassin score for mail replies
- * @property string|null $facebookid
  * @property int|null $scheduleid
  * @property bool|null $replyexpected
  * @property bool $replyreceived
@@ -85,6 +84,14 @@ class ChatMessage extends Model implements Auditable
     protected $table = 'chat_messages';
     protected $guarded = ['id'];
     public $timestamps = FALSE;
+
+    /**
+     * Reasons a message was dropped during processing (chat_messages.processingfailreason).
+     * A dropped message is never notified to the recipient, so support needs to be able to
+     * say why rather than leave it looking like the sender never wrote.
+     */
+    public const PROCESSFAIL_SPAMMER = 'Spammer';
+    public const PROCESSFAIL_BANNED_IN_COMMON = 'BannedInCommonGroups';
 
     public const TYPE_DEFAULT = 'Default';
     public const TYPE_SYSTEM = 'System';
