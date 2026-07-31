@@ -97,7 +97,10 @@ const endDate = ref('')
 // analysis is meaningless for them. Fixed, not user-selectable.
 const digestType = ref('UnifiedDigestDaily')
 
-// Recipient cohort for the digest relevance-ranking experiment.
+// Recipient cohort for the digest relevance-ranking experiment. "Ranked" counts
+// only digests the ranker actually reordered (recorded per digest), not everyone
+// outside the holdout - members with no interest signal got an identical
+// unranked digest and would flatten the comparison.
 const cohort = ref('')
 const cohortOptions = [
   { value: '', text: 'All recipients' },

@@ -285,10 +285,27 @@ func deleteSyntheticCohortUser(id uint64) {
 	db.Exec("DELETE FROM users WHERE id = ?", id)
 }
 
-// TestDigestPositions_CohortSplit verifies the ranked/holdout cohort filter
-// (userid % 10) partitions the click data: a holdout recipient's clicks appear
-// only under cohort=holdout, a ranked recipient's only under cohort=ranked, and
-// both under no cohort.
+// setRelevanceRanked stamps metadata.relevance_ranked on a digest tracking row,
+// as UnifiedDigest does when it records whether the ranker actually reordered
+// that recipient's digest.
+func setRelevanceRanked(t *testing.T, id uint64, ranked int) {
+	db := database.DBConn
+	result := db.Exec("UPDATE email_tracking SET metadata = JSON_SET(metadata, '$.relevance_ranked', ?) WHERE id = ?", ranked, id)
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to set relevance_ranked on %d: %v", id, result.Error)
+	}
+}
+
+// TestDigestPositions_CohortSplit verifies the cohort filter partitions the
+// click data: a holdout recipient's clicks appear only under cohort=holdout, a
+// genuinely reranked recipient's only under cohort=ranked, and all of them under
+// no cohort.
+//
+// The ranked arm reads the recorded metadata.relevance_ranked rather than
+// "not in the holdout", so a recipient outside the holdout whose digest was
+// never reranked (no interest signal, or the flag off) must NOT count as ranked:
+// they received an identical unranked digest and would drag the measured effect
+// toward zero.
 func TestDigestPositions_CohortSplit(t *testing.T) {
 	prefix := uniquePrefix("dpcohort")
 	userID := CreateTestUser(t, prefix, "Support")
@@ -301,21 +318,33 @@ func TestDigestPositions_CohortSplit(t *testing.T) {
 	// users.id (added by the 2026-07-21 schema-parity migration), so these
 	// must be real rows rather than arbitrary high numbers. 990000000 % 10
 	// == 0 (holdout); 990000001 % 10 == 1 (ranked).
+	// 990000002 % 10 == 2, so it is outside the holdout, but its digest records
+	// relevance_ranked = 0: the ranker declined to rerank it.
 	const holdoutUser = uint64(990000000)
 	const rankedUser = uint64(990000001)
+	const unrankedUser = uint64(990000002)
 	createSyntheticCohortUser(t, holdoutUser)
 	createSyntheticCohortUser(t, rankedUser)
+	createSyntheticCohortUser(t, unrankedUser)
 	defer deleteSyntheticCohortUser(holdoutUser)
 	defer deleteSyntheticCohortUser(rankedUser)
+	defer deleteSyntheticCohortUser(unrankedUser)
 
-	// Holdout recipient: 2-post digest, clicks position 0.
-	idHold := createDigestTrackingRecordForUser(t, etype, now, 2, holdoutUser)
-	// Ranked recipient: 2-post digest, clicks position 1.
-	idRank := createDigestTrackingRecordForUser(t, etype, now, 2, rankedUser)
-	defer cleanupTestTrackingByID([]uint64{idHold, idRank})
+	// Holdout recipient: 3-post digest, clicks position 0.
+	idHold := createDigestTrackingRecordForUser(t, etype, now, 3, holdoutUser)
+	// Genuinely reranked recipient: 3-post digest, clicks position 1.
+	idRank := createDigestTrackingRecordForUser(t, etype, now, 3, rankedUser)
+	// Outside the holdout but never reranked: 3-post digest, clicks position 2.
+	idUnranked := createDigestTrackingRecordForUser(t, etype, now, 3, unrankedUser)
+	defer cleanupTestTrackingByID([]uint64{idHold, idRank, idUnranked})
+
+	setRelevanceRanked(t, idHold, 0)
+	setRelevanceRanked(t, idRank, 1)
+	setRelevanceRanked(t, idUnranked, 0)
 
 	createPositionClick(t, idHold, "post_0", now)
 	createPositionClick(t, idRank, "post_1", now)
+	createPositionClick(t, idUnranked, "post_2", now)
 
 	start := now.AddDate(0, 0, -1).Format("2006-01-02")
 	end := now.AddDate(0, 0, 1).Format("2006-01-02")
@@ -342,12 +371,16 @@ func TestDigestPositions_CohortSplit(t *testing.T) {
 	// Holdout cohort sees only the holdout recipient's position-0 click.
 	assert.Equal(t, float64(1), clicksAt("holdout", 0), "holdout: pos0 clicked")
 	assert.Equal(t, float64(0), clicksAt("holdout", 1), "holdout: pos1 not clicked (that was the ranked user)")
+	assert.Equal(t, float64(0), clicksAt("holdout", 2), "holdout: pos2 not clicked (that was the unranked user)")
 
-	// Ranked cohort sees only the ranked recipient's position-1 click.
+	// Ranked cohort sees only the genuinely reranked recipient's position-1 click.
 	assert.Equal(t, float64(0), clicksAt("ranked", 0), "ranked: pos0 not clicked (that was the holdout user)")
 	assert.Equal(t, float64(1), clicksAt("ranked", 1), "ranked: pos1 clicked")
+	assert.Equal(t, float64(0), clicksAt("ranked", 2),
+		"ranked: a recipient outside the holdout whose digest was never reranked must not dilute the arm")
 
-	// No cohort sees both.
+	// No cohort sees all three.
 	assert.Equal(t, float64(1), clicksAt("", 0), "all: pos0 clicked")
 	assert.Equal(t, float64(1), clicksAt("", 1), "all: pos1 clicked")
+	assert.Equal(t, float64(1), clicksAt("", 2), "all: pos2 clicked")
 }

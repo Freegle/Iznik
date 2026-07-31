@@ -69,6 +69,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         public string $mode,
         protected Collection $sponsors = new Collection(),
         protected Collection $completedPosts = new Collection(),
+        protected bool $relevanceRanked = false,
         public ?string $matchReason = null
     ) {
         parent::__construct();
@@ -107,6 +108,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 // position P in N digests" denominator is recoverable. Without
                 // this only the rare clicked post can be attributed.
                 'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
+                // 1 when relevance ranking actually reordered this digest. The
+                // click-by-position dashboard's "ranked" arm filters on this
+                // rather than on "not in the holdout", which would also count
+                // members who had no interest signal and so received an
+                // identical unranked digest.
+                'relevance_ranked' => $this->relevanceRanked ? 1 : 0,
                 'digest_number' => $this->digestNumber,
                 'has_amp' => $this->ampForRecipient(),
             ],

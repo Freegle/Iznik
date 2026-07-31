@@ -1679,15 +1679,23 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		AND e.sent_at BETWEEN ? AND ?`
 
 	// Optional recipient-cohort split for the digest relevance-ranking experiment:
-	//   cohort=holdout → the 10% who always get the unranked (arrival) order,
-	//   cohort=ranked  → everyone else (who get relevance ranking when enabled).
-	// Absent → all recipients (the default, pre-experiment behaviour). Same
-	// userid % 10 == 0 rule as DigestRelevanceService's holdout.
+	//   cohort=holdout → the 10% control, the same userid % 10 == 0 rule
+	//                    DigestRelevanceService uses to withhold ranking,
+	//   cohort=ranked  → digests the ranker actually reordered.
+	// Absent → all recipients (the default, pre-experiment behaviour).
+	//
+	// The ranked arm reads what was recorded (metadata.relevance_ranked, written
+	// by UnifiedDigest) rather than deriving membership from "not in the
+	// holdout". A rule-derived arm also sweeps in every member who had no
+	// interest signal, or any period when the flag was off: they received an
+	// identical unranked digest, so counting them drags the measured effect
+	// toward zero. Same approach as the recommendations funnel, which derives
+	// its arms from recorded impressions.
 	switch c.Query("cohort", "") {
 	case "holdout":
 		cohort += " AND e.userid IS NOT NULL AND e.userid % 10 = 0"
 	case "ranked":
-		cohort += " AND e.userid IS NOT NULL AND e.userid % 10 <> 0"
+		cohort += " AND e.userid IS NOT NULL AND JSON_EXTRACT(e.metadata, '$.relevance_ranked') = 1"
 	}
 
 	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`

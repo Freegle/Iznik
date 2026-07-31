@@ -111,6 +111,11 @@ class UnifiedDigestService
             $users = $users->take($limit);
         }
 
+        // Relevance ranking memoises decoded embeddings across recipients within a
+        // run (neighbouring members see largely the same posts). Start each run
+        // clean so a long-lived worker can't serve yesterday's vectors.
+        DigestRelevanceService::flushEmbeddingCache();
+
         foreach ($users as $user) {
             // Graceful interrupt: SIGTERM/SIGINT (or an abort-file touch) flips
             // the caller's shouldStop flag. Check between users so a kill
@@ -1391,6 +1396,9 @@ class UnifiedDigestService
         // withdrawn/expired (has_outcome && !has_success) appear in neither.
         $posts = $allPosts->filter(fn ($p) => !$p->has_outcome)->values();
 
+        // Whether relevance ranking actually reordered this digest (daily only).
+        $relevanceRanked = false;
+
         // Order the live posts by the rippling digest-preview score (nearer +
         // newer + less-seen float up), matching the /rippling "Digest preview".
         // Daily only — immediate mode stays chronological (single-group, real-time).
@@ -1421,7 +1429,14 @@ class UnifiedDigestService
             // what post_msgids records (the position the click dashboard measures).
             // A no-op (returns $posts unchanged) when the flag is off, the member
             // is in the holdout, or they have no interest signal.
-            $posts = app(DigestRelevanceService::class)->rank((int) $user->id, $posts);
+            $relevance = app(DigestRelevanceService::class);
+            $posts = $relevance->rank((int) $user->id, $posts);
+            // Record whether ranking was genuinely applied, so the dashboard's
+            // "ranked" arm holds only reranked digests. Defining that arm as
+            // "not in the holdout" would count every member who had no interest
+            // signal — they got an identical unranked digest and would drag any
+            // measured effect toward zero.
+            $relevanceRanked = $relevance->didRank();
         }
 
         $completedPosts = $mode === self::MODE_DAILY
@@ -1511,7 +1526,7 @@ class UnifiedDigestService
         // went" Taken/Received set) was partitioned from the same query above.
         if (!$dryRun) {
             app(\App\Services\EmailSpoolerService::class)->spool(
-                new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts),
+                new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors, $completedPosts, $relevanceRanked),
                 emailType: 'digest_daily',
             );
             // Advance the cursor past everything examined this window (live,
@@ -2082,6 +2097,11 @@ class UnifiedDigestService
         $closest = $sorted->filter(fn ($p) => empty($p->seen_by_user))
             ->sortBy('_dist')->take(2)->values();
         $closestIds = $closest->pluck('id')->all();
+        // Mark the pin so a later re-sort can honour it. Relevance ranking runs
+        // after this and would otherwise discard the pin for every ranked member.
+        $closest->each(function ($p) {
+            $p->_pinned = true;
+        });
         $rest = $sorted->reject(fn ($p) => in_array($p->id, $closestIds, true))->values();
         return $closest->concat($rest)->values();
     }
