@@ -2,19 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ModAlertHistory from '~/modtools/components/ModAlertHistory.vue'
 
-// Mock datetimeshort helper
-vi.hoisted(() => {
-  vi.resetModules()
-})
-
-vi.mock('#imports', async () => {
-  const actual = await vi.importActual('#imports')
-  return {
-    ...actual,
-    datetimeshort: vi.fn().mockReturnValue('2024-01-01 12:00'),
-  }
-})
-
+// datetimeshort is deliberately NOT mocked: the "Invalid Date" bug lived in how the real
+// formatter handles a missing complete timestamp, so the tests below need the real thing.
 const defaultAlert = {
   id: 1,
   created: '2024-01-01T10:00:00',
@@ -34,7 +23,11 @@ vi.mock('~/stores/alert', () => ({
 }))
 
 describe('ModAlertHistory', () => {
-  function mountComponent(props = {}) {
+  function mountComponent(props = {}, alert = null) {
+    if (alert) {
+      mockAlertStore.get.mockImplementation((id) => (id === 1 ? alert : null))
+    }
+
     return mount(ModAlertHistory, {
       props: { alertid: 1, ...props },
       global: {
@@ -52,9 +45,6 @@ describe('ModAlertHistory', () => {
             template: '<div class="stats-modal" />',
             methods: { show: vi.fn() },
           },
-        },
-        mocks: {
-          datetimeshort: vi.fn().mockReturnValue('2024-01-01 12:00'),
         },
       },
     })
@@ -82,6 +72,28 @@ describe('ModAlertHistory', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Show Stats')
       expect(wrapper.text()).toContain('Show Details')
+    })
+
+    it('shows the completion time for a finished alert', () => {
+      const wrapper = mountComponent(
+        {},
+        { ...defaultAlert, complete: '2024-01-01T12:00:00' }
+      )
+      expect(wrapper.text()).toContain('1st Jan, 2024 12:00')
+      expect(wrapper.text()).not.toContain('In progress')
+    })
+
+    // The API serialises a NULL complete timestamp as an empty string, which used to reach
+    // dayjs and render the literal "Invalid Date" in the history table.
+    it.each([
+      ['an empty string', ''],
+      ['null', null],
+      ['undefined', undefined],
+      ['an unparseable value', 'not a date'],
+    ])('shows In progress when complete is %s', (_label, complete) => {
+      const wrapper = mountComponent({}, { ...defaultAlert, complete })
+      expect(wrapper.text()).toContain('In progress')
+      expect(wrapper.text()).not.toContain('Invalid Date')
     })
   })
 
