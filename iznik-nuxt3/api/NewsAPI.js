@@ -57,6 +57,22 @@ export default class NewsAPI extends BaseAPI {
     await this.$postv2('/newsfeed', { id, action: 'ConvertToStory' })
   }
 
+  // ChitChat moderators only - the server 403s for anyone else, because the
+  // answer names one of the poster's own posts.
+  async duplicate(id) {
+    return await this.$getv2(`/newsfeed/${id}/duplicate`)
+  }
+
+  // Records on the thread that a volunteer has posted this properly for the
+  // member, pointing at the OFFER/WANTED just created. ChitChat moderators only.
+  async convertedToPost(id, msgid) {
+    return await this.$postv2('/newsfeed', {
+      id,
+      msgid,
+      action: 'ConvertedToPost',
+    })
+  }
+
   async seen(id) {
     await this.$postv2('/newsfeed?bump=' + id, { id, action: 'Seen' })
   }

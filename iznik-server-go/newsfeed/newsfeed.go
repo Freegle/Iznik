@@ -901,6 +901,9 @@ type PostRequest struct {
 	Reason  string `json:"reason"`
 	Replyto uint64 `json:"replyto"`
 	Imageid uint64 `json:"imageid"`
+	// Msgid carries the OFFER/WANTED just created for the poster by the
+	// ChitChat convert-to-post flow, so the note on the thread can point at it.
+	Msgid uint64 `json:"msgid"`
 }
 
 // canModifyPost checks if a user can edit/delete a newsfeed post.
@@ -929,16 +932,9 @@ func canModifyPost(myid uint64, nfID uint64) bool {
 // Requires: isAdminOrSupport() OR member of "ChitChat Moderation" team.
 // This is stricter than canModifyPost - not all moderators can hide posts.
 func canHidePost(myid uint64) bool {
-	if auth.IsAdminOrSupport(myid) {
-		return true
-	}
-
-	// Check if user is a member of the ChitChat Moderation team
-	db := database.DBConn
-	var teamMemberCount int64
-	db.Raw("SELECT COUNT(*) FROM teams_members tm INNER JOIN teams t ON tm.teamid = t.id WHERE t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).Scan(&teamMemberCount)
-
-	return teamMemberCount > 0
+	// ChitChat Moderation team, or support/admin. Shared with the message
+	// package, which gates posting on a member's behalf on the same audience.
+	return auth.IsChitChatMod(myid)
 }
 
 func Post(c *fiber.Ctx) error {
@@ -1038,6 +1034,25 @@ func Post(c *fiber.Ctx) error {
 		} else if req.ID > 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
+	case "ConvertedToPost":
+		// Records on the thread that a ChitChat moderator has posted this as a
+		// real OFFER/WANTED for the member, so they can see what happened and
+		// go and find it. The post itself is created through the normal
+		// PUT /message + JoinAndPost route with ?onbehalfof=, which is where
+		// the permission to post as them is enforced; this only adds the note.
+		if req.ID == 0 || req.Msgid == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "id and msgid are required")
+		}
+
+		if !canHidePost(myid) {
+			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+		}
+
+		createRefer(db, myid, req.ID, "ConvertedToPost")
+
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, ?)",
+			log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_CREATED, myid,
+			fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid))
 	case "ReferToWanted":
 		if req.ID > 0 {
 			createRefer(db, myid, req.ID, "ReferToWanted")

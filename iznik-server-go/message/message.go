@@ -2943,6 +2943,36 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
+	// A member may only submit their own draft. A ChitChat moderator converting
+	// a ChitChat post submits the draft they just created for that member, so
+	// they submit as the member via ?onbehalfof=.
+	author, err := onBehalfOf(c, myid)
+	if err != nil {
+		return err
+	}
+
+	var owner uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&owner)
+	if owner == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found")
+	}
+	if owner != author {
+		return fiber.NewError(fiber.StatusForbidden, "Not your message")
+	}
+
+	return JoinAndPostAs(c, author, req)
+}
+
+// JoinAndPostAs joins author to the destination group and submits the draft as
+// them. The ownership check lives in the caller: handleJoinAndPost enforces
+// "your own draft" for the member route, while the ChitChat convert-to-post
+// path instead requires the caller to be a ChitChat moderator or support/admin
+// (newsfeed.canHidePost) and passes the member as author.
+//
+// No other caller should pass an author other than the caller.
+func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
 	// Look up the existing draft message.
 	type msgInfo struct {
 		Fromuser uint64
@@ -2952,9 +2982,6 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	db.Raw("SELECT fromuser, type FROM messages WHERE id = ?", req.ID).Scan(&msg)
 	if msg.Fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
-	}
-	if msg.Fromuser != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not your message")
 	}
 
 	// Find the group — from request, then messages_drafts, then messages_groups.
@@ -3958,8 +3985,49 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /api/message [put]
+// PutMessage creates a message for the caller, or for another member when a
+// ChitChat moderator is converting their ChitChat post into a real OFFER/WANTED.
 func PutMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
+
+	author, err := onBehalfOf(c, myid)
+	if err != nil {
+		return err
+	}
+
+	return PutMessageAs(c, author)
+}
+
+// onBehalfOf resolves the ?onbehalfof= parameter to the member a post belongs
+// to. Absent (the normal case) it is the caller.
+//
+// Posting as someone else is restricted to ChitChat moderators and
+// support/admin, and the check lives here rather than in each caller so no
+// route can acquire the capability by omission.
+func onBehalfOf(c *fiber.Ctx, myid uint64) (uint64, error) {
+	obo := uint64(c.QueryInt("onbehalfof", 0))
+	if obo == 0 || obo == myid {
+		return myid, nil
+	}
+
+	if !auth.IsChitChatMod(myid) {
+		return 0, fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	return obo, nil
+}
+
+// PutMessageAs creates a message attributed to author, which is normally the
+// caller. It differs only for the ChitChat convert-to-post path, where a
+// ChitChat moderator turns someone's ChitChat post into a real OFFER/WANTED and
+// the post must belong to that member rather than to the moderator.
+//
+// Passing an author other than the caller is restricted to ChitChat moderators
+// and support/admin (newsfeed.canHidePost). That caller is responsible for the
+// permission check and for logging the mod action; no other caller should pass
+// a different author.
+func PutMessageAs(c *fiber.Ctx, author uint64) error {
+	myid := author
 
 	type PutMessageRequest struct {
 		Groupid            uint64          `json:"groupid"`
@@ -4030,6 +4098,46 @@ func PutMessage(c *fiber.Ctx) error {
 
 	if strings.TrimSpace(req.Item) == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
+	}
+
+	// Posting on someone's behalf: pin the post to THEIR location, never to
+	// whatever the moderator's client sent. A moderator moderates from wherever
+	// they happen to be, so trusting the client here would stamp their postcode
+	// on a member's post and put it in front of the wrong people.
+	if author != user.WhoAmI(c) {
+		latlng := user.GetLatLng(author)
+		if latlng.Lat == 0 && latlng.Lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "That member has no location set, so we can't post for them")
+		}
+
+		nearest := location.ClosestPostcode(latlng.Lat, latlng.Lng)
+		if nearest.ID == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "We can't work out a postcode for that member")
+		}
+
+		req.Locationid = &nearest.ID
+
+		// The group must be one they are ALREADY in. Submitting joins the
+		// author to the destination group, so accepting an arbitrary group here
+		// would let a moderator quietly sign a member up to a community they
+		// never chose. Default to their nearest existing membership.
+		if req.Groupid == 0 {
+			db.Raw("SELECT m.groupid FROM memberships m "+
+				"INNER JOIN groups g ON g.id = m.groupid "+
+				"WHERE m.userid = ? AND m.collection = ? "+
+				"ORDER BY ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?)) LIMIT 1",
+				author, utils.COLLECTION_APPROVED, latlng.Lng, latlng.Lat).Scan(&req.Groupid)
+
+			if req.Groupid == 0 {
+				return fiber.NewError(fiber.StatusBadRequest, "That member isn't in any community, so we can't post for them")
+			}
+		} else {
+			var memberCount int64
+			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", author, req.Groupid).Scan(&memberCount)
+			if memberCount == 0 {
+				return fiber.NewError(fiber.StatusBadRequest, "That member isn't in that community")
+			}
+		}
 	}
 
 	// For non-Draft, check membership and fetch posting status in one query.

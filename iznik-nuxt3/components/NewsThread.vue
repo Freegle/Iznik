@@ -13,6 +13,30 @@
             <span v-else>the system</span>
             and is only visible to volunteers and the person who posted it.
           </div>
+          <!-- Volunteers only. Names one of the poster's own live posts, so it
+               must never render for other members; the server also refuses the
+               request for them. -->
+          <NoticeMessage
+            v-if="chitChatMod && duplicateOf && !newsfeed.hidden"
+            variant="warning"
+            class="mb-2"
+          >
+            <p class="mb-1">
+              <strong>Volunteers only.</strong> This looks like the same thing
+              as a post they already have live:
+            </p>
+            <p class="mb-1">
+              <strong>{{ duplicateOf.type.toUpperCase() }}:</strong>
+              {{ duplicateOf.subject }}
+            </p>
+            <p class="mb-2">
+              If it's a repeat, hide this - their real post is already doing the
+              work, and it reaches more people than ChitChat does.
+            </p>
+            <b-button variant="secondary" size="sm" @click="hide">
+              Hide this post
+            </b-button>
+          </NoticeMessage>
           <div v-if="isNewsComponent">
             <b-dropdown
               lazy
@@ -48,6 +72,9 @@
               </b-dropdown-item>
               <b-dropdown-item @click="report">
                 Report this thread or one of its replies
+              </b-dropdown-item>
+              <b-dropdown-item v-if="chitChatMod" @click="showConvert = true">
+                Post this as an OFFER/WANTED for them
               </b-dropdown-item>
               <b-dropdown-item v-if="canRefer" @click="referToOffer">
                 Refer to OFFER
@@ -262,6 +289,13 @@
       :id="newsfeed.id"
       @hidden="showReportModal = false"
     />
+    <NewsConvertModal
+      v-if="showConvert"
+      :newsfeed="newsfeed"
+      :poster-name="newsfeed?.displayname || 'them'"
+      @posted="onConverted"
+      @hidden="showConvert = false"
+    />
     <ConfirmModal
       v-if="showDeleteModal"
       :title="'Delete thread started by ' + starter"
@@ -330,6 +364,9 @@ const props = defineProps({
 const emit = defineEmits(['rendered', 'expand-duplicates'])
 
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
+const NewsConvertModal = defineAsyncComponent(() =>
+  import('./NewsConvertModal')
+)
 const ConfirmModal = defineAsyncComponent(() =>
   import('~/components/ConfirmModal.vue')
 )
@@ -375,6 +412,7 @@ const imagemods = ref(null)
 const showDeleteModal = ref(false)
 const showEditModal = ref(false)
 const showReportModal = ref(false)
+const showConvert = ref(false)
 const showThis = ref(true)
 const currentAtts = ref([])
 
@@ -489,9 +527,24 @@ if (
 await newsfeedStore.fetch(props.id)
 
 // Lifecycle hooks
-onMounted(() => {
+// One of the poster's own live posts saying the same thing, or null. Only
+// fetched for ChitChat moderators - the server refuses it for anyone else, so
+// a member's browser never holds it.
+const duplicateOf = ref(null)
+
+onMounted(async () => {
   // Scroll down now that the child components are rendered.
   emit('rendered')
+
+  if (chitChatMod.value && isNewsComponent.value && !newsfeed.value?.hidden) {
+    try {
+      duplicateOf.value = await newsfeedStore.duplicate(props.id)
+    } catch (e) {
+      // Advisory only. If we can't work out whether this repeats one of their
+      // own posts, the moderator still gets the thread and every control on it.
+      duplicateOf.value = null
+    }
+  }
 })
 
 // True once the whole reply tree has reported mounting (or there was
@@ -703,6 +756,14 @@ async function unhide() {
 
 async function hide() {
   await newsfeedStore.hide(props.id)
+}
+
+// A volunteer has just posted this properly for the member. The thread now
+// carries the note telling them, and the duplicate warning would be stale
+// (their new post IS the thing this repeats), so drop it.
+async function onConverted() {
+  duplicateOf.value = null
+  await newsfeedStore.fetch(props.id, true)
 }
 
 async function referTo(type) {

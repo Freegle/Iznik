@@ -143,6 +143,29 @@ func IsAdminOrSupport(myid uint64) bool {
 	return systemrole == utils.SYSTEMROLE_SUPPORT || systemrole == utils.SYSTEMROLE_ADMIN
 }
 
+// IsChitChatMod reports whether the user may moderate ChitChat: a member of the
+// ChitChat Moderation team, or support/admin.
+//
+// This is the audience for the ChitChat moderation tools — hiding a post, seeing
+// the duplicate-of-their-own-post note, and converting a post into a real
+// OFFER/WANTED on the member's behalf. Group moderators are deliberately NOT
+// included: ChitChat is not group-scoped.
+func IsChitChatMod(myid uint64) bool {
+	if myid == 0 {
+		return false
+	}
+
+	if IsAdminOrSupport(myid) {
+		return true
+	}
+
+	db := database.DBConn
+	var teamMemberCount int64
+	db.Raw("SELECT COUNT(*) FROM teams_members tm INNER JOIN teams t ON tm.teamid = t.id WHERE t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).Scan(&teamMemberCount)
+
+	return teamMemberCount > 0
+}
+
 // IsAdmin checks if the user has the Admin systemrole.
 func IsAdmin(myid uint64) bool {
 	db := database.DBConn

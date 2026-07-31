@@ -3,6 +3,13 @@ import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 import { notAHeldConflict } from '~/api/heldConflict'
 
+// A ChitChat moderator posting on a member's behalf names the member here. The
+// server checks the caller is a ChitChat moderator and derives that member's
+// location and community itself, so this only says WHO the post is for.
+function onBehalfOfQuery(userid) {
+  return userid ? '?onbehalfof=' + encodeURIComponent(userid) : ''
+}
+
 export default class MessageAPI extends BaseAPI {
   fetch(id, logError = true) {
     return this.$getv2('/message/' + id, {}, logError)
@@ -98,7 +105,11 @@ export default class MessageAPI extends BaseAPI {
     const logErrorFn =
       options.logError !== undefined ? options.logError : logError
 
-    return this.$postv2('/message', params, logErrorFn)
+    return this.$postv2(
+      '/message' + onBehalfOfQuery(options.onbehalfof),
+      params,
+      logErrorFn
+    )
   }
 
   del(id) {
@@ -106,7 +117,11 @@ export default class MessageAPI extends BaseAPI {
   }
 
   put(data) {
-    return this.$putv2('/message', data)
+    // onbehalfof travels in the query string, where the server reads it and
+    // checks the caller is a ChitChat moderator. Keep it out of the body so it
+    // can't be mistaken for a message field.
+    const { onbehalfof, ...body } = data
+    return this.$putv2('/message' + onBehalfOfQuery(onbehalfof), body)
   }
 
   intend(id, outcome) {
