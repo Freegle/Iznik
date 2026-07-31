@@ -20,19 +20,7 @@
         section is just for chat and recommendations.
       </p>
     </notice-message>
-    <notice-message v-if="type === 'ConvertedToPost'" variant="primary">
-      <p>
-        One of our volunteers has posted this properly for you, so more people
-        will see it. You don't need to do anything.
-      </p>
-      <p>
-        You'll find it in My Posts, along with any replies, and you can edit or
-        withdraw it from there.
-      </p>
-      <b-button variant="primary" to="/myposts" class="mb-1">
-        Go to My Posts
-      </b-button>
-    </notice-message>
+    <NewsConvertedNotice v-if="type === 'ConvertedToPost'" />
     <notice-message v-if="type === 'ReferToTaken'">
       <p>
         If your item has been taken, please go to My Posts, click on the item,
@@ -71,6 +59,7 @@
 <script setup>
 import { ref, computed, defineAsyncComponent } from 'vue'
 import NoticeMessage from './NoticeMessage'
+import NewsConvertedNotice from './NewsConvertedNotice'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMe } from '~/composables/useMe'
 

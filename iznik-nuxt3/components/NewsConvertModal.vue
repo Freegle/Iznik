@@ -52,6 +52,14 @@
         </div>
       </div>
 
+      <!-- The note is left on a public thread in the member's name, so show the
+           moderator what it says before they commit to it. Same component the
+           thread renders, so the two cannot drift apart. -->
+      <div class="mt-3">
+        <h5>What goes on this chat</h5>
+        <NewsConvertedNotice preview />
+      </div>
+
       <NoticeMessage v-if="error" variant="danger" class="mt-3">
         {{ error }}
       </NoticeMessage>
