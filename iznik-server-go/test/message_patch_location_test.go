@@ -42,7 +42,7 @@ const (
 // (locationid, lat/lng, and a rebuilt-shaped subject), with a tnpostid and
 // partner key so it can be edited via PATCH /message/tn/:tnpostid?partner=...
 // exactly as a real TN client would.
-func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnpostid string, key string) {
+func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnpostid string, key string, tnuserid uint64) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
@@ -51,8 +51,10 @@ func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnp
 	// users.tnuserid is UNIQUE, so a fixed value only works for the first test
 	// in the run - every later one silently fails to become a TN partner and
 	// gets a 403 instead of exercising the location derivation. Derive it from
-	// the user id, which is already unique per test.
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 90000000+ownerID, ownerID)
+	// the user id, which is already unique per test, and return it so the
+	// request carries the same value.
+	tnuserid = 90000000 + ownerID
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, ownerID)
 
 	msgID = CreateTestMessage(t, ownerID, groupID, prefix+" original subject", patchLocOldLat, patchLocOldLng)
 
@@ -74,14 +76,14 @@ func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnp
 
 	key = insertTestPartnerKeyMsg(t, prefix, "tn.com")
 
-	return msgID, tnpostid, key
+	return msgID, tnpostid, key, tnuserid
 }
 
 // patchTnMessage sends a partner-authenticated PATCH /message/tn/:tnpostid, the
 // same request shape a TN client uses.
-func patchTnMessage(t *testing.T, tnpostid, key, prefix string, body map[string]interface{}) *http.Response {
+func patchTnMessage(t *testing.T, tnpostid, key, prefix string, tnuserid uint64, body map[string]interface{}) *http.Response {
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=90001&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=%d&email=%s@tn.com", tnpostid, key, tnuserid, prefix+"_owner")
 	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
@@ -100,10 +102,10 @@ func patchTnMessage(t *testing.T, tnpostid, key, prefix string, body map[string]
 func TestPatchMessageByTnDerivesLocationIdFromLatLng(t *testing.T) {
 	prefix := uniquePrefix("patchloc_flip")
 	db := database.DBConn
-	msgID, tnpostid, key := setupTnPatchLocationMessage(t, prefix)
+	msgID, tnpostid, key, tnuserid := setupTnPatchLocationMessage(t, prefix)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	resp := patchTnMessage(t, tnpostid, key, prefix, map[string]interface{}{
+	resp := patchTnMessage(t, tnpostid, key, prefix, tnuserid, map[string]interface{}{
 		"lat": patchLocNewLat,
 		"lng": patchLocNewLng,
 	})
@@ -130,10 +132,10 @@ func TestPatchMessageByTnDerivesLocationIdFromLatLng(t *testing.T) {
 func TestPatchMessageByTnRejectsZeroZeroSentinelForLocationDerivation(t *testing.T) {
 	prefix := uniquePrefix("patchloc_00")
 	db := database.DBConn
-	msgID, tnpostid, key := setupTnPatchLocationMessage(t, prefix)
+	msgID, tnpostid, key, tnuserid := setupTnPatchLocationMessage(t, prefix)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	resp := patchTnMessage(t, tnpostid, key, prefix, map[string]interface{}{
+	resp := patchTnMessage(t, tnpostid, key, prefix, tnuserid, map[string]interface{}{
 		"lat": 0,
 		"lng": 0,
 	})
@@ -153,11 +155,11 @@ func TestPatchMessageByTnRejectsZeroZeroSentinelForLocationDerivation(t *testing
 func TestPatchMessageByTnRejectsOutOfUKBoundsForLocationDerivation(t *testing.T) {
 	prefix := uniquePrefix("patchloc_oob")
 	db := database.DBConn
-	msgID, tnpostid, key := setupTnPatchLocationMessage(t, prefix)
+	msgID, tnpostid, key, tnuserid := setupTnPatchLocationMessage(t, prefix)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
 	// New York - a very long way outside the UK.
-	resp := patchTnMessage(t, tnpostid, key, prefix, map[string]interface{}{
+	resp := patchTnMessage(t, tnpostid, key, prefix, tnuserid, map[string]interface{}{
 		"lat": 40.7128,
 		"lng": -74.0060,
 	})
@@ -177,12 +179,12 @@ func TestPatchMessageByTnRejectsOutOfUKBoundsForLocationDerivation(t *testing.T)
 func TestPatchMessageByTnRejectsDistantPostcodeForLocationDerivation(t *testing.T) {
 	prefix := uniquePrefix("patchloc_far")
 	db := database.DBConn
-	msgID, tnpostid, key := setupTnPatchLocationMessage(t, prefix)
+	msgID, tnpostid, key, tnuserid := setupTnPatchLocationMessage(t, prefix)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
 	// Central London: within the UK bounding box, but ~150+ miles from both
 	// seeded test postcodes (Edinburgh/Pembrokeshire) - too far to trust.
-	resp := patchTnMessage(t, tnpostid, key, prefix, map[string]interface{}{
+	resp := patchTnMessage(t, tnpostid, key, prefix, tnuserid, map[string]interface{}{
 		"lat": 51.5074,
 		"lng": -0.1278,
 	})
