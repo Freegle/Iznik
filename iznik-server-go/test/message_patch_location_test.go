@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// --- PATCH /message/tn/:tnpostid re-derives locationid from lat/lng (Discourse 9908) ---
+// --- PATCH /message/tn/:tnpostid re-derives locationid from lat/lng ---
 //
 // TN (Trash Nothing) edits arrive as lat/lng with no explicit locationid (see
 // applyPatchMessageCore in message.go). Before the fix, messages.locationid stayed
@@ -91,8 +91,8 @@ func patchTnMessage(t *testing.T, tnpostid, key, prefix string, tnuserid uint64,
 	return resp
 }
 
-// TestPatchMessageByTnDerivesLocationIdFromLatLng is the AssertFlip regression test
-// for Discourse 9908. It drives applyPatchMessageCore end-to-end through
+// TestPatchMessageByTnDerivesLocationIdFromLatLng is the AssertFlip regression test.
+// It drives applyPatchMessageCore end-to-end through
 // PATCH /message/tn/:tnpostid with a TN-shaped request (lat/lng only, no
 // locationid) and asserts BOTH the persisted messages.locationid and the
 // rebuilt subject line move to the new coordinates. On unpatched master this
@@ -119,7 +119,7 @@ func TestPatchMessageByTnDerivesLocationIdFromLatLng(t *testing.T) {
 	db.Raw("SELECT locationid, subject FROM messages WHERE id = ?", msgID).Scan(&got)
 
 	assert.Equal(t, patchLocNewID, got.Locationid,
-		"locationid should move to the postcode nearest the NEW lat/lng, not stay pinned to the original post's postcode (Discourse 9908)")
+		"locationid should move to the postcode nearest the NEW lat/lng, not stay pinned to the original post's postcode")
 	assert.Contains(t, got.Subject, "Edinburgh EH3",
 		"subject should be rebuilt using the NEW location once locationid is re-derived")
 	assert.NotContains(t, got.Subject, "SA65",

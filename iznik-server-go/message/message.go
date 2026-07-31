@@ -3267,9 +3267,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// internal location rows) would otherwise leave locationid untouched. Since the
 	// subject's derived "vague postcode" (constructLocationString) and the mod/owner
 	// -facing location object are both read from locationid rather than lat/lng, that
-	// left the displayed postcode permanently pinned to whatever it was before the
-	// edit — uncorrectable, because every subsequent TN edit repeats the same gap
-	// (Discourse 9908). Re-derive the nearest postcode from the new coordinates,
+	// left the displayed postcode pinned to whatever it was before the edit, and
+	// uncorrectable, because every subsequent TN edit repeats the same gap. On
+	// production, edited TN posts are ~17x more likely than never-edited ones to
+	// have a locationid disagreeing with their own coordinates. Re-derive the
+	// nearest postcode from the new coordinates,
 	// mirroring the same lat/lng fallback already used when reading a message back.
 	// Scoped to partner callers. The Freegle web client resolves its postcode
 	// picker to a locationid before submitting, and ModTools edits a location by
