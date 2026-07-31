@@ -217,4 +217,20 @@ class CommunityNewsResearchServiceTest extends TestCase
         $this->assertNull($items[0]['url']);     // javascript: dropped
         $this->assertSame('https://ok.org', $items[1]['url']);
     }
+
+    public function test_parse_replaces_em_dashes_with_hyphens(): void
+    {
+        $text = json_encode([
+            'intro' => 'News — fresh this week',
+            'items' => [
+                ['title' => 'Fete—this Saturday', 'blurb' => 'Cakes, stalls — and more.', 'url' => 'https://ok.org', 'source' => 'S'],
+            ],
+        ]);
+
+        [$intro, $items] = $this->svc()->parse($text, 6);
+
+        $this->assertSame('News - fresh this week', $intro);
+        $this->assertSame('Fete - this Saturday', $items[0]['title']);
+        $this->assertSame('Cakes, stalls - and more.', $items[0]['blurb']);
+    }
 }

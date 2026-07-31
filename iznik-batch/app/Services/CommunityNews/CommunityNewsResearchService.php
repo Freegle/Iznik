@@ -299,15 +299,15 @@ class CommunityNewsResearchService
             return null;
         }
 
-        $intro = isset($json['intro']) && is_string($json['intro']) ? trim($json['intro']) : '';
+        $intro = isset($json['intro']) && is_string($json['intro']) ? $this->replaceEmDashes(trim($json['intro'])) : '';
 
         $items = [];
         foreach ((array) ($json['items'] ?? []) as $it) {
             if (!is_array($it)) {
                 continue;
             }
-            $title = trim((string) ($it['title'] ?? ''));
-            $blurb = trim((string) ($it['blurb'] ?? ''));
+            $title = $this->replaceEmDashes(trim((string) ($it['title'] ?? '')));
+            $blurb = $this->replaceEmDashes(trim((string) ($it['blurb'] ?? '')));
             if ($title === '' || $blurb === '') {
                 continue;
             }
@@ -331,6 +331,15 @@ class CommunityNewsResearchService
         }
 
         return [$intro, $items];
+    }
+
+    /**
+     * House style: no em dashes in member-facing news text. Enforced in code
+     * rather than the prompt so it holds however the model phrases things.
+     */
+    private function replaceEmDashes(string $text): string
+    {
+        return trim(preg_replace('/\s*—\s*/u', ' - ', $text));
     }
 
     private function extractJson(string $text): ?array
