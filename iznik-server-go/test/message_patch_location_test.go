@@ -48,7 +48,11 @@ func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnp
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 90001, ownerID)
+	// users.tnuserid is UNIQUE, so a fixed value only works for the first test
+	// in the run - every later one silently fails to become a TN partner and
+	// gets a 403 instead of exercising the location derivation. Derive it from
+	// the user id, which is already unique per test.
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 90000000+ownerID, ownerID)
 
 	msgID = CreateTestMessage(t, ownerID, groupID, prefix+" original subject", patchLocOldLat, patchLocOldLng)
 
