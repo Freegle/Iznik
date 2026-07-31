@@ -17,6 +17,7 @@ import {
   geoToLeaflet,
   pointInRing,
   reachedIdSet,
+  shouldAutoLocate,
 } from './geometry.js'
 import {
   hasRing,
@@ -41,6 +42,11 @@ export async function setupRipplingExplorer({
 
   let map = null
   const cleanupFns = []
+
+  // Set by cleanup() when the explorer is torn down. Work that resumes after an
+  // await must check this: ModTools is a single-page app, so anything deferred
+  // can otherwise land on whatever page the moderator has since navigated to.
+  let destroyed = false
 
   function apiUrl(path) {
     const sep = path.includes('?') ? '&' : '?'
@@ -1242,14 +1248,28 @@ export async function setupRipplingExplorer({
   // Defer until after onMounted's synchronous setup completes (so all the
   // let-bindings further down are reached) — setTimeout(0) is enough.
   setTimeout(async () => {
+    if (destroyed) return
     // Reflect the default view (catchment) in the DOM before URL/props may switch it —
     // applyViewMode is otherwise only called on a tab click, and the markup default view
     // is catchment (its panel starts hidden until applyViewMode shows it).
     if (!pendingView) applyViewMode()
     const urlSetLocation = await applyUrlInit()
-    if (!urlSetLocation && navigator.geolocation && currentLat === null) {
+    // applyUrlInit can await an external geocode lookup, so re-check: the
+    // moderator may have left the explorer while it was in flight. Asking the
+    // browser for their location at that point pops "Allow modtools.org to
+    // access your location?" over an unrelated page — reported on /settings,
+    // where it reads as a site doing something it has no business doing.
+    if (
+      shouldAutoLocate({
+        destroyed,
+        urlSetLocation,
+        hasGeolocation: navigator.geolocation,
+        currentLat,
+      })
+    ) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
+          if (destroyed) return
           if (currentLat === null)
             setLocation(pos.coords.latitude, pos.coords.longitude, true)
         },
@@ -3222,6 +3242,7 @@ export async function setupRipplingExplorer({
   }
 
   return function cleanup() {
+    destroyed = true
     cleanupFns.forEach((fn) => fn())
     if (map) {
       map.remove()

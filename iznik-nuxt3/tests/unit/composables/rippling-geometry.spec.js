@@ -6,6 +6,7 @@ import {
   pointInRing,
   reachedIdSet,
   segmentsIntersect,
+  shouldAutoLocate,
 } from '~/modtools/composables/rippling/geometry.js'
 
 // Closed [lng,lat] ring for a 2-unit square centred on origin.
@@ -36,7 +37,9 @@ describe('rippling/geometry', () => {
 
   describe('reachedIdSet', () => {
     it("prefers a frame's per-tick ids when present", () => {
-      expect([...reachedIdSet([1, 2], [9])].sort((a, b) => a - b)).toEqual([1, 2])
+      expect([...reachedIdSet([1, 2], [9])].sort((a, b) => a - b)).toEqual([
+        1, 2,
+      ])
     })
 
     it('treats an empty frame array as an answer (tick reached nothing yet)', () => {
@@ -44,7 +47,9 @@ describe('rippling/geometry', () => {
     })
 
     it('falls back to the max-extent gate ids when no frame ids', () => {
-      expect([...reachedIdSet(undefined, [9, 10])].sort((a, b) => a - b)).toEqual([9, 10])
+      expect(
+        [...reachedIdSet(undefined, [9, 10])].sort((a, b) => a - b)
+      ).toEqual([9, 10])
     })
 
     it('tints nothing when neither source has answered - never geometry', () => {
@@ -137,5 +142,38 @@ describe('rippling/geometry', () => {
       // (0,0)→(2,0) and (1,0)→(3,0) are collinear — cross product is 0.
       expect(segmentsIntersect(0, 0, 2, 0, 1, 0, 3, 0)).toBe(false)
     })
+  })
+})
+
+describe('shouldAutoLocate', () => {
+  const base = {
+    destroyed: false,
+    urlSetLocation: false,
+    hasGeolocation: {},
+    currentLat: null,
+  }
+
+  it('asks for the location when the explorer is live and has none', () => {
+    expect(shouldAutoLocate(base)).toBe(true)
+  })
+
+  // The reported bug: ModTools is a single-page app and this decision is taken
+  // after an await, so a moderator who has moved on to another page would
+  // otherwise get "Allow modtools.org to access your location?" on a page with
+  // nothing to do with maps (seen on /settings).
+  it('does not ask once the explorer has been torn down', () => {
+    expect(shouldAutoLocate({ ...base, destroyed: true })).toBe(false)
+  })
+
+  it('does not ask when props or the URL already supplied a location', () => {
+    expect(shouldAutoLocate({ ...base, urlSetLocation: true })).toBe(false)
+  })
+
+  it('does not ask when the map already has a location', () => {
+    expect(shouldAutoLocate({ ...base, currentLat: 53.8 })).toBe(false)
+  })
+
+  it('does not ask when the browser offers no geolocation', () => {
+    expect(shouldAutoLocate({ ...base, hasGeolocation: undefined })).toBe(false)
   })
 })
