@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import ChatMessageText from '~/components/ChatMessageText.vue'
 
 // Mock vue-highlight-words external component
@@ -68,6 +68,7 @@ vi.mock('~/composables/useLinkify', () => ({
 vi.mock('~/composables/useMap', () => ({
   attribution: () => '© OpenStreetMap',
   osmtile: () => 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  INLINE_MAP_OPTIONS: { scrollWheelZoom: false, bounceAtZoomLimits: true },
 }))
 
 // Mock constants
@@ -100,8 +101,9 @@ describe('ChatMessageText', () => {
             props: ['fluid', 'src', 'lazy', 'rounded'],
           },
           'l-map': {
-            template: '<div class="l-map"><slot /></div>',
-            props: ['zoom', 'maxZoom', 'center', 'style'],
+            template:
+              '<div class="l-map" :data-scrollwheelzoom="String(options && options.scrollWheelZoom)"><slot /></div>',
+            props: ['zoom', 'maxZoom', 'center', 'style', 'options'],
           },
           'l-tile-layer': {
             template: '<div class="l-tile-layer"></div>',
@@ -130,6 +132,22 @@ describe('ChatMessageText', () => {
     })
     const wrapperMine = createWrapper()
     expect(wrapperMine.find('.myChatMessage').exists()).toBe(true)
+  })
+
+  it('disables wheel zoom on the postcode map', async () => {
+    // Leaflet grabs the wheel event by default, so without scrollWheelZoom
+    // disabled, scrolling the conversation with the pointer over the map zooms
+    // the map out instead of scrolling it, leaving it stuck at world view.
+    const wrapper = createWrapper()
+    expect(wrapper.find('.l-map').exists()).toBe(false)
+
+    wrapper.vm.lat = 53.8321
+    wrapper.vm.lng = -2.6191
+    await nextTick()
+
+    expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
+      'false'
+    )
   })
 
   it('highlights emails only when highlightEmails prop is true', () => {
