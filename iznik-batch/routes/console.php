@@ -1367,11 +1367,9 @@ Schedule::command('eee:sync-mv-labels')
 // COMMUNITY_NEWS_ENABLED=true, and per-community opt-in is the `communitynews`
 // group setting (off by default).
 //
-// The ChitChat drip trial IS scheduled. The WEEKLY EMAIL is deliberately NOT
-// scheduled yet — we judge engagement on the ChitChat drip first. When the
-// trial proves out, uncomment community-news:email below and add
-// 'CommunityNews' to FREEGLE_MAIL_ENABLED_TYPES (the email path is
-// feature-flag gated on top of the kill switch).
+// Both channels are scheduled: the daily ChitChat drip and the weekly email
+// (Fridays). The email additionally needs 'CommunityNews' in
+// FREEGLE_MAIL_ENABLED_TYPES (feature-flag gated on top of the kill switch).
 //
 // Manual runs (work regardless of the schedule and kill switch):
 //     php artisan community-news:research  --area=<id>            (or all enabled)
@@ -1392,13 +1390,15 @@ Schedule::command('community-news:post-chitchat')
     ->sendOutputTo(cronLog('community-news:post-chitchat'))
     ->runInBackground();
 
-// Weekly email — OFF for now: ChitChat trial first (see above).
-// Schedule::command('community-news:email')
-//     ->weeklyOn(3, '10:00')
-//     ->when(fn () => config('freegle.communitynews.enabled', false))
-//     ->withoutOverlapping(120)
-//     ->sendOutputTo(cronLog('community-news:email'))
-//     ->runInBackground();
+// Weekly email — live since 2026-07-31, Fridays. Needs 'CommunityNews' in
+// FREEGLE_MAIL_ENABLED_TYPES as well as the kill switch. email_min_days is 6
+// on live so a Friday send can never make the next Friday's cron skip.
+Schedule::command('community-news:email')
+    ->weeklyOn(5, '11:00')
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('community-news:email'))
+    ->runInBackground();
 
 // Curated source store: health-check + discover new local feeds (~quarterly;
 // the command self-gates per place on source_discovery_days).

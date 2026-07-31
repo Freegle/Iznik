@@ -187,21 +187,21 @@ php artisan community-news:engagement
 `--area`, `--force`, `--count` and `--dry-run` make one-off manual runs
 predictable.
 
-## Scheduling: ChitChat trial on, weekly email off
+## Scheduling: both channels live
 
-`routes/console.php` schedules the ChitChat pipeline — `community-news:research`
-(daily 06:30), `:post-chitchat` (daily 09:15) and `:discover-sources`
-(quarterly) — each gated on `communitynews.enabled`, so nothing fires until ops
-sets `COMMUNITY_NEWS_ENABLED=true`. The commands self-gate per area, so a daily
-cadence just tops up / drips as each area falls due. On live the research
-credential is the existing `CLAUDE_CODE_OAUTH_TOKEN` in `.env.background`
-(subscription via the bundled `claude` CLI).
+`routes/console.php` schedules the whole pipeline — `community-news:research`
+(daily 06:30), `:post-chitchat` (daily 09:15), `:email` (**Fridays 11:00**) and
+`:discover-sources` (quarterly) — each gated on `communitynews.enabled`
+(`COMMUNITY_NEWS_ENABLED`). The commands self-gate per area, so the daily
+cadences just top up / drip as each area falls due. The research credential on
+live is the Claude subscription token (via the bundled `claude` CLI).
 
-`community-news:email` is deliberately **not scheduled** — the ChitChat drip
-runs first and we judge engagement before any email goes out. When the trial
-proves out: uncomment its schedule block and add `CommunityNews` to
-`FREEGLE_MAIL_ENABLED_TYPES` (the email path is feature-flag gated on top of
-the kill switch).
+The email additionally requires `CommunityNews` in `FREEGLE_MAIL_ENABLED_TYPES`
+(feature-flag gated on top of the kill switch). Live sets
+`COMMUNITY_NEWS_EMAIL_MIN_DAYS=6` (not the default 7) so a Friday send that ran
+late can never make the next Friday's 11:00 cron skip the week.
+
+Went live 2026-07-31 for Edinburgh, Oxford and Ribble Valley.
 
 ## Measuring the trial
 
