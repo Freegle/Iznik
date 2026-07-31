@@ -148,10 +148,60 @@ Extractor, manifest and CI ratchet: about 1 week. Harness layers 1 to 4: about 2
 
 - **Push more writes into background processing: adopt now, selectively.** Defer high-volume, low-criticality writes (like counters, email tracking hits, search logging, stats) through the existing Laravel queue/batch layer instead of synchronous API-path writes. Engine-agnostic, can start on MySQL today, and under Postgres it directly reduces autovacuum/WAL churn (fewer, larger transactions), which is our main new operational risk. Never for anything gating moderation or safety decisions.
 - **Front-end reads from a cache, not full SQL: adopt now, in a narrow form.** Full event-sourced CQRS is rejected: disproportionate for a two-person ops team and creates an unowned projection pipeline to fail silently. The right-sized version is a Redis/Valkey cache for the two or three hottest read paths (browse/nearby feed, group listings), invalidated inline by our only two writers (apiv2, batch). No event bus required.
-- **Telemetry offload to ClickHouse: adopt later, after the engine migration settles.** messages_likes, bounces, logs, email_tracking*, stats, users_searches are ~40 to 43GB of append/scan telemetry. Offloading shrinks OLTP to roughly 95 to 100GB (not 60 to 80GB: rippling_reach is live application state, not telemetry). Worthwhile, but do not stack two architecture changes at once.
+- **Telemetry offload: adopt later, after the engine migration settles, but with DuckDB rather than ClickHouse (the greenfield review in section 10 changed this call).** messages_likes, bounces, logs, email_tracking*, stats, users_searches are ~40 to 43GB of append/scan telemetry. Offloading shrinks OLTP to roughly 95 to 100GB (not 60 to 80GB: rippling_reach is live application state, not telemetry). Worthwhile, but do not stack two architecture changes at once.
 - **Rejected:** TiDB (no spatial support at all, hard disqualifier), Vitess (solves a sharding problem we do not have), CockroachDB (interesting DDL story but a bigger rewrite than Postgres, partial PostGIS compatibility, and free-tier telemetry-lapse throttling; revisit only if ever needed), ReadySet (BSL licence caps free production use at 2GB RAM; commercial pricing sales-gated), PolyScale (dead, dissolved 2024), Heimdall (opaque, duplicates what we built), AWS RDS/Aurora and Supabase (2 to 3x current spend once HA-sized, plus cross-provider latency/egress against app servers staying at Krystal), Hetzner dedicated (post June-2026 repricing it is ~4x cheaper, not 7 to 10x, has no UK datacentre, and adds cross-provider DB latency; not worth it), SQLite/LiteFS/Turso/DuckDB (wrong shape entirely).
 
-## 10. Migration plan (PostgreSQL stage)
+## 10. If we were starting today: would we even use a relational database?
+
+The founder's question: a few years ago we might have gone NoSQL; what are the cool kids doing nowadays? Researched July 2026 (four angles, each adversarially fact-checked; sources inline).
+
+### The short answer
+
+Yes, we would still be relational, and it is not close. Every piece of 2025-2026 evidence points the same way: Postgres, extended with PostGIS and pgvector, is what a competent team builds a join-heavy, consistency-sensitive, spatially-aware application on today. That is, point for point, the migration already recommended in this document. The memory that "a few years ago we might have gone NoSQL" is accurate: the industry did go through that wave, and it has largely reversed since. Boring, but boring is the honest answer.
+
+### What the 2026 zeitgeist actually is
+
+The clearest single data point is Stack Overflow's 2025 developer survey: PostgreSQL usage jumped to 55.6% (58.2% among professional developers), the largest single-year rise in the survey's history, topping "most used", "most admired" (65.5%) and "most desired" (46.5%) for the third or fourth year running (vonng.com/en/pg/so2025-pg). MongoDB was the only major database to shrink year on year (roughly 24.8% down to 24.0%), sliding from the #1 most-wanted database in 2017-2020 to #5 by 2025. MongoDB the company is not dying (Atlas revenue is growing in the high-20s to 30% range and it turned its first profitable quarter in Q1 FY2027); the split is that existing customers are moving to managed Atlas while developers choosing a database for new work choose Postgres.
+
+The strongest "what are the cool kids doing" signal is what gets picked when nobody is choosing at all, because an AI coding agent picks for them. Supabase (Postgres-as-backend-platform) reports AI tools now start over 60% of its new databases, with ARR from about $101M to $170M in five months and a $10.5B valuation in June 2026 (cnbc.com/2026/06/04); Databricks bought Neon (serverless Postgres) for about $1B, and over 80% of new Neon databases are created by AI agents; Vercel ships Postgres as its default. With no legacy and no bias in the room, the default is Postgres.
+
+At real scale the pattern holds: Figma has scaled Postgres roughly 100x since 2020 (sharding plus a custom query router, still investing as of May 2026, figma.com/blog/pgkeeper). Nextdoor, the closest product comparison to Freegle in this whole exercise, runs Postgres as its system of record with Valkey purely as a look-aside cache in front of it (engblog.nextdoor.com), not the other way round.
+
+There is credible pushback worth taking seriously: the widely-read "just use Postgres" debate (532 points, 333 comments, tigerdata.com/blog/its-2026-just-use-postgres) surfaces the real point that Postgres needs genuine operational care (vacuum, reindexing, careful upgrades), though one prominent dissenter there is a ClickHouse employee with a commercial stake in the alternative. The honest middle ground, adopted here: Postgres as the default, a specialised store only once you hit a measured limit, not because of a conference talk.
+
+### NoSQL, assessed honestly against Freegle's shape
+
+- **Document stores (MongoDB).** Genuinely good for schema-volatile, low-join, narrow-access-pattern data: content platforms, IoT, variable-field catalogues. Freegle is the opposite shape: users, memberships, groups, messages, chats, moderation state and spam checks join constantly, and ad-hoc cross-entity queries are daily moderator and support work. More decisive: Mongo's 2dsphere geo index does containment and proximity but has no polygon union, intersection, difference or repair, so it cannot do the reach and isochrone work our PostGIS layer does. Plain no.
+- **Wide-column (Cassandra, ScyllaDB, DynamoDB, Firestore).** These win for one dominant, frozen, write-firehose access pattern at extreme scale; Discord's message store (trillions of rows, no joins, no ad-hoc queries, discord.com/blog/how-discord-stores-trillions-of-messages) is the textbook case. We are three orders of magnitude smaller and need exactly the ad-hoc querying this family handles worst. DynamoDB and Firestore also only exist inside AWS and GCP, ruled out by our fixed-cost self-hosted UK model alone. Firm no.
+- **In-memory KV (Redis/Valkey).** Cache or queue in front of a durable database, never the system of record: even AWS's June 2026 Valkey durability upgrade accepts up to a 10-second write-loss window in async mode, disqualifying for a moderation audit trail. Use it the way Nextdoor does, as a cache, if and when needed.
+- **Graph (Neo4j and friends).** In 2025-2026 production use these are consistently a secondary analytics layer beside a relational system of record, not the record. Our graph-shaped data (user to membership to group, chat participants) is shallow and served by joins and recursive CTEs; PostgreSQL 19 (beta, June 2026) even adds native SQL/PGQ graph syntax on ordinary tables. No case.
+
+### The genuinely new paradigms
+
+Two things in the 2024-2026 window are real novelty rather than repackaged NoSQL:
+
+- **Local-first sync engines** (ElectricSQL, PowerSync, Rocicorp's Zero, which hit 1.0 in June 2026). Real production traction, but every one of them, including Linear's famous custom engine, treats Postgres as the authority and the local layer as a cache (Zero's creator calls it "a fancy cache" that cannot corrupt data). Not a database replacement; a plausible future answer to our chat/notification polling, on top of Postgres.
+- **Serverless/managed Postgres** (Neon, Supabase, PlanetScale Postgres). Real Postgres under a different operating model, built for bursty, ephemeral, many-small-database workloads (AI agents spinning up throwaway DBs). An always-on 137GB instance prices out at roughly $350/month on Neon before HA, comparable to or above our two Krystal VMs, and it would move the database off the UK network our app servers live on. Not a fit, but its existence confirms rather than contradicts the Postgres choice.
+
+Everything else surveyed fails on arithmetic, workload shape, licensing or team size: server-side SQLite (Turso, Cloudflare D1) has a contested real-world write ceiling (roughly 200 to 2,000 writes/sec depending on shape) and a single-writer architecture that is a poor match for our ~400 writes/sec join-heavy 137GB profile; CockroachDB retired free self-hosting entirely in November 2024; NewSQL generally solves multi-region write-scale problems we do not have; SurrealDB only made durable commits the default in its 3.0 release in 2026, a maturity flag for a system of record; Gel (formerly EdgeDB) markets itself as "Postgres unchained", which is itself an admission of what the base layer worth building on is.
+
+### The satellites a 2026 greenfield build would attach
+
+This is where the greenfield lens earns its keep: not the core (which it confirms) but what surrounds it. Four researched decisions, with a common theme: at our scale, nearly every "add a new service" temptation loses to "Postgres already does this".
+
+- **Realtime chat/notifications (replacing API polling): LISTEN/NOTIFY plus SSE, no new infrastructure.** One caveat matters and is planned for: LISTEN is incompatible with pgbouncer's transaction pooling (the subscription lives on a backend connection the pooler reassigns; pgbouncer issue #655). The standard pattern is a single long-lived listener process per app node holding one dedicated non-pooled connection to the Patroni primary; writers call pg_notify with the message id inside the same transaction as the write; the listener fans the id out over SSE (simpler than websockets for "something changed, re-fetch" traffic) and clients fetch the row through the normal pooled path. Failover degrades to polling cadence briefly, losing nothing durable. Our volume is far below the ~1,000 notifications/sec soft ceiling. Even Supabase's 2026 realtime rebuild converged on "logical replication plus a thin relay", not Kafka.
+- **Search: ParadeDB pg_search (BM25 inside Postgres) is the strong candidate; Meilisearch is the fallback.** We have no fulltext today. Postgres native FTS lacks typo tolerance; OpenSearch is a JVM cluster and the wrong shape for two people. pg_search is production-real in 2026 (native Postgres index type on Tantivy/Rust, 250k+ extension installs, Alibaba Cloud among named users) and would give BM25 plus pgvector hybrid ranking in one SQL query with no second system and no sync lag. The operational asterisk: it is a compiled extension that must be built and pinned alongside PG18 and PostGIS across Patroni nodes and major upgrades; evaluate that during migration Phase 0. If the extension risk reads too high, Meilisearch (single binary, native hybrid search that can consume our existing HuggingFace embeddings) beats Typesense and OpenSearch for our team size.
+- **Telemetry analytics: DuckDB, not ClickHouse.** At ~40GB the engines are equivalent in capability, so the decision is ops model: ClickHouse is another whole system with a distributed-system config surface; DuckDB is an in-process binary speaking Postgres-flavoured SQL that reads Postgres and Parquet directly. Either export telemetry to Parquet and query with standalone DuckDB, or run pg_duckdb (1.0, September 2025, production-ready) on a reporting replica so stats dashboards get columnar scans with zero new services. Note ParadeDB's older pg_analytics is archived; pg_duckdb is the maintained embedding.
+- **Queues/jobs: keep them in Postgres, on the same instance.** FOR UPDATE SKIP LOCKED queueing is thoroughly production-proven in 2026: Oban (Elixir) demonstrates ~1M jobs/minute on a single Postgres instance, River (Go, riverqueue.com) is the same architecture and directly relevant to apiv2, and Laravel's own database driver uses the same pattern. Our write rate is 10-40x below those demonstrated ceilings. The transactional-enqueue property (a job exists only if the business transaction committed) is a correctness win a separate Redis-backed queue cannot give. Do not add Valkey for this.
+
+### What this changes in the plan
+
+- **Core recommendation: unchanged and independently reinforced.** PostgreSQL 18 + PostGIS + Patroni is what the 2026 evidence picks for this workload even with no legacy to migrate.
+- **During migration:** design connection handling for the realtime listener pattern up front (one non-pooled LISTEN connection coexisting with pgbouncer transaction pooling); evaluate pg_search in Phase 0 alongside the other extension decisions; queues stay in Postgres (no change, and no Valkey).
+- **Later:** fold the vector-search half of the embedding sidecar into pgvector/pgvectorscale (our corpus is well under the scale where a dedicated vector store earns its keep); telemetry offload with DuckDB per section 9; a local-first sync-engine pilot (Zero/ElectricSQL/PowerSync) only if we want richer realtime UX than the LISTEN/NOTIFY+SSE step provides.
+- **Never:** any NoSQL family as system of record; serverless/managed Postgres as the hosting model; server-side SQLite; NewSQL; multi-model newcomers. Each has a real niche, and none of those niches is our workload.
+
+## 11. Migration plan (PostgreSQL stage)
 
 | Phase | Content | Effort |
 |---|---|---|
@@ -173,7 +223,7 @@ Extractor, manifest and CI ratchet: about 1 week. Harness layers 1 to 4: about 2
 
 **If the Phase 1 PoC disappoints** (KNN/containment no better than our MBR-prefilter workaround on real data): the spatial justification weakens and the decision tree is: still proceed if the DDL pain alone justifies it (32% of changes needing manual runbooks says a lot), or stay on PXC 8.4 (optionally 2-node+garbd for the cost saving) and keep the ORM/portability work as standing code quality. That off-ramp is cheap because nothing engine-specific has been built yet at that point.
 
-## 11. Risks and honest downsides
+## 12. Risks and honest downsides
 
 - Zero in-house Postgres production experience; autovacuum, WAL, Patroni and pgBackRest are genuinely new disciplines. Mitigation (training + external setup review + retainer) is budgeted but does not remove the 3am-incident gap while experience builds; train both people, staggered.
 - The SRID relabel and ST_MakeValid cleanup can fail silently into "wrong nearby posts weeks later". Row-count parity does not prove geographic correctness; the PoC phase must include geometry-result parity checks, not just performance.
@@ -184,7 +234,7 @@ Extractor, manifest and CI ratchet: about 1 week. Harness layers 1 to 4: about 2
 - CI runs two database engines for the duration; every branch pays that tax.
 - The dual-run months need temporary extra infrastructure (~£150 to £250/mo) that the steady-state cost table excludes.
 
-## 12. Key sources
+## 13. Key sources
 
 - Percona commitment to PXC (30 Apr 2026): percona.com/blog/continued-commitment-to-percona-xtradb-cluster/
 - PXC 8.0.46-38 final release (23 Jul 2026): docs.percona.com/new/2026/07/23/percona-xtradb-cluster-8046-38-has-been-released
@@ -203,3 +253,5 @@ Extractor, manifest and CI ratchet: about 1 week. Harness layers 1 to 4: about 2
 - GORM upsert caveats: github.com/go-gorm/gorm/issues/4355, go-gorm/mysql/issues/39; dbresolver-on-PG doubt: go-gorm/gorm#5010
 - Scientist pattern precedent: stripe.com/blog/online-migrations; github.com/github/scientist
 - MariaDB LTS/support: mariadb.com and mariadb.org release notes (11.4/11.8 LTS)
+- Greenfield/zeitgeist (section 10): SO 2025 survey analysis vonng.com/en/pg/so2025-pg; Supabase growth cnbc.com/2026/06/04; Figma figma.com/blog/pgkeeper; Nextdoor engblog.nextdoor.com; "just use Postgres" debate tigerdata.com/blog/its-2026-just-use-postgres; Discord discord.com/blog/how-discord-stores-trillions-of-messages
+- Satellites (section 10): LISTEN/NOTIFY vs pooling github.com/pgbouncer/pgbouncer/issues/655 and pgdog.dev/blog/scaling-postgres-listen-notify; ParadeDB paradedb.com; pg_duckdb 1.0 motherduck.com/blog/pg-duckdb-release/; Meilisearch hybrid meilisearch.com/products/hybrid-search; River riverqueue.com; Oban throughput oban.pro/articles/one-million-jobs-a-minute-with-oban; Zero 1.0 (Rocicorp); CockroachDB self-hosting change (Nov 2024)
