@@ -9623,6 +9623,62 @@ func TestPatchMessageByTnPostidNotFound(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+// TestPatchMessageByTnPostidUpdatesLocationFromCoordinates verifies that a TN edit
+// carrying fresh lat/lng but no Freegle location/locationid (TN only ever knows GPS
+// coordinates for a post, never Freegle's internal location rows) re-derives
+// locationid from the new coordinates - and therefore the subject's derived "vague
+// postcode" - instead of leaving it pinned to whatever it was before the edit.
+// Regression test for Discourse 9908: a TN post's postcode could never be corrected
+// because locationid never followed a coordinates-only edit.
+func TestPatchMessageByTnPostidUpdatesLocationFromCoordinates(t *testing.T) {
+	prefix := uniquePrefix("msg_patchtn_loc")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77705, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 52.006292, -4.939858)
+	tnpostid := fmt.Sprintf("tn-loc-%d", msgID)
+
+	// Give the message a matched item (as every TN message has - confirmed against
+	// production), and pin it to the OLD test-fixture postcode/coords (SA65 9ET) so
+	// locationid and lat/lng agree before the edit, as a real pre-edit message would.
+	itemName := prefix + " Item"
+	db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", itemName)
+	var itemID uint64
+	db.Raw("SELECT id FROM items WHERE name = ?", itemName).Scan(&itemID)
+	db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
+	db.Exec("UPDATE messages SET tnpostid = ?, locationid = ?, lat = ?, lng = ? WHERE id = ?",
+		tnpostid, 1687412, 52.006292, -4.939858, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// TN edits the post with new coordinates only - no location/locationid, since TN
+	// doesn't know Freegle's internal location rows.
+	body := map[string]interface{}{
+		"lat": 55.957571,
+		"lng": -3.205333,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77705&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var locationID uint64
+	var subject string
+	db.Raw("SELECT locationid FROM messages WHERE id = ?", msgID).Scan(&locationID)
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+
+	assert.Equal(t, uint64(1000001), locationID, "locationid should follow the new coordinates, not stay pinned to the old postcode")
+	assert.Equal(t, "OFFER: "+itemName+" (Edinburgh EH3)", subject, "subject should be rebuilt from the new location, not the stale one")
+}
+
 // TestPatchMessageByTnPostidUpdatesAllMessages verifies that PATCH /message/tn/:tnpostid
 // updates ALL Freegle messages sharing the same tnpostid (not just the first one).
 func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
