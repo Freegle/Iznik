@@ -368,9 +368,9 @@ return [
         // Post to ChitChat / send the digest AS this account ("Freegle").
         'system_user_email' => env('COMMUNITY_NEWS_SYSTEM_USER_EMAIL', env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org')),
 
-        // Area clustering: neighbouring enabled groups whose centres are within
-        // this many miles are unioned into one area (approximates the ~30-min
-        // Rippling-Out reach without a routing call).
+        // Town assignment radius: an enabled group joins its nearest `towns`-table
+        // town within this many miles (the town names the area — the searchable
+        // unit); beyond it the group stands alone as its own area.
         'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
 
         // How many nuggets the researcher aims to produce per area.

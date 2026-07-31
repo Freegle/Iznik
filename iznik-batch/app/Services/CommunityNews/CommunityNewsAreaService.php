@@ -6,18 +6,24 @@ use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
 use App\Models\Group;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
- * Clusters the communitynews-enabled Freegle groups into "areas".
+ * Groups the communitynews-enabled Freegle groups into "areas" anchored on the
+ * `towns` table.
  *
- * A small town (Edinburgh, Oxford) sits on its own; a dense cluster of boroughs
- * merges into one area so news is researched once and members are deduplicated
- * across it. Clustering is greedy union-find on great-circle centre distance —
- * neighbouring enabled groups within `area_cluster_miles` join the same area.
- * This approximates the ~30-min Rippling-Out reach without a routing call; a
- * drive-time refinement can replace clusterByDistance() later.
+ * The research call searches around the area's NAME, and local news supply is
+ * organised by named place (a paper's patch, a council's what's-on) — so the
+ * area unit must be a real, searchable town, not a distance blob. Each enabled
+ * group joins its nearest town within `area_cluster_miles`; the town's name and
+ * centre become the area's. Distance clustering (union-find) was tried first
+ * but chains transitively: with every group enabled, mainland England collapses
+ * into one 400-group component spanning 300+ miles. Town anchoring can't chain,
+ * so it still works when all groups are active (~240 areas). A group with no
+ * town within the cap — and every group, when the towns table is empty (dev) —
+ * stands alone as its own area, named from the group.
  *
- * Areas are keyed by `anchorgroupid` (the lowest enabled groupid in the cluster)
+ * Areas are keyed by `anchorgroupid` (the lowest enabled groupid on the town)
  * so a re-run upserts the same row and keeps its cadence timers.
  */
 class CommunityNewsAreaService
@@ -27,14 +33,14 @@ class CommunityNewsAreaService
 
     /**
      * Recompute areas from the current enabled-group set and upsert them.
-     * Stale areas (whose anchor no longer clusters) are removed, cascading to
+     * Stale areas (whose anchor no longer holds one) are removed, cascading to
      * their items.
      *
      * @return Collection<int, CommunityNewsArea>
      */
     public function rebuildAreas(): Collection
     {
-        $miles = (float) config('freegle.communitynews.area_cluster_miles', 20);
+        $capMiles = (float) config('freegle.communitynews.area_cluster_miles', 20);
 
         $groups = Group::activeFreegle()
             ->communityNewsEnabled()
@@ -46,37 +52,78 @@ class CommunityNewsAreaService
             })
             ->values();
 
-        $clusters = $this->clusterByDistance($groups, $miles);
+        $towns = DB::table('towns')
+            ->whereNotNull('lat')
+            ->whereNotNull('lng')
+            ->get(['id', 'name', 'lat', 'lng']);
+
+        // Assign each group to its nearest town within the cap; the rest stand
+        // alone. O(groups × towns) haversines — trivial at this scale.
+        $byTown = [];
+        $standalone = [];
+        foreach ($groups as $g) {
+            $best = null;
+            $bestDist = INF;
+            foreach ($towns as $t) {
+                $d = $this->haversineMiles((float) $g->lat, (float) $g->lng, (float) $t->lat, (float) $t->lng);
+                if ($d < $bestDist) {
+                    $bestDist = $d;
+                    $best = $t;
+                }
+            }
+            if ($best !== null && $bestDist <= $capMiles) {
+                $byTown[$best->id]['town'] = $best;
+                $byTown[$best->id]['groups'][] = $g;
+            } else {
+                $standalone[] = $g;
+            }
+        }
 
         $areas = collect();
         $seenAnchors = [];
 
-        foreach ($clusters as $members) {
-            $groupIds = $members->pluck('id')->map(fn ($i) => (int) $i)->sort()->values()->all();
+        foreach ($byTown as $bucket) {
+            $groupIds = collect($bucket['groups'])->pluck('id')->map(fn ($i) => (int) $i)->sort()->values()->all();
             $anchor = $groupIds[0];
             $seenAnchors[] = $anchor;
 
-            $area = CommunityNewsArea::updateOrCreate(
+            $areas->push(CommunityNewsArea::updateOrCreate(
                 ['anchorgroupid' => $anchor],
                 [
-                    'name' => $this->areaName($members),
-                    'lat' => round((float) $members->avg('lat'), 6),
-                    'lng' => round((float) $members->avg('lng'), 6),
+                    'name' => $bucket['town']->name,
+                    'lat' => round((float) $bucket['town']->lat, 6),
+                    'lng' => round((float) $bucket['town']->lng, 6),
                     'groupids' => $groupIds,
                     'groupcount' => count($groupIds),
                 ]
-            );
-            $areas->push($area);
+            ));
         }
 
-        // Re-home history from areas whose cluster changed shape: when an old
-        // area's anchor group now lives inside a different cluster (a mass
-        // enablement can merge neighbours under a new, lower anchor id), move
-        // its items across and carry its cadence stamps forward. Without this,
-        // the FK cascade silently destroys posted/emailed bookkeeping and the
-        // engagement linkage, and the reset cadences re-mail members early.
-        // An area whose groups left the feature entirely still deletes (with
-        // its items) — that removal is genuine.
+        foreach ($standalone as $g) {
+            $anchor = (int) $g->id;
+            $seenAnchors[] = $anchor;
+
+            $areas->push(CommunityNewsArea::updateOrCreate(
+                ['anchorgroupid' => $anchor],
+                [
+                    'name' => $this->areaName(collect([$g])),
+                    'lat' => round((float) $g->lat, 6),
+                    'lng' => round((float) $g->lng, 6),
+                    'groupids' => [$anchor],
+                    'groupcount' => 1,
+                ]
+            ));
+        }
+
+        // Re-home history from areas whose shape changed: when an old area's
+        // anchor group now lives inside a different area (a mass enablement or
+        // a towns-table change can re-anchor neighbours under a new, lower
+        // anchor id), move its items across and carry its cadence stamps
+        // forward. Without this, the FK cascade silently destroys
+        // posted/emailed bookkeeping and the engagement linkage, and the reset
+        // cadences re-mail members early. An area whose groups left the
+        // feature entirely still deletes (with its items) — that removal is
+        // genuine.
         $stale = CommunityNewsArea::query();
         if (!empty($seenAnchors)) {
             $stale->whereNotIn('anchorgroupid', $seenAnchors);
@@ -98,53 +145,6 @@ class CommunityNewsAreaService
         }
 
         return $areas;
-    }
-
-    /**
-     * Greedy union-find: connect any two groups whose centres are within $miles;
-     * connected components become areas.
-     *
-     * @param  Collection $groups  group rows with ->id, ->lat, ->lng, ->namefull
-     * @return Collection<int, Collection>  one collection of group rows per area
-     */
-    public function clusterByDistance(Collection $groups, float $miles): Collection
-    {
-        $list = $groups->values();
-        $n = $list->count();
-
-        $parent = range(0, max(0, $n - 1));
-        $find = function (int $x) use (&$parent) {
-            while ($parent[$x] !== $x) {
-                $parent[$x] = $parent[$parent[$x]];
-                $x = $parent[$x];
-            }
-            return $x;
-        };
-
-        for ($i = 0; $i < $n; $i++) {
-            for ($j = $i + 1; $j < $n; $j++) {
-                $d = $this->haversineMiles(
-                    (float) $list[$i]->lat,
-                    (float) $list[$i]->lng,
-                    (float) $list[$j]->lat,
-                    (float) $list[$j]->lng
-                );
-                if ($d <= $miles) {
-                    $ri = $find($i);
-                    $rj = $find($j);
-                    if ($ri !== $rj) {
-                        $parent[$ri] = $rj;
-                    }
-                }
-            }
-        }
-
-        $components = [];
-        for ($i = 0; $i < $n; $i++) {
-            $components[$find($i)][] = $list[$i];
-        }
-
-        return collect($components)->map(fn ($rows) => collect($rows))->values();
     }
 
     public function haversineMiles(float $lat1, float $lng1, float $lat2, float $lng2): float

@@ -33,7 +33,11 @@ It has **two delivery channels that share one research core**:
    candidates must carry the moderator newsletter flags (`public` +
    `newsletterreviewed` + `newsletter`, the Stories Newsletter bar) and Gemini
    then picks one that is genuinely positive and clearly written — or none.
-   Sent to deduplicated, opted-in members. The footer deliberately does NOT
+   Sent to deduplicated, opted-in members **whose home group is in the area**:
+   a member is mailed only when the catchment (`groups.polyindex`) of a group
+   they belong to covers their location (`settings.mylocation`, else
+   `lastlocation`) — membership alone is not enough, so a far-flung join
+   (living in Edinburgh, member of Oxford) gets nothing. The footer deliberately does NOT
    carry the generic "Unsubscribe" link (that leaves Freegle completely);
    it names the one relevant control — "Newsletters &amp; stories" in
    Settings — and links there.
@@ -46,7 +50,7 @@ deterministic PHP.)
 
 ```
 communitynews-enabled groups
-        │  cluster by centre distance (union-find, ~30-min reach approximation)
+        │  each joins its nearest town (`towns` table, within area_cluster_miles)
         ▼
    community_news_areas ──研究──► Anthropic (web_search) ──► community_news_items
         │                                                          │
@@ -68,16 +72,25 @@ key in the group's `settings` JSON.
 
 ## Areas
 
-Small towns (Edinburgh, Oxford) are a sensible research/delivery unit on their own;
-dense boroughs are too granular, so neighbouring enabled groups are **clustered**:
-a greedy union-find connects any two enabled groups whose centres
-(`groups.lat/lng`) are within `area_cluster_miles` (default 20), and each connected
-component becomes an area keyed by its lowest groupid (`anchorgroupid`). This
-approximates the ~30-minute Rippling-Out drive-time reach without a routing call; a
-drive-time refinement can later replace `CommunityNewsAreaService::clusterByDistance()`.
+The research call searches around the area's **name**, and local news supply is
+organised by named place (a local paper's patch, a council's what's-on page) —
+so the area unit must be a real, searchable town. Areas are anchored on the
+**`towns` table** (~234 curated UK towns): each enabled group joins its nearest
+town within `area_cluster_miles` (default 20), and the town's name and centre
+become the area's. Each used town is one area, keyed by the lowest enabled
+groupid on it (`anchorgroupid`) so re-runs keep the same row and its cadence
+timers. A group with no town inside the cap — and every group when the towns
+table is empty (dev) — stands alone as its own area, named from the group.
+
+Distance clustering (union-find) was the first design, but it chains
+transitively: simulated with every group enabled at 20 miles, mainland England
+collapses into ONE 400-group area spanning 314 miles. Town anchoring cannot
+chain — at full activation it yields ~240 areas, every one named after a place
+that actually shows up in search results.
 
 Members are deduplicated across an area, so someone in three of its groups gets one
-email.
+email — and only mailed at all if at least one of those groups is their **home
+group** (its catchment covers where they live; see Opt-out).
 
 ## Curated sources (seed + self-maintenance)
 
@@ -104,13 +117,18 @@ file's `groups`, or the place name appears in the area name.
 
 ## Opt-out
 
-Two levels gate the email. **Per group**, the ModTools "Send newsletters to
+Three things gate the email. **Per group**, the ModTools "Send newsletters to
 members?" toggle (`settings.newsletter`) must be **explicitly on** — for
 Community News it defaults off, stricter than the Stories Newsletter's
 default-on reading of the same setting. **Per member**, it
 reuses the **existing** "Newsletters & stories" preference, `users.newslettersallowed`
 — the same switch Stories Newsletter honours — so there is one familiar "no more of
-these" control. The email footer links to `/unsubscribe` and `/settings` (never the
+these" control. **Geographically**, the member's location (`settings.mylocation`,
+else `users.lastlocation`) must fall inside the catchment (`groups.polyindex`) of
+a group they are a member of — their **home group** — so far-flung memberships
+don't attract another town's news. Members with no known location, and groups
+with no catchment polygon (`polyindex` is a fallback `POINT`), are simply not
+mailed. The email footer links to `/unsubscribe` and `/settings` (never the
 account-deleting one-click route). ChitChat posts are public newsfeed items and are
 not opt-out-gated per user.
 
