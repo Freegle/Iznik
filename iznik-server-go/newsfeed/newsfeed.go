@@ -104,9 +104,16 @@ type Newsfeed struct {
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
 	const nearbyLimit = 10
-	// Over-fetch from the spatial index so that, after dropping alerts and posts
-	// older than the feed window, we still have at least nearbyLimit candidates.
-	const overFetch = 10
+	// Over-fetch from the spatial index so that, after dropping alerts, stale
+	// posts, the user's OWN posts and co-located duplicates, we still have at
+	// least nearbyLimit candidates. 100x reaches past the "wall" a long-time
+	// poster builds at their own coordinates: a member with years of posts
+	// geocoded to their home postcode can fill the first hundreds of KNN
+	// results with points ~0m away, which at 10x starved the walk before it
+	// ever saw another member's post (observed live: 100/100 results within
+	// 0.19km, radius clamped to the 1km floor, feed of 2 items).
+	// nearbyLimit*overFetch = 1000 is the spatial server's result limit.
+	const overFetch = 100
 	// maxNearbyKm bounds every radius computed below - the largest radius the
 	// pre-#459 doubling-box algorithm ever searched (1km doubling to 128km)
 	// before giving up. getFeed() treats a 0 return as "no geographic
@@ -138,25 +145,33 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 
 	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
 	if err == nil && len(results) >= nearbyLimit {
-		// The spatial "newsfeed" index has no type/timestamp columns, so it can't
-		// exclude alerts or stale posts — applying that here restores the
-		// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
-		// computed radius).
+		// The spatial "newsfeed" index has no type/timestamp/user columns, so it
+		// can't exclude alerts, stale posts or the user's own posts — applying
+		// that here restores the pre-spatial query's behaviour (otherwise those
+		// posts shrink the computed radius).
 		ids := make([]int64, len(results))
 		for i, r := range results {
 			ids[i] = r.ID
 		}
-		allowed := RecentNonAlertNewsfeedIDs(ids)
+		allowed := RecentNonAlertNewsfeedIDs(ids, uid)
 
-		// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
-		// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
+		// Walk the KNN results in distance order; the nearbyLimit-th allowed
+		// DISTINCT distance sets the radius (decimal degrees → km, 1 degree ≈
+		// 111 km). Distinct because many posts share one coordinate (a postcode
+		// centroid, a housebound poster): counting them individually measures
+		// one location's chattiness, not how far away the community is.
 		count := 0
 		distDeg := 0.0
+		lastCounted := -1.0
 		for _, r := range results {
 			if _, ok := allowed[r.ID]; !ok {
 				continue
 			}
+			if r.Distance <= lastCounted {
+				continue
+			}
 			count++
+			lastCounted = r.Distance
 			if count == nearbyLimit {
 				distDeg = r.Distance
 				break
@@ -164,13 +179,17 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 		}
 
 		if count == nearbyLimit {
-			// Enough recent, non-alert posts nearby - size the radius from their true density.
+			// Enough recent posts by other people nearby - size the radius from
+			// their true density.
 			distKm = distDeg * 111.0
 		} else {
-			// Too few passed the recency/alert filter, but there's still enough
-			// raw local density data (>= nearbyLimit raw candidates) to size a
-			// radius from, rather than falling straight back to the flat ceiling.
-			distKm = results[nearbyLimit-1].Distance * 111.0
+			// Too few distinct recent posts by others inside the fetch window.
+			// Size from the window's full reach: we know the index's activity
+			// (of any age) covers at least this far, and the furthest raw entry
+			// cannot be wall-dominated the way a near entry can. The old
+			// fallback used the nearbyLimit-th RAW entry, which against a
+			// co-located wall was ~0m and clamped the radius to the floor.
+			distKm = results[len(results)-1].Distance * 111.0
 		}
 	}
 
@@ -188,11 +207,14 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 }
 
 // RecentNonAlertNewsfeedIDs returns the subset of the given newsfeed ids that
-// are not ALERT-type and were posted within the feed window (31 days). The
+// are not ALERT-type, were posted within the feed window (31 days), and were
+// not authored by excludeUserid (pass 0 to keep everyone): a member's own
+// posts sit at their own coordinates and say nothing about how far away the
+// surrounding community's activity is. The
 // spatial "newsfeed" index omits the type and timestamp columns, so the
 // nearby-distance calculation applies these filters here (matching the old
 // MySQL query) rather than in the shared index.
-func RecentNonAlertNewsfeedIDs(ids []int64) map[int64]struct{} {
+func RecentNonAlertNewsfeedIDs(ids []int64, excludeUserid uint64) map[int64]struct{} {
 	allowed := make(map[int64]struct{}, len(ids))
 	if len(ids) == 0 {
 		return allowed
@@ -207,9 +229,9 @@ func RecentNonAlertNewsfeedIDs(ids []int64) map[int64]struct{} {
 
 	var found []int64
 	database.DBConn.Raw(fmt.Sprintf(
-		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ?",
+		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ? AND userid != ?",
 		strings.Join(idStrs, ","),
-	), utils.NEWSFEED_TYPE_ALERT, since).Scan(&found)
+	), utils.NEWSFEED_TYPE_ALERT, since, excludeUserid).Scan(&found)
 
 	for _, id := range found {
 		allowed[id] = struct{}{}

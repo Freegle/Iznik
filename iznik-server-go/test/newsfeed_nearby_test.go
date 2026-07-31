@@ -33,7 +33,7 @@ func TestRecentNonAlertNewsfeedIDs(t *testing.T) {
 	oldMsg := CreateTestNewsfeedWithType(t, uid, lat, lng, "stale message", "Message", 24*40)    // 40 days ago
 	recentAlert := CreateTestNewsfeedWithType(t, uid, lat, lng, "recent alert", utils.NEWSFEED_TYPE_ALERT, 24*5)
 
-	allowed := newsfeed.RecentNonAlertNewsfeedIDs([]int64{int64(recentMsg), int64(oldMsg), int64(recentAlert)})
+	allowed := newsfeed.RecentNonAlertNewsfeedIDs([]int64{int64(recentMsg), int64(oldMsg), int64(recentAlert)}, 0)
 
 	_, hasRecent := allowed[int64(recentMsg)]
 	_, hasOld := allowed[int64(oldMsg)]
@@ -42,6 +42,12 @@ func TestRecentNonAlertNewsfeedIDs(t *testing.T) {
 	assert.True(t, hasRecent, "recent non-alert post should count towards the nearby radius")
 	assert.False(t, hasOld, "post older than 31 days should be excluded")
 	assert.False(t, hasAlert, "alert post should be excluded")
+
+	// A member's own posts are excluded when their id is passed: they sit at the
+	// member's own coordinates and say nothing about how far away the community is.
+	own := newsfeed.RecentNonAlertNewsfeedIDs([]int64{int64(recentMsg)}, uid)
+	_, hasOwn := own[int64(recentMsg)]
+	assert.False(t, hasOwn, "the member's own posts must not count towards their nearby radius")
 }
 
 // mockNewsfeedKNN points the spatial client at an in-process server that
@@ -94,13 +100,14 @@ func mockNewsfeedKNN(t *testing.T, ids []int64, dists []float64) func() {
 // maxNearbyKmForTest, and only a genuine unconditional clamp passes it.
 func TestGetNearbyDistanceCapsRawKNNFallbackRadius(t *testing.T) {
 	uid := CreateTestUser(t, "nearbycapfallback", "User")
+	author := CreateTestUser(t, "nearbycapfallbackauthor", "User")
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
 	var dists []float64
 
 	addPoint := func(hoursAgo int, degrees float64) {
-		id := CreateTestNewsfeedWithType(t, uid, lat, lng, fmt.Sprintf("fallback post %d", len(ids)), "Message", hoursAgo)
+		id := CreateTestNewsfeedWithType(t, author, lat, lng, fmt.Sprintf("fallback post %d", len(ids)), "Message", hoursAgo)
 		ids = append(ids, int64(id))
 		dists = append(dists, degrees)
 	}
@@ -133,13 +140,14 @@ func TestGetNearbyDistanceCapsRawKNNFallbackRadius(t *testing.T) {
 // capped too.
 func TestGetNearbyDistanceCapsHappyPathRadius(t *testing.T) {
 	uid := CreateTestUser(t, "nearbycaphappy", "User")
+	author := CreateTestUser(t, "nearbycaphappyauthor", "User")
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
 	var dists []float64
 
 	addPoint := func(degrees float64) {
-		id := CreateTestNewsfeedWithType(t, uid, lat, lng, fmt.Sprintf("happy post %d", len(ids)), "Message", 24)
+		id := CreateTestNewsfeedWithType(t, author, lat, lng, fmt.Sprintf("happy post %d", len(ids)), "Message", 24)
 		ids = append(ids, int64(id))
 		dists = append(dists, degrees)
 	}
@@ -166,17 +174,19 @@ func TestGetNearbyDistanceCapsHappyPathRadius(t *testing.T) {
 // post at the user's own coordinates - their own post, or someone else's
 // right on top of them - has KNN distance 0 in decimal degrees, and 0 hits
 // getFeed()'s "no restriction at all" path exactly like an unbounded radius
-// does. This exercises the "happy path" branch (>= nearbyLimit recent,
-// non-alert posts, all co-located with the user).
+// does. With distinct-distance dedupe these 10 co-located posts now count as
+// ONE location, so this routes through the too-few fallback - and its
+// window-reach distance is also 0, exercising the floor there.
 func TestGetNearbyDistanceFloorsHappyPathZeroRadius(t *testing.T) {
 	uid := CreateTestUser(t, "nearbyfloorhappy", "User")
+	author := CreateTestUser(t, "nearbyfloorhappyauthor", "User")
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
 	var dists []float64
 
 	addPoint := func(degrees float64) {
-		id := CreateTestNewsfeedWithType(t, uid, lat, lng, fmt.Sprintf("floorhappy post %d", len(ids)), "Message", 24)
+		id := CreateTestNewsfeedWithType(t, author, lat, lng, fmt.Sprintf("floorhappy post %d", len(ids)), "Message", 24)
 		ids = append(ids, int64(id))
 		dists = append(dists, degrees)
 	}
@@ -200,13 +210,14 @@ func TestGetNearbyDistanceFloorsHappyPathZeroRadius(t *testing.T) {
 // candidate is also co-located with the user (distance 0).
 func TestGetNearbyDistanceFloorsRawKNNFallbackZeroRadius(t *testing.T) {
 	uid := CreateTestUser(t, "nearbyfloorfallback", "User")
+	author := CreateTestUser(t, "nearbyfloorfallbackauthor", "User")
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
 	var dists []float64
 
 	addPoint := func(hoursAgo int, degrees float64) {
-		id := CreateTestNewsfeedWithType(t, uid, lat, lng, fmt.Sprintf("floorfallback post %d", len(ids)), "Message", hoursAgo)
+		id := CreateTestNewsfeedWithType(t, author, lat, lng, fmt.Sprintf("floorfallback post %d", len(ids)), "Message", hoursAgo)
 		ids = append(ids, int64(id))
 		dists = append(dists, degrees)
 	}
