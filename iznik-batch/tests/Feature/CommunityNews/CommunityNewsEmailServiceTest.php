@@ -134,6 +134,35 @@ class CommunityNewsEmailServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    public function test_group_newsletter_toggle_excludes_members(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        // Mod turned off "Send newsletters to members?" for g1; g2 default-on.
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 0]]);
+        $g2 = $this->createTestGroup(['lat' => 51.51, 'lng' => -0.11, 'settings' => ['communitynews' => 1]]);
+
+        $u1 = $this->createTestUser(['email_preferred' => 'off@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->createMembership($u1, $g1);
+        $u2 = $this->createTestUser(['email_preferred' => 'on@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->createMembership($u2, $g2);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id], 'groupcount' => 2,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
+            'url' => 'https://x.org', 'researched_at' => now(),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertSame($u2->id, $sent->first()->userId);
+    }
+
     public function test_pick_story_uses_flags_window_and_ai(): void
     {
         $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
