@@ -141,14 +141,11 @@ Community News is inert until **all** of these are true:
    The ChitChat trial does **not** need this — run the trial first, watch
    engagement, then flip on the email.
 
-## Running it manually (current mode)
+## Running it manually
 
-Community News is **manual-only for now** — the scheduled runs in
-`routes/console.php` are **commented out** (nothing fires automatically). The plan
-is to hand-run a research for a few places, then hand-run ChitChat posts, and
-judge engagement before automating.
-
-A manual trial run:
+The commands also run by hand, regardless of the schedule and the
+`COMMUNITY_NEWS_ENABLED` flag — useful for a one-off research or post while
+judging the trial:
 
 ```bash
 # 1. Opt a few communities in.
@@ -156,7 +153,8 @@ php artisan group:set-community-news --group=EdinburghFreegle --on
 php artisan group:set-community-news --group=OxfordFreegle --on
 
 # 2. Cluster into areas and research each (prints "#<areaid> <name>: N item(s)").
-#    Needs ANTHROPIC_API_KEY. Add --dry-run to preview without storing.
+#    Needs a research credential (CLAUDE_CODE_OAUTH_TOKEN / COMMUNITY_NEWS_OAUTH_TOKEN
+#    or ANTHROPIC_API_KEY). Add --dry-run to preview without storing.
 php artisan community-news:research
 
 # 3. Post to ChitChat as Freegle. --force ignores the per-area cadence and
@@ -168,17 +166,23 @@ php artisan community-news:engagement
 ```
 
 `--area`, `--force`, `--count` and `--dry-run` make one-off manual runs
-predictable. The commands run regardless of the (commented-out) schedule or the
-`COMMUNITY_NEWS_ENABLED` flag.
+predictable.
 
-## Automating later (not enabled yet)
+## Scheduling: ChitChat trial on, weekly email off
 
-The three `Schedule::command(...)` blocks are present but **commented out** in
-`routes/console.php`, each already gated on `communitynews.enabled`
-(`community-news:research` daily 06:30, `:post-chitchat` daily 09:15, `:email`
-weekly Wed 10:00). To turn automation on after the manual trial: uncomment them
-and set `COMMUNITY_NEWS_ENABLED=true`. The commands self-gate per area, so a daily
-cadence just tops up / drips as each area falls due.
+`routes/console.php` schedules the ChitChat pipeline — `community-news:research`
+(daily 06:30), `:post-chitchat` (daily 09:15) and `:discover-sources`
+(quarterly) — each gated on `communitynews.enabled`, so nothing fires until ops
+sets `COMMUNITY_NEWS_ENABLED=true`. The commands self-gate per area, so a daily
+cadence just tops up / drips as each area falls due. On live the research
+credential is the existing `CLAUDE_CODE_OAUTH_TOKEN` in `.env.background`
+(subscription via the bundled `claude` CLI).
+
+`community-news:email` is deliberately **not scheduled** — the ChitChat drip
+runs first and we judge engagement before any email goes out. When the trial
+proves out: uncomment its schedule block and add `CommunityNews` to
+`FREEGLE_MAIL_ENABLED_TYPES` (the email path is feature-flag gated on top of
+the kill switch).
 
 ## Measuring the trial
 
