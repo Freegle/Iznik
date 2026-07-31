@@ -16,7 +16,13 @@ It has **two delivery channels that share one research core**:
 1. **ChitChat trial** — drip individual items onto the newsfeed (a "ChitChat"
    post) as the **Freegle** account, placed at the area centre so members nearby
    see them, every few days. This is the cheap engagement signal we watch before
-   committing to email.
+   committing to email. Each post sets **both** newsfeed columns: plain
+   `message` (read by the newsfeed digest email, notifications and the
+   duplicate guard) and `html` (an escaped, title-hyperlinked rendering that
+   clients display in preference, suppressing their stacked link-preview
+   cards). The `html` column is not settable through the public API, so it
+   stays trusted; `composeHtml()` escapes everything and only links http(s)
+   URLs.
 2. **Weekly email** — a Freegle-branded MJML digest bundling the recent items for
    an area, sent to deduplicated, opted-in members.
 

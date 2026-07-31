@@ -125,6 +125,7 @@ class CommunityNewsChitChatService
         $newsfeed->type = 'Message';
         $newsfeed->userid = $systemUserId;
         $newsfeed->message = $message;
+        $newsfeed->html = $this->composeHtml($item);
         $newsfeed->location = mb_substr($area->name, 0, 80);
         // Geometry via a raw expression, exactly like Group::boot() sets polyindex.
         $newsfeed->position = DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)");
@@ -148,6 +149,38 @@ class CommunityNewsChitChatService
         }
 
         return trim(implode("\n\n", array_filter($parts, fn ($p) => $p !== '')));
+    }
+
+    /**
+     * HTML rendering for the newsfeed `html` column: the title becomes a
+     * hyperlink instead of the bare URL line, so the post reads cleanly and the
+     * client suppresses its stacked preview cards. The plain `message` is still
+     * always set — the newsfeed digest email, notifications and the duplicate
+     * guard read that. `html` is trusted display markup (not settable through
+     * the public API and rendered unescaped by the clients), so every value
+     * interpolated here must be escaped, and only http(s) URLs are linked.
+     */
+    public function composeHtml(CommunityNewsItem $item): string
+    {
+        $title = trim($item->title);
+        if ($title !== '' && !preg_match('/[.!?…]$/u', $title)) {
+            $title .= '.';
+        }
+        $title = e($title);
+
+        $url = trim((string) $item->url);
+        if ($url !== '' && preg_match('#^https?://#i', $url)) {
+            $title = '<a href="' . e($url) . '" target="_blank" rel="noopener">' . $title . '</a>';
+        }
+
+        $parts = ['<p><strong>' . $title . '</strong></p>'];
+
+        $snippet = trim($item->snippet);
+        if ($snippet !== '') {
+            $parts[] = '<p>' . e($snippet) . '</p>';
+        }
+
+        return implode('', $parts);
     }
 
     /**

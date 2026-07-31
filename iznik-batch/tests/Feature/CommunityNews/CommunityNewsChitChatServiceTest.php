@@ -69,15 +69,48 @@ class CommunityNewsChitChatServiceTest extends TestCase
         $this->assertNotNull($item->posted_at);
 
         $nf = DB::table('newsfeed')->where('id', $item->newsfeedid)
-            ->selectRaw('type, userid, location, ST_AsText(position) AS pos, message')
+            ->selectRaw('type, userid, location, ST_AsText(position) AS pos, message, html')
             ->first();
         $this->assertSame('Message', $nf->type);
         $this->assertSame($sys->id, (int) $nf->userid);
         $this->assertStringContainsString('POINT', $nf->pos);
         $this->assertStringContainsString('Repair Café', $nf->message);
         $this->assertStringContainsString('https://example.org/repair', $nf->message);
+        // The html variant hyperlinks the title; clients render it in
+        // preference to message (and suppress preview cards).
+        $this->assertStringContainsString('<a href="https://example.org/repair" target="_blank" rel="noopener">Repair Café.</a>', $nf->html);
+        $this->assertStringContainsString('<p>Fix your bits and bobs.</p>', $nf->html);
 
         $this->assertNotNull($area->fresh()->lastposted);
+    }
+
+    public function test_compose_html_escapes_and_links(): void
+    {
+        $area = $this->area();
+        $item = $this->item($area, [
+            'title' => 'Fish & chips <b>fest</b>',
+            'snippet' => 'Bring "cash" & <script>alert(1)</script> a friend.',
+        ]);
+
+        $html = $this->svc()->composeHtml($item);
+
+        // Escaped, hyperlinked title with the full stop appended before linking.
+        $this->assertStringContainsString('>Fish &amp; chips &lt;b&gt;fest&lt;/b&gt;.</a>', $html);
+        // Snippet fully escaped — no raw markup can reach v-html on the client.
+        $this->assertStringContainsString('Bring &quot;cash&quot; &amp; &lt;script&gt;alert(1)&lt;/script&gt; a friend.', $html);
+        $this->assertStringNotContainsString('<script>', $html);
+    }
+
+    public function test_compose_html_without_url_has_no_anchor(): void
+    {
+        $area = $this->area();
+        $noUrl = $this->item($area, ['url' => null]);
+        $this->assertStringNotContainsString('<a ', $this->svc()->composeHtml($noUrl));
+
+        // Non-http(s) schemes are never linked — html is rendered unescaped
+        // client-side, so only web URLs may become hrefs.
+        $badScheme = $this->item($area, ['url' => 'javascript:alert(1)']);
+        $this->assertStringNotContainsString('<a ', $this->svc()->composeHtml($badScheme));
     }
 
     public function test_dup_guard_skips_identical_repeat(): void
