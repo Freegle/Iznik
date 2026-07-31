@@ -462,6 +462,114 @@ describe('ModMessage', () => {
     })
   })
 
+  // The automated content check records WHY it left a post in the queue, but nothing
+  // ever showed it. A paint post flagged on the word "mineral" looked to the moderator
+  // like it had been called a medicine for no reason (Discourse 9988), and a post held
+  // purely by a moderation setting said nothing at all (9987).
+  describe('Content check hold reasons', () => {
+    it('shows the word that flagged the post', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              contentcheck_reasons: JSON.stringify([
+                {
+                  check: 'ConcernKeyword',
+                  category: 'substance_medicine',
+                  action: 'flag',
+                  keyword: 'mineral',
+                  detail: "Matched concern keyword 'mineral'",
+                },
+              ]),
+            },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).toContain('Why this is waiting for approval')
+      expect(wrapper.text()).toContain("Matched concern keyword 'mineral'")
+    })
+
+    it('explains a hold caused by a moderation setting', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              contentcheck_reasons: JSON.stringify([
+                {
+                  check: 'GroupModerated',
+                  category: null,
+                  action: 'flag',
+                  detail:
+                    'This group moderates all posts, whatever the member’s setting',
+                },
+              ]),
+            },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).toContain('This group moderates all posts')
+    })
+
+    it('accepts reasons already parsed into an array', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              contentcheck_reasons: [
+                { check: 'PhoneNumber', detail: 'Post contains a phone number' },
+              ],
+            },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).toContain('Post contains a phone number')
+    })
+
+    it('shows nothing when there are no reasons', async () => {
+      const wrapper = mountComponent(
+        {},
+        { groups: [{ groupid: 789, collection: 'Pending' }] }
+      )
+      await flushPromises()
+      expect(wrapper.vm.holdReasons).toEqual([])
+      expect(wrapper.text()).not.toContain('Why this is waiting for approval')
+    })
+
+    it('survives malformed reasons rather than breaking the card', async () => {
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              contentcheck_reasons: 'not json at all',
+            },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.vm.holdReasons).toEqual([])
+      expect(wrapper.text()).not.toContain('Why this is waiting for approval')
+      consoleError.mockRestore()
+    })
+  })
+
   describe('Computed: alreadyOnHomeGroup', () => {
     // Regression: a post must not be told it "Possibly should be on" a group it is ALREADY
     // on (its origin, or a group it has rippled onto). The hint previously fired whenever the

@@ -372,8 +372,8 @@
               </NoticeMessage>
             </div>
             <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
-              We couldn't work out where this post is (often an emailed post whose
-              subject has no recognised place name). Please click
+              We couldn't work out where this post is (often an emailed post
+              whose subject has no recognised place name). Please click
               <strong>Edit</strong> and add a postcode (it doesn't have to be
               exactly right - do your best) so members can find it.
             </NoticeMessage>
@@ -406,6 +406,26 @@
               class="mb-2"
             >
               {{ contextGroup.spamreason }}
+            </NoticeMessage>
+            <!-- Why the automated content check left this in the queue. The keyword
+                 that flagged it is recorded per post but was never shown, so a mod
+                 had to guess - a paint post flagged on the word "mineral" looked
+                 like it had been flagged as a medicine for no reason (Discourse
+                 #9988), and a post held purely by a moderation setting said nothing
+                 at all (#9987). The server only sends this to moderators. -->
+            <NoticeMessage
+              v-if="holdReasons.length"
+              variant="warning"
+              class="mb-2"
+            >
+              <p class="mb-1">
+                <strong>Why this is waiting for approval:</strong>
+              </p>
+              <ul class="mb-0 ps-3">
+                <li v-for="(reason, ix) in holdReasons" :key="ix">
+                  {{ reason }}
+                </li>
+              </ul>
             </NoticeMessage>
             <NoticeMessage
               v-if="
@@ -740,7 +760,9 @@
           This message needs editing so that we know where it is.
         </NoticeMessage>
         <div
-          v-if="pending && (!contextGroup?.heldby || heldbyId === myid) && !editing"
+          v-if="
+            pending && (!contextGroup?.heldby || heldbyId === myid) && !editing
+          "
           class="text-end mb-1"
         >
           <b-button variant="danger" @click="spamReport">
@@ -1020,6 +1042,32 @@ const contextGroup = computed(() => {
   )
 })
 
+// What the automated content check found, in plain words. The API only sends
+// contentcheck_reasons to moderators, so this is empty for anyone else.
+const holdReasons = computed(() => {
+  const raw = contextGroup.value?.contentcheck_reasons
+
+  if (!raw) {
+    return []
+  }
+
+  let parsed = raw
+
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw)
+    } catch (e) {
+      // Never let a malformed reason take the whole message card down.
+      console.error('Could not parse contentcheck_reasons', e)
+      return []
+    }
+  }
+
+  return Array.isArray(parsed)
+    ? parsed.map((reason) => reason?.detail).filter(Boolean)
+    : []
+})
+
 // The origin group: the earliest arrival across the post's groups (shown as "First
 // posted on ..."). Excluded from the "may also be shown" list so it isn't listed twice.
 const originGroupid = computed(() => {
@@ -1112,7 +1160,9 @@ const isRippledInToContextGroup = computed(() =>
 // (both fields non-null) when the routing server said quicker=true at ripple-in time.
 const rippleProximity = computed(() => {
   const gid = currentGroupid.value
-  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  const g = (message.value?.groups || []).find(
+    (row) => parseInt(row.groupid) === gid
+  )
   if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
     return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
   }

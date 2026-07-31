@@ -2,8 +2,10 @@
 
 namespace Tests\Feature\Message;
 
+use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
+use App\Models\User;
 use App\Services\ContentCheckService;
 use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
@@ -2901,5 +2903,120 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($row->contentcheck_checked_at, 'a clean held post is still checked');
         $this->assertEquals(MessageGroup::COLLECTION_PENDING, $row->collection,
             'a clean held post must NOT be auto-approved while a moderator holds it');
+    }
+
+    /**
+     * Discourse #9987: a post held because of a moderation SETTING rather than
+     * its content used to reach the mod queue with contentcheck_reasons NULL,
+     * so the moderator had nothing telling them why it needed approving.
+     */
+    private function pendingCleanPost(Group $group, User $user, array $messageOverrides = []): int
+    {
+        $msgid = DB::table('messages')->insertGetId(array_merge([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'lat'      => 51.5,
+            'lng'      => -0.12,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ], $messageOverrides));
+
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        return $msgid;
+    }
+
+    private function reasonsFor(int $msgid, int $groupid): array
+    {
+        $json = DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $groupid)
+            ->value('contentcheck_reasons');
+
+        return $json ? json_decode($json, true) : [];
+    }
+
+    public function test_moderated_member_hold_records_why(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        // NULL ourPostingStatus = MODERATED.
+        $this->createMembership($user, $group);
+
+        $msgid = $this->pendingCleanPost($group, $user);
+
+        $stats = $this->service->processUnprocessed();
+        $this->assertEquals(1, $stats['kept_pending']);
+
+        $checks = array_column($this->reasonsFor($msgid, $group->id), 'check');
+        $this->assertContains(ContentCheckService::CHECK_MEMBER_MODERATED, $checks,
+            'a post held because the member is moderated must say so');
+    }
+
+    public function test_fully_moderated_group_hold_records_why(): void
+    {
+        // Group::$casts has 'rules' => 'array', so pass an array - a pre-encoded
+        // string gets encoded a second time and isGroupModerated() cannot read it.
+        $group = $this->createTestGroup(['rules' => ['fullymoderated' => true]]);
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = $this->pendingCleanPost($group, $user);
+
+        $this->service->processUnprocessed();
+
+        $checks = array_column($this->reasonsFor($msgid, $group->id), 'check');
+        $this->assertContains(ContentCheckService::CHECK_GROUP_MODERATED, $checks,
+            'a post held because the group moderates everything must say so');
+        $this->assertNotContains(ContentCheckService::CHECK_MEMBER_MODERATED, $checks,
+            'the member is on Group Settings, so do not also blame the member');
+    }
+
+    public function test_missing_location_hold_records_why(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        // Not moderated, so the only thing keeping this pending is the location.
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = $this->pendingCleanPost($group, $user, ['lat' => null, 'lng' => null]);
+
+        $this->service->processUnprocessed();
+
+        $checks = array_column($this->reasonsFor($msgid, $group->id), 'check');
+        $this->assertContains(ContentCheckService::CHECK_NO_LOCATION, $checks,
+            'a post held because we could not locate it must say so');
+    }
+
+    public function test_clean_unmoderated_post_is_approved_with_no_reasons(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = $this->pendingCleanPost($group, $user);
+
+        $this->service->processUnprocessed();
+
+        $row = DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $group->id)->first();
+
+        $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $row->collection,
+            'nothing is holding this post, so it should go live');
+        $this->assertNull($row->contentcheck_reasons,
+            'an approved post carries no hold reasons');
     }
 }

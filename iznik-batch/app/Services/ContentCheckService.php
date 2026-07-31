@@ -27,6 +27,12 @@ class ContentCheckService
     public const CHECK_LANGUAGE          = 'Language';
     public const CHECK_NOT_AN_ITEM       = 'NotAnItem';
 
+    // Not content problems - these explain a hold that the member's or group's
+    // moderation settings caused, so the mod queue says why (Discourse #9987).
+    public const CHECK_MEMBER_MODERATED  = 'MemberModerated';
+    public const CHECK_GROUP_MODERATED   = 'GroupModerated';
+    public const CHECK_NO_LOCATION       = 'NoLocation';
+
     /**
      * Candidate languages for the content-check language detector. Restricted to
      * languages realistically seen on UK Freegle — English/Welsh, the main UK
@@ -294,8 +300,9 @@ class ContentCheckService
                             continue;
                         }
 
-                        $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser)
-                                    || $this->isGroupModerated((int) $row->groupid);
+                        $userModerated  = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser);
+                        $groupModerated = $this->isGroupModerated((int) $row->groupid);
+                        $isModerated    = $userModerated || $groupModerated;
                         // Never auto-promote an Offer/Wanted we couldn't locate (NULL lat -
                         // subject didn't geocode and no usable poster fallback): it would go
                         // live undiscoverable. Keep it in the mod queue so a moderator adds a
@@ -307,6 +314,18 @@ class ContentCheckService
                             $reasons,
                             fn($r) => ($r['action'] ?? 'flag') === 'block'
                         ));
+
+                        // A post held for a STATUS reason rather than a content reason used to
+                        // store no reasons at all, so it arrived in the mod queue with nothing
+                        // saying why - "there is no explanation of why the post needs Approval"
+                        // (Discourse #9987). Record the cause too. Appended after $hasBlock is
+                        // computed so it can never turn a flag into a block.
+                        if (!$promote && !$hasBlock) {
+                            $reasons = array_merge(
+                                $reasons,
+                                $this->holdReasons($userModerated, $groupModerated, $missingLocation)
+                            );
+                        }
 
                         if ($dryRun) {
                             if ($promote) {
@@ -498,6 +517,50 @@ class ContentCheckService
      * @param int      $groupid  Group ID.
      * @param int|null $fromuser Known fromuser value; skips the messages query when supplied.
      */
+    /**
+     * Why a post is being kept pending when the content itself was clean.
+     *
+     * Without these a moderator sees a post sitting in the queue with no
+     * indication of what put it there, which is what Discourse #9987 reported.
+     * These are 'flag', never 'block' - they explain a hold, they don't cause one.
+     *
+     * @return array<int, array{check:string, category:null, action:string, detail:string}>
+     */
+    private function holdReasons(bool $userModerated, bool $groupModerated, bool $missingLocation): array
+    {
+        $reasons = [];
+
+        if ($groupModerated) {
+            $reasons[] = [
+                'check'    => self::CHECK_GROUP_MODERATED,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'This group moderates all posts, whatever the member\'s setting',
+            ];
+        }
+
+        // Only worth saying if the group isn't moderating everything anyway.
+        if ($userModerated && !$groupModerated) {
+            $reasons[] = [
+                'check'    => self::CHECK_MEMBER_MODERATED,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'This member\'s posts are moderated',
+            ];
+        }
+
+        if ($missingLocation) {
+            $reasons[] = [
+                'check'    => self::CHECK_NO_LOCATION,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'We could not work out where this post is - add a postcode before approving',
+            ];
+        }
+
+        return $reasons;
+    }
+
     public function isUserModerated(int $msgid, int $groupid, ?int $fromuser = null): bool
     {
         if ($fromuser === null) {

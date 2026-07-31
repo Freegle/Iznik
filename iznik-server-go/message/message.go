@@ -706,6 +706,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Fromaddr = nil
 					message.Fromip = nil
 					message.Fromcountry = nil
+
+					// Why a post was held is moderator information: it names the
+					// keyword that flagged it, which tells a spammer exactly what
+					// to avoid next time. The row is selected for everyone because
+					// collection/arrival are public, so strip the check fields here.
+					for i := range message.MessageGroups {
+						message.MessageGroups[i].ContentcheckReasons = nil
+						message.MessageGroups[i].ContentcheckCheckedAt = nil
+					}
 				}
 
 				// Convert 2-letter country code to full name for frontend display.
