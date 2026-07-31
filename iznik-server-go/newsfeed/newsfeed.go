@@ -306,17 +306,28 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			}
 		} else {
 			// Explicit "anywhere" - which is also the DEFAULT for anyone who has
-			// never chosen a feed distance. The feed body is unfiltered, but an
-			// unpinned alert (Community News) must not escape its geography just
-			// because of the distance toggle: size an alert-only box exactly as
-			// the nearby feed would, so the toggle doesn't change which news you
-			// see. With no known location, only pinned alerts are served.
-			reasonable, _, aNelat, aNelng, aSwlat, aSwlng := GetNearbyDistance(myid)
+			// never chosen a feed distance. The feed body is unfiltered, but we
+			// still need the user's location for the alert box below.
+			latlng := user.GetLatLng(myid)
+			userLat = float64(latlng.Lat)
+			userLng = float64(latlng.Lng)
+		}
 
-			if reasonable > 0 {
-				gotAlertBox = true
-				alertNelat, alertNelng, alertSwlat, alertSwlng = aNelat, aNelng, aSwlat, aSwlng
-			}
+		// Unpinned alerts (Community News) stay in their geography whatever the
+		// distance toggle says. Their box is a fixed NEWSFEED_ALERT_RADIUS_KM
+		// around the member - the scale their news area is clustered at - NOT the
+		// feed's density-derived radius, which can collapse to its 1km floor and
+		// starve them of news (see the constant's comment). With no known
+		// location only pinned alerts are served.
+		if userLat != 0 || userLng != 0 {
+			p := geo.NewPoint(userLat, userLng)
+			ne := p.PointAtDistanceAndBearing(utils.NEWSFEED_ALERT_RADIUS_KM, 45)
+			sw := p.PointAtDistanceAndBearing(utils.NEWSFEED_ALERT_RADIUS_KM, 225)
+			gotAlertBox = true
+			alertNelat = ne.Lat()
+			alertNelng = ne.Lng()
+			alertSwlat = sw.Lat()
+			alertSwlng = sw.Lng()
 		}
 	}()
 
@@ -348,8 +359,9 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 		// 1. Regular posts (non-event, non-alert types) in the user's geographic area, capped at 100.
 		// 2. Event/volunteering posts in the user's area, capped at NEWSFEED_EVENTS_PER_FEED so a
 		//    flood of these cannot push regular posts out of the feed (Discourse #9624).
-		// 3. Alerts in the user's area, capped at NEWSFEED_ALERTS_PER_FEED. Community News
-		//    drip-posts as type Alert, so this is the same flood guard as #2.
+		// 3. Alerts in the user's ALERT box (fixed NEWSFEED_ALERT_RADIUS_KM), capped at
+		//    NEWSFEED_ALERTS_PER_FEED. Community News drip-posts as type Alert, so this is
+		//    the same flood guard as #2.
 		// 4. PINNED alerts (any location), capped at 5. Only pinned alerts - central Freegle
 		//    announcements - are allowed to escape the geographic filter.
 		db.Raw(
@@ -458,15 +470,17 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			start,
 			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
 			userLng, userLat, utils.SRID,
-			// UNION 3: alerts in geographic area (flood-capped) - Community News posts here
+			// UNION 3: alerts in the ALERT box (flood-capped) - Community News posts here.
+			// The alert box, not the feed box: the feed's density-derived radius can be
+			// far smaller than the ~20-mile scale news areas are clustered at.
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
 			myid,
-			swlng, swlat,
-			swlng, nelat,
-			nelng, nelat,
-			nelng, swlat,
-			swlng, swlat,
+			alertSwlng, alertSwlat,
+			alertSwlng, alertNelat,
+			alertNelng, alertNelat,
+			alertNelng, alertSwlat,
+			alertSwlng, alertSwlat,
 			utils.SRID,
 			start,
 			utils.NEWSFEED_TYPE_ALERT,

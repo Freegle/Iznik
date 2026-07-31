@@ -167,6 +167,17 @@ const NEWSFEED_EVENTS_PER_FEED = 20
 // PINNED alerts - central Freegle announcements - escape the geographic filter;
 // everything else stays local to the poster's area like any other post.
 const NEWSFEED_ALERTS_PER_FEED = 5
+
+// How far away an unpinned alert (Community News) can be and still reach a
+// member. Community News areas cluster groups onto their nearest town within
+// area_cluster_miles (20 miles, CommunityNewsAreaService), and the post sits at
+// the area centre - so a member can legitimately be up to ~20 miles from their
+// own area's news. A fixed box at that scale is used instead of the feed's
+// density-derived radius, which collapses to its 1km floor against a wall of
+// co-located historical posts (e.g. the member's own) and then starves them of
+// news entirely.
+const NEWSFEED_ALERT_RADIUS_KM = 32.0
+
 const NEWSFEED_MODSTATUS_SUPPRESSED = "Suppressed"
 
 const NEARBY = 50
@@ -409,7 +420,6 @@ func TidyName(name string) string {
 	if tnOnlyRegexp.MatchString(name) {
 		name = "A freegler"
 	}
-
 
 	if len(name) == 0 {
 		name = "A freegler"
