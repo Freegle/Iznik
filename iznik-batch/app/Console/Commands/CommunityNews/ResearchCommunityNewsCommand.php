@@ -24,6 +24,27 @@ class ResearchCommunityNewsCommand extends Command
             ? (int) $this->option('min-days')
             : (int) config('freegle.communitynews.chitchat_min_days', 3);
 
+        // Same manual-vs-cron mutex as community-news:email: a long manual run
+        // (e.g. after a mass enablement, ~minutes of model time per new area)
+        // must not have the hourly cron start a second copy and double-research
+        // areas whose lastresearched isn't stamped yet. Generous TTL — a mass
+        // run can span hours; released in finally on any exit.
+        $lock = $dryRun ? null : \Illuminate\Support\Facades\Cache::lock('community-news:research', 4 * 3600);
+        if ($lock && !$lock->get()) {
+            $this->warn('Another community-news:research run is in progress; skipping.');
+
+            return self::SUCCESS;
+        }
+
+        try {
+            return $this->research($areas, $research, $dryRun, $minDays);
+        } finally {
+            $lock?->release();
+        }
+    }
+
+    private function research(CommunityNewsAreaService $areas, CommunityNewsResearchService $research, bool $dryRun, int $minDays): int
+    {
         $built = $areas->rebuildAreas();
         $this->info(($dryRun ? '[dry-run] ' : '') . "Areas: {$built->count()} from communitynews-enabled communities.");
 
