@@ -65,8 +65,8 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
-        $g2 = $this->createTestGroup(['lat' => 51.51, 'lng' => -0.11, 'settings' => ['communitynews' => 1]]);
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $g2 = $this->createTestGroup(['lat' => 51.51, 'lng' => -0.11, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
 
         // In BOTH area groups -> must receive exactly one mail (dedup).
         $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
@@ -114,7 +114,7 @@ class CommunityNewsEmailServiceTest extends TestCase
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
         config(['freegle.communitynews.email_min_days' => 7]);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
         $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->createMembership($u1, $g1);
 
@@ -214,7 +214,7 @@ class CommunityNewsEmailServiceTest extends TestCase
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1]]);
+        $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
         $u1 = $this->createTestUser(['email_preferred' => 'u1@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->createMembership($u1, $g1);
 
