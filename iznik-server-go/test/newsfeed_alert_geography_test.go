@@ -96,13 +96,52 @@ func TestFeedCapsAlertsWhenEverywhere(t *testing.T) {
 	prefix := uniquePrefix("alertcapevery")
 	userID, token := CreateFullTestUser(t, prefix)
 
-	// With "everywhere" there is no geographic filter to hold the volume down,
-	// so the cap is the only thing standing between a news run and a feed full
-	// of Community News.
+	// Local alerts are still served in the "everywhere" feed, so the cap is
+	// what stands between a news run and a feed full of Community News.
 	created := createAlertBurst(t, userID, prefix, 55.9533, -3.1883)
 	ids := feedIDs(t, token, "anywhere")
 
 	assertAlertsCapped(t, created, ids)
+}
+
+func TestFeedUnpinnedAlertStaysInGeographyWhenEverywhere(t *testing.T) {
+	prefix := uniquePrefix("alertgeoevery")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	// "Everywhere" is the default feed setting for anyone who never chose a
+	// distance, so it must apply the same rule as Nearby: only PINNED alerts
+	// escape their geography. The user is in Edinburgh; London is far outside
+	// any alert box.
+	londonLat, londonLng := 51.5074, -0.1278
+
+	unpinnedID := CreateTestNewsfeedWithType(t, userID, londonLat, londonLng,
+		"Far unpinned alert everywhere "+prefix, utils.NEWSFEED_TYPE_ALERT, 0)
+
+	pinnedID := CreateTestNewsfeedWithType(t, userID, londonLat, londonLng,
+		"Far pinned alert everywhere "+prefix, utils.NEWSFEED_TYPE_ALERT, 0)
+	pinNewsfeed(t, pinnedID)
+
+	ids := feedIDs(t, token, "anywhere")
+
+	assert.False(t, ids[unpinnedID],
+		"an unpinned alert 330 miles away must not appear in the Everywhere feed either")
+	assert.True(t, ids[pinnedID],
+		"a pinned alert is a central announcement and must still reach everyone")
+}
+
+func TestFeedLocalUnpinnedAlertStillAppearsWhenEverywhere(t *testing.T) {
+	prefix := uniquePrefix("alertlocalevery")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	// Right where the user is: local Community News is still delivered when the
+	// feed distance is "anywhere".
+	localID := CreateTestNewsfeedWithType(t, userID, 55.9533, -3.1883,
+		"Local alert everywhere "+prefix, utils.NEWSFEED_TYPE_ALERT, 0)
+
+	ids := feedIDs(t, token, "anywhere")
+
+	assert.True(t, ids[localID],
+		"an alert at the user's own location must still appear in the Everywhere feed")
 }
 
 // createAlertBurst makes more alerts than the cap allows, newest last.

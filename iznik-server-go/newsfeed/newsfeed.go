@@ -265,6 +265,11 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	var nelat, nelng, swlat, swlng float64
 	var userLat, userLng float64
 
+	// The "everywhere" feed is unfiltered as a whole, but unpinned alerts
+	// (Community News) must still stay in their geography - see below.
+	var alertNelat, alertNelng, alertSwlat, alertSwlng float64
+	var gotAlertBox bool
+
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -298,6 +303,19 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 				swlat = sw.Lat()
 				swlng = sw.Lng()
 				gotLatLng = true
+			}
+		} else {
+			// Explicit "anywhere" - which is also the DEFAULT for anyone who has
+			// never chosen a feed distance. The feed body is unfiltered, but an
+			// unpinned alert (Community News) must not escape its geography just
+			// because of the distance toggle: size an alert-only box exactly as
+			// the nearby feed would, so the toggle doesn't change which news you
+			// see. With no known location, only pinned alerts are served.
+			reasonable, _, aNelat, aNelng, aSwlat, aSwlng := GetNearbyDistance(myid)
+
+			if reasonable > 0 {
+				gotAlertBox = true
+				alertNelat, alertNelng, alertSwlat, alertSwlng = aNelat, aNelng, aSwlat, aSwlng
 			}
 		}
 	}()
@@ -460,12 +478,29 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			utils.NEWSFEED_TYPE_ALERT,
 		).Scan(&newsfeed)
 	} else {
-		// Three-way UNION for the no-location path:
+		// Three-way UNION for the "everywhere" path:
 		// 1. Regular posts (non-event, non-alert types), capped at 100.
 		// 2. Event/volunteering posts, capped at NEWSFEED_EVENTS_PER_FEED.
-		// 3. Alerts, capped at NEWSFEED_ALERTS_PER_FEED. There is no geographic filter here to
-		//    hold the volume down, so the cap is the only thing stopping a Community News run
-		//    from crowding out members' own ChitChat.
+		// 3. Alerts, capped at NEWSFEED_ALERTS_PER_FEED. Pinned alerts (central Freegle
+		//    announcements) come from anywhere; unpinned ones - Community News - only from
+		//    inside the user's own alert box, so "everywhere" (the default feed setting)
+		//    doesn't serve somebody in Cornwall news about Yorkshire. With no known
+		//    location only pinned alerts are served.
+		alertGeo := "AND newsfeed.pinned = 1 "
+		var alertGeoArgs []interface{}
+
+		if gotAlertBox {
+			alertGeo = "AND (newsfeed.pinned = 1 OR MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position)) "
+			alertGeoArgs = []interface{}{
+				alertSwlng, alertSwlat,
+				alertSwlng, alertNelat,
+				alertNelng, alertNelat,
+				alertNelng, alertSwlat,
+				alertSwlng, alertSwlat,
+				utils.SRID,
+			}
+		}
+
 		db.Raw(
 			fmt.Sprintf(
 				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
@@ -520,28 +555,30 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
 					"AND newsfeed.type = ? "+
+					"%s"+
 					"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT %d "+
 					") ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED, utils.NEWSFEED_ALERTS_PER_FEED),
-			// UNION 1: regular posts
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
-			// UNION 2: event/volunteering posts (flood-capped)
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
-			// UNION 3: alerts (flood-capped) - Community News posts here
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			start,
-			utils.NEWSFEED_TYPE_ALERT,
-		).Scan(&newsfeed)
+				utils.NEWSFEED_EVENTS_PER_FEED, alertGeo, utils.NEWSFEED_ALERTS_PER_FEED),
+			append([]interface{}{
+				// UNION 1: regular posts
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
+				// UNION 2: event/volunteering posts (flood-capped)
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+				// UNION 3: alerts (flood-capped) - Community News posts here
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_ALERT,
+			}, alertGeoArgs...)...).Scan(&newsfeed)
 	}
 
 	amAMod := me.Systemrole != utils.SYSTEMROLE_USER
