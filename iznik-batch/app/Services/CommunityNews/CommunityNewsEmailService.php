@@ -230,14 +230,11 @@ class CommunityNewsEmailService
             ->where('memberships.collection', 'Approved')
             ->where('users.newslettersallowed', 1)
             ->whereNull('users.deleted')
-            ->where(function ($q) {
-                // The ModTools "Send newsletters to members?" group toggle
-                // (settings.newsletter). Defaults to on when not set; a group
-                // is excluded only if a mod explicitly turned it off. Same
-                // clause as StoriesNewsletterService.
-                $q->whereNull('groups.settings')
-                    ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
-            })
+            // The ModTools "Send newsletters to members?" group toggle
+            // (settings.newsletter). For Community News this defaults OFF —
+            // stricter than StoriesNewsletterService's default-on — so a group
+            // is mailed only when its mods have newsletters explicitly enabled.
+            ->whereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 0) != 0")
             ->distinct()
             ->select('users.id');
     }

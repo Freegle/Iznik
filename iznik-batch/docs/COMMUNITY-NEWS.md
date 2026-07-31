@@ -104,7 +104,11 @@ file's `groups`, or the place name appears in the area name.
 
 ## Opt-out
 
-Reuses the **existing** "Newsletters & stories" preference, `users.newslettersallowed`
+Two levels gate the email. **Per group**, the ModTools "Send newsletters to
+members?" toggle (`settings.newsletter`) must be **explicitly on** — for
+Community News it defaults off, stricter than the Stories Newsletter's
+default-on reading of the same setting. **Per member**, it
+reuses the **existing** "Newsletters & stories" preference, `users.newslettersallowed`
 — the same switch Stories Newsletter honours — so there is one familiar "no more of
 these" control. The email footer links to `/unsubscribe` and `/settings` (never the
 account-deleting one-click route). ChitChat posts are public newsfeed items and are

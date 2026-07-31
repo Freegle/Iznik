@@ -134,22 +134,26 @@ class CommunityNewsEmailServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_group_newsletter_toggle_excludes_members(): void
+    public function test_group_newsletter_toggle_defaults_off(): void
     {
         config(['freegle.mail.enabled_types' => 'CommunityNews']);
 
-        // Mod turned off "Send newsletters to members?" for g1; g2 default-on.
+        // The ModTools "Send newsletters to members?" toggle gates the email
+        // and DEFAULTS OFF for Community News: only g3 (explicitly on) mails.
         $g1 = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 0]]);
         $g2 = $this->createTestGroup(['lat' => 51.51, 'lng' => -0.11, 'settings' => ['communitynews' => 1]]);
+        $g3 = $this->createTestGroup(['lat' => 51.52, 'lng' => -0.10, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
 
         $u1 = $this->createTestUser(['email_preferred' => 'off@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->createMembership($u1, $g1);
-        $u2 = $this->createTestUser(['email_preferred' => 'on@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u2 = $this->createTestUser(['email_preferred' => 'unset@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
         $this->createMembership($u2, $g2);
+        $u3 = $this->createTestUser(['email_preferred' => 'on@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->createMembership($u3, $g3);
 
         $area = CommunityNewsArea::create([
-            'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'Hi',
-            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id], 'groupcount' => 2,
+            'anchorgroupid' => min($g1->id, $g2->id, $g3->id), 'name' => 'Testville', 'intro' => 'Hi',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id, $g3->id], 'groupcount' => 3,
         ]);
         CommunityNewsItem::create([
             'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
@@ -160,7 +164,7 @@ class CommunityNewsEmailServiceTest extends TestCase
 
         $sent = Mail::sent(CommunityNewsMail::class);
         $this->assertCount(1, $sent);
-        $this->assertSame($u2->id, $sent->first()->userId);
+        $this->assertSame($u3->id, $sent->first()->userId);
     }
 
     public function test_pick_story_uses_flags_window_and_ai(): void
