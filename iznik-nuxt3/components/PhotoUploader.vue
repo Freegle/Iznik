@@ -209,6 +209,10 @@ import Compressor from '@uppy/compressor'
 import PhotoCard from './PhotoCard.vue'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
+import {
+  createHeicPreProcessor,
+  createHeicSafeCompressor,
+} from '~/composables/useUppyHeic'
 import { action } from '~/composables/useClientLog'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
 import { reportCameraError } from '~/composables/useCameraErrorMessage'
@@ -755,12 +759,18 @@ onMounted(() => {
       allowedFileTypes: ['image/*', '.jpg', '.jpeg', '.png', '.gif', '.heic'],
       maxNumberOfFiles: props.maxPhotos,
     },
+  }).use(Tus, {
+    endpoint: runtimeConfig.public.TUS_UPLOADER,
+    uploadDataDuringCreation: true,
   })
-    .use(Tus, {
-      endpoint: runtimeConfig.public.TUS_UPLOADER,
-      uploadDataDuringCreation: true,
-    })
-    .use(Compressor)
+  // Must be registered before Compressor - pre-processors run in the order
+  // they're added. Converts HEIC to JPEG so Compressor's canvas re-encode has
+  // something the browser can draw; the wrapped Compressor then skips anything
+  // still HEIC. See useUppyHeic.
+  uppy.value.addPreProcessor(
+    createHeicPreProcessor({ getUppy: () => uppy.value, uploader: 'photo' })
+  )
+  uppy.value.use(createHeicSafeCompressor(Compressor))
 
   uppy.value.on('complete', handleUppySuccess)
   // Upload funnel telemetry (Loki, event_type=action). This uploader previously
