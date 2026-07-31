@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import ChatReplyPane from '~/components/ChatReplyPane.vue'
@@ -98,6 +98,10 @@ vi.mock('~/composables/useClientLog', () => ({
 
 vi.mock('~/constants', () => ({
   FAR_AWAY: 20,
+  LAST_SEEN_TOOLTIP: 'When they were last on Freegle',
+  REPLY_TIME_TOOLTIP: 'How long they usually take to reply to a message',
+  DISTANCE_TOOLTIP:
+    'Roughly how far away they are, as the crow flies rather than by road',
 }))
 
 // ChatReplyPane captures the current route at setup to derive the reply surface
@@ -205,6 +209,14 @@ describe('ChatReplyPane', () => {
             template: '<div class="chat-button" />',
             props: ['userid'],
           },
+          UserRatings: {
+            template: '<div class="user-ratings" :data-id="id" />',
+            props: ['id', 'size'],
+          },
+          SupporterInfo: {
+            template: '<div class="supporter-info" />',
+            props: ['size'],
+          },
           ProfileImage: {
             template: '<div class="profile-image" :data-name="name" />',
             props: [
@@ -247,6 +259,18 @@ describe('ChatReplyPane', () => {
           NuxtLink: {
             template: '<a class="nuxt-link" :href="to"><slot /></a>',
             props: ['to'],
+          },
+        },
+        directives: {
+          // Record what v-b-tooltip was given so the chips' tooltips can be asserted.
+          'b-tooltip': {
+            mounted(el, binding) {
+              el.setAttribute('data-tooltip', binding.value ?? '')
+              el.setAttribute(
+                'data-tooltip-placement',
+                Object.keys(binding.modifiers).join(' ')
+              )
+            },
           },
         },
       },
@@ -413,6 +437,56 @@ describe('ChatReplyPane', () => {
     it('hides delivery notice when no delivery', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Delivery may be possible')
+    })
+  })
+
+  describe('freegler stat chips', () => {
+    // The chips only render for a poster with profile info, so give the stub
+    // poster a last-access time and a reply time, then put it back afterwards.
+    const posterBase = {
+      id: 200,
+      displayname: 'Jane Doe',
+      profile: { paththumb: '/profile.jpg' },
+    }
+
+    beforeEach(() => {
+      mockUserStore.byId.mockReturnValue({
+        ...posterBase,
+        lastaccess: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        info: { replytime: 3 * 60 * 60 },
+      })
+    })
+
+    afterEach(() => {
+      mockUserStore.byId.mockReturnValue(posterBase)
+    })
+
+    // "2 hours" and "2 hours" side by side told you nothing about which was which,
+    // so each chip names what it is and carries a tooltip explaining it.
+    it('labels last seen and reply time so they cannot be confused', async () => {
+      const wrapper = await createWrapper()
+      const chips = wrapper.findAll('.reply-stat-chip').map((c) => c.text())
+      expect(chips.some((t) => t.startsWith('Last seen'))).toBe(true)
+      expect(chips.some((t) => t.startsWith('Replies in'))).toBe(true)
+    })
+
+    it('gives every chip a tooltip that opens below', async () => {
+      const wrapper = await createWrapper()
+      const chips = wrapper.findAll('.reply-stat-chip')
+      expect(chips.length).toBeGreaterThan(0)
+      chips.forEach((chip) => {
+        expect(chip.attributes('data-tooltip')).toBeTruthy()
+        expect(chip.attributes('data-tooltip-placement')).toContain('bottom')
+      })
+    })
+
+    it('says the distance is as the crow flies, not by road', async () => {
+      const wrapper = await createWrapper()
+      const distance = wrapper
+        .findAll('.reply-stat-chip')
+        .find((c) => c.text().includes('miles away'))
+      expect(distance.attributes('data-tooltip')).toContain('crow flies')
+      expect(distance.attributes('data-tooltip')).toContain('road')
     })
   })
 

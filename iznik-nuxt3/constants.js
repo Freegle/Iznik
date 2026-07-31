@@ -54,6 +54,15 @@ export const DAY_WORDS = [
 
 export const MAX_MAP_ZOOM = 14
 
+// Tooltips for the freegler chips shown in chat - in the header, in the mobile
+// profile card and in the reply-from-browse pane. Last seen and reply time both
+// render as a bare duration, so say plainly which is which.
+export const LAST_SEEN_TOOLTIP = 'When they were last on Freegle'
+export const REPLY_TIME_TOOLTIP =
+  'How long they usually take to reply to a message'
+export const DISTANCE_TOOLTIP =
+  'Roughly how far away they are, as the crow flies rather than by road'
+
 export const RECENT_MESSAGES = 31
 export const OWN_POSTS_AGE = 120
 export const MESSAGE_EXPIRE_TIME = 90

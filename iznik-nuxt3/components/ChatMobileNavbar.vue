@@ -94,20 +94,31 @@
               />
             </div>
             <div class="profile-card-stats">
-              <span v-if="otheruser.lastaccess" class="stat-chip">
+              <span
+                v-if="otheruser.lastaccess"
+                v-b-tooltip.bottom="LAST_SEEN_TOOLTIP"
+                class="stat-chip"
+              >
                 <v-icon icon="clock" class="stat-icon" />
                 <span class="stat-label">Last seen</span>
-                {{ otheraccessFull }}
+                {{ lastSeenAgo }}
               </span>
-              <span v-if="replytimeFull" class="stat-chip">
+              <span
+                v-if="replytimeFull"
+                v-b-tooltip.bottom="REPLY_TIME_TOOLTIP"
+                class="stat-chip"
+              >
                 <v-icon icon="reply" class="stat-icon" />
                 <span class="stat-label">Replies in</span>
                 {{ replytimeFull }}
               </span>
-              <span v-if="!otheruser?.deleted && milesaway" class="stat-chip">
+              <span
+                v-if="!otheruser?.deleted && milesaway"
+                v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                class="stat-chip"
+              >
                 <v-icon icon="map-marker-alt" class="stat-icon" />
-                <span class="stat-label">Distance</span>
-                {{ milesaway }} miles
+                {{ milesaway }} miles away
               </span>
             </div>
           </div>
@@ -262,11 +273,11 @@ const showRatingsDownModal = ref(false)
 const showRatingsRemoveModal = ref(false)
 const ratingsUserId = ref(null)
 
-const otheraccessFull = computed(() => {
+// Keeps the "ago" so the chip reads "Last seen 2 hours ago", and copes with
+// timeago's non-numeric forms like "a few seconds ago".
+const lastSeenAgo = computed(() => {
   if (!otheruser.value?.lastaccess) return null
-  const full = timeago(otheruser.value.lastaccess)
-  // Remove "ago" suffix for cleaner display
-  return full.replace(/ ago$/, '')
+  return timeago(otheruser.value.lastaccess)
 })
 
 const replytimeFull = computed(() => {
@@ -674,21 +685,30 @@ onBeforeUnmount(() => {
   color: $color-gray--darker;
   font-weight: 500;
   border-radius: var(--radius-sm, 0.375rem);
+
+  /* Spelling the labels out costs width, so shrink rather than wrap on phones. */
+  @include media-breakpoint-down(sm) {
+    gap: 3px;
+    padding: 3px 6px;
+    font-size: 0.65rem;
+  }
 }
 
 .stat-icon {
   font-size: 0.7rem;
-  color: $color-green--dark;
+  color: $color-green--darker;
+
+  @include media-breakpoint-down(sm) {
+    font-size: 0.6rem;
+  }
 }
 
+/* The label is what tells "last seen" apart from "replies in" - both render as a
+   bare duration - so it stays visible on mobile and the chip shrinks instead. */
 .stat-label {
-  display: none;
+  display: inline;
   color: var(--color-gray-600);
   font-weight: 400;
-
-  @include media-breakpoint-up(md) {
-    display: inline;
-  }
 }
 
 .profile-card-ratings {

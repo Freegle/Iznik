@@ -367,7 +367,7 @@ describe('ChatMobileNavbar', () => {
     })
 
     it('uses useTimeFormat', () => {
-      // timeago for otheraccessFull
+      // timeago for lastSeenAgo
       expect(true).toBe(true)
     })
   })

@@ -49,17 +49,29 @@
                browse/email carries the same reassurance as being in the chat. -->
           <div v-if="poster && poster.info" class="reply-card__stats">
             <UserRatings :id="poster.id" size="sm" />
-            <span v-if="posterLastSeen" class="reply-stat-chip">
+            <span
+              v-if="posterLastSeen"
+              v-b-tooltip.bottom="LAST_SEEN_TOOLTIP"
+              class="reply-stat-chip"
+            >
               <v-icon icon="clock" class="reply-stat-icon" />
-              {{ posterLastSeen }}
+              Last seen {{ posterLastSeen }}
             </span>
-            <span v-if="replytime" class="reply-stat-chip">
+            <span
+              v-if="replytime"
+              v-b-tooltip.bottom="REPLY_TIME_TOOLTIP"
+              class="reply-stat-chip"
+            >
               <v-icon icon="reply" class="reply-stat-icon" />
-              {{ replytime }}
+              Replies in {{ replytime }}
             </span>
-            <span v-if="milesaway" class="reply-stat-chip">
+            <span
+              v-if="milesaway"
+              v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+              class="reply-stat-chip"
+            >
               <v-icon icon="map-marker-alt" class="reply-stat-icon" />
-              {{ milesaway }} miles
+              {{ milesaway }} miles away
             </span>
           </div>
         </div>
@@ -333,7 +345,12 @@ import UserRatings from '~/components/UserRatings'
 import SupporterInfo from '~/components/SupporterInfo'
 import { timeago } from '~/composables/useTimeFormat'
 import { rippledInAreaDates } from '~/composables/rippleStatus'
-import { FAR_AWAY } from '~/constants'
+import {
+  FAR_AWAY,
+  LAST_SEEN_TOOLTIP,
+  REPLY_TIME_TOOLTIP,
+  DISTANCE_TOOLTIP,
+} from '~/constants'
 
 const NewFreegler = defineAsyncComponent(() =>
   import('~/components/NewFreegler')
@@ -431,10 +448,12 @@ const poster = computed(() => {
     : null
 })
 
-// When the poster was last seen, formatted like the chat header (no trailing "ago").
+// When the poster was last seen, formatted like the chat header. Keeps the "ago"
+// so the chip reads "Last seen 2 hours ago" and copes with forms like
+// "a few seconds ago".
 const posterLastSeen = computed(() => {
   if (!poster.value?.lastaccess) return null
-  return timeago(poster.value.lastaccess).replace(/ ago$/, '')
+  return timeago(poster.value.lastaccess)
 })
 
 // How quickly the poster typically replies - mirrors the chat header's phrasing.
@@ -765,11 +784,22 @@ $reply-border: #cdcdcd;
   color: $color-gray--darker;
   font-weight: 500;
   border-radius: var(--radius-sm, 0.375rem);
+
+  /* Spelling the labels out costs width, so shrink rather than wrap on phones. */
+  @media (max-width: 575.98px) {
+    gap: 3px;
+    padding: 2px 6px;
+    font-size: 0.65rem;
+  }
 }
 
 .reply-stat-icon {
   font-size: 0.7rem;
-  color: $color-green--dark;
+  color: $color-green--darker;
+
+  @media (max-width: 575.98px) {
+    font-size: 0.6rem;
+  }
 }
 
 /* ---- Body (chat conversation area) ---- */
