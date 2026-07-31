@@ -30,6 +30,7 @@
                     :zoom="16"
                     :max-zoom="maxZoom"
                     :center="[address.lat, address.lng]"
+                    :options="mapOptions"
                     :style="'width: 100%; height: 200px'"
                   >
                     <l-tile-layer
@@ -99,6 +100,7 @@
                     :zoom="14"
                     :max-zoom="maxZoom"
                     :center="[address.lat, address.lng]"
+                    :options="mapOptions"
                     :style="'width: 100%; height: 200px'"
                   >
                     <l-tile-layer
@@ -145,7 +147,7 @@ import { useAddressStore } from '~/stores/address'
 import { useChatStore } from '~/stores/chat'
 import { useChatMessageBase } from '~/composables/useChat'
 import { constructMultiLine } from '~/composables/usePAF'
-import { attribution, osmtile } from '~/composables/useMap'
+import { attribution, osmtile, INLINE_MAP_OPTIONS } from '~/composables/useMap'
 import { MAX_MAP_ZOOM } from '~/constants'
 import { ref, computed, onMounted } from '#imports'
 
@@ -182,6 +184,7 @@ const address = ref(null)
 
 // Computed properties
 const maxZoom = computed(() => MAX_MAP_ZOOM)
+const mapOptions = INLINE_MAP_OPTIONS
 const multiline = computed(() => constructMultiLine(address.value))
 
 // Methods

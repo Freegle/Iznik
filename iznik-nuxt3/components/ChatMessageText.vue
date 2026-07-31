@@ -102,6 +102,7 @@
           :zoom="16"
           :max-zoom="maxZoom"
           :center="[lat, lng]"
+          :options="mapOptions"
           :style="'width: 100%; height: 200px'"
         >
           <l-tile-layer :url="osmtile()" :attribution="attribution()" />
@@ -124,7 +125,7 @@ import {
 import { ref, computed, onMounted } from '#imports'
 import ProfileImage from '~/components/ProfileImage'
 import { MAX_MAP_ZOOM, POSTCODE_REGEX } from '~/constants'
-import { attribution, osmtile } from '~/composables/useMap'
+import { attribution, osmtile, INLINE_MAP_OPTIONS } from '~/composables/useMap'
 import { useLocationStore } from '~/stores/location'
 import { useMiscStore } from '~/stores/misc'
 
@@ -169,6 +170,7 @@ const lng = ref(null)
 
 // Computed properties
 const maxZoom = computed(() => MAX_MAP_ZOOM)
+const mapOptions = INLINE_MAP_OPTIONS
 
 const messageIsNew = computed(() => {
   return (
