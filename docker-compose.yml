@@ -1607,6 +1607,12 @@ services:
       - FREEGLE_MOD_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
       - FREEGLE_API_BASE_URL=http://localhost:${PORT_APIV2:-8193}
       - FREEGLE_DELIVERY_URL=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      # Community News: research credential (metered key OR a `claude setup-token`
+      # subscription token, which wins when set) + global kill switch.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - COMMUNITY_NEWS_OAUTH_TOKEN=${COMMUNITY_NEWS_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+      - COMMUNITY_NEWS_ENABLED=${COMMUNITY_NEWS_ENABLED:-false}
+      - COMMUNITY_NEWS_MODEL=${COMMUNITY_NEWS_MODEL:-claude-opus-4-8}
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - AMP_API_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/amp
       - LOKI_ENABLED=true

@@ -354,6 +354,15 @@
         />
         <ModGroupSetting
           :groupid="groupid"
+          name="settings.communitynews"
+          label="Community News"
+          description="Whether this community takes part in Community News — a friendly local round-up posted on ChitChat, with a weekly email to follow later."
+          type="toggle"
+          toggle-checked="Yes"
+          toggle-unchecked="No"
+        />
+        <ModGroupSetting
+          :groupid="groupid"
           name="settings.stories"
           label="Stories"
           description="Whether members are prompted to tell us their Freegle Story for publicity."
