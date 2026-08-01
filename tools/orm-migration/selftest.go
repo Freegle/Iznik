@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -227,6 +229,29 @@ func runSelfCheck() []string {
 	b, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", src, false)
 	if len(a) == 1 && len(b) == 1 && a[0].ID != b[0].ID {
 		fail("stable id", "ID differs between runs: %s vs %s", a[0].ID, b[0].ID)
+	}
+
+	// Gate 2 must not accept a comment as proof. A note explaining why a site
+	// was NOT converted mentions its ID, and matching IDs anywhere in the file
+	// counted that as the parity test asserting it WAS - exactly backwards.
+	if dir, err := os.MkdirTemp("", "ormselftest"); err == nil {
+		defer os.RemoveAll(dir)
+		src := "package test\n" +
+			"// deliberately not converted: 0123456789ab (see the plan)\n" +
+			"func TestX(t *testing.T) {\n" +
+			"\tormharness.AssertGoldenSQL(t, \"abcdef012345\", nil)\n" +
+			"}\n"
+		if err := os.WriteFile(filepath.Join(dir, "x_test.go"), []byte(src), 0o644); err == nil {
+			tested, err := parityTestedIDs(dir)
+			switch {
+			case err != nil:
+				fail("gate 2 proof", "parityTestedIDs: %v", err)
+			case tested["0123456789ab"]:
+				fail("gate 2 proof", "a site ID mentioned only in a comment was counted as having a parity test")
+			case !tested["abcdef012345"]:
+				fail("gate 2 proof", "a site ID passed to AssertGoldenSQL was not counted")
+			}
+		}
 	}
 
 	// Two identical statements in one file must not collide onto one ID.

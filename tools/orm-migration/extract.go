@@ -745,14 +745,30 @@ func load(path string) (*Manifest, error) {
 
 // siteIDPattern matches the 12-hex site IDs this tool mints, so that a parity
 // test naming its site can be recognised mechanically.
-var siteIDPattern = regexp.MustCompile(`\b[0-9a-f]{12}\b`)
+var siteIDPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
-// parityTestedIDs collects every site ID named by a test under root. Plan 7.2
-// makes this Gate 2: "a site cannot be marked converted unless a parity test
-// bearing its ID exists and passes. The extractor checks test existence
-// mechanically." Existence is what is checked here; passing is the suite's job.
+// parityAssertions are the harness calls that constitute proof for a site.
+var parityAssertions = map[string]bool{
+	"AssertGoldenSQL":    true,
+	"AssertResultParity": true,
+}
+
+// parityTestedIDs collects every site ID actually asserted on by a test under
+// root. Plan 7.2 makes this Gate 2: "a site cannot be marked converted unless a
+// parity test bearing its ID exists and passes. The extractor checks test
+// existence mechanically." Existence is what is checked here; passing is the
+// suite's job.
+//
+// This parses rather than greps, and that distinction is load-bearing. Matching
+// the ID anywhere in the file counted a COMMENT as proof, so a note reading
+// "site abc123 is deliberately not converted" satisfied the gate asserting that
+// it was, which is precisely backwards. Working from the AST excludes comments
+// by construction, and requiring the ID to be a string argument to one of the
+// assertion calls means an incidental mention cannot vouch for anything.
 func parityTestedIDs(root string) (map[string]bool, error) {
 	found := map[string]bool{}
+	fset := token.NewFileSet()
+
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -766,13 +782,33 @@ func parityTestedIDs(root string) (map[string]bool, error) {
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		b, err := os.ReadFile(path)
+
+		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse %s: %w", path, err)
 		}
-		for _, m := range siteIDPattern.FindAllString(string(b), -1) {
-			found[m] = true
-		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || !parityAssertions[sel.Sel.Name] {
+				return true
+			}
+			for _, arg := range call.Args {
+				lit, ok := arg.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err == nil && siteIDPattern.MatchString(s) {
+					found[s] = true
+				}
+			}
+			return true
+		})
 		return nil
 	})
 	return found, err

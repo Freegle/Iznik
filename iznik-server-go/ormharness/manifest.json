@@ -74,7 +74,7 @@
       "args": 1,
       "goldenSql": "DELETE FROM chat_messages WHERE id = ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "test-fixture"
     },
     "001f278f7332": {
@@ -96,7 +96,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups WHERE msgid = ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "test-fixture"
     },
     "0027eebfe4a7": {
@@ -8722,7 +8722,7 @@
       "args": 4,
       "goldenSql": "SELECT date, SUM(count) AS count FROM stats WHERE type = ? AND groupid IN (?) AND date \u003e= ? AND date \u003c= ? GROUP BY date ORDER BY date ASC",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "11558c0c6cd0": {
@@ -14646,7 +14646,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "1d98111ea90d": {
@@ -14870,7 +14870,7 @@
       "args": 2,
       "goldenSql": "SELECT groupid, COUNT(*) as count FROM memberships WHERE groupid IN ? AND collection = ? GROUP BY groupid",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "1de7e639029b": {
@@ -28743,7 +28743,7 @@
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added \u003e= ? AND added \u003c= ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "383011ca9c05": {
@@ -29849,7 +29849,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat)",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "3a717e9343ff": {
@@ -33840,7 +33840,7 @@
       "args": 3,
       "goldenSql": "SELECT breakdown FROM stats WHERE type = 'MessageBreakdown' AND groupid IN (?) AND date \u003e= ? AND date \u003c= ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "42bb2fc5fe91": {
@@ -51686,7 +51686,7 @@
       "args": 3,
       "goldenSql": "SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = ? FOR UPDATE",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "keep-raw",
       "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."
     },
@@ -57937,7 +57937,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat) AND heldby IS NULL",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "71b08063be7e": {
@@ -61168,7 +61168,7 @@
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added \u003e= ? AND added \u003c= ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "771773c0e43b": {
@@ -76370,7 +76370,7 @@
       "args": 1,
       "goldenSql": "SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "94b0be1107e0": {
@@ -85507,7 +85507,7 @@
       "args": 1,
       "goldenSql": "SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "a74bfa8a19c1": {
@@ -110953,7 +110953,7 @@
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND collection = ?",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "d9492e3aa52a": {
@@ -111890,7 +111890,7 @@
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND groupid IN (?)",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "db60834e67a2": {
@@ -113331,7 +113331,7 @@
       "args": 1,
       "goldenSql": "SELECT groupid, COUNT(DISTINCT id) as count FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL GROUP BY groupid",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "de6e235aa5a0": {
@@ -121618,7 +121618,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat) AND heldby IS NOT NULL",
       "presentInCode": true,
-      "hasParityTest": true,
+      "hasParityTest": false,
       "status": "raw"
     },
     "ef1680989d03": {

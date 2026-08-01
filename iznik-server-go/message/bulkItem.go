@@ -85,7 +85,8 @@ func linkBulkItemAttachment(db *gorm.DB, bulkitemid uint64, attachmentid uint64)
 // core messages table untouched.
 func loadAccessInstructions(db *gorm.DB, msgid uint64) string {
 	var ai string
-	db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages_bulk_access WHERE msgid = ?", msgid).Scan(&ai)
+	// ORM migration site 0c576c0140ff (wave 1).
+	db.Table("messages_bulk_access").Select("COALESCE(accessinstructions, '')").Where("msgid = ?", msgid).Scan(&ai)
 	return ai
 }
 
@@ -101,16 +102,23 @@ func saveAccessInstructions(db *gorm.DB, msgid uint64, instructions string) {
 // non-bulk message so the JSON field is omitted.
 func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, attachments []MessageAttachment) []BulkItem {
 	var items []BulkItem
-	db.Raw("SELECT id, msgid, position, name, quantity, available, `condition`, dimensions, photourl, description "+
-		"FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&items)
+	// ORM migration site 6d41381ea61b (wave 1).
+	db.Table("messages_bulk_items").
+		Select("id, msgid, position, name, quantity, available, `condition`, dimensions, photourl, description").
+		Where("msgid = ?", msgid).
+		Order("position ASC, id ASC").
+		Scan(&items)
 
 	if len(items) == 0 {
 		return nil
 	}
 
 	var interest []BulkItemInterest
-	db.Raw("SELECT id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid "+
-		"FROM messages_bulk_items_interest WHERE msgid = ?", msgid).Scan(&interest)
+	// ORM migration site 4b13c81d7f07 (wave 1).
+	db.Table("messages_bulk_items_interest").
+		Select("id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid").
+		Where("msgid = ?", msgid).
+		Scan(&interest)
 
 	// Index interest by bulk item id.
 	byItem := map[uint64][]BulkItemInterest{}
@@ -159,7 +167,8 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	}
 
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
+	// ORM migration site 644035e792fd (wave 1).
+	db.Table("messages").Select("fromuser").Where("id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
