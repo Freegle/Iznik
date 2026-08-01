@@ -100,10 +100,18 @@ watch(currentValue, (newVal) => {
   if (newVal && !timer.value) {
     // Starting the timer here avoids having the timer run for empty textareas, which happen a lot in ChitChat.
     checkRows()
-  } else if (!newVal && timer.value) {
-    // No longer need to check.
-    clearTimeout(timer.value)
-    timer.value = null
+  } else if (!newVal) {
+    // Emptied - usually because the comment was just sent. Shrink back to the
+    // starting height: currentRows only ever grew, so after posting a long
+    // comment the box stayed at its grown height with nothing in it, which on
+    // mobile left an empty 8-row box filling the screen.
+    currentRows.value = props.rows
+
+    if (timer.value) {
+      // No longer need to check.
+      clearTimeout(timer.value)
+      timer.value = null
+    }
   }
 
   emit('update:modelValue', newVal)
