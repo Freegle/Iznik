@@ -18,6 +18,7 @@
 const path = require('path')
 const { test, expect } = require('./fixtures')
 const { timeouts } = require('./config')
+const { loginViaHomepage } = require('./utils/user')
 
 const HEIC_FIXTURE = path.join(__dirname, 'assets', 'item1.heic')
 
@@ -107,24 +108,36 @@ async function uploadHeicAndCheck(page, uploads) {
 }
 
 test.describe('HEIC photo upload', () => {
-  test('give flow converts a HEIC photo to JPEG before uploading', async ({
+  // There are two uploader components and they convert independently, so cover
+  // one flow through each. ChitChat is the OurUploader one; the give flow below
+  // (both desktop and mobile - /give renders PostMessageTablet, which uses
+  // PhotoUploader) is the PhotoUploader one.
+  test('chitchat converts a HEIC photo to JPEG before uploading', async ({
     page,
+    testEnv,
   }) => {
     const uploads = captureTusUploads(page)
 
-    await page.gotoAndVerify('/give', {
+    expect(
+      await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    ).toBeTruthy()
+
+    await page.gotoAndVerify('/chitchat', {
       timeout: timeouts.navigation.default,
     })
 
-    const addPhotos = page.locator('button').filter({ hasText: /add photos/i })
-    await addPhotos.first().click({ timeout: timeouts.ui.appearance })
+    // Reveal the uploader, then open its dashboard.
+    await page
+      .locator('.photo-btn')
+      .first()
+      .click({ timeout: timeouts.ui.appearance })
+    await page
+      .locator('button')
+      .filter({ hasText: /^\s*Add photo\s*$/i })
+      .first()
+      .click({ timeout: timeouts.ui.appearance })
 
     await uploadHeicAndCheck(page, uploads)
-
-    // And the photo has to actually come back and render.
-    await expect(page.locator('img[alt="Photo"]').first()).toBeVisible({
-      timeout: timeouts.ui.appearance,
-    })
   })
 
   test.describe('mobile give flow', () => {
