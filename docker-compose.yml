@@ -548,6 +548,10 @@ services:
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
+      # So the test runner can tell it is on CI. CI already builds the database
+      # fresh for every run, so the pre-run reset it does locally would just be
+      # repeating work - and the migrate is slow enough to time the run out.
+      - CI=${CI:-}
 
   ai-support-helper:
     build:
