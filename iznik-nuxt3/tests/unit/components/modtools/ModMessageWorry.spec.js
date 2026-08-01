@@ -325,7 +325,7 @@ describe('ModMessageWorry', () => {
       expect(wrapper.text()).toContain('Regulated substance')
     })
 
-    it('substance_regulated: mentions not legal on Freegle', () => {
+    it('substance_regulated: says it is not allowed on Freegle', () => {
       const wrapper = mountWithReasons([
         {
           check: 'ConcernKeyword',
@@ -333,7 +333,7 @@ describe('ModMessageWorry', () => {
           detail: "Matched concern keyword 'cocaine'",
         },
       ])
-      expect(wrapper.text()).toContain('not legal on Freegle')
+      expect(wrapper.text()).toContain("isn't allowed on Freegle")
     })
 
     it('substance_regulated: links to Central', () => {
@@ -384,7 +384,7 @@ describe('ModMessageWorry', () => {
       expect(wrapper.text()).toContain('Medicine or drug')
     })
 
-    it('substance_medicine: mentions not legal on Freegle', () => {
+    it('substance_medicine: says it is not allowed on Freegle', () => {
       const wrapper = mountWithReasons([
         {
           check: 'ConcernKeyword',
@@ -392,7 +392,7 @@ describe('ModMessageWorry', () => {
           detail: "Matched concern keyword 'aspirin'",
         },
       ])
-      expect(wrapper.text()).toContain('not legal on Freegle')
+      expect(wrapper.text()).toContain("isn't allowed on Freegle")
     })
 
     it('scam: shows Possible scam heading', () => {
@@ -762,6 +762,256 @@ describe('ModMessageWorry', () => {
       }
       const wrapper = mountMessage(message, { groupid: 10 })
       expect(wrapper.findAll('.notice-message').length).toBe(1)
+    })
+  })
+
+  // This component is the only place stored hold reasons are rendered. A second
+  // renderer in ModMessage meant a post with two flags showed four notices
+  // (Discourse 9989); ModMessage now says which causes its own notices cover.
+  describe('single owner of hold reasons (Discourse 9989)', () => {
+    function mountMessage(message, props = {}) {
+      mockMessageStore.byId.mockImplementation((id) =>
+        id === message.id ? message : null
+      )
+      return mount(ModMessageWorry, {
+        props: { messageid: message.id, ...props },
+        global: { stubs: STUBS },
+      })
+    }
+
+    it('drops a reason the parent says it is already explaining', () => {
+      const wrapper = mountMessage(
+        {
+          id: 1,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                { check: 'NoLocation', detail: 'We could not work out where' },
+                { check: 'Vague', detail: 'too generic' },
+              ],
+            },
+          ],
+        },
+        { groupid: 10, covered: ['NoLocation'] }
+      )
+      const boxes = wrapper.findAll('.notice-message')
+      expect(boxes.length).toBe(1)
+      expect(wrapper.text()).toContain('Vague post')
+      expect(wrapper.text()).not.toContain('We could not work out where')
+    })
+
+    it('keeps a reason when the parent is not covering it', () => {
+      const wrapper = mountMessage(
+        {
+          id: 2,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                { check: 'MemberModerated', detail: 'moderated member' },
+              ],
+            },
+          ],
+        },
+        { groupid: 10, covered: [] }
+      )
+      expect(wrapper.text()).toContain("This member's posts are moderated")
+    })
+
+    it('shows a moderation setting as information, not as a warning', () => {
+      const wrapper = mountMessage(
+        {
+          id: 3,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                { check: 'GroupModerated', detail: 'group moderates' },
+              ],
+            },
+          ],
+        },
+        { groupid: 10 }
+      )
+      expect(wrapper.find('.notice-message.info').exists()).toBe(true)
+      expect(wrapper.find('.notice-message.warning').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Flagged')
+    })
+
+    it('hides a money worry word when the stored Money check says the same thing', () => {
+      const wrapper = mountMessage(
+        {
+          id: 4,
+          worry: [{ worryword: { keyword: '£', type: 'Other' } }],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                { check: 'Money', detail: 'Post contains a money symbol' },
+              ],
+            },
+          ],
+        },
+        { groupid: 10 }
+      )
+      expect(wrapper.findAll('.notice-message').length).toBe(1)
+      expect(wrapper.text()).toContain('Post contains a money symbol')
+    })
+
+    it('still shows a money worry word when no stored Money check is displayed', () => {
+      const wrapper = mountMessage(
+        {
+          id: 5,
+          worry: [{ worryword: { keyword: '£', type: 'Other' } }],
+          groups: [{ groupid: 10, contentcheck_reasons: [] }],
+        },
+        { groupid: 10 }
+      )
+      expect(wrapper.text()).toContain('Flagged for review:')
+      expect(wrapper.text()).toContain('£')
+    })
+
+    it('names the word behind a categorised keyword flag (Discourse 9988)', () => {
+      const wrapper = mountMessage(
+        {
+          id: 6,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                {
+                  check: 'ConcernKeyword',
+                  category: 'substance_medicine',
+                  keyword: 'mineral',
+                  detail: "Matched concern keyword 'mineral'",
+                },
+              ],
+            },
+          ],
+        },
+        { groupid: 10 }
+      )
+      const text = wrapper.text()
+      expect(text).toContain('Medicine or drug')
+      expect(text).toContain('Triggered by the word')
+      expect(text.split('mineral').length - 1).toBe(1)
+    })
+
+    it('reads reasons that arrive as a JSON string', () => {
+      const wrapper = mountMessage(
+        {
+          id: 7,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: JSON.stringify([
+                { check: 'Vague', detail: 'too generic' },
+              ]),
+            },
+          ],
+        },
+        { groupid: 10 }
+      )
+      expect(wrapper.text()).toContain('Vague post')
+    })
+
+    it('uses one lead-in for every flag, never "Flagged" and "Flagged for review" together', () => {
+      const wrapper = mountMessage(
+        {
+          id: 9,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                {
+                  check: 'ConcernKeyword',
+                  category: null,
+                  keyword: 'jewellery',
+                  detail: "Matched concern keyword 'jewellery'",
+                },
+                {
+                  check: 'ConcernKeyword',
+                  category: 'substance_medicine',
+                  keyword: 'codeine',
+                  detail: "Matched concern keyword 'codeine'",
+                },
+                { check: 'Money', detail: 'Post contains a money symbol' },
+                { check: 'SomeFutureCheck', detail: 'something else' },
+              ],
+            },
+          ],
+        },
+        { groupid: 10 }
+      )
+      const text = wrapper.text()
+      expect(text).toContain('Flagged for review')
+      // Every "Flagged" must be part of "Flagged for review".
+      expect(text.split('Flagged').length - 1).toBe(
+        text.split('Flagged for review').length - 1
+      )
+    })
+
+    it('words the substance guidance the same whichever pass found it', () => {
+      // The stored check and the real-time worry word describe the same three
+      // substance cases and must not read differently.
+      const stored = mountMessage(
+        {
+          id: 10,
+          worry: [],
+          groups: [
+            {
+              groupid: 10,
+              contentcheck_reasons: [
+                {
+                  check: 'ConcernKeyword',
+                  category: 'substance_medicine',
+                  keyword: 'codeine',
+                  detail: "Matched concern keyword 'codeine'",
+                },
+              ],
+            },
+          ],
+        },
+        { groupid: 10 }
+      )
+      const live = mountMessage(
+        {
+          id: 11,
+          worry: [{ worryword: { keyword: 'codeine', type: 'Medicine' } }],
+          groups: [{ groupid: 10, contentcheck_reasons: [] }],
+        },
+        { groupid: 10 }
+      )
+      // Both routes must carry the identical guidance sentence. They differ only
+      // in how they name the word, which each does in its own lead-in.
+      const GUIDANCE =
+        "Medicine or drug: This post might contain a drug, medicine or supplement, which isn't allowed on Freegle. If you have questions, ask on Central."
+      const flat = (w) => w.text().replace(/\s+/g, ' ')
+      expect(flat(stored)).toContain(GUIDANCE)
+      expect(flat(live)).toContain(GUIDANCE)
+    })
+
+    it('survives a malformed reasons value rather than breaking the card', () => {
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      const wrapper = mountMessage(
+        {
+          id: 8,
+          worry: [],
+          groups: [{ groupid: 10, contentcheck_reasons: 'not json at all' }],
+        },
+        { groupid: 10 }
+      )
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
+      consoleError.mockRestore()
     })
   })
 })
