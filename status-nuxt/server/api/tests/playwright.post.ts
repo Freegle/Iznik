@@ -292,20 +292,28 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
     // Start from the same clean database CI does. Without this the local database
     // drifts run by run and specs fail here that pass in CI.
-    setTestState('playwright', { message: 'Resetting test database...' })
-    try {
-      await resetTestDatabase(pfx, '')
-    } catch (dbResetError: any) {
-      // Running against a half-reset database would produce results nobody can
-      // trust, so stop rather than report failures caused by the reset.
-      appendTestLogs('playwright', `Database reset FAILED: ${(dbResetError as Error).message}\n`)
-      setTestState('playwright', {
-        status: 'failed',
-        message: `Database reset failed: ${(dbResetError as Error).message}`,
-        endTime: Date.now(),
-      })
-      if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
-      return
+    //
+    // Not on CI, which has just built the database from scratch for this run.
+    // Repeating the migrate there is pure duplicated work, and it is slow enough
+    // that the run timed out before a single spec executed.
+    if (process.env.CI) {
+      appendTestLogs('playwright', 'CI: database already built fresh for this run, skipping reset\n')
+    } else {
+      setTestState('playwright', { message: 'Resetting test database...' })
+      try {
+        await resetTestDatabase(pfx, '')
+      } catch (dbResetError: any) {
+        // Running against a half-reset database would produce results nobody can
+        // trust, so stop rather than report failures caused by the reset.
+        appendTestLogs('playwright', `Database reset FAILED: ${(dbResetError as Error).message}\n`)
+        setTestState('playwright', {
+          status: 'failed',
+          message: `Database reset failed: ${(dbResetError as Error).message}`,
+          endTime: Date.now(),
+        })
+        if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
+        return
+      }
     }
 
     setTestState('playwright', { message: 'Running Playwright tests...' })
