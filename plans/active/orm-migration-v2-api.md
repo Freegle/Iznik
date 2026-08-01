@@ -113,6 +113,38 @@ prerequisites, then 4 to 6 weeks of waves) and gives no reason yet to revise
 the wave estimate. It should be re-checked after the first full batch of ~20,
 which is the first data point with enough sites to measure a real per-site rate.
 
+## The `IN ?` sites are convertible, not permanently raw
+
+Every wave 1 batch has skipped the same shape: a Go slice bound to `IN ?`.
+Eleven so far across group, membership and dashboard, and the count will keep
+growing. They were skipped because GORM's dry run expands the slice, so the
+render carries one `?` per element and cannot match a golden that records the
+literal source text `IN ?`.
+
+That reasoning is right about the text and wrong about the conclusion.
+`db.Raw("... IN ?", slice)` expands the slice too: GORM does this for raw SQL
+exactly as it does for a chained `Where`. The old and new statements therefore
+execute identically. What differs is only that the golden was captured from Go
+source before expansion, while the render is taken after it. Comparing the two
+is comparing a statement to itself at two different stages.
+
+So these are convertible, with a two-part proof rather than a skip:
+
+- **Layer 1**: an approved diff recording the expanded render for a fixed-length
+  bind in the test. The test controls the slice, so the render is deterministic.
+- **Layer 2**: a result-parity test running the old raw SQL and the new chain
+  against the seeded database and comparing rows. This is the part that actually
+  proves runtime equivalence, and it does so independently of how either
+  statement is spelled.
+
+Layer 2 matters more than usual here, because the Layer 1 diff is length
+dependent by construction. Do not convert these on the approved diff alone.
+
+Parking them in wave 5 is plan-compliant in the meantime (7.3 makes wave 5
+"triage of everything left into keep-raw or an individually planned
+conversion"), and each one is reported with its reason rather than quietly
+dropped. But they should not stay there: they are ordinary single-table reads.
+
 ## The driver-protocol question, settled
 
 `go-sql-driver/mysql` returns `[]byte` for every column under the text protocol
