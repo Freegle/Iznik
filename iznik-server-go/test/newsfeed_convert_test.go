@@ -157,3 +157,135 @@ func TestConvertedToPost_RefusedForOrdinaryMember(t *testing.T) {
 
 	assert.Equal(t, 403, resp.StatusCode)
 }
+
+// --- Convert preview: where would this post land? ---
+//
+// The modal shows the moderator the postcode and community before they commit.
+// It must be the MEMBER's, never the moderator's, and it must come from the same
+// resolver that does the posting - a preview that promises one postcode while the
+// post uses another is worse than no preview.
+
+func TestNewsfeedConvertInfo_RefusedForOrdinaryMember(t *testing.T) {
+	prefix := uniquePrefix("cvtinfomember")
+	userID, token := CreateFullTestUser(t, prefix)
+	nfID := CreateTestNewsfeed(t, userID, 55.9533, -3.1883, "A sofa going spare "+prefix)
+
+	id := strconv.FormatUint(nfID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+token, nil))
+
+	assert.Equal(t, 403, resp.StatusCode, "it says where another member lives")
+}
+
+func TestNewsfeedConvertInfo_RefusedWhenLoggedOut(t *testing.T) {
+	prefix := uniquePrefix("cvtinfoout")
+	userID, _ := CreateFullTestUser(t, prefix)
+	nfID := CreateTestNewsfeed(t, userID, 55.9533, -3.1883, "A sofa going spare "+prefix)
+
+	id := strconv.FormatUint(nfID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo", nil))
+
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+func TestNewsfeedConvertInfo_ModSeesWhereItWouldPost(t *testing.T) {
+	prefix := uniquePrefix("cvtinfomod")
+	posterID, _ := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Dining chairs going spare "+prefix)
+
+	id := strconv.FormatUint(nfID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	// canpost is always present so the modal can decide what to show; when it is
+	// false there must be a reason the moderator can act on.
+	canpost, present := result["canpost"]
+	assert.True(t, present, "response should always say whether it can post")
+
+	if canpost == true {
+		assert.NotEmpty(t, result["locationname"], "a moderator needs the actual postcode, not a placeholder")
+		assert.NotEmpty(t, result["groupid"], "and the community it will go to")
+	} else {
+		assert.NotEmpty(t, result["reason"], "if it cannot post, say why")
+	}
+}
+
+func TestNewsfeedConvertInfo_NotFoundForMissingEntry(t *testing.T) {
+	prefix := uniquePrefix("cvtinfomissing")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/999999999/convertinfo?jwt="+modToken, nil))
+	assert.Equal(t, 404, resp.StatusCode)
+}
+
+func TestNewsfeedConvertInfo_UsesTheMembersChosenLocation(t *testing.T) {
+	// The postcode must be the one the MEMBER set in their settings, not one
+	// inferred from wherever they last happened to be, and not the moderator's.
+	prefix := uniquePrefix("cvtinfochosen")
+	posterID, _ := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	db := database.DBConn
+
+	// Any real location row will do - we only care that the id and name we set
+	// are the ones handed back.
+	var locID uint64
+	var locName string
+	db.Raw("SELECT id, name FROM locations WHERE type = ? AND name IS NOT NULL AND name != '' LIMIT 1",
+		"Postcode").Row().Scan(&locID, &locName)
+
+	if locID == 0 {
+		t.Skip("no postcode locations seeded")
+	}
+
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(NULLIF(settings, ''), '{}'), "+
+		"'$.mylocation', JSON_OBJECT('id', ?, 'name', ?, 'lat', 55.9533, 'lng', -3.1883)) WHERE id = ?",
+		locID, locName, posterID)
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Dining chairs going spare "+prefix)
+
+	id := strconv.FormatUint(nfID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	if result["canpost"] == true {
+		assert.Equal(t, locName, result["locationname"],
+			"the preview must show the postcode the member chose")
+	} else {
+		// Only legitimate reason left is that the test user is in no community.
+		assert.Contains(t, result["reason"], "community")
+	}
+}
+
+func TestNewsfeedConvertInfo_RefusesWhenMemberHasNoChosenLocation(t *testing.T) {
+	// No guessing: if the member never set a location we refuse rather than
+	// stamp one on their post.
+	prefix := uniquePrefix("cvtinfonoloc")
+	posterID, _ := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	database.DBConn.Exec("UPDATE users SET settings = JSON_REMOVE(COALESCE(NULLIF(settings, ''), '{}'), '$.mylocation') WHERE id = ?", posterID)
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "A sofa going spare "+prefix)
+
+	id := strconv.FormatUint(nfID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"/convertinfo?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	assert.Equal(t, false, result["canpost"], "cannot post for a member with no chosen location")
+	assert.Contains(t, result["reason"], "location")
+}

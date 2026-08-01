@@ -4004,6 +4004,73 @@ func PutMessage(c *fiber.Ctx) error {
 // Posting as someone else is restricted to ChitChat moderators and
 // support/admin, and the check lives here rather than in each caller so no
 // route can acquire the capability by omission.
+// OnBehalfPosting is where a post made on someone else's behalf would land:
+// their own postcode and their own community, never the moderator's.
+type OnBehalfPosting struct {
+	Locationid   uint64 `json:"locationid"`
+	Locationname string `json:"locationname"`
+	Groupid      uint64 `json:"groupid"`
+	Groupname    string `json:"groupname"`
+}
+
+// ResolveOnBehalfPosting works out the location and group a post for `author`
+// would use. PutMessageAs calls it when it actually posts, and the convert
+// preview calls it to show the moderator the same answer beforehand - one
+// function so the preview cannot promise a postcode the post then ignores.
+//
+// The location is the one the member CHOSE, settings.mylocation - the same
+// postcode their own posts carry. Deliberately not derived from lastlocation or
+// a nearest-postcode lookup: those say where they last were, not where they say
+// they are, so they would stamp a postcode on a member's post that the member
+// never picked. If they have not set one, we refuse rather than guess.
+//
+// The error text is shown to the moderator, so it says what to do about it.
+func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
+	db := database.DBConn
+
+	var chosen struct {
+		Locationid   uint64
+		Locationname string
+		Lat          float64
+		Lng          float64
+	}
+
+	db.Raw("SELECT "+
+		"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.id')) AS locationid, "+
+		"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
+		"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
+		"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng "+
+		"FROM users WHERE id = ?", author).Scan(&chosen)
+
+	if chosen.Locationid == 0 || chosen.Locationname == "" {
+		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
+	}
+
+	// The group must be one they are ALREADY in. Submitting joins the author to
+	// the destination group, so an arbitrary group would quietly sign a member
+	// up to a community they never chose. Default to their nearest membership.
+	var groupid uint64
+	db.Raw("SELECT m.groupid FROM memberships m "+
+		"INNER JOIN `groups` g ON g.id = m.groupid "+
+		"WHERE m.userid = ? AND m.collection = ? "+
+		"ORDER BY ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?)) LIMIT 1",
+		author, utils.COLLECTION_APPROVED, chosen.Lng, chosen.Lat).Scan(&groupid)
+
+	if groupid == 0 {
+		return nil, errors.New("That member isn't in any community, so we can't post for them")
+	}
+
+	var groupname string
+	db.Raw("SELECT COALESCE(NULLIF(namefull, ''), nameshort) FROM `groups` WHERE id = ?", groupid).Scan(&groupname)
+
+	return &OnBehalfPosting{
+		Locationid:   chosen.Locationid,
+		Locationname: chosen.Locationname,
+		Groupid:      groupid,
+		Groupname:    groupname,
+	}, nil
+}
+
 func onBehalfOf(c *fiber.Ctx, myid uint64) (uint64, error) {
 	obo := uint64(c.QueryInt("onbehalfof", 0))
 	if obo == 0 || obo == myid {
@@ -4105,32 +4172,17 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	// they happen to be, so trusting the client here would stamp their postcode
 	// on a member's post and put it in front of the wrong people.
 	if author != user.WhoAmI(c) {
-		latlng := user.GetLatLng(author)
-		if latlng.Lat == 0 && latlng.Lng == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "That member has no location set, so we can't post for them")
+		// Same resolution the convert preview showed the moderator - see
+		// ResolveOnBehalfPosting.
+		posting, err := ResolveOnBehalfPosting(author)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 
-		nearest := location.ClosestPostcode(latlng.Lat, latlng.Lng)
-		if nearest.ID == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "We can't work out a postcode for that member")
-		}
+		req.Locationid = &posting.Locationid
 
-		req.Locationid = &nearest.ID
-
-		// The group must be one they are ALREADY in. Submitting joins the
-		// author to the destination group, so accepting an arbitrary group here
-		// would let a moderator quietly sign a member up to a community they
-		// never chose. Default to their nearest existing membership.
 		if req.Groupid == 0 {
-			db.Raw("SELECT m.groupid FROM memberships m "+
-				"INNER JOIN groups g ON g.id = m.groupid "+
-				"WHERE m.userid = ? AND m.collection = ? "+
-				"ORDER BY ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?)) LIMIT 1",
-				author, utils.COLLECTION_APPROVED, latlng.Lng, latlng.Lat).Scan(&req.Groupid)
-
-			if req.Groupid == 0 {
-				return fiber.NewError(fiber.StatusBadRequest, "That member isn't in any community, so we can't post for them")
-			}
+			req.Groupid = posting.Groupid
 		} else {
 			var memberCount int64
 			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", author, req.Groupid).Scan(&memberCount)

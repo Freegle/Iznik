@@ -73,8 +73,14 @@
               <b-dropdown-item @click="report">
                 Report this thread or one of its replies
               </b-dropdown-item>
+              <!-- Says what it leaves behind. This posts in the member's name
+                   and adds a note to this public thread, so the menu shouldn't
+                   read like a private mod action. -->
               <b-dropdown-item v-if="chitChatMod" @click="showConvert = true">
                 Post this as an OFFER/WANTED for them
+                <div class="small text-muted convert-hint">
+                  Posts as them, and adds a note to this thread
+                </div>
               </b-dropdown-item>
               <b-dropdown-item v-if="canRefer" @click="referToOffer">
                 Refer to OFFER
@@ -890,5 +896,12 @@ async function unmute() {
   @include media-breakpoint-down(sm) {
     display: none;
   }
+}
+
+/* Wraps rather than stretching the dropdown to the width of the sentence. */
+.convert-hint {
+  white-space: normal;
+  line-height: 1.2;
+  max-width: 16rem;
 }
 </style>

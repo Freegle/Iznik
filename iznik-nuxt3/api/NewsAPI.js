@@ -63,6 +63,13 @@ export default class NewsAPI extends BaseAPI {
     return await this.$getv2(`/newsfeed/${id}/duplicate`)
   }
 
+  // Where a convert-to-post would land: the member's own postcode and community,
+  // resolved server-side by the same code that does the posting. ChitChat
+  // moderators only - it says where another member lives.
+  async convertInfo(id) {
+    return await this.$getv2(`/newsfeed/${id}/convertinfo`)
+  }
+
   // Records on the thread that a volunteer has posted this properly for the
   // member, pointing at the OFFER/WANTED just created. ChitChat moderators only.
   async convertedToPost(id, msgid) {

@@ -1169,6 +1169,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Not a ChitChat moderator"
 		rg.Get("/newsfeed/:id/duplicate", newsfeed.Duplicate)
 
+		// @Router /newsfeed/{id}/convertinfo [get]
+		// @Summary Where a convert-to-post would land
+		// @Description Moderator-only. The postcode and community a post made for the
+		// @Description member would use, so the modal can show it before committing.
+		// @Tags newsfeed
+		// @Produce json
+		// @Param id path integer true "Newsfeed ID"
+		// @Success 200 {object} newsfeed.ConvertInfoResult
+		// @Failure 403 {object} fiber.Error "Not a ChitChat moderator"
+		rg.Get("/newsfeed/:id/convertinfo", newsfeed.ConvertInfo)
+
 		// Newsfeed Count
 		// @Router /newsfeedcount [get]
 		// @Summary Get newsfeed count

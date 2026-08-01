@@ -46,11 +46,26 @@
           <div class="fw-bold">{{ previewSubject }}</div>
           <div class="preline mt-2">{{ body }}</div>
         </b-card>
-        <div class="text-muted small mt-1">
+        <div v-if="postingArea" class="text-muted small mt-1">
+          Posting to <strong>{{ posting.groupname }}</strong> using
+          <strong>{{ postingArea }}</strong> - {{ posterName }}'s own area, not
+          yours.
+        </div>
+        <div v-else class="text-muted small mt-1">
           Their area and postcode get added to the subject when it posts, the
           same as any other post.
         </div>
       </div>
+
+      <!-- The server refuses to post for a member it can't place, so say so
+           here rather than after the moderator has filled the form in. -->
+      <NoticeMessage
+        v-if="postingChecked && posting && !posting.canpost"
+        variant="warning"
+        class="mt-3"
+      >
+        {{ posting.reason }}
+      </NoticeMessage>
 
       <!-- The note is left on a public thread in the member's name, so show the
            moderator what it says before they commit to it. Same component the
@@ -79,11 +94,13 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import NoticeMessage from '~/components/NoticeMessage'
 import SpinButton from '~/components/SpinButton'
 import { useOurModal } from '~/composables/useOurModal'
 import { useNewsfeedStore } from '~/stores/newsfeed'
+import { useRuntimeConfig } from '#app'
+import api from '~/api'
 
 const props = defineProps({
   newsfeed: {
@@ -100,6 +117,7 @@ const emit = defineEmits(['posted'])
 
 const { modal, hide } = useOurModal()
 const newsfeedStore = useNewsfeedStore()
+const runtimeConfig = useRuntimeConfig()
 
 const typeOptions = [
   { text: 'OFFER - they are giving something away', value: 'Offer' },
@@ -170,11 +188,38 @@ const body = ref(props.newsfeed?.message || '')
 const error = ref(null)
 
 const canSubmit = computed(
-  () => item.value.trim().length > 0 && body.value.trim().length > 0
+  () =>
+    item.value.trim().length > 0 &&
+    body.value.trim().length > 0 &&
+    // Don't let them post something the server has already said it will refuse.
+    !(postingChecked.value && posting.value && !posting.value.canpost)
 )
 
+// Where this will actually land. Resolved server-side from the member - the
+// moderator's own location is irrelevant and must never be used - so the modal
+// asks rather than guesses, and shows the same postcode the post will carry.
+const posting = ref(null)
+const postingChecked = ref(false)
+
+onMounted(async () => {
+  try {
+    posting.value = await api(runtimeConfig).news.convertInfo(props.newsfeed.id)
+  } catch (e) {
+    // Leave posting null: the preview falls back to "their area" rather than
+    // blocking a moderator who could otherwise post fine.
+    console.error('Could not work out where this would post', e)
+  }
+
+  postingChecked.value = true
+})
+
+const postingArea = computed(() => posting.value?.locationname || null)
+
 const previewSubject = computed(
-  () => `${type.value.toUpperCase()}: ${item.value || '...'} (their area)`
+  () =>
+    `${type.value.toUpperCase()}: ${item.value || '...'} (${
+      postingArea.value || 'their area'
+    })`
 )
 
 async function submit(callback) {
