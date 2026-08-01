@@ -50,6 +50,7 @@ vi.mock('tus-js-client', () => ({
 const mockUppy = {
   use: vi.fn().mockReturnThis(),
   on: vi.fn().mockReturnThis(),
+  addPreProcessor: vi.fn(),
   getPlugin: vi.fn(),
   retryAll: vi.fn(),
   clear: vi.fn(),
@@ -147,6 +148,7 @@ describe('OurUploader', () => {
     // Reset Uppy mock
     mockUppy.use.mockClear().mockReturnThis()
     mockUppy.on.mockClear().mockReturnThis()
+    mockUppy.addPreProcessor.mockClear()
     mockUppy.getPlugin.mockReset()
     mockUppy.clear.mockClear()
     mockUppy.retryAll.mockClear()
@@ -463,6 +465,24 @@ describe('OurUploader', () => {
       mockIsApp.value = false
       await createWrapper()
       expect(mockUppy.use).toHaveBeenCalled()
+    })
+
+    it('registers the HEIC pre-processor', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      expect(mockUppy.addPreProcessor).toHaveBeenCalledTimes(1)
+      expect(mockUppy.addPreProcessor.mock.calls[0][0]).toBeInstanceOf(Function)
+    })
+
+    it('registers the HEIC pre-processor before the Compressor plugin', async () => {
+      // Uppy runs pre-processors in registration order, and Compressor cannot
+      // read HEIC through a canvas - so HEIC has to become JPEG first.
+      mockIsApp.value = false
+      await createWrapper()
+      const compressorRegistered = mockUppy.use.mock.invocationCallOrder.at(-1)
+      const heicRegistered =
+        mockUppy.addPreProcessor.mock.invocationCallOrder[0]
+      expect(heicRegistered).toBeLessThan(compressorRegistered)
     })
 
     it('registers event listeners on Uppy', async () => {
