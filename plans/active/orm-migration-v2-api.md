@@ -113,16 +113,16 @@ prerequisites, then 4 to 6 weeks of waves) and gives no reason yet to revise
 the wave estimate. It should be re-checked after the first full batch of ~20,
 which is the first data point with enough sites to measure a real per-site rate.
 
-**Recommendation before Wave 1.** Resolve the Layer 2 protocol caveat below,
-since it will otherwise produce confusing false failures at volume.
+## The driver-protocol question, settled
 
-## Known caveat to resolve before Wave 1
+`go-sql-driver/mysql` returns `[]byte` for every column under the text protocol
+but native Go types under the binary one, and picks between them by whether the
+statement was prepared, which depends on whether bind arguments were supplied.
+So two statements can return the same datum carrying different Go types.
 
-`go-sql-driver/mysql` returns `[]byte` under the text protocol and native Go
-types under the binary (prepared-statement) protocol. A raw query carrying bind
-args and a GORM chain carrying none can therefore return the same value with
-different Go types, which Layer 2's `reflect.DeepEqual` comparison rejects.
-That strictness is deliberate (it is what catches genuine implicit-cast
-divergence), but it can fire for a reason that has nothing to do with the
-conversion. Either normalise the two protocols before comparing, or report the
-difference with an explicit hint that it may be protocol rather than semantics.
+This was initially written up as a caveat to live with. That was wrong. A
+faithful conversion binds the same arguments as the statement it replaces, so a
+protocol difference means the replacement parameterises differently from the
+original, which is a real divergence. Layer 2 therefore still fails on it, and
+`protocolHint` in `resultparity.go` names the cause in the failure message so it
+is actionable rather than baffling. Nothing is normalised away.

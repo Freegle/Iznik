@@ -5,7 +5,7 @@
     "converted": 10,
     "keep-raw": 35,
     "raw": 1591,
-    "test-fixture": 4213
+    "test-fixture": 4223
   },
   "sites": {
     "00053e96d76f": {
@@ -481,6 +481,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
+    },
+    "00cfcc43186b": {
+      "id": "00cfcc43186b",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 140,
+      "function": "TestRunUpsertParity_ConditionalCounterUpdate",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "counter",
+        "ormharness_upsert_fixture"
+      ],
+      "mysqlisms": [
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO ormharness_upsert_fixture (id, counter, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE counter = VALUES(counter), updated_at = VALUES(updated_at)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "00d071fe82a5": {
       "id": "00d071fe82a5",
@@ -1121,7 +1146,7 @@
     "0256080f8e78": {
       "id": "0256080f8e78",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 189,
+      "line": 225,
       "function": "TestRenderDryRunSQL_NoDatabaseNeeded",
       "receiver": "tx",
       "method": "Raw",
@@ -20341,6 +20366,28 @@
       "hasParityTest": false,
       "status": "raw"
     },
+    "277fffd43546": {
+      "id": "277fffd43546",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 206,
+      "function": "TestDiffTables_NoDifferencesWhenBothSidesReadTheSameData",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "ormharness_diff_fixture"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "DELETE FROM ormharness_diff_fixture WHERE id IN (?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "2780c1ccdb94": {
       "id": "2780c1ccdb94",
       "file": "iznik-server-go/test/message_test.go",
@@ -27960,7 +28007,7 @@
     "368b4f71fdcf": {
       "id": "368b4f71fdcf",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 124,
+      "line": 160,
       "function": "TestAssertGoldenSQL_GenuineMismatchFails",
       "receiver": "tx",
       "method": "Raw",
@@ -35174,6 +35221,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
+    },
+    "45342427d03d": {
+      "id": "45342427d03d",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 208,
+      "function": "TestDiffTables_NoDifferencesWhenBothSidesReadTheSameData",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "ormharness_diff_fixture"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO ormharness_diff_fixture (id, note) VALUES (?, 'a'), (?, 'b')",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "4541731c5611": {
       "id": "4541731c5611",
@@ -45641,6 +45710,31 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "5a728147fbaf": {
+      "id": "5a728147fbaf",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 153,
+      "function": "TestRunUpsertParity_ConditionalCounterUpdate",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "counter",
+        "ormharness_upsert_fixture"
+      ],
+      "mysqlisms": [
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO ormharness_upsert_fixture (id, counter, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE counter = IF(VALUES(counter) \u003e counter, VALUES(counter), counter)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "5a8cfcf7aada": {
       "id": "5a8cfcf7aada",
       "file": "iznik-server-go/test/social_login_test.go",
@@ -53019,6 +53113,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "6898b056582a": {
+      "id": "6898b056582a",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 179,
+      "function": "TestRunUpsertParity_ConditionalCounterUpdate",
+      "receiver": "sideDB",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "ormharness_upsert_fixture"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT counter FROM ormharness_upsert_fixture WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "68a309b6f9ad": {
       "id": "68a309b6f9ad",
       "file": "iznik-server-go/test/session_test.go",
@@ -53550,6 +53666,26 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
+    },
+    "69e4378e5a50": {
+      "id": "69e4378e5a50",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 78,
+      "function": "setupUpsertFixture",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DDL",
+      "tables": [],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 5,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "CREATE TABLE IF NOT EXISTS ormharness_upsert_fixture ( id BIGINT UNSIGNED NOT NULL PRIMARY KEY, counter INT NOT NULL, updated_at DATETIME NOT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "69ea1c9889b6": {
       "id": "69ea1c9889b6",
@@ -61168,6 +61304,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "772ef0c51226": {
+      "id": "772ef0c51226",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 189,
+      "function": "TestRunUpsertParity_ConditionalCounterUpdate",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "ormharness_upsert_fixture"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT counter FROM ormharness_upsert_fixture WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "773818dbe044": {
       "id": "773818dbe044",
       "file": "iznik-server-go/test/isochrone_reach_test.go",
@@ -61778,7 +61936,7 @@
     "784f22ddac08": {
       "id": "784f22ddac08",
       "file": "iznik-server-go/ormharness/replay.go",
-      "line": 336,
+      "line": 337,
       "function": "replayFetchTableRows",
       "receiver": "db",
       "method": "Raw",
@@ -62201,6 +62359,26 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
+    },
+    "79439b175c19": {
+      "id": "79439b175c19",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 198,
+      "function": "TestDiffTables_NoDifferencesWhenBothSidesReadTheSameData",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DDL",
+      "tables": [],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 5,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "CREATE TABLE IF NOT EXISTS ormharness_diff_fixture ( id BIGINT UNSIGNED NOT NULL PRIMARY KEY, note VARCHAR(64) NOT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "794422da5415": {
       "id": "794422da5415",
@@ -64070,7 +64248,7 @@
     "7ccfe18d28a8": {
       "id": "7ccfe18d28a8",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 108,
+      "line": 144,
       "function": "TestAssertGoldenSQL_MatchingRenderPasses",
       "receiver": "tx",
       "method": "Raw",
@@ -66495,7 +66673,7 @@
     "8189fbbf8e0a": {
       "id": "8189fbbf8e0a",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 174,
+      "line": 210,
       "function": "TestAssertGoldenSQL_ApprovedDiffDoesNotCoverOtherDivergences",
       "receiver": "tx",
       "method": "Raw",
@@ -68182,7 +68360,7 @@
     "8522fc43fe46": {
       "id": "8522fc43fe46",
       "file": "iznik-server-go/test/ormharness_resultparity_test.go",
-      "line": 41,
+      "line": 76,
       "function": "setupResultParityFixture",
       "receiver": "db",
       "method": "Exec",
@@ -69684,7 +69862,7 @@
     "87c43e26ac52": {
       "id": "87c43e26ac52",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 136,
+      "line": 172,
       "function": "TestAssertGoldenSQL_NoGoldenSQLFails",
       "receiver": "tx",
       "method": "Raw",
@@ -71304,7 +71482,7 @@
     "8b81d850eaa8": {
       "id": "8b81d850eaa8",
       "file": "iznik-server-go/ormharness/resultparity.go",
-      "line": 89,
+      "line": 88,
       "function": "runRawSQL",
       "receiver": "db",
       "method": "Raw",
@@ -74462,7 +74640,7 @@
     "9160f8b1cbe7": {
       "id": "9160f8b1cbe7",
       "file": "iznik-server-go/ormharness/replay.go",
-      "line": 43,
+      "line": 44,
       "function": "ExplainTree",
       "receiver": "db",
       "method": "Raw",
@@ -74808,6 +74986,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM trysts WHERE user1 = ? ORDER BY id DESC LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "9237ecd90317": {
+      "id": "9237ecd90317",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 188,
+      "function": "TestRunUpsertParity_ConditionalCounterUpdate",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "ormharness_upsert_fixture"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT counter FROM ormharness_upsert_fixture WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -81166,7 +81366,7 @@
     "9f9b91eb0c5e": {
       "id": "9f9b91eb0c5e",
       "file": "iznik-server-go/test/ormharness_resultparity_test.go",
-      "line": 31,
+      "line": 66,
       "function": "setupResultParityFixture",
       "receiver": "db",
       "method": "Exec",
@@ -88540,7 +88740,7 @@
     "adc45993bd5d": {
       "id": "adc45993bd5d",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 92,
+      "line": 128,
       "function": "TestAssertGoldenSQL_UnknownSiteFails",
       "receiver": "tx",
       "method": "Raw",
@@ -90633,7 +90833,7 @@
     "b1efe6ab2f3b": {
       "id": "b1efe6ab2f3b",
       "file": "iznik-server-go/ormharness/golden_test.go",
-      "line": 156,
+      "line": 192,
       "function": "TestAssertGoldenSQL_ApprovedDiffPasses",
       "receiver": "tx",
       "method": "Raw",
@@ -106231,6 +106431,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
+    },
+    "d0b8fb573ea6": {
+      "id": "d0b8fb573ea6",
+      "file": "iznik-server-go/test/ormharness_replay_test.go",
+      "line": 121,
+      "function": "TestRunUpsertParity_ConditionalCounterUpdate",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "ormharness_upsert_fixture"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "DELETE FROM ormharness_upsert_fixture WHERE id IN (?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "d0beb3321266": {
       "id": "d0beb3321266",
@@ -129940,7 +130162,7 @@
     "febb90feb157": {
       "id": "febb90feb157",
       "file": "iznik-server-go/ormharness/replay.go",
-      "line": 324,
+      "line": 325,
       "function": "replayPrimaryKeyColumns",
       "receiver": "db",
       "method": "Raw",

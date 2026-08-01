@@ -230,11 +230,57 @@ func assertRowEqual(t TestingT, cols []string, rowLabel string, original, replac
 
 	for _, c := range cols {
 		originalValue, replacementValue := original[c], replacement[c]
-		if !reflect.DeepEqual(originalValue, replacementValue) {
-			t.Fatalf("ormharness: %s, column %q differs:\n  original:    %s\n  replacement: %s",
-				rowLabel, c, formatValue(originalValue), formatValue(replacementValue))
+		if reflect.DeepEqual(originalValue, replacementValue) {
+			continue
 		}
+
+		t.Fatalf("ormharness: %s, column %q differs:\n  original:    %s\n  replacement: %s%s",
+			rowLabel, c, formatValue(originalValue), formatValue(replacementValue),
+			protocolHint(originalValue, replacementValue))
 	}
+}
+
+// protocolHint explains the one way these two values can differ without the
+// SQL differing semantically.
+//
+// go-sql-driver/mysql returns []byte for every column under the text protocol,
+// but native Go types (int64, float64, time.Time) under the binary protocol,
+// and it picks the protocol by whether the statement was prepared - which in
+// turn depends on whether any bind arguments were supplied. So a statement
+// with arguments and one without can return the same value carrying different
+// Go types.
+//
+// This is NOT waved through. A faithful conversion binds the same arguments as
+// the statement it replaces, so a protocol difference means the replacement
+// parameterises differently from the original, which is a real divergence and
+// still fails. The hint exists so the failure names its cause rather than
+// looking like an inexplicable type mismatch.
+func protocolHint(originalValue, replacementValue any) string {
+	if originalValue == nil || replacementValue == nil {
+		return "" // a NULL difference is never a protocol artefact
+	}
+	if reflect.TypeOf(originalValue) == reflect.TypeOf(replacementValue) {
+		return ""
+	}
+	if renderForComparison(originalValue) != renderForComparison(replacementValue) {
+		return "" // genuinely different data, not just a different representation
+	}
+
+	return "\n  note: the values match but their Go types do not. That happens when one" +
+		"\n  statement was prepared and the other was not, because go-sql-driver returns" +
+		"\n  []byte under the text protocol and native types under the binary one. Check" +
+		"\n  that the replacement binds the same arguments as the original: differing" +
+		"\n  parameterisation is a real difference, not a harmless one."
+}
+
+// renderForComparison reduces a scanned value to its textual form, so that
+// []byte("5") and int64(5) can be recognised as the same underlying datum.
+// Used only to explain a failure, never to excuse one.
+func renderForComparison(v any) string {
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // formatValue renders a scanned column value for failure messages (and as
