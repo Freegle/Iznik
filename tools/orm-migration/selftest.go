@@ -1,0 +1,249 @@
+package main
+
+import (
+	"fmt"
+	"go/token"
+	"strings"
+)
+
+// The extractor is the contract the whole migration rests on: a site it fails
+// to see is a site the CI ratchet cannot protect. These cases pin the
+// behaviours that were actually got wrong during development, so a regression
+// shows up as a named failure rather than a quietly smaller manifest.
+//
+// The same table runs two ways: `go run . -selftest` locally (the repo's hooks
+// block `go test` on the host) and TestSelfCheck in CI.
+
+type selfCase struct {
+	name string
+	src  string
+
+	wantSites int
+	// Assertions applied to the first site found, when wantSites > 0.
+	wantSQLPrefix string
+	wantSource    string
+	wantKind      string
+	wantTables    []string
+	wantMySQLisms []string
+	wantComplex   string
+}
+
+var selfCases = []selfCase{
+	{
+		name: "simple select is captured with its tables",
+		src: `package p
+func f() {
+	db.Raw("SELECT id, name FROM users WHERE id = ?", 1).Scan(&u)
+}`,
+		wantSites:     1,
+		wantSQLPrefix: "SELECT id, name FROM users",
+		wantSource:    "literal",
+		wantKind:      "SELECT",
+		wantTables:    []string{"users"},
+		wantComplex:   "simple",
+	},
+	{
+		name: "multi-line concatenation is folded into one statement",
+		src: `package p
+func f() {
+	db.Raw("" +
+		"SELECT a " +
+		"FROM messages " +
+		"WHERE id = ?", 1).Scan(&m)
+}`,
+		wantSites:     1,
+		wantSQLPrefix: "SELECT a FROM messages WHERE id = ?",
+		wantSource:    "literal",
+		wantKind:      "SELECT",
+		wantTables:    []string{"messages"},
+	},
+	{
+		name:          "backtick raw string literal is folded",
+		src:           "package p\nfunc f() {\n\tdb.Exec(`UPDATE users SET x = 1 WHERE id = ?`, 2)\n}",
+		wantSites:     1,
+		wantSQLPrefix: "UPDATE users SET x = 1",
+		wantKind:      "UPDATE",
+		wantTables:    []string{"users"},
+	},
+	{
+		// Regression: the newsfeed queries are unions of parenthesised
+		// subqueries and were silently dropped by requiring a bare verb at
+		// position zero.
+		name: "statement starting with an open paren is captured",
+		src: `package p
+func f() {
+	db.Raw(fmt.Sprintf("(SELECT id FROM newsfeed FORCE INDEX (position) WHERE x = ?) UNION (SELECT id FROM alerts)", a)).Scan(&n)
+}`,
+		wantSites:     1,
+		wantSource:    "literal",
+		wantKind:      "SELECT",
+		wantMySQLisms: []string{"force-index"},
+		wantComplex:   "complex",
+	},
+	{
+		// Regression: db.Raw(baseQuery + " GROUP BY ...") begins with a hole,
+		// so no verb appears first, but it is unambiguously a SQL site.
+		name: "fragment beginning with a variable is captured as partial",
+		src: `package p
+func f() {
+	db.Raw(baseQuery+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?", limit).Scan(&msgs)
+}`,
+		wantSites:   1,
+		wantSource:  "partial",
+		wantKind:    "DYNAMIC",
+		wantComplex: "complex",
+	},
+	{
+		// Regression: SQL handed in wholesale by the dynamic query builders.
+		name: "SQL held entirely in a variable is captured",
+		src: `package p
+func f() {
+	db.Raw(query, args...).Scan(&rows)
+}`,
+		wantSites:   1,
+		wantSource:  "variable",
+		wantKind:    "DYNAMIC",
+		wantComplex: "complex",
+	},
+	{
+		// Regression: fiber's HTTP query-parameter getter shares the name
+		// Query with database/sql and would otherwise add 300+ non-SQL rows.
+		name: "fiber c.Query is not a SQL site",
+		src: `package p
+func f() {
+	uid := c.Query("uid")
+	_ = uid
+}`,
+		wantSites: 0,
+	},
+	{
+		name: "template and os/exec calls are not SQL sites",
+		src: `package p
+func f() {
+	tmpl.Exec("some template text")
+	cmd.Exec("ls -l")
+}`,
+		wantSites: 0,
+	},
+	{
+		name: "SQL mentioned only in a comment is not a site",
+		src: `package p
+func f() {
+	// returns the full SQL ready for db.Raw("SELECT * FROM users")
+	x := 1
+	_ = x
+}`,
+		wantSites: 0,
+	},
+	{
+		name: "upsert is flagged for the wave 3 portable wrapper",
+		src: `package p
+func f() {
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?) ON DUPLICATE KEY UPDATE email = ?", a, b, c)
+}`,
+		wantSites:     1,
+		wantKind:      "INSERT",
+		wantMySQLisms: []string{"on-duplicate-key"},
+		wantComplex:   "complex",
+	},
+	{
+		name: "spatial function forces complex",
+		src: `package p
+func f() {
+	db.Raw("SELECT ST_Y(point) AS lat FROM messages_spatial WHERE id = ?", 1).Scan(&m)
+}`,
+		wantSites:     1,
+		wantKind:      "SELECT",
+		wantMySQLisms: []string{"spatial"},
+		wantComplex:   "complex",
+	},
+	{
+		name: "join makes a select moderate rather than simple",
+		src: `package p
+func f() {
+	db.Raw("SELECT u.id FROM users u INNER JOIN memberships m ON m.userid = u.id WHERE m.groupid = ?", 1).Scan(&r)
+}`,
+		wantSites:   1,
+		wantKind:    "SELECT",
+		wantComplex: "moderate",
+		wantTables:  []string{"memberships", "users"},
+	},
+}
+
+// runSelfCheck executes the table and returns one message per failure.
+func runSelfCheck() []string {
+	var failures []string
+
+	fail := func(name, format string, args ...any) {
+		failures = append(failures, name+": "+fmt.Sprintf(format, args...))
+	}
+
+	for _, tc := range selfCases {
+		fset := token.NewFileSet()
+		got, err := sitesInFile(fset, "selftest.go", "selftest.go", tc.src, false)
+		if err != nil {
+			fail(tc.name, "parse error: %v", err)
+			continue
+		}
+		if len(got) != tc.wantSites {
+			fail(tc.name, "found %d sites, want %d", len(got), tc.wantSites)
+			continue
+		}
+		if tc.wantSites == 0 {
+			continue
+		}
+
+		s := got[0]
+		if tc.wantSQLPrefix != "" && !strings.HasPrefix(s.GoldenSQL, tc.wantSQLPrefix) {
+			fail(tc.name, "goldenSql = %q, want prefix %q", s.GoldenSQL, tc.wantSQLPrefix)
+		}
+		if tc.wantSource != "" && s.SQLSource != tc.wantSource {
+			fail(tc.name, "sqlSource = %q, want %q", s.SQLSource, tc.wantSource)
+		}
+		if tc.wantKind != "" && s.Kind != tc.wantKind {
+			fail(tc.name, "kind = %q, want %q", s.Kind, tc.wantKind)
+		}
+		if tc.wantComplex != "" && s.Complexity != tc.wantComplex {
+			fail(tc.name, "complexity = %q, want %q", s.Complexity, tc.wantComplex)
+		}
+		if tc.wantTables != nil && strings.Join(s.Tables, ",") != strings.Join(tc.wantTables, ",") {
+			fail(tc.name, "tables = %v, want %v", s.Tables, tc.wantTables)
+		}
+		for _, want := range tc.wantMySQLisms {
+			if !contains(s.MySQLisms, want) {
+				fail(tc.name, "mysqlisms = %v, want to contain %q", s.MySQLisms, want)
+			}
+		}
+		if s.ID == "" {
+			fail(tc.name, "site has no stable ID")
+		}
+	}
+
+	// The ID must be stable across runs, or the ratchet would flag every site
+	// as new on each regeneration.
+	fset := token.NewFileSet()
+	src := "package p\nfunc f() { db.Raw(\"SELECT 1 FROM dual\") }"
+	a, _ := sitesInFile(fset, "x.go", "x.go", src, false)
+	b, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", src, false)
+	if len(a) == 1 && len(b) == 1 && a[0].ID != b[0].ID {
+		fail("stable id", "ID differs between runs: %s vs %s", a[0].ID, b[0].ID)
+	}
+
+	// Two identical statements in one file must not collide onto one ID.
+	dup := "package p\nfunc f() { db.Raw(\"SELECT 1 FROM dual\"); db.Raw(\"SELECT 1 FROM dual\") }"
+	d, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", dup, false)
+	if len(d) == 2 && d[0].ID == d[1].ID {
+		fail("duplicate sql", "two sites in one file share ID %s", d[0].ID)
+	}
+
+	return failures
+}
+
+func contains(hay []string, needle string) bool {
+	for _, h := range hay {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
