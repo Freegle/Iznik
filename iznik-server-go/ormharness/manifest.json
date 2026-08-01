@@ -858,7 +858,8 @@
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1",
       "presentInCode": false,
       "hasParityTest": true,
-      "status": "converted"
+      "status": "converted",
+      "approvedDiff": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT ?"
     },
     "01bedb9d631d": {
       "id": "01bedb9d631d",
