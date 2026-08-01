@@ -103,6 +103,27 @@ function driverMode() {
 }
 
 /**
+ * What this query actually costs, given how the SDK is authenticated.
+ *
+ * The SDK always reports a `total_cost_usd`, but that is a notional token price
+ * worked out from the model's list rates - it is only what anyone is charged in
+ * 'api' mode. Both 'subscription' (a `claude setup-token` OAuth token) and
+ * 'session' (a mounted ~/.claude login) run against a Claude subscription that
+ * is paid for monthly, so nothing is billed per query and showing a dollar
+ * figure is meaningless, and alarming to whoever is reading it.
+ *
+ * This used to test for 'session' alone, so the helper reported a cost on a
+ * subscription - the one case the comment was trying to exclude.
+ *
+ * @param {'api'|'subscription'|'session'} mode from driverMode()
+ * @param {number} sdkCostUsd the SDK's total_cost_usd
+ * @returns {number} dollars actually billed for this query
+ */
+function billableCostUsd(mode, sdkCostUsd) {
+  return mode === 'api' ? sdkCostUsd || 0 : 0
+}
+
+/**
  * Make the subscription token win. When a `claude setup-token` OAuth token is present,
  * remove ANTHROPIC_API_KEY from the environment so the Claude Agent SDK / CLI authenticates
  * with the subscription instead of silently billing the metered API (which it does whenever
@@ -117,4 +138,12 @@ function preferSubscriptionToken() {
   return false
 }
 
-module.exports = { verifyModerator, extractJWT, driverMode, preferSubscriptionToken, FREEGLE_API_URL, SUPPORT_ROLES }
+module.exports = {
+  verifyModerator,
+  extractJWT,
+  driverMode,
+  preferSubscriptionToken,
+  billableCostUsd,
+  FREEGLE_API_URL,
+  SUPPORT_ROLES,
+}

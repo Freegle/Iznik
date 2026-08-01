@@ -10,13 +10,14 @@
 
 const { query, createSdkMcpServer } = require('@anthropic-ai/claude-agent-sdk')
 const { buildTools, audit } = require('./tools')
-const { driverMode } = require('./auth')
+const { driverMode, billableCostUsd } = require('./auth')
 
 // Use an unpinned alias, not a dated snapshot: snapshots get retired and then
 // the SDK 404s on the model. On the Claude subscription (session mode) we can
 // use Opus. Override with SUPPORT_AI_MODEL if needed.
 const MODEL = process.env.SUPPORT_AI_MODEL || 'opus'
 const CODEBASE = process.env.CODEBASE_DIR || '/app/codebase'
+
 
 
 function systemPrompt(userId) {
@@ -195,10 +196,7 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
       } else if (message.type === 'result') {
         if (message.subtype === 'success') {
           analysis = message.result || ''
-          // Session mode runs on the Claude subscription — there is no per-query
-          // API charge, so report $0 rather than the SDK's notional token cost.
-          costUsd =
-            driverMode() === 'session' ? 0 : message.total_cost_usd || 0
+          costUsd = billableCostUsd(driverMode(), message.total_cost_usd)
           usage = {
             inputTokens: message.usage?.input_tokens || 0,
             outputTokens: message.usage?.output_tokens || 0,

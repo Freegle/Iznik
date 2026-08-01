@@ -39,12 +39,26 @@
       >
         <div class="d-flex align-items-center flex-wrap">
           <strong>AI Support Helper</strong>
-          <span v-if="totalCost > 0" class="session-cost ms-2">
-            Session: ${{ totalCost.toFixed(4) }}
+          <!-- On a Claude subscription nothing is billed per query, so the
+               server reports a cost of 0 and no money is shown. The token
+               counts are still worth having, so they no longer hang off the
+               cost being non-zero. -->
+          <span
+            v-if="
+              totalCost > 0 ||
+              totalTokens.inputTokens ||
+              totalTokens.outputTokens
+            "
+            class="session-cost ms-2"
+          >
+            <template v-if="totalCost > 0">
+              Session: ${{ totalCost.toFixed(4) }}
+            </template>
             <template
               v-if="totalTokens.inputTokens || totalTokens.outputTokens"
             >
-              &middot; {{ formatTokenCounts(totalTokens) }}
+              <template v-if="totalCost > 0">&middot; </template>
+              {{ formatTokenCounts(totalTokens) }}
             </template>
           </span>
           <div
@@ -196,10 +210,11 @@
           class="text-muted small"
         >
           <template v-if="deviceSummary?.lastApiActivity">
-            Active on the server side {{ formatLastSeen(deviceSummary.lastApiActivity) }},
-            but their device sends no telemetry &mdash; usually an ad/tracker
-            blocker, or an app from before client logging. Device details
-            aren't available for this member.
+            Active on the server side
+            {{ formatLastSeen(deviceSummary.lastApiActivity) }}, but their
+            device sends no telemetry &mdash; usually an ad/tracker blocker, or
+            an app from before client logging. Device details aren't available
+            for this member.
           </template>
           <template v-else>
             No device sessions found in the last 7 days.
