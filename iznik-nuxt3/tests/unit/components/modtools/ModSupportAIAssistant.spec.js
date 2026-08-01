@@ -716,6 +716,43 @@ describe('ModSupportAIAssistant', () => {
 
       expect(wrapper.text()).toContain('100 in / 50 out tokens')
     })
+
+    // On a Claude subscription nothing is billed per query, so the server sends
+    // a cost of 0. Showing "$0.0000" - or a dollar figure at all - is meaningless
+    // and alarming, but the token counts are still useful.
+    it('shows no money at all when the cost is zero', async () => {
+      const wrapper = mountComponent()
+
+      wrapper.vm.messages = [
+        {
+          role: 'assistant',
+          content: 'test',
+          costUsd: 0,
+          usage: { inputTokens: 100, outputTokens: 50 },
+        },
+      ]
+      await nextTick()
+
+      expect(wrapper.text()).not.toContain('Session: $')
+      expect(wrapper.text()).not.toContain('$0.0000')
+      expect(wrapper.text()).toContain('100 in / 50 out tokens')
+    })
+
+    it('still shows token totals when no cost is reported at all', async () => {
+      const wrapper = mountComponent()
+
+      wrapper.vm.messages = [
+        {
+          role: 'assistant',
+          content: 'test',
+          usage: { inputTokens: 20, outputTokens: 7 },
+        },
+      ]
+      await nextTick()
+
+      expect(wrapper.text()).not.toContain('Session: $')
+      expect(wrapper.text()).toContain('20 in / 7 out tokens')
+    })
   })
 
   describe('follow-up input', () => {
