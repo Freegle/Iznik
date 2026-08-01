@@ -757,3 +757,75 @@ func TestVolunteeringNullUserid(t *testing.T) {
 	resp, _ = getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+// A national opportunity has no volunteering_groups row at all, so a group-only query
+// can never find it. It must still appear in a member's list - and ahead of the
+// group-specific ones, since it is relevant whoever is looking.
+func TestVolunteering_NationalOpsListedFirst(t *testing.T) {
+	prefix := uniquePrefix("volnatlist")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	creatorID := CreateTestUser(t, prefix+"_creator", "User")
+	CreateTestMembership(t, creatorID, groupID, "Member")
+
+	// The live NATIONAL op is created FIRST so it gets the LOWER id. That matters: a plain
+	// "ORDER BY id DESC" would then put it BELOW the group op, so this test fails unless the
+	// handler really does hoist national ops to the top.
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'National Live Vol', 'national desc', '', 0, 0, 0)", creatorID)
+	var nationalOpID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'National Live Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalOpID)
+	assert.Greater(t, nationalOpID, uint64(0))
+	// No INSERT INTO volunteering_groups - that is what makes it national.
+
+	// A live per-group op, created second so it has the HIGHER id.
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Group Live Vol', 'group desc', '', 0, 0, 0)", creatorID)
+	var groupOpID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'Group Live Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&groupOpID)
+	assert.Greater(t, groupOpID, nationalOpID, "group op must have the higher id for this test to mean anything")
+	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", groupOpID, groupID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	_, memberToken := CreateTestSession(t, memberID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?jwt="+memberToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var ids []uint64
+	json2.Unmarshal(rsp(resp), &ids)
+
+	assert.Contains(t, ids, nationalOpID, "national op must be listed for a member")
+	assert.Contains(t, ids, groupOpID, "group op must still be listed")
+
+	natPos, grpPos := -1, -1
+	for i, id := range ids {
+		if id == nationalOpID {
+			natPos = i
+		}
+		if id == groupOpID {
+			grpPos = i
+		}
+	}
+	assert.Less(t, natPos, grpPos, "national op must be listed ahead of the group op")
+}
+
+// A member of no communities at all should still be shown national opportunities.
+func TestVolunteering_NationalOpsListedWithNoGroups(t *testing.T) {
+	prefix := uniquePrefix("volnatnogrp")
+	db := database.DBConn
+
+	creatorID := CreateTestUser(t, prefix+"_creator", "User")
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'National Only Vol', 'national desc', '', 0, 0, 0)", creatorID)
+	var nationalOpID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'National Only Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalOpID)
+	assert.Greater(t, nationalOpID, uint64(0))
+
+	loneID := CreateTestUser(t, prefix+"_lone", "User")
+	_, loneToken := CreateTestSession(t, loneID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?jwt="+loneToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var ids []uint64
+	json2.Unmarshal(rsp(resp), &ids)
+	assert.Contains(t, ids, nationalOpID, "member of no communities must still see national ops")
+}
