@@ -261,7 +261,8 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 		Chattype string `gorm:"column:chattype"`
 	}
 	var room roomBasic
-	db.Raw("SELECT id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype FROM chat_rooms WHERE id = ?", id).Scan(&room)
+	// ORM migration site 52dd73c2cd60 (wave 1).
+	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
 
 	if room.ID == 0 {
 		var chat ChatRoomListEntry
@@ -392,8 +393,9 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 		// Find or create a chat between the target user and the group's mods.
 		var existingID uint64
-		db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND chattype = ? AND groupid = ? LIMIT 1",
-			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Scan(&existingID)
+		// ORM migration site 753fbc262f6b (wave 1).
+		db.Table("chat_rooms").Select("id").Where("user1 = ? AND chattype = ? AND groupid = ?",
+			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Limit(1).Scan(&existingID)
 
 		if existingID > 0 {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
@@ -425,7 +427,8 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 		// add ALL group moderators to the roster so they get notifications.
 		var modIDs []uint64
-		db.Raw("SELECT userid FROM memberships WHERE groupid = ? AND role IN (?, ?) AND collection = ?",
+		// ORM migration site 0cc375ba3154 (wave 1).
+		db.Table("memberships").Where("groupid = ? AND role IN (?, ?) AND collection = ?",
 			req.Groupid, utils.ROLE_OWNER, utils.ROLE_MODERATOR, utils.COLLECTION_APPROVED).Pluck("userid", &modIDs)
 		for _, modID := range modIDs {
 			db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, ?)",
@@ -439,8 +442,9 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 	// Check for existing chat first (covers both user orderings).
 	var existingID uint64
-	db.Raw("SELECT id FROM chat_rooms WHERE ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ? LIMIT 1",
-		myid, req.Userid, req.Userid, myid, utils.CHAT_TYPE_USER2USER).Scan(&existingID)
+	// ORM migration site 8b3ccb082a00 (wave 1).
+	db.Table("chat_rooms").Select("id").Where("((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ?",
+		myid, req.Userid, req.Userid, myid, utils.CHAT_TYPE_USER2USER).Limit(1).Scan(&existingID)
 
 	if existingID > 0 {
 		if req.UpdateRoster != nil && *req.UpdateRoster {
@@ -547,7 +551,8 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 	db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)", chatID, userID)
 
 	var modUserIDs []uint64
-	db.Raw("SELECT userid FROM memberships WHERE groupid = ? AND role IN (?, ?)", groupID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modUserIDs)
+	// ORM migration site 8df448e1a244 (wave 1).
+	db.Table("memberships").Select("userid").Where("groupid = ? AND role IN (?, ?)", groupID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modUserIDs)
 	for _, modUID := range modUserIDs {
 		db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)", chatID, modUID)
 	}
@@ -569,11 +574,11 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 	// Check for existing chat first to avoid an INSERT roundtrip in the
 	// hot path where the chat already exists.
 	var chatID uint64
-	db.Raw(`SELECT id FROM chat_rooms
-		WHERE ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))
-		AND chattype = ?
-		LIMIT 1`,
-		userA, userB, userB, userA, utils.CHAT_TYPE_USER2USER).Scan(&chatID)
+	// ORM migration site f114a9d3efaf (wave 1).
+	db.Table("chat_rooms").Select("id").
+		Where("((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ?",
+			userA, userB, userB, userA, utils.CHAT_TYPE_USER2USER).
+		Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
 		sqlDB, err := db.DB()
@@ -632,7 +637,8 @@ func GetCommonGroups(c *fiber.Ctx) error {
 		User1 uint64
 		User2 uint64
 	}
-	db.Raw("SELECT id, user1, user2 FROM chat_rooms WHERE id = ?", id).Scan(&room)
+	// ORM migration site 0ca3c490a3f4 (wave 1).
+	db.Table("chat_rooms").Select("id, user1, user2").Where("id = ?", id).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
@@ -1369,7 +1375,8 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 	// Verify user is a member of this chat
 	var room ChatRoom
-	db.Raw("SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?", chatid).Scan(&room)
+	// ORM migration site 60cc02526265 (wave 1).
+	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", chatid).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
@@ -1383,13 +1390,15 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 		Userid uint64
 	}
 	var last lastMsg
-	db.Raw("SELECT type, userid FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatid).Scan(&last)
+	// ORM migration site f467930b5852 (wave 1).
+	db.Table("chat_messages").Select("type, userid").Where("chatid = ?", chatid).Order("id DESC").Limit(1).Scan(&last)
 
 	if last.Type == utils.CHAT_MESSAGE_NUDGE && last.Userid == myid {
 		// Already nudged - return the existing nudge ID
 		var existingId uint64
-		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND type = ? AND userid = ? ORDER BY id DESC LIMIT 1",
-			chatid, utils.CHAT_MESSAGE_NUDGE, myid).Scan(&existingId)
+		// ORM migration site d6af2e7ded90 (wave 1).
+		db.Table("chat_messages").Select("id").Where("chatid = ? AND type = ? AND userid = ?",
+			chatid, utils.CHAT_MESSAGE_NUDGE, myid).Order("id DESC").Limit(1).Scan(&existingId)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingId})
 	}
 
@@ -1427,7 +1436,8 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 	// Verify the chat room exists.
 	var roomID uint64
-	db.Raw("SELECT id FROM chat_rooms WHERE id = ?", chatid).Scan(&roomID)
+	// ORM migration site 9cbfea9abfb4 (wave 1).
+	db.Table("chat_rooms").Select("id").Where("id = ?", chatid).Scan(&roomID)
 	if roomID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
@@ -1448,7 +1458,8 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
 	// Verify user can see this chat and is a legitimate member
 	var room ChatRoom
-	db.Raw("SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?", req.ID).Scan(&room)
+	// ORM migration site e9c62ddd84f5 (wave 1).
+	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})
 	}
@@ -1523,7 +1534,8 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 
 	// Get updated roster
 	var roster []RosterEntry
-	db.Raw("SELECT userid, status FROM chat_roster WHERE chatid = ?", req.ID).Scan(&roster)
+	// ORM migration site 727229e201ff (wave 1).
+	db.Table("chat_roster").Select("userid, status").Where("chatid = ?", req.ID).Scan(&roster)
 
 	// Get unseen count — only count messages from the last CHAT_ACTIVE_LIMIT days (V1 parity: ACTIVELIM).
 	activeSince := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
@@ -1556,7 +1568,8 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 
 	// Verify user is a member of this chat.
 	var room ChatRoom
-	db.Raw("SELECT id, chattype, user1, user2, groupid FROM chat_rooms WHERE id = ?", chatid).Scan(&room)
+	// ORM migration site e6897171f8cc (wave 1).
+	db.Table("chat_rooms").Select("id, chattype, user1, user2, groupid").Where("id = ?", chatid).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
@@ -1584,7 +1597,8 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	}
 
 	var room ChatRoom
-	db.Raw("SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?", req.ID).Scan(&room)
+	// ORM migration site ef385ae58c6f (wave 1).
+	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
@@ -1784,18 +1798,21 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 		if user1 == myid {
 			if groupid > 0 {
 				var nameshort string
-				db.Raw("SELECT COALESCE(namefull, nameshort) FROM `groups` WHERE id = ?", groupid).Scan(&nameshort)
+				// ORM migration site ad4461c2eb9b (wave 1).
+				db.Table("groups").Select("COALESCE(namefull, nameshort)").Where("id = ?", groupid).Scan(&nameshort)
 				if nameshort != "" {
 					return nameshort + " Volunteers"
 				}
 			}
 		} else if user1 > 0 {
 			var fullname string
-			db.Raw("SELECT fullname FROM users WHERE id = ?", user1).Scan(&fullname)
+			// ORM migration site e531967a2538 (wave 1).
+			db.Table("users").Select("fullname").Where("id = ?", user1).Scan(&fullname)
 			if fullname != "" {
 				if groupid > 0 {
 					var groupname string
-					db.Raw("SELECT COALESCE(namefull, nameshort) FROM `groups` WHERE id = ?", groupid).Scan(&groupname)
+					// ORM migration site c033fc5fdc76 (wave 1).
+					db.Table("groups").Select("COALESCE(namefull, nameshort)").Where("id = ?", groupid).Scan(&groupname)
 					if groupname != "" {
 						return fullname + " on " + groupname
 					}
@@ -1806,7 +1823,8 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 	case utils.CHAT_TYPE_MOD2MOD:
 		if groupid > 0 {
 			var nameshort string
-			db.Raw("SELECT nameshort FROM `groups` WHERE id = ?", groupid).Scan(&nameshort)
+			// ORM migration site aad80eae279a (wave 1).
+			db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&nameshort)
 			if nameshort != "" {
 				return nameshort + " Mods"
 			}
@@ -1818,7 +1836,8 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 		}
 		if otheruid > 0 {
 			var fullname string
-			db.Raw("SELECT fullname FROM users WHERE id = ?", otheruid).Scan(&fullname)
+			// ORM migration site 843ffd0c4450 (wave 1).
+			db.Table("users").Select("fullname").Where("id = ?", otheruid).Scan(&fullname)
 			if fullname != "" {
 				return fullname
 			}

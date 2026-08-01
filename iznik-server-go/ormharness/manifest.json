@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 69,
+    "converted": 170,
     "keep-raw": 35,
-    "raw": 1532,
+    "raw": 1431,
     "test-fixture": 4223
   },
   "sites": {
@@ -1125,7 +1125,7 @@
     "02506a663a0e": {
       "id": "02506a663a0e",
       "file": "iznik-server-go/session/session.go",
-      "line": 649,
+      "line": 663,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -1436,7 +1436,7 @@
     "030c4c489394": {
       "id": "030c4c489394",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1585,
+      "line": 1603,
       "function": "rejectChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -2839,7 +2839,7 @@
     "05c1cd917f86": {
       "id": "05c1cd917f86",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1417,
+      "line": 1426,
       "function": "handleNudge",
       "receiver": "db",
       "method": "Exec",
@@ -3389,9 +3389,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "06d6435e0fc8": {
       "id": "06d6435e0fc8",
@@ -3440,7 +3440,7 @@
     "07113a2db28b": {
       "id": "07113a2db28b",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1114,
+      "line": 1126,
       "function": "getChatMessagesForRoom",
       "receiver": "db",
       "method": "Raw",
@@ -3617,7 +3617,7 @@
     "076c5c70eb8e": {
       "id": "076c5c70eb8e",
       "file": "iznik-server-go/session/session.go",
-      "line": 1190,
+      "line": 1219,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -3678,9 +3678,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed, engagement AS engagementlevel FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "077662d6b2c6": {
       "id": "077662d6b2c6",
@@ -4210,9 +4210,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT replyto FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "084f87f8787b": {
       "id": "084f87f8787b",
@@ -4487,7 +4487,7 @@
     "08d12a748d01": {
       "id": "08d12a748d01",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1215,
+      "line": 1227,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -4594,14 +4594,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "09515916c939": {
       "id": "09515916c939",
       "file": "iznik-server-go/session/session.go",
-      "line": 1389,
+      "line": 1422,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -4648,7 +4648,7 @@
     "09730933af57": {
       "id": "09730933af57",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1133,
+      "line": 1145,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -4694,7 +4694,7 @@
     "09878cd3c660": {
       "id": "09878cd3c660",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1549,
+      "line": 1566,
       "function": "rejectChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -5020,9 +5020,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0a0a478ae363": {
       "id": "0a0a478ae363",
@@ -5137,7 +5137,7 @@
     "0a6ca0656195": {
       "id": "0a6ca0656195",
       "file": "iznik-server-go/session/session.go",
-      "line": 956,
+      "line": 985,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5447,7 +5447,7 @@
     "0ae47e468828": {
       "id": "0ae47e468828",
       "file": "iznik-server-go/session/session.go",
-      "line": 1075,
+      "line": 1104,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5814,9 +5814,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid, message FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0bc04084a517": {
       "id": "0bc04084a517",
@@ -5948,9 +5948,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c2736a9cf30": {
       "id": "0c2736a9cf30",
@@ -6309,9 +6309,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, user1, user2 FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0ca4810292dc": {
       "id": "0ca4810292dc",
@@ -6351,9 +6351,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT userid FROM memberships WHERE groupid = ? AND role IN (?, ?) AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0ccda46b359c": {
       "id": "0ccda46b359c",
@@ -8125,7 +8125,7 @@
     "1013ca206ab1": {
       "id": "1013ca206ab1",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 106,
+      "line": 108,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -8416,7 +8416,7 @@
     "10bcbd6a6404": {
       "id": "10bcbd6a6404",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1496,
+      "line": 1516,
       "function": "createRefer",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -11196,7 +11196,7 @@
     "16ab70b058c0": {
       "id": "16ab70b058c0",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1443,
+      "line": 1453,
       "function": "handleTyping",
       "receiver": "db",
       "method": "Exec",
@@ -13798,9 +13798,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT domain FROM spam_whitelist_links WHERE count \u003e= 3 AND LENGTH(domain) \u003e 5 AND domain NOT LIKE '%linkedin%' AND domain NOT LIKE '%goo.gl%' AND domain NOT LIKE '%bit.ly%' AND domain NOT LIKE '%tinyurl%'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1bdbafed31fa": {
       "id": "1bdbafed31fa",
@@ -13943,7 +13943,7 @@
     "1c2cfaaab39b": {
       "id": "1c2cfaaab39b",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 547,
+      "line": 551,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "db",
       "method": "Exec",
@@ -14629,7 +14629,7 @@
     "1d7035c837c8": {
       "id": "1d7035c837c8",
       "file": "iznik-server-go/session/session.go",
-      "line": 1164,
+      "line": 1193,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -14645,13 +14645,13 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "1d98111ea90d": {
       "id": "1d98111ea90d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1632,
+      "line": 1646,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -14734,9 +14734,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid, replyto FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1dad8482b993": {
       "id": "1dad8482b993",
@@ -15721,7 +15721,7 @@
     "1f5798e8214d": {
       "id": "1f5798e8214d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1402,
+      "line": 1411,
       "function": "handleNudge",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -15765,7 +15765,7 @@
     "1f5fe9f4e306": {
       "id": "1f5fe9f4e306",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 756,
+      "line": 761,
       "function": "CreateChatMessageLoveJunk",
       "receiver": "db",
       "method": "Raw",
@@ -16167,7 +16167,7 @@
     "1ff179ae0e2c": {
       "id": "1ff179ae0e2c",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1143,
+      "line": 1155,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -16191,7 +16191,7 @@
     "1ff296c8656c": {
       "id": "1ff296c8656c",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1271,
+      "line": 1284,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -16326,7 +16326,7 @@
     "2045fb2e0152": {
       "id": "2045fb2e0152",
       "file": "iznik-server-go/session/session.go",
-      "line": 1047,
+      "line": 1076,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -16707,7 +16707,7 @@
     "20d3333b6657": {
       "id": "20d3333b6657",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1123,
+      "line": 1134,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -17151,9 +17151,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT series FROM sessions WHERE id = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "21bcf98d0ade": {
       "id": "21bcf98d0ade",
@@ -17180,7 +17180,7 @@
     "21c0c56448e8": {
       "id": "21c0c56448e8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 431,
+      "line": 434,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -17692,7 +17692,7 @@
     "22b6e811aaa9": {
       "id": "22b6e811aaa9",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 644,
+      "line": 650,
       "function": "GetCommonGroups",
       "receiver": "db",
       "method": "Raw",
@@ -18244,9 +18244,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, email, preferred, validated, bounced FROM users_emails WHERE userid = ? ORDER BY preferred DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "239d2cb0036e": {
       "id": "239d2cb0036e",
@@ -18447,9 +18447,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, userid, timestamp FROM newsfeed WHERE replyto = ? OR id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "23ee2bc0640f": {
       "id": "23ee2bc0640f",
@@ -18702,7 +18702,7 @@
     "2451a0b54d63": {
       "id": "2451a0b54d63",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 522,
+      "line": 526,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "tx",
       "method": "Exec",
@@ -20793,7 +20793,7 @@
     "28acafc7c5a8": {
       "id": "28acafc7c5a8",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1169,
+      "line": 1181,
       "function": "Post",
       "receiver": "db",
       "method": "Raw",
@@ -21077,9 +21077,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT * FROM newsfeed_likes WHERE newsfeedid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2906641f60f2": {
       "id": "2906641f60f2",
@@ -21325,7 +21325,7 @@
     "2984f464c081": {
       "id": "2984f464c081",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1531,
+      "line": 1543,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -21393,7 +21393,7 @@
     "29b68b1db029": {
       "id": "29b68b1db029",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1575,
+      "line": 1593,
       "function": "rejectChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -23526,7 +23526,7 @@
     "2e5a6f9c7077": {
       "id": "2e5a6f9c7077",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1520,
+      "line": 1537,
       "function": "approveChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -23812,7 +23812,7 @@
     "2edb182648ba": {
       "id": "2edb182648ba",
       "file": "iznik-server-go/session/session.go",
-      "line": 1178,
+      "line": 1207,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -24699,9 +24699,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT userid FROM users_logins WHERE type = ? AND uid = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "30517f1cbffd": {
       "id": "30517f1cbffd",
@@ -25281,9 +25281,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT user1, user2, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3198f6ee3de5": {
       "id": "3198f6ee3de5",
@@ -25488,7 +25488,7 @@
     "31e0b23915a9": {
       "id": "31e0b23915a9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1360,
+      "line": 1393,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -26549,7 +26549,7 @@
     "33ad97a3417c": {
       "id": "33ad97a3417c",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 514,
+      "line": 515,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Raw",
@@ -27244,7 +27244,7 @@
     "35023816be21": {
       "id": "35023816be21",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1725,
+      "line": 1739,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -27356,7 +27356,7 @@
     "3519e352775b": {
       "id": "3519e352775b",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1626,
+      "line": 1640,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -27555,7 +27555,7 @@
     "359a8dec20e2": {
       "id": "359a8dec20e2",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1252,
+      "line": 1265,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -27985,7 +27985,7 @@
     "366c64b4d972": {
       "id": "366c64b4d972",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1190,
+      "line": 1196,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -28120,7 +28120,7 @@
     "36b33902c122": {
       "id": "36b33902c122",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1515,
+      "line": 1526,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -28540,9 +28540,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT text, timestamp FROM users_aboutme WHERE userid = ? ORDER BY timestamp DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "37c205978f1f": {
       "id": "37c205978f1f",
@@ -29416,7 +29416,7 @@
     "39a4f93e1455": {
       "id": "39a4f93e1455",
       "file": "iznik-server-go/session/session.go",
-      "line": 732,
+      "line": 750,
       "function": "handleRelated",
       "receiver": "db",
       "method": "Exec",
@@ -29831,7 +29831,7 @@
     "3a6e42ab9746": {
       "id": "3a6e42ab9746",
       "file": "iznik-server-go/session/session.go",
-      "line": 1138,
+      "line": 1167,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -29847,7 +29847,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat)",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "3a717e9343ff": {
@@ -30001,9 +30001,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users WHERE id = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ae26b846300": {
       "id": "3ae26b846300",
@@ -30045,9 +30045,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT user1, user2, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ae731f36c3d": {
       "id": "3ae731f36c3d",
@@ -30806,7 +30806,7 @@
     "3c4828e01db8": {
       "id": "3c4828e01db8",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1144,
+      "line": 1156,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -30920,7 +30920,7 @@
     "3c78baa8b628": {
       "id": "3c78baa8b628",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1473,
+      "line": 1493,
       "function": "notifyThreadContributors",
       "receiver": "db",
       "method": "Exec",
@@ -31622,7 +31622,7 @@
     "3e8f726f0ef8": {
       "id": "3e8f726f0ef8",
       "file": "iznik-server-go/session/session.go",
-      "line": 1890,
+      "line": 1926,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -31798,9 +31798,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ef1d1da229f": {
       "id": "3ef1d1da229f",
@@ -31827,7 +31827,7 @@
     "3efb8e22cd38": {
       "id": "3efb8e22cd38",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1225,
+      "line": 1237,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -31893,7 +31893,7 @@
     "3efeb225c001": {
       "id": "3efeb225c001",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 584,
+      "line": 589,
       "function": "GetOrCreateUser2UserChat",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -32049,7 +32049,7 @@
     "3f3696f3bba4": {
       "id": "3f3696f3bba4",
       "file": "iznik-server-go/session/session.go",
-      "line": 1317,
+      "line": 1348,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -32289,7 +32289,7 @@
     "3fc481b1a1a6": {
       "id": "3fc481b1a1a6",
       "file": "iznik-server-go/session/session.go",
-      "line": 1776,
+      "line": 1812,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -33615,9 +33615,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT value FROM config WHERE `key` = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "42298d200b5f": {
       "id": "42298d200b5f",
@@ -35560,7 +35560,7 @@
     "461f55d25b16": {
       "id": "461f55d25b16",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 426,
+      "line": 427,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Raw",
@@ -36603,7 +36603,7 @@
     "47dfb0a3eebe": {
       "id": "47dfb0a3eebe",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1184,
+      "line": 1196,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -36882,9 +36882,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM chat_messages WHERE platform = 0 AND date \u003e= DATE_SUB(NOW(), INTERVAL 2 HOUR)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "488c92a4f115": {
       "id": "488c92a4f115",
@@ -37206,7 +37206,7 @@
     "491a9ebdf3f8": {
       "id": "491a9ebdf3f8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1643,
+      "line": 1657,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -37333,9 +37333,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM newsfeed WHERE replyto = ? AND deleted IS NULL ORDER BY timestamp ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "497062e50a84": {
       "id": "497062e50a84",
@@ -37586,7 +37586,7 @@
     "49e43e92d1e5": {
       "id": "49e43e92d1e5",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 398,
+      "line": 399,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Exec",
@@ -37826,9 +37826,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4a4e6ef7b504": {
       "id": "4a4e6ef7b504",
@@ -38431,9 +38431,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT newsfeedid FROM newsfeed_users WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4b1829c352b9": {
       "id": "4b1829c352b9",
@@ -38483,7 +38483,7 @@
     "4b310a4913e0": {
       "id": "4b310a4913e0",
       "file": "iznik-server-go/session/session.go",
-      "line": 1062,
+      "line": 1091,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -38600,7 +38600,7 @@
     "4b773363a4f4": {
       "id": "4b773363a4f4",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 942,
+      "line": 951,
       "function": "DeleteChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -38781,7 +38781,7 @@
     "4c1209980f1f": {
       "id": "4c1209980f1f",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 940,
+      "line": 949,
       "function": "DeleteChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -40403,7 +40403,7 @@
     "4f9d823a53a7": {
       "id": "4f9d823a53a7",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1653,
+      "line": 1667,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -40449,7 +40449,7 @@
     "4fc47623d055": {
       "id": "4fc47623d055",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 446,
+      "line": 447,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Raw",
@@ -40602,9 +40602,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT name, lat, lng FROM locations WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "502f37d7387b": {
       "id": "502f37d7387b",
@@ -40692,9 +40692,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM helper_repliers WHERE state = 'ESCALATED'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "505974c6a50f": {
       "id": "505974c6a50f",
@@ -41364,7 +41364,7 @@
     "51e0c66e68ff": {
       "id": "51e0c66e68ff",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 857,
+      "line": 864,
       "function": "CreateChatMessageLoveJunk",
       "receiver": "db",
       "method": "Exec",
@@ -41455,7 +41455,7 @@
     "520be22ce5db": {
       "id": "520be22ce5db",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1103,
+      "line": 1113,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -41826,9 +41826,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "52ec3508f186": {
       "id": "52ec3508f186",
@@ -42212,7 +42212,7 @@
     "537a2764efde": {
       "id": "537a2764efde",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1010,
+      "line": 1016,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -42436,7 +42436,7 @@
     "54406e904bd5": {
       "id": "54406e904bd5",
       "file": "iznik-server-go/session/session.go",
-      "line": 697,
+      "line": 715,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -42706,7 +42706,7 @@
     "54cdf0e1dfa0": {
       "id": "54cdf0e1dfa0",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1510,
+      "line": 1521,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -42840,7 +42840,7 @@
     "54fd76b4cc2c": {
       "id": "54fd76b4cc2c",
       "file": "iznik-server-go/session/session.go",
-      "line": 1775,
+      "line": 1811,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -43836,7 +43836,7 @@
     "56c15677ea5b": {
       "id": "56c15677ea5b",
       "file": "iznik-server-go/session/session.go",
-      "line": 1848,
+      "line": 1884,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -44458,7 +44458,7 @@
     "57f83af68a60": {
       "id": "57f83af68a60",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 552,
+      "line": 557,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "db",
       "method": "Exec",
@@ -44541,9 +44541,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "581c281d1190": {
       "id": "581c281d1190",
@@ -44639,7 +44639,7 @@
     "582f5b4bb7ce": {
       "id": "582f5b4bb7ce",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 406,
+      "line": 407,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Raw",
@@ -45126,9 +45126,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM cron_job_status WHERE last_exit_code IS NOT NULL AND last_exit_code != 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "592315f132b7": {
       "id": "592315f132b7",
@@ -45282,9 +45282,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5976145dc312": {
       "id": "5976145dc312",
@@ -47316,7 +47316,7 @@
     "5da587b4234d": {
       "id": "5da587b4234d",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1277,
+      "line": 1290,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -47622,7 +47622,7 @@
     "5e425bd87624": {
       "id": "5e425bd87624",
       "file": "iznik-server-go/session/session.go",
-      "line": 712,
+      "line": 730,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -47749,9 +47749,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT id, chatid FROM chat_messages WHERE date \u003e= ? AND reviewrequired = 1 AND message = ? AND id != ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5e76606c7348": {
       "id": "5e76606c7348",
@@ -48321,7 +48321,7 @@
     "5f7862e7e461": {
       "id": "5f7862e7e461",
       "file": "iznik-server-go/session/session.go",
-      "line": 2005,
+      "line": 2042,
       "function": "DeleteSession",
       "receiver": "db",
       "method": "Exec",
@@ -48498,7 +48498,7 @@
     "5fb6e8fa85fd": {
       "id": "5fb6e8fa85fd",
       "file": "iznik-server-go/session/session.go",
-      "line": 1915,
+      "line": 1951,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -48560,9 +48560,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5fd102e62bbb": {
       "id": "5fd102e62bbb",
@@ -48758,9 +48758,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "60708566b67a": {
       "id": "60708566b67a",
@@ -48890,7 +48890,7 @@
     "60aa69c60334": {
       "id": "60aa69c60334",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 484,
+      "line": 488,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -48930,9 +48930,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM chat_messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "60ca45ed0b39": {
       "id": "60ca45ed0b39",
@@ -48974,9 +48974,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "60cfb7fd242f": {
       "id": "60cfb7fd242f",
@@ -49907,7 +49907,7 @@
     "62a2f6fa4bdb": {
       "id": "62a2f6fa4bdb",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1309,
+      "line": 1322,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -50841,7 +50841,7 @@
     "645c3f56baac": {
       "id": "645c3f56baac",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1506,
+      "line": 1517,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -50900,9 +50900,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT tnuserid FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "64665c2c0a8b": {
       "id": "64665c2c0a8b",
@@ -50988,9 +50988,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY groupid LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "64ac50c41dd2": {
       "id": "64ac50c41dd2",
@@ -51347,7 +51347,7 @@
     "65574169749a": {
       "id": "65574169749a",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 407,
+      "line": 409,
       "function": "PutChatRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -51531,7 +51531,7 @@
     "659e00792d43": {
       "id": "659e00792d43",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 465,
+      "line": 469,
       "function": "PutChatRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -51667,7 +51667,7 @@
     "65fde41159df": {
       "id": "65fde41159df",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 517,
+      "line": 521,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "tx",
       "method": "QueryRow",
@@ -51683,7 +51683,7 @@
       "args": 3,
       "goldenSql": "SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = ? FOR UPDATE",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "6600a09b1b67": {
@@ -52043,9 +52043,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, COUNT(*) AS count FROM chat_messages WHERE chatid = ? GROUP BY CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "66c504001504": {
       "id": "66c504001504",
@@ -52363,7 +52363,7 @@
     "67632eee8567": {
       "id": "67632eee8567",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1183,
+      "line": 1195,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -52407,7 +52407,7 @@
     "67871ee12b8f": {
       "id": "67871ee12b8f",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1609,
+      "line": 1629,
       "function": "holdChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -52654,7 +52654,7 @@
     "67cd5e1cc4ec": {
       "id": "67cd5e1cc4ec",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 594,
+      "line": 597,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Raw",
@@ -53272,7 +53272,7 @@
     "68ee4370bd9a": {
       "id": "68ee4370bd9a",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 891,
+      "line": 897,
       "function": "fetchSingle",
       "receiver": "db",
       "method": "Raw",
@@ -53714,7 +53714,7 @@
     "69ed53a55edc": {
       "id": "69ed53a55edc",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 526,
+      "line": 530,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "tx",
       "method": "Exec",
@@ -53756,7 +53756,7 @@
     "69fb1ebb3a73": {
       "id": "69fb1ebb3a73",
       "file": "iznik-server-go/session/session.go",
-      "line": 1880,
+      "line": 1916,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -53976,9 +53976,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, series, token FROM sessions WHERE id = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6a4f5b776c87": {
       "id": "6a4f5b776c87",
@@ -54399,9 +54399,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6b0ee621a1fb": {
       "id": "6b0ee621a1fb",
@@ -54494,7 +54494,7 @@
     "6b1f5e2ded05": {
       "id": "6b1f5e2ded05",
       "file": "iznik-server-go/session/session.go",
-      "line": 1332,
+      "line": 1363,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -56437,9 +56437,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id FROM chat_messages WHERE chatid = ? AND id \u003e ? AND reviewrequired = 1 AND type = 'ModMail'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6f136c99e5de": {
       "id": "6f136c99e5de",
@@ -56618,9 +56618,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM cron_job_status",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6f82b3e99673": {
       "id": "6f82b3e99673",
@@ -57916,7 +57916,7 @@
     "719d174ca4a7": {
       "id": "719d174ca4a7",
       "file": "iznik-server-go/session/session.go",
-      "line": 1121,
+      "line": 1150,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -57932,7 +57932,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat) AND heldby IS NULL",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "71b08063be7e": {
@@ -58376,9 +58376,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid, status FROM chat_roster WHERE chatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "72908ace6717": {
       "id": "72908ace6717",
@@ -58535,7 +58535,7 @@
     "72c7371e4220": {
       "id": "72c7371e4220",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1117,
+      "line": 1128,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -58789,7 +58789,7 @@
     "735b4f446b8e": {
       "id": "735b4f446b8e",
       "file": "iznik-server-go/session/session.go",
-      "line": 655,
+      "line": 669,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -58989,7 +58989,7 @@
     "739b42667028": {
       "id": "739b42667028",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 711,
+      "line": 716,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -59414,7 +59414,7 @@
     "747de3c4a649": {
       "id": "747de3c4a649",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1568,
+      "line": 1581,
       "function": "handleReferToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -59840,7 +59840,7 @@
     "750cbc27385c": {
       "id": "750cbc27385c",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1253,
+      "line": 1266,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -59990,9 +59990,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT id FROM chat_rooms WHERE user1 = ? AND chattype = ? AND groupid = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7540ba365e1b": {
       "id": "7540ba365e1b",
@@ -60261,7 +60261,7 @@
     "75b3dfc075ca": {
       "id": "75b3dfc075ca",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1139,
+      "line": 1151,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -60459,7 +60459,7 @@
     "7631a317a13b": {
       "id": "7631a317a13b",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1453,
+      "line": 1467,
       "function": "autoApproveModmails",
       "receiver": "db",
       "method": "Exec",
@@ -60595,7 +60595,7 @@
     "76555fe088e5": {
       "id": "76555fe088e5",
       "file": "iznik-server-go/session/session.go",
-      "line": 1319,
+      "line": 1350,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -60720,9 +60720,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM newsfeed WHERE id = ? AND deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7684f6d280a1": {
       "id": "7684f6d280a1",
@@ -61368,9 +61368,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM chat_messages_held WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7791f9938ec2": {
       "id": "7791f9938ec2",
@@ -62093,7 +62093,7 @@
     "78b08f1a877d": {
       "id": "78b08f1a877d",
       "file": "iznik-server-go/session/session.go",
-      "line": 377,
+      "line": 381,
       "function": "handleLostPassword",
       "receiver": "db",
       "method": "Raw",
@@ -62712,9 +62712,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT chattype FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "79d0f795939b": {
       "id": "79d0f795939b",
@@ -63528,9 +63528,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT userid FROM chat_messages WHERE id = ? AND chatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7b66bc45661e": {
       "id": "7b66bc45661e",
@@ -64333,9 +64333,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7d182c9df469": {
       "id": "7d182c9df469",
@@ -64676,7 +64676,7 @@
     "7db50195bb3c": {
       "id": "7db50195bb3c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1483,
+      "line": 1494,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -64716,9 +64716,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7dd651131cac": {
       "id": "7dd651131cac",
@@ -66433,7 +66433,7 @@
     "812775236c88": {
       "id": "812775236c88",
       "file": "iznik-server-go/session/session.go",
-      "line": 525,
+      "line": 534,
       "function": "getOrCreateLoginKey",
       "receiver": "db",
       "method": "Exec",
@@ -66470,9 +66470,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT * FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "81455ec3f159": {
       "id": "81455ec3f159",
@@ -66653,7 +66653,7 @@
     "818065956105": {
       "id": "818065956105",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1530,
+      "line": 1547,
       "function": "approveChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -67688,9 +67688,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) \u003e 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "83ab41e7c9ac": {
       "id": "83ab41e7c9ac",
@@ -68040,9 +68040,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8449bd8b5a59": {
       "id": "8449bd8b5a59",
@@ -68203,7 +68203,7 @@
     "848af7d73bfe": {
       "id": "848af7d73bfe",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 391,
+      "line": 392,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Raw",
@@ -69507,9 +69507,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "86dd74a43686": {
       "id": "86dd74a43686",
@@ -70484,7 +70484,7 @@
     "89645312ccd2": {
       "id": "89645312ccd2",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 903,
+      "line": 911,
       "function": "PatchChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -70858,7 +70858,7 @@
     "8a247fbd07a3": {
       "id": "8a247fbd07a3",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1414,
+      "line": 1423,
       "function": "handleNudge",
       "receiver": "db",
       "method": "Exec",
@@ -70971,7 +70971,7 @@
     "8a70c0aa1832": {
       "id": "8a70c0aa1832",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1135,
+      "line": 1147,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -71411,9 +71411,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT id FROM chat_rooms WHERE ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8b420a4dfa0d": {
       "id": "8b420a4dfa0d",
@@ -72729,7 +72729,7 @@
     "8d982395eb1f": {
       "id": "8d982395eb1f",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1148,
+      "line": 1160,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -72810,9 +72810,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM email_tracking WHERE sent_at \u003e= DATE_SUB(NOW(), INTERVAL 1 HOUR)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8db9c1c92417": {
       "id": "8db9c1c92417",
@@ -72920,9 +72920,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT userid FROM memberships WHERE groupid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8df7fad1ee3d": {
       "id": "8df7fad1ee3d",
@@ -73149,7 +73149,7 @@
     "8e568332ecdb": {
       "id": "8e568332ecdb",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1777,
+      "line": 1805,
       "function": "redactChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -73479,7 +73479,7 @@
     "8f117eb67b75": {
       "id": "8f117eb67b75",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1598,
+      "line": 1612,
       "function": "handleReportNoGroup",
       "receiver": "db",
       "method": "Raw",
@@ -74278,7 +74278,7 @@
     "90b0f0bb3029": {
       "id": "90b0f0bb3029",
       "file": "iznik-server-go/newsfeed/create.go",
-      "line": 115,
+      "line": 120,
       "function": "CreateNewsfeedEntry",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -74441,7 +74441,7 @@
     "91271beda4fa": {
       "id": "91271beda4fa",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1616,
+      "line": 1636,
       "function": "releaseChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -74547,9 +74547,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9138fa0d78ef": {
       "id": "9138fa0d78ef",
@@ -74576,7 +74576,7 @@
     "9142d5476c03": {
       "id": "9142d5476c03",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 706,
+      "line": 711,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -75122,9 +75122,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM users_images WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9263f0bb43fb": {
       "id": "9263f0bb43fb",
@@ -75511,7 +75511,7 @@
     "93161dacd118": {
       "id": "93161dacd118",
       "file": "iznik-server-go/session/session.go",
-      "line": 1204,
+      "line": 1233,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -75761,9 +75761,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM newsfeed_likes WHERE newsfeedid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "93b13f040e04": {
       "id": "93b13f040e04",
@@ -76120,9 +76120,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT `type` FROM newsfeed WHERE userid = ? ORDER BY id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "941fa556061a": {
       "id": "941fa556061a",
@@ -76566,9 +76566,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ljuserid FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "954d3085c050": {
       "id": "954d3085c050",
@@ -77079,9 +77079,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9618235aed73": {
       "id": "9618235aed73",
@@ -78377,7 +78377,7 @@
     "994ffacdcb47": {
       "id": "994ffacdcb47",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 123,
+      "line": 125,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -79707,9 +79707,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(newsfeedmodstatus, 'Unmoderated') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9c1a1e183c8b": {
       "id": "9c1a1e183c8b",
@@ -79938,7 +79938,7 @@
     "9c86a991eb7c": {
       "id": "9c86a991eb7c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1496,
+      "line": 1507,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -80029,7 +80029,7 @@
     "9cb4eab12012": {
       "id": "9cb4eab12012",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 112,
+      "line": 114,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -80068,9 +80068,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9ccb23bbcdaf": {
       "id": "9ccb23bbcdaf",
@@ -81078,7 +81078,7 @@
     "9f1d1bde8950": {
       "id": "9f1d1bde8950",
       "file": "iznik-server-go/session/session.go",
-      "line": 708,
+      "line": 726,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -81146,7 +81146,7 @@
     "9f3a14137203": {
       "id": "9f3a14137203",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1347,
+      "line": 1365,
       "function": "createPost",
       "receiver": "db",
       "method": "Raw",
@@ -81213,7 +81213,7 @@
     "9f50349c1378": {
       "id": "9f50349c1378",
       "file": "iznik-server-go/session/session.go",
-      "line": 1151,
+      "line": 1180,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -81602,9 +81602,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT type FROM messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a01cc6cc697d": {
       "id": "a01cc6cc697d",
@@ -82880,7 +82880,7 @@
     "a29c37823e28": {
       "id": "a29c37823e28",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 491,
+      "line": 495,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -82925,7 +82925,7 @@
     "a2ab9aecba3e": {
       "id": "a2ab9aecba3e",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1505,
+      "line": 1522,
       "function": "approveChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -83281,7 +83281,7 @@
     "a32e0ffcd9e2": {
       "id": "a32e0ffcd9e2",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1190,
+      "line": 1202,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -83852,7 +83852,7 @@
     "a4250aa0ada3": {
       "id": "a4250aa0ada3",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 433,
+      "line": 434,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Raw",
@@ -84662,9 +84662,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a5db7f2229d1": {
       "id": "a5db7f2229d1",
@@ -85308,7 +85308,7 @@
     "a70cf3624bdb": {
       "id": "a70cf3624bdb",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 601,
+      "line": 606,
       "function": "GetOrCreateUser2UserChat",
       "receiver": "db",
       "method": "Exec",
@@ -85462,7 +85462,7 @@
     "a74101bfbfa2": {
       "id": "a74101bfbfa2",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 546,
+      "line": 548,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Raw",
@@ -86805,7 +86805,7 @@
     "aa142f16e0e0": {
       "id": "aa142f16e0e0",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1394,
+      "line": 1412,
       "function": "createPost",
       "receiver": "db",
       "method": "Exec",
@@ -87093,9 +87093,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, replyto, type, message FROM newsfeed WHERE userid = ? ORDER BY id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "aa91b5004ec2": {
       "id": "aa91b5004ec2",
@@ -87339,9 +87339,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT nameshort FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "aadda3a14ebb": {
       "id": "aadda3a14ebb",
@@ -88007,7 +88007,7 @@
     "ac238fc96e7e": {
       "id": "ac238fc96e7e",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 653,
+      "line": 656,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -88157,9 +88157,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid, COALESCE(message, '') AS message, type FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ac5b59d9b3a9": {
       "id": "ac5b59d9b3a9",
@@ -88470,9 +88470,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(namefull, nameshort) FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ad4681313be0": {
       "id": "ad4681313be0",
@@ -89328,7 +89328,7 @@
     "aeda8c91f9ff": {
       "id": "aeda8c91f9ff",
       "file": "iznik-server-go/session/session.go",
-      "line": 643,
+      "line": 657,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -89598,7 +89598,7 @@
     "af7676dc1734": {
       "id": "af7676dc1734",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1525,
+      "line": 1542,
       "function": "approveChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -89688,7 +89688,7 @@
     "afaa0e49a541": {
       "id": "afaa0e49a541",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 422,
+      "line": 424,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -90612,7 +90612,7 @@
     "b184ef8e3ad2": {
       "id": "b184ef8e3ad2",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1156,
+      "line": 1162,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -92260,7 +92260,7 @@
     "b4d495e2284e": {
       "id": "b4d495e2284e",
       "file": "iznik-server-go/session/session.go",
-      "line": 821,
+      "line": 840,
       "function": "GetSession",
       "receiver": "db",
       "method": "Exec",
@@ -94150,9 +94150,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b8a1c3877866": {
       "id": "b8a1c3877866",
@@ -94359,7 +94359,7 @@
     "b8fc832d50a0": {
       "id": "b8fc832d50a0",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1554,
+      "line": 1571,
       "function": "rejectChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -94623,7 +94623,7 @@
     "b9777a2b2dc3": {
       "id": "b9777a2b2dc3",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1578,
+      "line": 1601,
       "function": "Delete",
       "receiver": "db",
       "method": "Exec",
@@ -95765,7 +95765,7 @@
     "bbbc465b075c": {
       "id": "bbbc465b075c",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 79,
+      "line": 81,
       "function": "socialMatchOrCreate",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -95983,7 +95983,7 @@
     "bc1ca64ed7ec": {
       "id": "bc1ca64ed7ec",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1606,
+      "line": 1620,
       "function": "handleReportNoGroup",
       "receiver": "db",
       "method": "Exec",
@@ -96452,7 +96452,7 @@
     "bd0d10b12d60": {
       "id": "bd0d10b12d60",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1405,
+      "line": 1423,
       "function": "bumpThread",
       "receiver": "db",
       "method": "Exec",
@@ -97885,9 +97885,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(namefull, nameshort) FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c035008cb1fd": {
       "id": "c035008cb1fd",
@@ -98728,7 +98728,7 @@
     "c1dcf61cde69": {
       "id": "c1dcf61cde69",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1579,
+      "line": 1602,
       "function": "Delete",
       "receiver": "db",
       "method": "Exec",
@@ -99670,7 +99670,7 @@
     "c38c5422a649": {
       "id": "c38c5422a649",
       "file": "iznik-server-go/session/session.go",
-      "line": 645,
+      "line": 659,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -99714,7 +99714,7 @@
     "c3c151b4b7a5": {
       "id": "c3c151b4b7a5",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 447,
+      "line": 451,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -100292,7 +100292,7 @@
     "c49605990641": {
       "id": "c49605990641",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1033,
+      "line": 1044,
       "function": "canSeeChatRoom",
       "receiver": "db",
       "method": "Raw",
@@ -100336,7 +100336,7 @@
     "c49c4a6dd162": {
       "id": "c49c4a6dd162",
       "file": "iznik-server-go/session/session.go",
-      "line": 2002,
+      "line": 2039,
       "function": "DeleteSession",
       "receiver": "db",
       "method": "Exec",
@@ -100704,7 +100704,7 @@
     "c56bbfcef4f1": {
       "id": "c56bbfcef4f1",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1513,
+      "line": 1534,
       "function": "createRefer",
       "receiver": "db",
       "method": "Exec",
@@ -101014,7 +101014,7 @@
     "c6167c3afc65": {
       "id": "c6167c3afc65",
       "file": "iznik-server-go/session/session.go",
-      "line": 456,
+      "line": 461,
       "function": "handleUnsubscribe",
       "receiver": "db",
       "method": "Raw",
@@ -101235,7 +101235,7 @@
     "c6ae40a34425": {
       "id": "c6ae40a34425",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1550,
+      "line": 1572,
       "function": "Edit",
       "receiver": "db",
       "method": "Exec",
@@ -101980,9 +101980,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c8374c573a9d": {
       "id": "c8374c573a9d",
@@ -102053,7 +102053,7 @@
     "c86a6d9efeb3": {
       "id": "c86a6d9efeb3",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 99,
+      "line": 101,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -102912,9 +102912,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c9e06d962d78": {
       "id": "c9e06d962d78",
@@ -103190,7 +103190,7 @@
     "ca92bd0ba27d": {
       "id": "ca92bd0ba27d",
       "file": "iznik-server-go/session/session.go",
-      "line": 937,
+      "line": 960,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -103481,9 +103481,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM giftaid WHERE reviewed IS NULL AND deleted IS NULL AND period != 'Declined'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cb000fd5c0fa": {
       "id": "cb000fd5c0fa",
@@ -104719,7 +104719,7 @@
     "cdcc4a38c65d": {
       "id": "cdcc4a38c65d",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 118,
+      "line": 120,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -105349,9 +105349,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid, email FROM users_emails WHERE validatekey = ? AND (validatetime IS NULL OR validatetime \u003e NOW() - INTERVAL 7 DAY)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ced015e485a0": {
       "id": "ced015e485a0",
@@ -106279,7 +106279,7 @@
     "d0743f528af9": {
       "id": "d0743f528af9",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 824,
+      "line": 831,
       "function": "CreateChatMessageLoveJunk",
       "receiver": "db",
       "method": "Exec",
@@ -107838,7 +107838,7 @@
     "d3280ea8d71b": {
       "id": "d3280ea8d71b",
       "file": "iznik-server-go/session/session.go",
-      "line": 540,
+      "line": 549,
       "function": "handleEmailPasswordLogin",
       "receiver": "db",
       "method": "Raw",
@@ -108257,7 +108257,7 @@
     "d44b753b35c8": {
       "id": "d44b753b35c8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1758,
+      "line": 1772,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -108890,7 +108890,7 @@
     "d58a719af7e5": {
       "id": "d58a719af7e5",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1227,
+      "line": 1239,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -109348,7 +109348,7 @@
     "d6518a523f9c": {
       "id": "d6518a523f9c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1438,
+      "line": 1448,
       "function": "handleTyping",
       "receiver": "db",
       "method": "Exec",
@@ -109565,9 +109565,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT id FROM chat_messages WHERE chatid = ? AND type = ? AND userid = ? ORDER BY id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d6b3aa24d1c0": {
       "id": "d6b3aa24d1c0",
@@ -110277,9 +110277,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT chattype, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d830464e7f6d": {
       "id": "d830464e7f6d",
@@ -110666,7 +110666,7 @@
     "d8fa348393fe": {
       "id": "d8fa348393fe",
       "file": "iznik-server-go/session/session.go",
-      "line": 1096,
+      "line": 1125,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -110932,7 +110932,7 @@
     "d947b0e5819b": {
       "id": "d947b0e5819b",
       "file": "iznik-server-go/session/session.go",
-      "line": 1109,
+      "line": 1138,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -110948,7 +110948,7 @@
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND collection = ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "d9492e3aa52a": {
@@ -111332,7 +111332,7 @@
     "da41536965a2": {
       "id": "da41536965a2",
       "file": "iznik-server-go/session/session.go",
-      "line": 705,
+      "line": 723,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -111667,7 +111667,7 @@
     "db03a274a8a2": {
       "id": "db03a274a8a2",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 464,
+      "line": 465,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Exec",
@@ -111757,7 +111757,7 @@
     "db15655f044f": {
       "id": "db15655f044f",
       "file": "iznik-server-go/session/session.go",
-      "line": 1761,
+      "line": 1797,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -113193,9 +113193,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM users_images WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "de27a03ccefb": {
       "id": "de27a03ccefb",
@@ -113507,9 +113507,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT nameshort FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "defea54774e0": {
       "id": "defea54774e0",
@@ -114997,9 +114997,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM spam_users WHERE collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e1bb41c530cd": {
       "id": "e1bb41c530cd",
@@ -115622,9 +115622,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT userid FROM users_banned WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e3301eb339aa": {
       "id": "e3301eb339aa",
@@ -116668,9 +116668,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e563071d58d5": {
       "id": "e563071d58d5",
@@ -116988,7 +116988,7 @@
     "e611588b2309": {
       "id": "e611588b2309",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 481,
+      "line": 485,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -117206,9 +117206,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, chattype, user1, user2, groupid FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e68fb9e302ee": {
       "id": "e68fb9e302ee",
@@ -117346,7 +117346,7 @@
     "e6d3316c800c": {
       "id": "e6d3316c800c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1490,
+      "line": 1501,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -117415,7 +117415,7 @@
     "e71799673a73": {
       "id": "e71799673a73",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 599,
+      "line": 604,
       "function": "GetOrCreateUser2UserChat",
       "receiver": "db",
       "method": "Exec",
@@ -117523,9 +117523,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT chattype FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e7615b3fbcdc": {
       "id": "e7615b3fbcdc",
@@ -118774,7 +118774,7 @@
     "e96850e959f9": {
       "id": "e96850e959f9",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1191,
+      "line": 1203,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -118866,7 +118866,7 @@
     "e99680f74b2e": {
       "id": "e99680f74b2e",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1738,
+      "line": 1752,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -118981,7 +118981,7 @@
     "e9be2e263367": {
       "id": "e9be2e263367",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 649,
+      "line": 652,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -119040,9 +119040,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e9cc5186c0a5": {
       "id": "e9cc5186c0a5",
@@ -119268,9 +119268,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM partners_keys WHERE `key` = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ea345efc829c": {
       "id": "ea345efc829c",
@@ -121597,7 +121597,7 @@
     "ef15aa1e20c6": {
       "id": "ef15aa1e20c6",
       "file": "iznik-server-go/session/session.go",
-      "line": 1128,
+      "line": 1157,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -121613,7 +121613,7 @@
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat) AND heldby IS NOT NULL",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "ef1680989d03": {
@@ -121769,9 +121769,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, chattype, user1, user2 FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef3f3e590f61": {
       "id": "ef3f3e590f61",
@@ -121798,7 +121798,7 @@
     "ef470baa050b": {
       "id": "ef470baa050b",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1510,
+      "line": 1527,
       "function": "approveChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -121879,9 +121879,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM spam_users WHERE collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef5ef50abd33": {
       "id": "ef5ef50abd33",
@@ -122563,9 +122563,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f0a818c07ce5": {
       "id": "f0a818c07ce5",
@@ -122767,9 +122767,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT id FROM chat_rooms WHERE ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f121eb1f3bca": {
       "id": "f121eb1f3bca",
@@ -123643,7 +123643,7 @@
     "f31ae2ffe181": {
       "id": "f31ae2ffe181",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 598,
+      "line": 601,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Raw",
@@ -123921,7 +123921,7 @@
     "f3911b4339db": {
       "id": "f3911b4339db",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1421,
+      "line": 1434,
       "function": "fetchReviewMessage",
       "receiver": "db",
       "method": "Raw",
@@ -124262,7 +124262,7 @@
     "f43d5f680ef9": {
       "id": "f43d5f680ef9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1252,
+      "line": 1283,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -124372,9 +124372,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT type, userid FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f470db5d065e": {
       "id": "f470db5d065e",
@@ -124627,7 +124627,7 @@
     "f4cc7314bea4": {
       "id": "f4cc7314bea4",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1490,
+      "line": 1507,
       "function": "updateMessageCounts",
       "receiver": "db",
       "method": "Exec",
@@ -125337,9 +125337,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT lat, lng FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f6190b74d8d5": {
       "id": "f6190b74d8d5",
@@ -125381,9 +125381,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT newsfeedid FROM newsfeed_users WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f619bcea08df": {
       "id": "f619bcea08df",
@@ -125628,7 +125628,7 @@
     "f6bd87f2df8e": {
       "id": "f6bd87f2df8e",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 94,
+      "line": 96,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -126600,7 +126600,7 @@
     "f85b0b8ed693": {
       "id": "f85b0b8ed693",
       "file": "iznik-server-go/session/session.go",
-      "line": 1865,
+      "line": 1901,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -127032,9 +127032,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT reviewrequired FROM chat_messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f93feb7f7c14": {
       "id": "f93feb7f7c14",
@@ -127083,7 +127083,7 @@
     "f961504c334d": {
       "id": "f961504c334d",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1374,
+      "line": 1392,
       "function": "createPost",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -127474,9 +127474,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM newsfeed_likes WHERE newsfeedid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fa2763270604": {
       "id": "fa2763270604",
@@ -128123,9 +128123,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fb359c6b238d": {
       "id": "fb359c6b238d",
@@ -128553,9 +128553,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM housekeeper_tasks WHERE enabled = 1 AND placeholder = 0 AND ( last_status = 'failure' OR last_run_at IS NULL OR last_run_at \u003c DATE_SUB(NOW(), INTERVAL interval_hours HOUR) )",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fbfe6c10ce4b": {
       "id": "fbfe6c10ce4b",
@@ -128582,7 +128582,7 @@
     "fc02dfb79aa4": {
       "id": "fc02dfb79aa4",
       "file": "iznik-server-go/session/session.go",
-      "line": 656,
+      "line": 670,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -128651,7 +128651,7 @@
     "fc0c6fd4f6df": {
       "id": "fc0c6fd4f6df",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 415,
+      "line": 416,
       "function": "recordReplyAttribution",
       "receiver": "db",
       "method": "Raw",
@@ -128829,7 +128829,7 @@
     "fc7cf4ff8b35": {
       "id": "fc7cf4ff8b35",
       "file": "iznik-server-go/session/session.go",
-      "line": 1760,
+      "line": 1796,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -129520,7 +129520,7 @@
     "fdeb2007824a": {
       "id": "fdeb2007824a",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1684,
+      "line": 1698,
       "function": "countUnseenMT",
       "receiver": "db",
       "method": "Raw",

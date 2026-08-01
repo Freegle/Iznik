@@ -308,7 +308,8 @@ func GetChatMessages(c *fiber.Ctx) error {
 		Groupid uint64
 	}
 	var room roomInfo
-	db.Raw("SELECT user1, user2, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&room)
+	// ORM migration site 3ae5a9640854 (wave 1).
+	db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
 
 	if room.User1 == 0 && room.User2 == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
@@ -527,7 +528,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			Groupid uint64
 		}
 		var room roomBasic
-		db.Raw("SELECT user1, user2, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&room)
+		// ORM migration site 3194998a3535 (wave 1).
+		db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
 
 		if room.User1 == 0 && room.User2 == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
@@ -567,7 +569,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	reach := replyReachEvidence{}
 	holdReply := false
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", id).Scan(&roomType)
+		// ORM migration site 79c2ce2c99fc (wave 1).
+		db.Table("chat_rooms").Select("chattype").Where("id = ?", id).Scan(&roomType)
 		if roomType == utils.CHAT_TYPE_USER2USER {
 			latlng := user.GetLatLng(myid)
 			if latlng.Lat != 0 || latlng.Lng != 0 {
@@ -675,7 +678,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// hiccup must never fail the reply.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		var refGroup uint64
-		db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY groupid LIMIT 1", *payload.Refmsgid).Scan(&refGroup)
+		// ORM migration site 649b3df011ed (wave 1).
+		db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
 		if refGroup > 0 {
 			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
 		}
@@ -694,7 +698,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			Chattype string
 			Groupid  uint64
 		}
-		db.Raw("SELECT chattype, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&reportRoom)
+		// ORM migration site d825142662c8 (wave 1).
+		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&reportRoom)
 		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
 			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
 		}
@@ -764,7 +769,8 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	// Find any groups in users_banned for this user and group.  If we find one, we can't reply.
 	var banned uint64
-	db.Raw("SELECT userid FROM users_banned WHERE userid = ? AND groupid = ?", myid, m.Groupid).Scan(&banned)
+	// ORM migration site e32ed86d4150 (wave 1).
+	db.Table("users_banned").Select("userid").Where("userid = ? AND groupid = ?", myid, m.Groupid).Scan(&banned)
 
 	if banned > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "User banned from group")
@@ -778,7 +784,8 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	// Find the chat between m.Fromuser and myid (check both user orderings -
 	// older rooms may not be normalized so user1/user2 can be in either order)
 	var chat ChatRoom
-	db.Raw("SELECT * FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
+	// ORM migration site 8137d3d33011 (wave 1).
+	db.Table("chat_rooms").Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
 		utils.CHAT_TYPE_USER2USER, myid, m.Fromuser, m.Fromuser, myid).Scan(&chat)
 
 	if chat.ID == 0 {
@@ -888,7 +895,8 @@ func PatchChatMessage(c *fiber.Ctx) error {
 
 	// Operations require message ownership.
 	var msgUserid uint64
-	db.Raw("SELECT userid FROM chat_messages WHERE id = ? AND chatid = ?", req.ID, req.Roomid).Scan(&msgUserid)
+	// ORM migration site 7b5ea85896db (wave 1).
+	db.Table("chat_messages").Select("userid").Where("id = ? AND chatid = ?", req.ID, req.Roomid).Scan(&msgUserid)
 
 	if msgUserid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -926,7 +934,8 @@ func DeleteChatMessage(c *fiber.Ctx) error {
 
 	// Verify the message exists and belongs to this user.
 	var msgUserid uint64
-	db.Raw("SELECT userid FROM chat_messages WHERE id = ?", id).Scan(&msgUserid)
+	// ORM migration site 60bd6b1b9bb3 (wave 1).
+	db.Table("chat_messages").Select("userid").Where("id = ?", id).Scan(&msgUserid)
 
 	if msgUserid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -969,7 +978,8 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 
 	// Check caller is a moderator on at least one group
 	var modCount int64
-	result := db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	// ORM migration site 581be541e60b (wave 1).
+	result := db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check moderator status for user %d: %v", myid, result.Error)
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
@@ -1017,8 +1027,9 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 
 	if groupid > 0 {
 		var modCount int64
-		result := db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
-			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+		// ORM migration site 3ee1550efb1a (wave 1).
+		result := db.Table("memberships").Where("userid = ? AND groupid = ? AND role IN (?, ?)",
+			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 		if result.Error != nil {
 			stdlog.Printf("Failed to check chat room mod permission user %d group %d: %v", myid, groupid, result.Error)
 			return false
@@ -1055,7 +1066,8 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		Chattype string
 	}
 	var room roomCheck
-	db.Raw("SELECT id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype FROM chat_rooms WHERE id = ?", roomid).Scan(&room)
+	// ORM migration site 094f8f3b0e41 (wave 1).
+	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", roomid).Scan(&room)
 
 	if room.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
@@ -1145,7 +1157,8 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	// Get groups where user is a moderator.
 	var groupIDs []uint64
-	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
+	// ORM migration site 9617dfaa6475 (wave 1).
+	db.Table("memberships").Select("groupid").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
 
 	if len(groupIDs) == 0 {
 		return c.JSON(fiber.Map{
@@ -1446,7 +1459,8 @@ func checkHoldConflict(msg *reviewMessage, myid uint64) bool {
 // autoApproveModmails approves any ModMail messages after the given message in the same chat.
 func autoApproveModmails(db *gorm.DB, myid uint64, chatID uint64, afterMsgID uint64) {
 	var modmailIDs []uint64
-	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND id > ? AND reviewrequired = 1 AND type = 'ModMail'",
+	// ORM migration site 6f05a9b2bdbb (wave 1).
+	db.Table("chat_messages").Select("id").Where("chatid = ? AND id > ? AND reviewrequired = 1 AND type = 'ModMail'",
 		chatID, afterMsgID).Scan(&modmailIDs)
 
 	for _, id := range modmailIDs {
@@ -1466,10 +1480,12 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 	// chat_messages.reviewrequired/reviewrejected on the source, and these recounted
 	// totals are written back to chat_rooms. A lagging replica read would persist
 	// stale valid/invalid counts that survive until the next approve/reject.
-	db.Clauses(dbresolver.Write).Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
-		"COUNT(*) AS count FROM chat_messages WHERE chatid = ? "+
-		"GROUP BY CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END",
-		chatID).Scan(&counts)
+	// ORM migration site 66c473c2545e (wave 1).
+	db.Clauses(dbresolver.Write).Table("chat_messages").
+		Select("CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, COUNT(*) AS count").
+		Where("chatid = ?", chatID).
+		Group("CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END").
+		Scan(&counts)
 
 	var msgValid, msgInvalid int64
 	for _, c := range counts {
@@ -1482,7 +1498,8 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 
 	// For Mod2Mod chats, force msginvalid to 0
 	var chattype string
-	db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", chatID).Scan(&chattype)
+	// ORM migration site e74cc22cc352 (wave 1).
+	db.Table("chat_rooms").Select("chattype").Where("id = ?", chatID).Scan(&chattype)
 	if chattype == "Mod2Mod" {
 		msgInvalid = 0
 	}
@@ -1565,7 +1582,8 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 		Chatid uint64
 	}
 	var dups []dupMsg
-	db.Raw("SELECT id, chatid FROM chat_messages WHERE date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
+	// ORM migration site 5e7534201c7c (wave 1).
+	db.Table("chat_messages").Select("id, chatid").Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
 		cutoff, msg.Message, msgID).Scan(&dups)
 
 	// Track affected chat IDs for count updates
@@ -1590,7 +1608,8 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
 	// Verify the message exists and requires review
 	var reviewRequired int
-	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	// ORM migration site f93f2b62ae60 (wave 1).
+	db.Table("chat_messages").Select("reviewrequired").Where("id = ?", msgID).Scan(&reviewRequired)
 	if reviewRequired != 1 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
 	}
@@ -1600,7 +1619,8 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 	// steal a hold rather than being told about it. Release is the deliberate way
 	// to break someone else's hold.
 	var currentHolder uint64
-	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&currentHolder)
+	// ORM migration site 776feb15b77b (wave 1).
+	db.Table("chat_messages_held").Select("userid").Where("msgid = ?", msgID).Scan(&currentHolder)
 	if currentHolder != 0 && currentHolder != myid {
 		return fiber.NewError(fiber.StatusConflict, "Message is held by another moderator")
 	}
@@ -1666,7 +1686,11 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		Exclude *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
+	// ORM migration site 839103c648fe (wave 1).
+	db.Table("concern_keywords").
+		Select("keyword AS word, match_mode AS type, action, exclude").
+		Where("match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").
+		Scan(&keywords)
 
 	for _, kw := range keywords {
 		word := strings.TrimSpace(kw.Word)
@@ -1705,7 +1729,11 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 	urls := urlRegexp.FindAllString(msg, -1)
 	if len(urls) > 0 {
 		var whitelist []string
-		db.Raw("SELECT domain FROM spam_whitelist_links WHERE count >= 3 AND LENGTH(domain) > 5 AND domain NOT LIKE '%linkedin%' AND domain NOT LIKE '%goo.gl%' AND domain NOT LIKE '%bit.ly%' AND domain NOT LIKE '%tinyurl%'").Scan(&whitelist)
+		// ORM migration site 1bd8efb9de20 (wave 1).
+		db.Table("spam_whitelist_links").
+			Select("domain").
+			Where("count >= 3 AND LENGTH(domain) > 5 AND domain NOT LIKE '%linkedin%' AND domain NOT LIKE '%goo.gl%' AND domain NOT LIKE '%bit.ly%' AND domain NOT LIKE '%tinyurl%'").
+			Scan(&whitelist)
 
 		untrustedCount := 0
 		for _, u := range urls {

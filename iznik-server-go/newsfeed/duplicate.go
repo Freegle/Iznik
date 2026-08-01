@@ -76,7 +76,8 @@ func Duplicate(c *fiber.Ctx) error {
 		Message string
 		Type    string
 	}
-	db.Raw("SELECT userid, COALESCE(message, '') AS message, type FROM newsfeed WHERE id = ?", id).Scan(&nf)
+	// ORM migration site ac4a5e5f4cf9 (wave 1).
+	db.Table("newsfeed").Select("userid, COALESCE(message, '') AS message, type").Where("id = ?", id).Scan(&nf)
 
 	if nf.Userid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Newsfeed entry not found")

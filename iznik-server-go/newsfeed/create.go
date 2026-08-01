@@ -55,7 +55,8 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Lng *float64
 		}
 		var gl GroupLoc
-		db.Raw("SELECT lat, lng FROM `groups` WHERE id = ?", groupid).Scan(&gl)
+		// ORM migration site f615ed45438f (wave 1).
+		db.Table("groups").Select("lat, lng").Where("id = ?", groupid).Scan(&gl)
 		lat = gl.Lat
 		lng = gl.Lng
 	}
@@ -69,10 +70,12 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	hidden := "NULL"
 	if userid > 0 {
 		var modStatus string
-		db.Raw("SELECT COALESCE(newsfeedmodstatus, 'Unmoderated') FROM users WHERE id = ?", userid).Scan(&modStatus)
+		// ORM migration site 9c0779fdc3cc (wave 1).
+		db.Table("users").Select("COALESCE(newsfeedmodstatus, 'Unmoderated')").Where("id = ?", userid).Scan(&modStatus)
 
 		var spamCount int64
-		db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection = ?", userid, utils.SPAM_COLLECTION_SPAMMER).Scan(&spamCount)
+		// ORM migration site 606016a06713 (wave 1).
+		db.Table("spam_users").Where("userid = ? AND collection = ?", userid, utils.SPAM_COLLECTION_SPAMMER).Count(&spamCount)
 
 		if modStatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED || spamCount > 0 {
 			hidden = "NOW()"
@@ -85,7 +88,8 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Type *string
 		}
 		var last LastEntry
-		db.Raw("SELECT `type` FROM newsfeed WHERE userid = ? ORDER BY id DESC LIMIT 1", userid).Scan(&last)
+		// ORM migration site 94168ea2d29c (wave 1).
+		db.Table("newsfeed").Select("`type`").Where("userid = ?", userid).Order("id DESC").Limit(1).Scan(&last)
 
 		if last.Type != nil && *last.Type == nfType {
 			// Last entry by this user was the same type - skip to prevent duplicate.
@@ -97,7 +101,8 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	var location *string
 	if groupid > 0 {
 		var groupName string
-		db.Raw("SELECT nameshort FROM `groups` WHERE id = ?", groupid).Scan(&groupName)
+		// ORM migration site def955a54c71 (wave 1).
+		db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&groupName)
 		if groupName != "" {
 			location = &groupName
 		}

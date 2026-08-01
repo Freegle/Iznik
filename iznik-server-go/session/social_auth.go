@@ -42,8 +42,9 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	}
 
 	// Find existing user by social login UID.
-	db.Raw("SELECT userid FROM users_logins WHERE type = ? AND uid = ? LIMIT 1",
-		loginType, uid).Scan(&loginUserID)
+	// ORM migration site 304e1cc5f2e5 (wave 1).
+	db.Table("users_logins").Select("userid").Where("type = ? AND uid = ?", loginType, uid).
+		Limit(1).Scan(&loginUserID)
 
 	// If both found and different, log it but pick the email user (PHP parity).
 	if emailUserID > 0 && loginUserID > 0 && emailUserID != loginUserID {
@@ -60,7 +61,8 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	// If we found a user by email but not by social login, check for TN user.
 	if userID > 0 && loginUserID == 0 {
 		var tnUserID *uint64
-		db.Raw("SELECT tnuserid FROM users WHERE id = ?", userID).Scan(&tnUserID)
+		// ORM migration site 64602d672727 (wave 1).
+		db.Table("users").Select("tnuserid").Where("id = ?", userID).Scan(&tnUserID)
 		if tnUserID != nil && *tnUserID > 0 {
 			return 0, fmt.Errorf("user %d is a TN user and cannot use %s login", userID, loginType)
 		}
