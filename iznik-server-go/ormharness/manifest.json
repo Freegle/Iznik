@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 36,
+    "converted": 44,
     "keep-raw": 35,
-    "raw": 1565,
+    "raw": 1557,
     "test-fixture": 4223
   },
   "sites": {
@@ -7986,9 +7986,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) AS count, happiness FROM messages_outcomes WHERE timestamp \u003e= ? AND timestamp \u003c= ? AND happiness IS NOT NULL GROUP BY happiness ORDER BY count DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0fe202c9cef5": {
       "id": "0fe202c9cef5",
@@ -8706,7 +8706,7 @@
     "114e3d2c526c": {
       "id": "114e3d2c526c",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 465,
+      "line": 469,
       "function": "getStatsTimeSeries",
       "receiver": "db",
       "method": "Raw",
@@ -8722,7 +8722,7 @@
       "args": 4,
       "goldenSql": "SELECT date, SUM(count) AS count FROM stats WHERE type = ? AND groupid IN (?) AND date \u003e= ? AND date \u003c= ? GROUP BY date ORDER BY date ASC",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "11558c0c6cd0": {
@@ -15938,9 +15938,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(fullname, firstname, lastname, 'Unknown') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1f87ca6ff49c": {
       "id": "1f87ca6ff49c",
@@ -20702,7 +20702,7 @@
     "285861d7b37c": {
       "id": "285861d7b37c",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 377,
+      "line": 380,
       "function": "getModeratorsActive",
       "receiver": "db",
       "method": "Raw",
@@ -28741,7 +28741,7 @@
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added \u003e= ? AND added \u003c= ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "383011ca9c05": {
@@ -31886,9 +31886,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(fullname, firstname, lastname, 'Unknown') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3efeb225c001": {
       "id": "3efeb225c001",
@@ -33822,7 +33822,7 @@
     "42a6b16c1a09": {
       "id": "42a6b16c1a09",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 414,
+      "line": 418,
       "function": "getMessageBreakdown",
       "receiver": "db",
       "method": "Raw",
@@ -33838,7 +33838,7 @@
       "args": 3,
       "goldenSql": "SELECT breakdown FROM stats WHERE type = 'MessageBreakdown' AND groupid IN (?) AND date \u003e= ? AND date \u003c= ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "42bb2fc5fe91": {
@@ -34415,9 +34415,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT SUM(GrossAmount) AS count, DATE(timestamp) AS date FROM users_donations WHERE timestamp \u003e= ? AND timestamp \u003c= ? GROUP BY date ORDER BY date ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "43bf45beab96": {
       "id": "43bf45beab96",
@@ -37700,7 +37700,7 @@
     "4a0837c4271f": {
       "id": "4a0837c4271f",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 344,
+      "line": 346,
       "function": "getUsersReplying",
       "receiver": "db",
       "method": "Raw",
@@ -44237,7 +44237,7 @@
     "57978ae039a2": {
       "id": "57978ae039a2",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 312,
+      "line": 313,
       "function": "getUsersPosting",
       "receiver": "db",
       "method": "Raw",
@@ -61163,7 +61163,7 @@
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added \u003e= ? AND added \u003c= ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "771773c0e43b": {
@@ -63616,9 +63616,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT id FROM `groups` WHERE publish = 1 AND onhere = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7b8bcc15f941": {
       "id": "7b8bcc15f941",
@@ -75698,7 +75698,7 @@
     "93937ea4340f": {
       "id": "93937ea4340f",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 499,
+      "line": 507,
       "function": "getDonations",
       "receiver": "db",
       "method": "Raw",
@@ -89794,9 +89794,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(fullname, firstname, lastname, 'Unknown') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b00f72a109f6": {
       "id": "b00f72a109f6",
@@ -94440,9 +94440,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b90542fe5559": {
       "id": "b90542fe5559",
@@ -107814,7 +107814,7 @@
     "d313fe02593e": {
       "id": "d313fe02593e",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 530,
+      "line": 541,
       "function": "getHappiness",
       "receiver": "db",
       "method": "Raw",
@@ -111885,7 +111885,7 @@
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND groupid IN (?)",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "db60834e67a2": {
@@ -120791,9 +120791,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ed5b9c0716a2": {
       "id": "ed5b9c0716a2",

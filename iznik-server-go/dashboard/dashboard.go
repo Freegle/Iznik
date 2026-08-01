@@ -284,7 +284,8 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 	for i, p := range posts {
 		// Get reply count.
 		var replies int
-		db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ?", p.ID).Scan(&replies)
+		// ORM migration site ed34569d9b36 (wave 1).
+		db.Table("chat_messages").Select("COUNT(*)").Where("refmsgid = ?", p.ID).Scan(&replies)
 
 		result[i] = map[string]interface{}{
 			"views":   p.Views,
@@ -319,7 +320,8 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		var displayname string
-		db.Raw("SELECT COALESCE(fullname, firstname, lastname, 'Unknown') FROM users WHERE id = ?", u.Fromuser).Scan(&displayname)
+		// ORM migration site 3efc6311d1fb (wave 1).
+		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", u.Fromuser).Scan(&displayname)
 		result[i] = map[string]interface{}{
 			"id":          u.Fromuser,
 			"displayname": displayname,
@@ -352,7 +354,8 @@ func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]inter
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		var displayname string
-		db.Raw("SELECT COALESCE(fullname, firstname, lastname, 'Unknown') FROM users WHERE id = ?", u.Userid).Scan(&displayname)
+		// ORM migration site afe6a06e35d5 (wave 1).
+		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", u.Userid).Scan(&displayname)
 		result[i] = map[string]interface{}{
 			"id":          u.Userid,
 			"displayname": displayname,
@@ -384,7 +387,8 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(mods))
 	for _, m := range mods {
 		var displayname string
-		db.Raw("SELECT COALESCE(fullname, firstname, lastname, 'Unknown') FROM users WHERE id = ?", m.Userid).Scan(&displayname)
+		// ORM migration site 1f7c9782b252 (wave 1).
+		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", m.Userid).Scan(&displayname)
 		entry := map[string]interface{}{
 			"id":          m.Userid,
 			"displayname": displayname,
@@ -492,9 +496,13 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 
 	var rows []DonRow
 	if systemwide {
-		db.Raw("SELECT SUM(GrossAmount) AS count, DATE(timestamp) AS date "+
-			"FROM users_donations WHERE timestamp >= ? AND timestamp <= ? "+
-			"GROUP BY date ORDER BY date ASC", startQ, endQ).Scan(&rows)
+		// ORM migration site 43bd10f45284 (wave 1).
+		db.Table("users_donations").
+			Select("SUM(GrossAmount) AS count, DATE(timestamp) AS date").
+			Where("timestamp >= ? AND timestamp <= ?", startQ, endQ).
+			Group("date").
+			Order("date ASC").
+			Scan(&rows)
 	} else if len(groupIDs) > 0 {
 		db.Raw("SELECT SUM(GrossAmount) AS count, DATE(timestamp) AS date "+
 			"FROM users_donations WHERE userid IN (SELECT DISTINCT userid FROM memberships WHERE groupid IN (?)) "+
@@ -522,10 +530,13 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 
 	var rows []HappyRow
 	if systemwide {
-		db.Raw("SELECT COUNT(*) AS count, happiness FROM messages_outcomes "+
-			"WHERE timestamp >= ? AND timestamp <= ? AND happiness IS NOT NULL "+
-			"GROUP BY happiness ORDER BY count DESC",
-			startQ, endQ).Scan(&rows)
+		// ORM migration site 0fdf3ccacd34 (wave 1).
+		db.Table("messages_outcomes").
+			Select("COUNT(*) AS count, happiness").
+			Where("timestamp >= ? AND timestamp <= ? AND happiness IS NOT NULL", startQ, endQ).
+			Group("happiness").
+			Order("count DESC").
+			Scan(&rows)
 	} else if len(groupIDs) > 0 {
 		db.Raw("SELECT COUNT(*) AS count, happiness FROM messages_outcomes "+
 			"INNER JOIN messages ON messages.id = messages_outcomes.msgid "+
@@ -585,9 +596,13 @@ func resolveGroupIDs(myid uint64, groupID uint64, systemwide, allgroups bool) []
 	if groupID > 0 {
 		groupIDs = []uint64{groupID}
 	} else if systemwide {
-		database.DBConn.Raw("SELECT id FROM `groups` WHERE publish = 1 AND onhere = 1").Scan(&groupIDs)
+		// ORM migration site 7b7dd94d9688 (wave 1).
+		database.DBConn.Table("groups").Select("id").Where("publish = 1 AND onhere = 1").Scan(&groupIDs)
 	} else if allgroups && myid > 0 {
-		database.DBConn.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
+		// ORM migration site b9033fc5427a (wave 1).
+		database.DBConn.Table("memberships").Select("groupid").
+			Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+			Scan(&groupIDs)
 	}
 	return groupIDs
 }
