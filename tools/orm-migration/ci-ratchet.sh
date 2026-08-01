@@ -104,7 +104,11 @@ TEMP_MANIFEST="$WORKDIR/manifest.json"
 cp "$COMMITTED_MANIFEST" "$TEMP_MANIFEST"
 
 note "regenerating inventory from $SOURCE_ROOT into a temp path (committed manifest is untouched)"
-if ! (cd "$EXTRACTOR_DIR" && go run . -root "$SOURCE_ROOT" -out "$TEMP_MANIFEST" -repo "$REPO_ROOT" >"$WORKDIR/extract.log" 2>&1); then
+# -rules is passed explicitly: the rules file is found next to the manifest by
+# default, and regenerating into a temp path would otherwise apply no keep-raw
+# decisions at all, making the regenerated inventory disagree with the committed
+# one for reasons that have nothing to do with the code.
+if ! (cd "$EXTRACTOR_DIR" && go run . -root "$SOURCE_ROOT" -out "$TEMP_MANIFEST" -repo "$REPO_ROOT" -rules "$EXTRACTOR_DIR/keep-raw.json" >"$WORKDIR/extract.log" 2>&1); then
   cat "$WORKDIR/extract.log" >&2
   echo "CI-RATCHET: FAIL: extractor failed to regenerate the manifest (see output above)" >&2
   exit 1

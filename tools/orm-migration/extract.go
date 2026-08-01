@@ -123,11 +123,15 @@ var (
 )
 
 func main() {
-	var root, out, repo string
+	var root, out, repo, rules string
 	var selftest bool
 	flag.StringVar(&root, "root", "../../iznik-server-go", "directory to scan")
 	flag.StringVar(&out, "out", "manifest.json", "manifest path")
 	flag.StringVar(&repo, "repo", "../..", "repo root; manifest paths are recorded relative to it")
+	// Kept separate from -out because the ratchet regenerates to a temp path,
+	// and deriving the rules location from the output silently dropped every
+	// keep-raw decision in that run.
+	flag.StringVar(&rules, "rules", "", "keep-raw rules file (default: keep-raw.json beside the manifest)")
 	flag.BoolVar(&selftest, "selftest", false, "run the extractor's own checks and exit")
 	flag.Parse()
 
@@ -159,7 +163,10 @@ func main() {
 
 	// Applied after the carry-forward so that a rule added to keep-raw.json
 	// takes effect on the next run without anyone hand-editing the manifest.
-	applied, err := applyKeepRaw(sites, filepath.Join(filepath.Dir(out), "keep-raw.json"))
+	if rules == "" {
+		rules = filepath.Join(filepath.Dir(out), "keep-raw.json")
+	}
+	applied, err := applyKeepRaw(sites, rules)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "extract:", err)
 		os.Exit(1)
