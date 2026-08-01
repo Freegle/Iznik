@@ -9,18 +9,13 @@ package test
 // source, so the extractor can only tell "converted" apart from "silently
 // deleted" by finding a parity test that names the ID.
 //
-// Thirteen sites in this module were left raw and are not tested here: every
-// one binds a literal `LIMIT 1` in its golden SQL. GORM's clause.Limit always
-// renders the limit as a bound `LIMIT ?` (clause/limit.go: Build calls
-// builder.AddVar), so `.Limit(1)` is a real text divergence from the golden,
-// not a cosmetic one - see canonical.go's identifier/keyword-case/whitespace
-// normalisation, none of which covers this. That divergence can legitimately
-// be accepted via an approvedDiff entry (as wave 0 did for site 242735a48039,
-// social_auth.go), but that requires editing manifest.json, which is outside
-// this batch's scope. Left for a follow-up: donations.go:97, donations.go:261,
-// donations.go:279, donations.go:317, donations.go:411, giftaid.go:68,
-// giftaid.go:177, giftaid.go:215, stripe.go:149, stripeipn.go:178,
-// stripeipn.go:190, stripeipn.go:213, stripeipn.go:237.
+// A first pass over this module left thirteen `LIMIT 1` sites raw, because
+// GORM's clause.Limit always binds the limit (clause/limit.go: Build calls
+// builder.AddVar), so `.Limit(1)` used to render `LIMIT ?` and diverge from a
+// golden's literal `LIMIT 1`. golden.go's AssertGoldenSQL now resolves bound
+// LIMIT/OFFSET values back into the rendered SQL before comparing
+// (resolveLimitOffset), so `.Limit(1)` and a golden `LIMIT 1` match directly
+// and all thirteen convert below like any other site.
 
 import (
 	"testing"
@@ -127,5 +122,132 @@ func TestWave1Donations_9b52d8bd115c(t *testing.T) {
 	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "9b52d8bd115c", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("users").Select("fullname").Where("id = ?", 1).Find(&dest)
+	})
+}
+
+// --- MatchUserByEmailOrPriorDonation: registered-address lookup ------------
+
+func TestWave1Donations_5ae46192a944(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "5ae46192a944", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("userid").
+			Where("(email = ? OR canon = ?) AND userid IS NOT NULL", "a@b.c", "a@b.c").
+			Limit(1).
+			Find(&dest)
+	})
+}
+
+// --- AddDonation: preferred-email lookup, first pass and fallback ----------
+
+func TestWave1Donations_9330b7d3045a(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "9330b7d3045a", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").
+			Select("email").
+			Where("userid = ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE '%@yahoogroups.%'",
+				1, "%@users.ilovefreegle.org", "%@groups.ilovefreegle.org", "%@direct.ilovefreegle.org", "%@republisher.freegle.in").
+			Order("preferred DESC, added DESC").
+			Limit(1).
+			Find(&dest)
+	})
+}
+
+func TestWave1Donations_3b4f1c2cf9eb(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "3b4f1c2cf9eb", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").
+			Select("email").
+			Where("userid = ?", 1).
+			Order("preferred DESC, added DESC").
+			Limit(1).
+			Find(&dest)
+	})
+}
+
+// --- AddDonation: existing gift-aid period, before creating a prompt -------
+
+func TestWave1Donations_21e8dbdd136c(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "21e8dbdd136c", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("giftaid").Select("period").Where("userid = ? AND deleted IS NULL", 1).Limit(1).Find(&dest)
+	})
+}
+
+// --- BulkUploadDonations: donor email match ---------------------------------
+
+func TestWave1Donations_16c4a7f6e566(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "16c4a7f6e566", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", "a@b.c").Limit(1).Find(&dest)
+	})
+}
+
+// --- GetGiftAid: logged-in user's declaration -------------------------------
+
+func TestWave1Donations_275465713fef(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "275465713fef", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("giftaid").
+			Select("id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber").
+			Where("userid = ? AND deleted IS NULL", 1).
+			Limit(1).
+			Find(&dest)
+	})
+}
+
+// --- ListGiftAid / SearchGiftAid: per-row email lookup ----------------------
+
+func TestWave1Donations_06f02d4d35de(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "06f02d4d35de", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("email").Where("userid = ?", 1).Order("preferred DESC").Limit(1).Find(&dest)
+	})
+}
+
+func TestWave1Donations_ba853e58442d(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "ba853e58442d", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("email").Where("userid = ?", 1).Order("preferred DESC").Limit(1).Find(&dest)
+	})
+}
+
+// --- CreateSubscription: donor email lookup ---------------------------------
+
+func TestWave1Donations_4e1a7726a577(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "4e1a7726a577", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("email").Where("userid = ?", 1).Order("preferred DESC").Limit(1).Find(&dest)
+	})
+}
+
+// --- matchDonorUser: customer-email and billing-email lookups, name/email --
+
+func TestWave1Donations_3c00a7ee8fd9(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "3c00a7ee8fd9", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", "a@b.c").Limit(1).Find(&dest)
+	})
+}
+
+func TestWave1Donations_7104e922999e(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "7104e922999e", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", "a@b.c").Limit(1).Find(&dest)
+	})
+}
+
+func TestWave1Donations_c1cf9529710a(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "c1cf9529710a", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_emails").Select("email").Where("userid = ?", 1).Order("preferred DESC").Limit(1).Find(&dest)
+	})
+}
+
+// --- handleGiftAidNotification: most recent gift-aid period ----------------
+
+func TestWave1Donations_433192020fab(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "433192020fab", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("giftaid").Select("period").Where("userid = ?", 1).Order("id DESC").Limit(1).Find(&dest)
 	})
 }

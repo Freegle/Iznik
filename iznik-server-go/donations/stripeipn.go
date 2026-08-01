@@ -177,7 +177,8 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 
 				// Try customer email.
 				if userID == 0 && cust.Email != "" {
-					gdb.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", cust.Email).Scan(&userID)
+					// ORM migration site 3c00a7ee8fd9 (wave 1).
+					gdb.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", cust.Email).Limit(1).Scan(&userID)
 					if userID > 0 {
 						log.Printf("[StripeIPN] Matched user %d from customer email %s", userID, cust.Email)
 					}
@@ -189,7 +190,8 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 	// 3. Try billing_details.email from the charge.
 	if userID == 0 && charge.BillingDetails != nil && charge.BillingDetails.Email != "" {
 		billingEmail := charge.BillingDetails.Email
-		gdb.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", billingEmail).Scan(&userID)
+		// ORM migration site 7104e922999e (wave 1).
+		gdb.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", billingEmail).Limit(1).Scan(&userID)
 		if userID > 0 {
 			log.Printf("[StripeIPN] Matched user %d from billing email %s", userID, billingEmail)
 		}
@@ -212,7 +214,8 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 
 	// Get user name and email for the matched user.
 	if userID > 0 {
-		gdb.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&userEmail)
+		// ORM migration site c1cf9529710a (wave 1).
+		gdb.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&userEmail)
 		// ORM migration site 9b52d8bd115c (wave 1).
 		gdb.Table("users").Select("fullname").Where("id = ?", userID).Scan(&userName)
 		log.Printf("[StripeIPN] User %d: name=%s email=%s", userID, userName, userEmail)
@@ -237,7 +240,8 @@ func handleGiftAidNotification(userID uint64) {
 	}
 
 	var giftaid GiftAidRecord
-	gdb.Raw("SELECT period FROM giftaid WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&giftaid)
+	// ORM migration site 433192020fab (wave 1).
+	gdb.Table("giftaid").Select("period").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&giftaid)
 
 	if giftaid.Period == "" || giftaid.Period == PERIOD_THIS {
 		// No gift aid declaration or only a temporary one — prompt them.

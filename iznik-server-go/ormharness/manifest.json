@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 56,
+    "converted": 69,
     "keep-raw": 35,
-    "raw": 1545,
+    "raw": 1532,
     "test-fixture": 4223
   },
   "sites": {
@@ -3433,9 +3433,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "07113a2db28b": {
       "id": "07113a2db28b",
@@ -4804,7 +4804,7 @@
     "09c76dc0c164": {
       "id": "09c76dc0c164",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 339,
+      "line": 340,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -11233,9 +11233,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "16d573c0de0d": {
       "id": "16d573c0de0d",
@@ -17285,9 +17285,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "21e9e881aa90": {
       "id": "21e9e881aa90",
@@ -18768,7 +18768,7 @@
     "246bbfcc9225": {
       "id": "246bbfcc9225",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 348,
+      "line": 349,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -19410,7 +19410,7 @@
     "258437a60f5d": {
       "id": "258437a60f5d",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 277,
+      "line": 278,
       "function": "SetGiftAid",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -20298,9 +20298,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "275971784ba4": {
       "id": "275971784ba4",
@@ -23790,7 +23790,7 @@
     "2ecbd6874f42": {
       "id": "2ecbd6874f42",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 351,
+      "line": 352,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -25557,7 +25557,7 @@
     "31fea9e6f321": {
       "id": "31fea9e6f321",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 172,
+      "line": 175,
       "function": "GetDonations",
       "receiver": "db",
       "method": "Raw",
@@ -28097,7 +28097,7 @@
     "36a30e931616": {
       "id": "36a30e931616",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 104,
+      "line": 107,
       "function": "MatchUserByEmailOrPriorDonation",
       "receiver": "gdb",
       "method": "Raw",
@@ -28658,7 +28658,7 @@
     "380a2b8e3fbc": {
       "id": "380a2b8e3fbc",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 164,
+      "line": 163,
       "function": "ListGiftAid",
       "receiver": "db",
       "method": "Raw",
@@ -30265,9 +30265,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, added DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3b5673d18287": {
       "id": "3b5673d18287",
@@ -30667,9 +30667,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3c0db7c93a36": {
       "id": "3c0db7c93a36",
@@ -32884,7 +32884,7 @@
     "40da338804c9": {
       "id": "40da338804c9",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 354,
+      "line": 355,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -34129,9 +34129,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT period FROM giftaid WHERE userid = ? ORDER BY id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "434f1b73ed5d": {
       "id": "434f1b73ed5d",
@@ -39792,9 +39792,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4e221521bb89": {
       "id": "4e221521bb89",
@@ -40227,7 +40227,7 @@
     "4f053cd8dd78": {
       "id": "4f053cd8dd78",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 330,
+      "line": 331,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -46096,9 +46096,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT userid FROM users_emails WHERE (email = ? OR canon = ?) AND userid IS NOT NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5ae98332e2e8": {
       "id": "5ae98332e2e8",
@@ -49608,7 +49608,7 @@
     "6204c4ea5ebe": {
       "id": "6204c4ea5ebe",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 296,
+      "line": 300,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Exec",
@@ -50863,7 +50863,7 @@
     "645c6f681043": {
       "id": "645c6f681043",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 333,
+      "line": 334,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -56288,7 +56288,7 @@
     "6eb0a1069fb6": {
       "id": "6eb0a1069fb6",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 345,
+      "line": 346,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -57705,9 +57705,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "711ae07edacb": {
       "id": "711ae07edacb",
@@ -75550,9 +75550,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE '%@yahoogroups.%' ORDER BY preferred DESC, added DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9331fc747d7a": {
       "id": "9331fc747d7a",
@@ -85966,7 +85966,7 @@
     "a827fcf725a7": {
       "id": "a827fcf725a7",
       "file": "iznik-server-go/donations/stripeipn.go",
-      "line": 244,
+      "line": 248,
       "function": "handleGiftAidNotification",
       "receiver": "gdb",
       "method": "Exec",
@@ -95254,9 +95254,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "baa16a17eb79": {
       "id": "baa16a17eb79",
@@ -95418,7 +95418,7 @@
     "baf0645f5f91": {
       "id": "baf0645f5f91",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 382,
+      "line": 383,
       "function": "DeleteGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -98653,9 +98653,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c1d6371a61b7": {
       "id": "c1d6371a61b7",
@@ -107367,7 +107367,7 @@
     "d21ef86c2517": {
       "id": "d21ef86c2517",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 342,
+      "line": 343,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -112429,7 +112429,7 @@
     "dcb461443c86": {
       "id": "dcb461443c86",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 324,
+      "line": 329,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Exec",
@@ -117439,7 +117439,7 @@
     "e71c28654c59": {
       "id": "e71c28654c59",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 423,
+      "line": 429,
       "function": "BulkUploadDonations",
       "receiver": "db",
       "method": "Exec",
@@ -121820,7 +121820,7 @@
     "ef4a0c1acdcb": {
       "id": "ef4a0c1acdcb",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 336,
+      "line": 337,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",

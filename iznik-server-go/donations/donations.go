@@ -94,8 +94,11 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 	// 1. Registered address, exact or canonical (reuses the shared util so the
 	//    canon form matches how addresses are stored).
 	canon := user.CanonicalizeEmail(email)
-	gdb.Raw("SELECT userid FROM users_emails WHERE (email = ? OR canon = ?) AND userid IS NOT NULL LIMIT 1",
-		email, canon).Scan(&userID)
+	// ORM migration site 5ae46192a944 (wave 1).
+	gdb.Table("users_emails").Select("userid").
+		Where("(email = ? OR canon = ?) AND userid IS NOT NULL", email, canon).
+		Limit(1).
+		Scan(&userID)
 	if userID > 0 {
 		return userID
 	}
@@ -260,28 +263,29 @@ func AddDonation(c *fiber.Ctx) error {
 	//
 	// Second pass: if no external address exists (e.g. social-login-only users whose
 	// only email is the alias), fall back to any email including the alias.
-	db.Raw(`SELECT email FROM users_emails
-		WHERE userid = ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE '%@yahoogroups.%'
-		ORDER BY preferred DESC, added DESC
-		LIMIT 1`,
-		req.UserID,
-		"%@"+utils.USER_DOMAIN,
-		"%@groups.ilovefreegle.org",
-		"%@direct.ilovefreegle.org",
-		"%@republisher.freegle.in",
-	).Scan(&preferredEmail)
+	// ORM migration site 9330b7d3045a (wave 1).
+	db.Table("users_emails").
+		Select("email").
+		Where("userid = ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE '%@yahoogroups.%'",
+			req.UserID,
+			"%@"+utils.USER_DOMAIN,
+			"%@groups.ilovefreegle.org",
+			"%@direct.ilovefreegle.org",
+			"%@republisher.freegle.in",
+		).
+		Order("preferred DESC, added DESC").
+		Limit(1).
+		Scan(&preferredEmail)
 
 	if preferredEmail == "" {
 		// Second pass: no external email found; accept any email including our-domain aliases.
-		db.Raw(`SELECT email FROM users_emails
-			WHERE userid = ?
-			ORDER BY preferred DESC, added DESC
-			LIMIT 1`, req.UserID).Scan(&preferredEmail)
+		// ORM migration site 3b4f1c2cf9eb (wave 1).
+		db.Table("users_emails").
+			Select("email").
+			Where("userid = ?", req.UserID).
+			Order("preferred DESC, added DESC").
+			Limit(1).
+			Scan(&preferredEmail)
 	}
 
 	if preferredEmail == "" {
@@ -317,7 +321,8 @@ func AddDonation(c *fiber.Ctx) error {
 	// the daily mail:donations:thank-prep digest, not a per-donation email.
 	if req.Amount > 0 {
 		var giftAidPeriod *string
-		db.Raw("SELECT period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1", req.UserID).Scan(&giftAidPeriod)
+		// ORM migration site 21e8dbdd136c (wave 1).
+		db.Table("giftaid").Select("period").Where("userid = ? AND deleted IS NULL", req.UserID).Limit(1).Scan(&giftAidPeriod)
 
 		if giftAidPeriod == nil || *giftAidPeriod == PERIOD_THIS {
 			// Create a GiftAid notification for the user.
@@ -411,7 +416,8 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		var userID *uint64
 		if d.Email != "" {
 			var uid uint64
-			db.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", d.Email).Scan(&uid)
+			// ORM migration site 16c4a7f6e566 (wave 1).
+			db.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", d.Email).Limit(1).Scan(&uid)
 			if uid > 0 {
 				userID = &uid
 			}

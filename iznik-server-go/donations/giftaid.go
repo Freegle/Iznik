@@ -65,13 +65,12 @@ func GetGiftAid(c *fiber.Ctx) error {
 
 	// Query for user's gift aid record (exclude deleted records)
 	var giftaid GiftAid
-	result := db.Raw(`
-		SELECT id, userid, timestamp, period, fullname, firstname, lastname,
-		       homeaddress, deleted, reviewed, updated, postcode, housenameornumber
-		FROM giftaid
-		WHERE userid = ? AND deleted IS NULL
-		LIMIT 1
-	`, userID).Scan(&giftaid)
+	// ORM migration site 275465713fef (wave 1).
+	result := db.Table("giftaid").
+		Select("id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber").
+		Where("userid = ? AND deleted IS NULL", userID).
+		Limit(1).
+		Scan(&giftaid)
 
 	if result.Error != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -175,7 +174,8 @@ func ListGiftAid(c *fiber.Ctx) error {
 	// Fetch emails for each user
 	for i := range giftaids {
 		var email *string
-		db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", giftaids[i].UserID).Scan(&email)
+		// ORM migration site 06f02d4d35de (wave 1).
+		db.Table("users_emails").Select("email").Where("userid = ?", giftaids[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
 		giftaids[i].Email = email
 	}
 
@@ -215,7 +215,8 @@ func SearchGiftAid(c *fiber.Ctx) error {
 	// Fetch emails for each user
 	for i := range giftaids {
 		var email *string
-		db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", giftaids[i].UserID).Scan(&email)
+		// ORM migration site ba853e58442d (wave 1).
+		db.Table("users_emails").Select("email").Where("userid = ?", giftaids[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
 		giftaids[i].Email = email
 	}
 
