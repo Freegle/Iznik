@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 170,
+    "converted": 267,
     "keep-raw": 40,
-    "raw": 1426,
+    "raw": 1329,
     "test-fixture": 4223
   },
   "sites": {
@@ -209,9 +209,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0063517fad01": {
       "id": "0063517fad01",
@@ -2323,7 +2323,7 @@
     "050e3574aa6f": {
       "id": "050e3574aa6f",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 426,
+      "line": 446,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -2608,9 +2608,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, timestamp, message, hidden, hiddenby, deleted, deletedby FROM newsfeed WHERE userid = ? ORDER BY id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "056c1a866933": {
       "id": "056c1a866933",
@@ -3393,6 +3393,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "06d02e94fa4a": {
+      "id": "06d02e94fa4a",
+      "file": "iznik-server-go/user/user.go",
+      "line": 1001,
+      "function": "GetSearchesForUser",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users_searches"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT * FROM(SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) t GROUP BY t.term ORDER BY t.id DESC LIMIT 10",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "06d6435e0fc8": {
       "id": "06d6435e0fc8",
       "file": "iznik-server-go/test/session_test.go",
@@ -3863,7 +3885,7 @@
     "07c4bef29c2f": {
       "id": "07c4bef29c2f",
       "file": "iznik-server-go/user/user.go",
-      "line": 1745,
+      "line": 1776,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -4264,7 +4286,7 @@
     "086a07072de1": {
       "id": "086a07072de1",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 687,
+      "line": 707,
       "function": "ingestBulkItemPhotos",
       "receiver": "db",
       "method": "Raw",
@@ -5093,7 +5115,7 @@
     "0a2d7de8a9b7": {
       "id": "0a2d7de8a9b7",
       "file": "iznik-server-go/message/helper.go",
-      "line": 732,
+      "line": 761,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -5115,7 +5137,7 @@
     "0a3ffbf56687": {
       "id": "0a3ffbf56687",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 282,
+      "line": 296,
       "function": "handleBulkInterest",
       "receiver": "db",
       "method": "Exec",
@@ -5493,7 +5515,7 @@
     "0b0cfc4af179": {
       "id": "0b0cfc4af179",
       "file": "iznik-server-go/user/user.go",
-      "line": 2684,
+      "line": 2730,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -5882,9 +5904,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c0dd45fc513": {
       "id": "0c0dd45fc513",
@@ -6082,9 +6104,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(accessinstructions, '') FROM messages_bulk_access WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c642b469bdd": {
       "id": "0c642b469bdd",
@@ -6111,7 +6133,7 @@
     "0c7fcde60aa8": {
       "id": "0c7fcde60aa8",
       "file": "iznik-server-go/user/user.go",
-      "line": 3209,
+      "line": 3265,
       "function": "GetUserMembershipHistory",
       "receiver": "db",
       "method": "Raw",
@@ -6202,7 +6224,7 @@
     "0c8e0836a74b": {
       "id": "0c8e0836a74b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2906,
+      "line": 2964,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -6270,7 +6292,7 @@
     "0c9e859752d0": {
       "id": "0c9e859752d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 1153,
+      "line": 1164,
       "function": "SearchUsers",
       "receiver": "db",
       "method": "Raw",
@@ -7366,31 +7388,6 @@
       "hasParityTest": false,
       "status": "raw"
     },
-    "0eacc514de9d": {
-      "id": "0eacc514de9d",
-      "file": "iznik-server-go/location/location.go",
-      "line": 125,
-      "function": "ClosestGroups",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "groups"
-      ],
-      "mysqlisms": [
-        "backticks",
-        "spatial"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": false,
-      "args": 8,
-      "goldenSql": "SELECT id, nameshort, namefull, ontn, settings, 0 AS dist, haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 FROM `groups` WHERE ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) AND publish = 1 AND listable = 1 ORDER BY hav ASC, external ASC LIMIT ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "0eaf6b2616d8": {
       "id": "0eaf6b2616d8",
       "file": "iznik-server-go/test/giftaid_test.go",
@@ -8081,7 +8078,7 @@
     "100ebe4c33c8": {
       "id": "100ebe4c33c8",
       "file": "iznik-server-go/message/helper.go",
-      "line": 759,
+      "line": 791,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -8149,7 +8146,7 @@
     "10216b47378d": {
       "id": "10216b47378d",
       "file": "iznik-server-go/user/user.go",
-      "line": 1632,
+      "line": 1662,
       "function": "handleEngaged",
       "receiver": "db",
       "method": "Exec",
@@ -8193,7 +8190,7 @@
     "1056062f1f8f": {
       "id": "1056062f1f8f",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 307,
+      "line": 310,
       "function": "GetPublicLocationForUser",
       "receiver": "db",
       "method": "Raw",
@@ -8679,30 +8676,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "1116f209fbba": {
-      "id": "1116f209fbba",
-      "file": "iznik-server-go/message/message.go",
-      "line": 1511,
-      "function": "Search",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "search_history"
-      ],
-      "mysqlisms": [
-        "backticks"
-      ],
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 4,
-      "goldenSql": "INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (?, ?, ?, ?);",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "114e3d2c526c": {
       "id": "114e3d2c526c",
       "file": "iznik-server-go/dashboard/dashboard.go",
@@ -9101,9 +9074,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1210ce1adc82": {
       "id": "1210ce1adc82",
@@ -9174,7 +9147,7 @@
     "123512413259": {
       "id": "123512413259",
       "file": "iznik-server-go/message/helper.go",
-      "line": 636,
+      "line": 657,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -9281,9 +9254,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COALESCE(state,'') FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "129979edb305": {
       "id": "129979edb305",
@@ -9413,9 +9386,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status FROM helper_proposals WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "12f6bba1be69": {
       "id": "12f6bba1be69",
@@ -9523,9 +9496,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT systemrole FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "133187b17ff0": {
       "id": "133187b17ff0",
@@ -9796,7 +9769,7 @@
     "13b31d721901": {
       "id": "13b31d721901",
       "file": "iznik-server-go/user/user.go",
-      "line": 820,
+      "line": 829,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -9949,28 +9922,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "13e645ea19f0": {
-      "id": "13e645ea19f0",
-      "file": "iznik-server-go/user/auth.go",
-      "line": 76,
-      "function": "GetLoveJunkUser",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 2,
-      "goldenSql": "SELECT id FROM locations WHERE name LIKE ? AND type = ? LIMIT 1;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "13f4d3014fcc": {
       "id": "13f4d3014fcc",
@@ -10282,9 +10233,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COALESCE(state, '') FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1504906850dc": {
       "id": "1504906850dc",
@@ -10601,7 +10552,7 @@
     "15b15ae11812": {
       "id": "15b15ae11812",
       "file": "iznik-server-go/message/helper.go",
-      "line": 771,
+      "line": 803,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -10645,7 +10596,7 @@
     "15c4586ac31e": {
       "id": "15c4586ac31e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2586,
+      "line": 2627,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Raw",
@@ -10816,6 +10767,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "160920e559dd": {
+      "id": "160920e559dd",
+      "file": "iznik-server-go/message/message.go",
+      "line": 1518,
+      "function": "Search",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users_searches"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "INSERT INTO users_searches (userid, term, locationid) VALUES (?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "160ecd77825f": {
       "id": "160ecd77825f",
@@ -11730,7 +11703,7 @@
     "17c08ee0c835": {
       "id": "17c08ee0c835",
       "file": "iznik-server-go/message/helper.go",
-      "line": 764,
+      "line": 796,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -12130,7 +12103,7 @@
     "18a18b50e638": {
       "id": "18a18b50e638",
       "file": "iznik-server-go/user/user.go",
-      "line": 2230,
+      "line": 2266,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Raw",
@@ -12411,9 +12384,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name')) FROM users WHERE id = ? AND settings IS NOT NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "19356cdf20b2": {
       "id": "19356cdf20b2",
@@ -13266,7 +13239,7 @@
     "1a851f316859": {
       "id": "1a851f316859",
       "file": "iznik-server-go/user/user.go",
-      "line": 949,
+      "line": 958,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -13333,7 +13306,7 @@
     "1aa7cdd2a963": {
       "id": "1aa7cdd2a963",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 599,
+      "line": 606,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -13754,9 +13727,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT MAX(lastsent) FROM users_push_notifications WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1bd68080fe90": {
       "id": "1bd68080fe90",
@@ -13892,31 +13865,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "1bee1f6bc195": {
-      "id": "1bee1f6bc195",
-      "file": "iznik-server-go/job/job.go",
-      "line": 209,
-      "function": "GetJob",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "ai_images",
-        "jobs"
-      ],
-      "mysqlisms": [
-        "backticks"
-      ],
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id = ? AND visible = 1;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "1c255089e3e0": {
       "id": "1c255089e3e0",
@@ -14212,7 +14160,7 @@
     "1ca61377ab9d": {
       "id": "1ca61377ab9d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2670,
+      "line": 2716,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -14227,6 +14175,34 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
+    "1cbaddb2ed2a": {
+      "id": "1cbaddb2ed2a",
+      "file": "iznik-server-go/authority/message.go",
+      "line": 19,
+      "function": "Messages",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "authorities",
+        "groups",
+        "messages_likes",
+        "messages_spatial"
+      ],
+      "mysqlisms": [
+        "backticks",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages_spatial INNER JOIN authorities ON ST_Contains(authorities.polygon, point) INNER JOIN `groups` ON groups.id = messages_spatial.groupid LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? WHERE authorities.id = ? AND messages_spatial.msgid \u003e 0 ORDER BY unseen DESC, messages_spatial.arrival DESC, messages_spatial.msgid DESC",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -14278,7 +14254,7 @@
     "1cd19cb774b2": {
       "id": "1cd19cb774b2",
       "file": "iznik-server-go/user/relevantoff.go",
-      "line": 49,
+      "line": 50,
       "function": "RelevantOff",
       "receiver": "db",
       "method": "Exec",
@@ -14832,7 +14808,7 @@
     "1dc8cf0d9098": {
       "id": "1dc8cf0d9098",
       "file": "iznik-server-go/user/user.go",
-      "line": 2356,
+      "line": 2393,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -15478,7 +15454,7 @@
     "1eb5dd8ca162": {
       "id": "1eb5dd8ca162",
       "file": "iznik-server-go/user/user.go",
-      "line": 1732,
+      "line": 1763,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -15563,29 +15539,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "1ed69bd57bc7": {
-      "id": "1ed69bd57bc7",
-      "file": "iznik-server-go/location/location.go",
-      "line": 513,
-      "function": "SearchLocations",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations",
-        "locations_dodgy"
-      ],
-      "mysqlisms": null,
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 4,
-      "goldenSql": "SELECT ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, l0.name AS name, l1.name AS oldname, l2.name AS newname FROM locations_dodgy ld INNER JOIN locations l0 ON l0.id = ld.locationid INNER JOIN locations l1 ON l1.id = ld.oldlocationid INNER JOIN locations l2 ON l2.id = ld.newlocationid WHERE ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "1ef340f619fa": {
       "id": "1ef340f619fa",
       "file": "iznik-server-go/test/message_test.go",
@@ -15655,7 +15608,7 @@
     "1f1db38c17ab": {
       "id": "1f1db38c17ab",
       "file": "iznik-server-go/message/helper.go",
-      "line": 593,
+      "line": 612,
       "function": "insertHelperChat",
       "receiver": "db",
       "method": "Exec",
@@ -16146,7 +16099,7 @@
     "1fec19922ea6": {
       "id": "1fec19922ea6",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 279,
+      "line": 293,
       "function": "handleBulkInterest",
       "receiver": "db",
       "method": "Exec",
@@ -16745,9 +16698,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users WHERE tnuserid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "20d94a434a8a": {
       "id": "20d94a434a8a",
@@ -17082,9 +17035,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "21b3c0392c17": {
       "id": "21b3c0392c17",
@@ -17220,9 +17173,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "21d43aeb818e": {
       "id": "21d43aeb818e",
@@ -17623,6 +17576,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "22a2af60d1b3": {
+      "id": "22a2af60d1b3",
+      "file": "iznik-server-go/user/auth.go",
+      "line": 78,
+      "function": "GetLoveJunkUser",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT id FROM locations WHERE name LIKE ? AND type = ? LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "22a5895916fd": {
       "id": "22a5895916fd",
@@ -18252,7 +18227,7 @@
     "239d2cb0036e": {
       "id": "239d2cb0036e",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 450,
+      "line": 470,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "db",
       "method": "Exec",
@@ -18525,7 +18500,7 @@
     "2403316ebe7c": {
       "id": "2403316ebe7c",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 215,
+      "line": 225,
       "function": "handleBulkInterest",
       "receiver": "db",
       "method": "Exec",
@@ -18792,7 +18767,7 @@
     "24704432f4d4": {
       "id": "24704432f4d4",
       "file": "iznik-server-go/user/user.go",
-      "line": 1935,
+      "line": 1968,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -18860,7 +18835,7 @@
     "247abd84a59e": {
       "id": "247abd84a59e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2784,
+      "line": 2840,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -19029,9 +19004,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT id FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "24f86f0fdd03": {
       "id": "24f86f0fdd03",
@@ -19183,9 +19158,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT credentials FROM users_logins WHERE userid = ? AND type = 'Link' LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "253bc6651f22": {
       "id": "253bc6651f22",
@@ -19390,7 +19365,7 @@
     "257f269f3d36": {
       "id": "257f269f3d36",
       "file": "iznik-server-go/message/helper.go",
-      "line": 385,
+      "line": 404,
       "function": "helperEnsureBatch",
       "receiver": "db",
       "method": "Exec",
@@ -19817,7 +19792,7 @@
     "265058d37c74": {
       "id": "265058d37c74",
       "file": "iznik-server-go/user/user.go",
-      "line": 1767,
+      "line": 1798,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -20366,9 +20341,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT subject FROM messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "277fffd43546": {
       "id": "277fffd43546",
@@ -20727,7 +20702,7 @@
     "286f80414bd5": {
       "id": "286f80414bd5",
       "file": "iznik-server-go/user/user.go",
-      "line": 729,
+      "line": 736,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -20788,6 +20763,28 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE ai_images SET externaluid = ?, pending_externaluid = NULL, regeneration_notes = NULL, status = 'active' WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
+    "2891d1ddef74": {
+      "id": "2891d1ddef74",
+      "file": "iznik-server-go/message/message.go",
+      "line": 611,
+      "function": "GetMessagesByIds",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT DISTINCT(chatid) FROM chat_messages WHERE refmsgid = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -21439,7 +21436,7 @@
     "29d38c03b5c7": {
       "id": "29d38c03b5c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2250,
+      "line": 2286,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -22732,7 +22729,7 @@
     "2cacf9e0d85d": {
       "id": "2cacf9e0d85d",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 521,
+      "line": 541,
       "function": "upsertBulkItems",
       "receiver": "db",
       "method": "Exec",
@@ -22908,7 +22905,7 @@
     "2d1aadd1887d": {
       "id": "2d1aadd1887d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2274,
+      "line": 2310,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -23631,9 +23628,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status, resolved_text, resolvedat, resolvedby FROM helper_proposals WHERE batchid = ? ORDER BY (status = 'pending') DESC, id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2e80876b2035": {
       "id": "2e80876b2035",
@@ -23993,7 +23990,7 @@
     "2f3126db180a": {
       "id": "2f3126db180a",
       "file": "iznik-server-go/user/user.go",
-      "line": 442,
+      "line": 444,
       "function": "InventName",
       "receiver": "db",
       "method": "Exec",
@@ -24147,7 +24144,7 @@
     "2f4ae0de2f36": {
       "id": "2f4ae0de2f36",
       "file": "iznik-server-go/user/user.go",
-      "line": 1975,
+      "line": 2008,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -24438,7 +24435,7 @@
     "2fb353882afe": {
       "id": "2fb353882afe",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 307,
+      "line": 321,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Raw",
@@ -24862,9 +24859,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, timestamp, eximid, `from`, `to`, subject, status FROM logs_emails WHERE userid = ? ORDER BY id DESC LIMIT 100",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "309b146150c4": {
       "id": "309b146150c4",
@@ -25090,7 +25087,7 @@
     "313bbe346bf7": {
       "id": "313bbe346bf7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2805,
+      "line": 2861,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -26173,7 +26170,7 @@
     "33201edc2a80": {
       "id": "33201edc2a80",
       "file": "iznik-server-go/user/user.go",
-      "line": 1660,
+      "line": 1690,
       "function": "handleRate",
       "receiver": "db",
       "method": "Exec",
@@ -26791,28 +26788,6 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "34292c12c516": {
-      "id": "34292c12c516",
-      "file": "iznik-server-go/user/userInfo.go",
-      "line": 221,
-      "function": "GetUserInfo",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "ratings"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "SELECT COUNT(*) AS count, rating FROM ratings WHERE ratee = ? AND timestamp \u003e= ? AND (tn_rating_id IS NOT NULL OR rater = ? OR visible = 1) GROUP BY rating;",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -27625,7 +27600,7 @@
     "35b87def61f8": {
       "id": "35b87def61f8",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 347,
+      "line": 363,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Exec",
@@ -27739,7 +27714,7 @@
     "35ec3910a568": {
       "id": "35ec3910a568",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 277,
+      "line": 291,
       "function": "handleBulkInterest",
       "receiver": "db",
       "method": "Exec",
@@ -27849,7 +27824,7 @@
     "362515fa583b": {
       "id": "362515fa583b",
       "file": "iznik-server-go/message/helper.go",
-      "line": 758,
+      "line": 790,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -28070,9 +28045,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(fullname, '') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "36a2a7be3fff": {
       "id": "36a2a7be3fff",
@@ -28092,9 +28067,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(edittoken, '') FROM messages_bulk_access WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "36a30e931616": {
       "id": "36a30e931616",
@@ -28138,37 +28113,6 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE chat_messages SET seenbyall = 1 WHERE chatid = ? AND id \u003c= ? AND seenbyall = 0 AND NOT EXISTS ( SELECT 1 FROM chat_roster WHERE chatid = ? AND (lastmsgseen IS NULL OR lastmsgseen \u003c chat_messages.id) AND userid != chat_messages.userid )",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "36ce177494bf": {
-      "id": "36ce177494bf",
-      "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 391,
-      "function": "getFeed",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "communityevents",
-        "newsfeed",
-        "newsfeed_unfollow",
-        "spam_users",
-        "users",
-        "users_stories",
-        "volunteering"
-      ],
-      "mysqlisms": [
-        "force-index",
-        "spatial"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": true,
-      "args": 63,
-      "goldenSql": "(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type NOT IN (?, ?, ?) ORDER BY timestamp DESC LIMIT 100 ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type IN (?, ?) ORDER BY ST_Distance(position, ST_SRID(POINT(?, ?), ?)) ASC, timestamp DESC LIMIT %d ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type = ? ORDER BY pinned DESC, timestamp DESC LIMIT %d ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.type = ? AND newsfeed.pinned = 1 AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL ORDER BY pinned DESC, timestamp DESC LIMIT 5) ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -28260,6 +28204,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "3736547cd88a": {
+      "id": "3736547cd88a",
+      "file": "iznik-server-go/location/location.go",
+      "line": 125,
+      "function": "ClosestGroups",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "groups"
+      ],
+      "mysqlisms": [
+        "backticks",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 8,
+      "goldenSql": "SELECT id, nameshort, namefull, ontn, settings, 0 AS dist, haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 FROM `groups` WHERE ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) AND publish = 1 AND listable = 1 ORDER BY hav ASC, external ASC LIMIT ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "3737286f7f2f": {
       "id": "3737286f7f2f",
@@ -28545,28 +28514,6 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
-    },
-    "37c205978f1f": {
-      "id": "37c205978f1f",
-      "file": "iznik-server-go/user/userEmails.go",
-      "line": 28,
-      "function": "getEmails",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "users_emails"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT id, added, bounced, preferred, email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, email ASC;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "37d4ff3aedb7": {
       "id": "37d4ff3aedb7",
@@ -28924,7 +28871,7 @@
     "388f473a3332": {
       "id": "388f473a3332",
       "file": "iznik-server-go/message/reach.go",
-      "line": 143,
+      "line": 144,
       "function": "Reach",
       "receiver": "db",
       "method": "Raw",
@@ -29129,7 +29076,7 @@
     "3904aaac34be": {
       "id": "3904aaac34be",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 352,
+      "line": 368,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Exec",
@@ -29261,7 +29208,7 @@
     "395499023142": {
       "id": "395499023142",
       "file": "iznik-server-go/user/user.go",
-      "line": 3176,
+      "line": 3232,
       "function": "GetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -29572,36 +29519,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "39d5d0729fa9": {
-      "id": "39d5d0729fa9",
-      "file": "iznik-server-go/message/groups.go",
-      "line": 63,
-      "function": "Groups",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "messages",
-        "messages_groups",
-        "messages_likes",
-        "messages_outcomes",
-        "messages_promises",
-        "messages_spatial"
-      ],
-      "mysqlisms": [
-        "any-value",
-        "spatial"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": true,
-      "args": 1,
-      "goldenSql": "SELECT * FROM (SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival, m.arrival AS posted, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages_spatial INNER JOIN messages m ON m.id = messages_spatial.msgid LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? WHERE 1=1 {{expr}}UNION SELECT lat, lng, messages.id, ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, ANY_VALUE(messages_groups.groupid) AS groupid, messages.type, MAX(messages_groups.arrival) AS arrival, messages.arrival AS posted, ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id LEFT JOIN messages_promises ON messages_promises.msgid = messages.id LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? WHERE fromuser = ? AND messages_groups.arrival \u003e= ? AND messages_outcomes.id IS NULL GROUP BY messages.id ) t ORDER BY unseen DESC, arrival DESC, id DESC;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "39e58fbf81cf": {
       "id": "39e58fbf81cf",
@@ -29918,6 +29835,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "3acefabd6672": {
+      "id": "3acefabd6672",
+      "file": "iznik-server-go/location/location.go",
+      "line": 259,
+      "function": "FetchSingle",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ? LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "3ad4178cb293": {
       "id": "3ad4178cb293",
       "file": "iznik-server-go/test/donations_test.go",
@@ -29965,7 +29904,7 @@
     "3ad68615e84c": {
       "id": "3ad68615e84c",
       "file": "iznik-server-go/message/helper.go",
-      "line": 198,
+      "line": 207,
       "function": "GetHelper",
       "receiver": "db",
       "method": "Raw",
@@ -30423,9 +30362,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM helper_repliers WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3bb5bf0c5009": {
       "id": "3bb5bf0c5009",
@@ -30676,7 +30615,7 @@
     "3c0db7c93a36": {
       "id": "3c0db7c93a36",
       "file": "iznik-server-go/user/partner.go",
-      "line": 130,
+      "line": 134,
       "function": "CreatePartnerUser",
       "receiver": "db",
       "method": "Exec",
@@ -30786,7 +30725,7 @@
     "3c462363aa82": {
       "id": "3c462363aa82",
       "file": "iznik-server-go/user/user.go",
-      "line": 2751,
+      "line": 2803,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -30868,9 +30807,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT rating FROM ratings WHERE rater = ? AND ratee = ? AND timestamp \u003e= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3c69abc38cbd": {
       "id": "3c69abc38cbd",
@@ -31404,7 +31343,7 @@
     "3df9a32dc731": {
       "id": "3df9a32dc731",
       "file": "iznik-server-go/user/user.go",
-      "line": 2285,
+      "line": 2321,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -31441,9 +31380,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT id FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3e313241f69a": {
       "id": "3e313241f69a",
@@ -32350,36 +32289,14 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT groupid FROM memberships WHERE userid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "3fed9f232fe7": {
-      "id": "3fed9f232fe7",
-      "file": "iznik-server-go/auth/auth.go",
-      "line": 61,
-      "function": "WhoAmI",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "sessions"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 2,
-      "goldenSql": "SELECT userid FROM sessions WHERE id = ? AND token = ? LIMIT 1;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ff417c41f7c": {
       "id": "3ff417c41f7c",
       "file": "iznik-server-go/user/user.go",
-      "line": 1677,
+      "line": 1707,
       "function": "handleRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -34043,9 +33960,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "430e819dd8b9": {
       "id": "430e819dd8b9",
@@ -34486,30 +34403,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "4408a91cc68d": {
-      "id": "4408a91cc68d",
-      "file": "iznik-server-go/story/story.go",
-      "line": 171,
-      "function": "Group",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "memberships",
-        "users",
-        "users_stories"
-      ],
-      "mysqlisms": null,
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 4,
-      "goldenSql": "SELECT DISTINCT users_stories.id FROM users_stories INNER JOIN memberships ON memberships.userid = users_stories.userid INNER JOIN users ON users.id = users_stories.userid WHERE memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL ORDER BY date DESC LIMIT ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "440d80ad2fb4": {
       "id": "440d80ad2fb4",
@@ -35202,30 +35095,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "4517e6fa7154": {
-      "id": "4517e6fa7154",
-      "file": "iznik-server-go/message/message.go",
-      "line": 1524,
-      "function": "Search",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "search_history"
-      ],
-      "mysqlisms": [
-        "backticks"
-      ],
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (NULL, ?, ?, ?);",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "45342427d03d": {
       "id": "45342427d03d",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
@@ -35487,9 +35356,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM partners_keys WHERE partner LIKE ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "45d863036025": {
       "id": "45d863036025",
@@ -36007,7 +35876,7 @@
     "4718b42d0c88": {
       "id": "4718b42d0c88",
       "file": "iznik-server-go/user/user.go",
-      "line": 2700,
+      "line": 2746,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -36561,7 +36430,7 @@
     "47daaacbf97d": {
       "id": "47daaacbf97d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2748,
+      "line": 2800,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -37291,9 +37160,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = 'User2Mod'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "495e8285da0a": {
       "id": "495e8285da0a",
@@ -37313,9 +37182,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT * FROM users_searches WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "496dfed25e99": {
       "id": "496dfed25e99",
@@ -38029,9 +37898,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? AND (settings IS NULL OR JSON_EXTRACT(settings, '$.active') IS NULL OR JSON_EXTRACT(settings, '$.active') != 0)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4a88cda37f95": {
       "id": "4a88cda37f95",
@@ -38348,7 +38217,7 @@
     "4aef5392a01f": {
       "id": "4aef5392a01f",
       "file": "iznik-server-go/message/helper.go",
-      "line": 438,
+      "line": 457,
       "function": "helperUpsertReplier",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -38389,9 +38258,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid FROM messages_bulk_items_interest WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4b1684e73dd8": {
       "id": "4b1684e73dd8",
@@ -38639,9 +38508,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groupid FROM users_banned WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4bc40c860595": {
       "id": "4bc40c860595",
@@ -38737,7 +38606,7 @@
     "4c001e1eeba2": {
       "id": "4c001e1eeba2",
       "file": "iznik-server-go/user/user.go",
-      "line": 2688,
+      "line": 2734,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -38910,9 +38779,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4c4b49dea655": {
       "id": "4c4b49dea655",
@@ -39095,7 +38964,7 @@
     "4cc44cc47cbe": {
       "id": "4cc44cc47cbe",
       "file": "iznik-server-go/user/user.go",
-      "line": 2367,
+      "line": 2404,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -39161,7 +39030,7 @@
     "4ccf389828b7": {
       "id": "4ccf389828b7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2207,
+      "line": 2243,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Raw",
@@ -39220,9 +39089,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid, type, added, lastaccess FROM users_logins WHERE userid = ? ORDER BY lastaccess DESC LIMIT 50",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4ce7a69fe146": {
       "id": "4ce7a69fe146",
@@ -40062,34 +39931,6 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT subject, COALESCE(textbody, '') as textbody, COALESCE(type, '') as type, locationid FROM messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "4ec628a65e95": {
-      "id": "4ec628a65e95",
-      "file": "iznik-server-go/authority/message.go",
-      "line": 19,
-      "function": "Messages",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "authorities",
-        "groups",
-        "messages_likes",
-        "messages_spatial"
-      ],
-      "mysqlisms": [
-        "backticks",
-        "spatial"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages_spatial INNER JOIN authorities ON ST_Contains(authorities.polygon, point) INNER JOIN `groups` ON groups.id = messages_spatial.groupid LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? WHERE authorities.id = ? AND messages_spatial.msgid \u003e 0 ORDER BY unseen DESC, messages_spatial.arrival DESC, messages_spatial.msgid DESC;",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -41363,28 +41204,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "51e0c66e68ff": {
-      "id": "51e0c66e68ff",
-      "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 864,
-      "function": "CreateChatMessageLoveJunk",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "UPDATE",
-      "tables": [
-        "chat_images"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 2,
-      "goldenSql": "UPDATE chat_images SET chatmsgid = ? WHERE id = ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "51e63f6d2562": {
       "id": "51e63f6d2562",
       "file": "iznik-server-go/test/user_test.go",
@@ -41432,7 +41251,7 @@
     "51fa5d2c1016": {
       "id": "51fa5d2c1016",
       "file": "iznik-server-go/user/user.go",
-      "line": 2327,
+      "line": 2363,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -41522,28 +41341,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "5242dfe650ec": {
-      "id": "5242dfe650ec",
-      "file": "iznik-server-go/message/message.go",
-      "line": 1518,
-      "function": "Search",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "users_searches"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "INSERT INTO users_searches (userid, term, locationid) VALUES (?, ?, ?);",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "52538d138ab2": {
       "id": "52538d138ab2",
       "file": "iznik-server-go/message/bulkEdit.go",
@@ -41562,9 +41359,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(edittoken, '') FROM messages_bulk_access WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "525aa1a40a63": {
       "id": "525aa1a40a63",
@@ -41608,9 +41405,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "526cc19cb280": {
       "id": "526cc19cb280",
@@ -41769,7 +41566,7 @@
     "52c033e59a9d": {
       "id": "52c033e59a9d",
       "file": "iznik-server-go/user/partner.go",
-      "line": 135,
+      "line": 139,
       "function": "CreatePartnerUser",
       "receiver": "db",
       "method": "Exec",
@@ -41806,9 +41603,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groupid FROM messages_groups WHERE msgid = ? AND deleted = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "52dd73c2cd60": {
       "id": "52dd73c2cd60",
@@ -41894,9 +41691,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid, byuserid, collection, reason, added FROM spam_users WHERE userid = ? ORDER BY id ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5306d4b915fe": {
       "id": "5306d4b915fe",
@@ -42035,7 +41832,7 @@
     "532b0ba4ba45": {
       "id": "532b0ba4ba45",
       "file": "iznik-server-go/user/user.go",
-      "line": 958,
+      "line": 967,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -42325,7 +42122,7 @@
     "540382023ce6": {
       "id": "540382023ce6",
       "file": "iznik-server-go/user/user.go",
-      "line": 892,
+      "line": 901,
       "function": "GetProfileRecord",
       "receiver": "db",
       "method": "Raw",
@@ -42642,7 +42439,7 @@
     "54b1921a63a5": {
       "id": "54b1921a63a5",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 409,
+      "line": 427,
       "function": "sendAccessInstructions",
       "receiver": "db",
       "method": "Exec",
@@ -42657,28 +42454,6 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "54b4d3d17ad8": {
-      "id": "54b4d3d17ad8",
-      "file": "iznik-server-go/location/location.go",
-      "line": 259,
-      "function": "FetchSingle",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations"
-      ],
-      "mysqlisms": null,
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ? LIMIT 1;",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -43277,9 +43052,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "559ee19bce81": {
       "id": "559ee19bce81",
@@ -43306,7 +43081,7 @@
     "55a57788c875": {
       "id": "55a57788c875",
       "file": "iznik-server-go/user/user.go",
-      "line": 2930,
+      "line": 2988,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Exec",
@@ -43641,7 +43416,7 @@
     "564e5329c133": {
       "id": "564e5329c133",
       "file": "iznik-server-go/user/user.go",
-      "line": 2511,
+      "line": 2552,
       "function": "LogGroupLeftForApprovedMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -43883,7 +43658,7 @@
     "56dfb1008d60": {
       "id": "56dfb1008d60",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 164,
+      "line": 170,
       "function": "recomputeBulkAvailableNow",
       "receiver": "db",
       "method": "Exec",
@@ -44010,9 +43785,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5742a4a9387c": {
       "id": "5742a4a9387c",
@@ -46260,7 +46035,7 @@
     "5b72a0acad8e": {
       "id": "5b72a0acad8e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2798,
+      "line": 2854,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -46502,7 +46277,7 @@
     "5bd4b2e2c8ff": {
       "id": "5bd4b2e2c8ff",
       "file": "iznik-server-go/user/auth.go",
-      "line": 68,
+      "line": 70,
       "function": "GetLoveJunkUser",
       "receiver": "db",
       "method": "Exec",
@@ -46922,7 +46697,7 @@
     "5ccbc340f539": {
       "id": "5ccbc340f539",
       "file": "iznik-server-go/message/helper.go",
-      "line": 154,
+      "line": 156,
       "function": "msgidForProposal",
       "receiver": "db",
       "method": "Raw",
@@ -48272,33 +48047,6 @@
       "hasParityTest": false,
       "status": "raw"
     },
-    "5f726d165bcf": {
-      "id": "5f726d165bcf",
-      "file": "iznik-server-go/message/message.go",
-      "line": 1825,
-      "function": "GetRecentActivity",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "groups",
-        "messages",
-        "messages_groups",
-        "users"
-      ],
-      "mysqlisms": [
-        "backticks"
-      ],
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 2,
-      "goldenSql": "SELECT messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, groups.nameshort, groups.namefull, groups.lat, groups.lng FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN `groups` ON messages_groups.groupid = groups.id INNER JOIN users ON messages.fromuser = users.id WHERE messages_groups.arrival \u003e ? AND collection = ? ORDER BY messages_groups.arrival ASC LIMIT 100;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "5f742c0fcf1f": {
       "id": "5f742c0fcf1f",
       "file": "iznik-server-go/membership/membership.go",
@@ -49118,7 +48866,7 @@
     "60fa78a45347": {
       "id": "60fa78a45347",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 288,
+      "line": 291,
       "function": "GetPublicLocationForUser",
       "receiver": "db",
       "method": "Raw",
@@ -49791,6 +49539,33 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "627297867656": {
+      "id": "627297867656",
+      "file": "iznik-server-go/message/message.go",
+      "line": 1825,
+      "function": "GetRecentActivity",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "groups",
+        "messages",
+        "messages_groups",
+        "users"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, groups.nameshort, groups.namefull, groups.lat, groups.lng FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN `groups` ON messages_groups.groupid = groups.id INNER JOIN users ON messages.fromuser = users.id WHERE messages_groups.arrival \u003e ? AND collection = ? ORDER BY messages_groups.arrival ASC LIMIT 100",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "6286776028c4": {
       "id": "6286776028c4",
       "file": "iznik-server-go/test/group_patch_test.go",
@@ -49970,9 +49745,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT status FROM helper_batches WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "62cea0b491c9": {
       "id": "62cea0b491c9",
@@ -50262,14 +50037,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fromuser, fromaddr FROM messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6358402174f8": {
       "id": "6358402174f8",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 583,
+      "line": 590,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -50771,9 +50546,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6443a7273274": {
       "id": "6443a7273274",
@@ -51103,28 +50878,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "64d51306dc51": {
-      "id": "64d51306dc51",
-      "file": "iznik-server-go/location/location.go",
-      "line": 419,
-      "function": "SearchLocations",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations"
-      ],
-      "mysqlisms": null,
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": true,
-      "args": 2,
-      "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? {{expr}} AND l1.name LIKE '% %' LIMIT ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "64e87bec1d54": {
       "id": "64e87bec1d54",
       "file": "iznik-server-go/authority/stats_split_test.go",
@@ -51256,6 +51009,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "6535a765873b": {
+      "id": "6535a765873b",
+      "file": "iznik-server-go/job/job.go",
+      "line": 209,
+      "function": "GetJob",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "ai_images",
+        "jobs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id = ? AND visible = 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "65478f281afd": {
       "id": "65478f281afd",
@@ -53654,7 +53432,7 @@
     "69e208d229bf": {
       "id": "69e208d229bf",
       "file": "iznik-server-go/user/user.go",
-      "line": 2675,
+      "line": 2721,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -53896,7 +53674,7 @@
     "6a225df4a259": {
       "id": "6a225df4a259",
       "file": "iznik-server-go/user/user.go",
-      "line": 3046,
+      "line": 3103,
       "function": "GetUserBans",
       "receiver": "db",
       "method": "Raw",
@@ -54235,7 +54013,7 @@
     "6acdc6efc5f0": {
       "id": "6acdc6efc5f0",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 734,
+      "line": 756,
       "function": "upsertBulkSlots",
       "receiver": "db",
       "method": "Exec",
@@ -54360,9 +54138,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, batchid, userid, chatid, state, collection_ok, criteria_met, transport_ok, distance_miles, is_connector, related_to, escalation_reason, parked_reason, next_action, other_items_mentioned, cooldown_until, offerer_last_message_at, last_processed_chatmsgid, knowledge FROM helper_repliers WHERE batchid = ? ORDER BY id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6b07d7949c25": {
       "id": "6b07d7949c25",
@@ -55302,6 +55080,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "6cdce430c158": {
+      "id": "6cdce430c158",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "line": 772,
+      "function": "fetchSingle",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "newsfeed",
+        "newsfeed_images",
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 5,
+      "goldenSql": "SELECT newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod FROM newsfeed LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id WHERE newsfeed.id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "6cdf309715ad": {
       "id": "6cdf309715ad",
       "file": "iznik-server-go/test/communityevent_test.go",
@@ -55432,6 +55234,30 @@
       "hasParityTest": false,
       "status": "raw"
     },
+    "6d0aed05d5eb": {
+      "id": "6d0aed05d5eb",
+      "file": "iznik-server-go/message/message.go",
+      "line": 1511,
+      "function": "Search",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "search_history"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (?, ?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "6d0d83bfc10d": {
       "id": "6d0d83bfc10d",
       "file": "iznik-server-go/comment/comment.go",
@@ -55542,9 +55368,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, msgid, position, name, quantity, available, `condition`, dimensions, photourl, description FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6d428538c7f6": {
       "id": "6d428538c7f6",
@@ -56464,9 +56290,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6f1d6543e5c0": {
       "id": "6f1d6543e5c0",
@@ -56696,7 +56522,7 @@
     "6f9705358ae3": {
       "id": "6f9705358ae3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2918,
+      "line": 2976,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -56824,6 +56650,29 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "6fc15cf6168f": {
+      "id": "6fc15cf6168f",
+      "file": "iznik-server-go/notification/notification.go",
+      "line": 39,
+      "function": "Count",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "spam_users",
+        "users_notifications"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "SELECT COUNT(*) AS count FROM users_notifications LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) WHERE touser = ? AND timestamp \u003e= ? AND seen = 0 AND spam_users.id IS NULL",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "6fcab3054ee0": {
       "id": "6fcab3054ee0",
@@ -57274,6 +57123,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "7069b88d6489": {
+      "id": "7069b88d6489",
+      "file": "iznik-server-go/user/userInfo.go",
+      "line": 223,
+      "function": "GetUserInfo",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "ratings"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT COUNT(*) AS count, rating FROM ratings WHERE ratee = ? AND timestamp \u003e= ? AND (tn_rating_id IS NOT NULL OR rater = ? OR visible = 1) GROUP BY rating",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "706b0bb5092e": {
       "id": "706b0bb5092e",
       "file": "iznik-server-go/test/story_test.go",
@@ -57607,7 +57478,7 @@
     "70eeb41b22a3": {
       "id": "70eeb41b22a3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2295,
+      "line": 2331,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -58027,6 +57898,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "71f1772f4a99": {
+      "id": "71f1772f4a99",
+      "file": "iznik-server-go/location/location.go",
+      "line": 567,
+      "function": "Typeahead",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 2,
+      "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? {{expr}} AND l1.name LIKE '% %' LIMIT ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "71fa7dbcc25a": {
       "id": "71fa7dbcc25a",
@@ -58950,7 +58843,7 @@
     "7394291c903d": {
       "id": "7394291c903d",
       "file": "iznik-server-go/message/helper.go",
-      "line": 566,
+      "line": 585,
       "function": "helperCreateProposal",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -59279,9 +59172,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groupid, collection, arrival, heldby, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "743a2f94ab35": {
       "id": "743a2f94ab35",
@@ -59308,7 +59201,7 @@
     "74516dda0fb7": {
       "id": "74516dda0fb7",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 274,
+      "line": 283,
       "function": "PostBulkEditOffer",
       "receiver": "db",
       "method": "Exec",
@@ -59772,9 +59665,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "74e58d425102": {
       "id": "74e58d425102",
@@ -59907,9 +59800,9 @@
       "dynamic": false,
       "args": 9,
       "goldenSql": "SELECT name FROM locations WHERE type = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? ORDER BY ((lat - ?)*(lat - ?) + (lng - ?)*(lng - ?)) ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "753352242242": {
       "id": "753352242242",
@@ -60065,6 +59958,36 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "7558e63cd067": {
+      "id": "7558e63cd067",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "line": 542,
+      "function": "getFeed",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "communityevents",
+        "newsfeed",
+        "newsfeed_unfollow",
+        "spam_users",
+        "users",
+        "users_stories",
+        "volunteering"
+      ],
+      "mysqlisms": [
+        "force-index"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 1,
+      "goldenSql": "(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (timestamp) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type NOT IN (?, ?, ?) ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT 100 ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (timestamp) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type IN (?, ?) ORDER BY newsfeed.timestamp DESC LIMIT %d ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (timestamp) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type = ? %sORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT %d ) ORDER BY pinned DESC, timestamp DESC LIMIT 100",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "755aa6fe70c2": {
       "id": "755aa6fe70c2",
       "file": "iznik-server-go/test/comment_test.go",
@@ -60105,9 +60028,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid, timestamp, period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "757206d64631": {
       "id": "757206d64631",
@@ -60947,9 +60870,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid, timestamp, GrossAmount, source, TransactionType, giftaidconsent FROM users_donations WHERE userid = ? ORDER BY timestamp DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "76d29a0fa03e": {
       "id": "76d29a0fa03e",
@@ -61192,32 +61115,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "77193b04603e": {
-      "id": "77193b04603e",
-      "file": "iznik-server-go/location/location.go",
-      "line": 475,
-      "function": "SearchLocations",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations",
-        "locations_excluded",
-        "locations_spatial"
-      ],
-      "mysqlisms": [
-        "spatial"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "SELECT DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, ST_AsText(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END) AS polygon FROM (SELECT DISTINCT locationid FROM locations_spatial INNER JOIN locations l2 ON l2.areaid = locations_spatial.locationid WHERE ST_Intersects(locations_spatial.geometry, ST_GeomFromText(?, ?)) AND l2.type = ?) ls INNER JOIN locations l ON l.id = ls.locationid LEFT JOIN locations_excluded ON ls.locationid = locations_excluded.locationid WHERE locations_excluded.locationid IS NULL LIMIT 500;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "771b502217d0": {
       "id": "771b502217d0",
@@ -61829,7 +61726,7 @@
     "783eedfa7e23": {
       "id": "783eedfa7e23",
       "file": "iznik-server-go/user/user.go",
-      "line": 927,
+      "line": 936,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -62187,7 +62084,7 @@
     "78e5a64166c8": {
       "id": "78e5a64166c8",
       "file": "iznik-server-go/message/helper.go",
-      "line": 796,
+      "line": 828,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -62788,7 +62685,7 @@
     "79f72a928ca3": {
       "id": "79f72a928ca3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2531,
+      "line": 2572,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -63388,7 +63285,7 @@
     "7b1efa32121d": {
       "id": "7b1efa32121d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2311,
+      "line": 2347,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -63584,7 +63481,7 @@
     "7b739452734d": {
       "id": "7b739452734d",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 546,
+      "line": 553,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -63650,7 +63547,7 @@
     "7b9310de870b": {
       "id": "7b9310de870b",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 267,
+      "line": 276,
       "function": "PostBulkEditOffer",
       "receiver": "db",
       "method": "Exec",
@@ -63672,7 +63569,7 @@
     "7ba4875e8aec": {
       "id": "7ba4875e8aec",
       "file": "iznik-server-go/message/helper.go",
-      "line": 449,
+      "line": 468,
       "function": "helperUpsertReplier",
       "receiver": "db",
       "method": "Exec",
@@ -63775,9 +63672,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT text) FROM logs WHERE user = ? AND type = ? AND subtype = ? AND timestamp \u003e= NOW() - INTERVAL 24 HOUR",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7bdc9f9d7004": {
       "id": "7bdc9f9d7004",
@@ -63999,9 +63896,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT replytime FROM users_replytime WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7c36da3acec8": {
       "id": "7c36da3acec8",
@@ -64481,7 +64378,7 @@
     "7d3ed9c6a8df": {
       "id": "7d3ed9c6a8df",
       "file": "iznik-server-go/user/user.go",
-      "line": 2681,
+      "line": 2727,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -64589,28 +64486,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "7d7bc7fd50a2": {
-      "id": "7d7bc7fd50a2",
-      "file": "iznik-server-go/location/location.go",
-      "line": 331,
-      "function": "Resolve",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT id, name, type, lat, lng, areaid FROM locations WHERE name = ? ORDER BY FIELD(type, 'Polygon', 'Postcode', 'Road', 'Line', 'Point'), id LIMIT 1;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "7d8462a9fa46": {
       "id": "7d8462a9fa46",
@@ -64796,7 +64671,7 @@
     "7e3e5f4d0b36": {
       "id": "7e3e5f4d0b36",
       "file": "iznik-server-go/message/helper.go",
-      "line": 361,
+      "line": 380,
       "function": "ensureBatchRow",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -65324,7 +65199,7 @@
     "7ec60cde5d39": {
       "id": "7ec60cde5d39",
       "file": "iznik-server-go/message/helper.go",
-      "line": 670,
+      "line": 692,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -65528,7 +65403,7 @@
     "7f1d565c4908": {
       "id": "7f1d565c4908",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 118,
+      "line": 124,
       "function": "bulkEditItems",
       "receiver": "db",
       "method": "Raw",
@@ -65898,9 +65773,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT slot FROM messages_bulk_slots WHERE msgid = ? ORDER BY position ASC, id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7fe526e2a805": {
       "id": "7fe526e2a805",
@@ -65920,9 +65795,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname, firstname, lastname, yahooid, systemrole, added, tnuserid FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7fe963f5c78b": {
       "id": "7fe963f5c78b",
@@ -66149,7 +66024,7 @@
     "80634b30b8a9": {
       "id": "80634b30b8a9",
       "file": "iznik-server-go/message/helper.go",
-      "line": 644,
+      "line": 665,
       "function": "helperSendAction",
       "receiver": "db",
       "method": "Exec",
@@ -66237,7 +66112,7 @@
     "80bda541244b": {
       "id": "80bda541244b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2109,
+      "line": 2144,
       "function": "CheckLocationChangeVelocity",
       "receiver": "db",
       "method": "Exec",
@@ -67075,6 +66950,32 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "826841109881": {
+      "id": "826841109881",
+      "file": "iznik-server-go/message/message.go",
+      "line": 568,
+      "function": "GetMessagesByIds",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages",
+        "messages",
+        "messages_groups",
+        "rippling_held_replies",
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 5,
+      "goldenSql": "SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname FROM chat_messages INNER JOIN messages ON messages.id = chat_messages.refmsgid INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) AND reviewrequired = 0 AND reviewrejected = 0 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status \u003c\u003e 'released') AND DATEDIFF(chat_messages.date, messages_groups.arrival) \u003c ? GROUP BY userid",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "826f2a9c5ca3": {
       "id": "826f2a9c5ca3",
       "file": "iznik-server-go/test/newsfeed_test.go",
@@ -67100,7 +67001,7 @@
     "8278f05f07af": {
       "id": "8278f05f07af",
       "file": "iznik-server-go/user/user.go",
-      "line": 2914,
+      "line": 2972,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -67368,7 +67269,7 @@
     "82f73ff0af1b": {
       "id": "82f73ff0af1b",
       "file": "iznik-server-go/message/helper.go",
-      "line": 598,
+      "line": 617,
       "function": "insertHelperChat",
       "receiver": "db",
       "method": "Exec",
@@ -67500,6 +67401,39 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "8344ba8f9aa5": {
+      "id": "8344ba8f9aa5",
+      "file": "iznik-server-go/location/location.go",
+      "line": 632,
+      "function": "GetLocationAddresses",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations",
+        "paf_addresses",
+        "paf_buildingname",
+        "paf_departmentname",
+        "paf_dependentlocality",
+        "paf_dependentthoroughfaredescriptor",
+        "paf_doubledependentlocality",
+        "paf_organisationname",
+        "paf_pobox",
+        "paf_posttown",
+        "paf_subbuildingname",
+        "paf_thoroughfaredescriptor"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT paf_addresses.id,locations.name as postcode, buildingname, buildingnumber, p.subbuildingname, departmentname, dependentlocality, doubledependentlocality, dependentthoroughfaredescriptor, organisationname, suorganisationindicator, deliverypointsuffix, udprn, posttown, postcodetype, pobox, thoroughfaredescriptor FROM paf_addresses INNER JOIN locations ON locations.id = paf_addresses.postcodeid LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id LEFT JOIN paf_pobox ON poboxid = paf_pobox.id LEFT JOIN paf_posttown ON posttownid = paf_posttown.id LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id WHERE paf_addresses.postcodeid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "8357e448c65a": {
       "id": "8357e448c65a",
@@ -68095,6 +68029,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "845387e20e9b": {
+      "id": "845387e20e9b",
+      "file": "iznik-server-go/location/location.go",
+      "line": 331,
+      "function": "Resolve",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, name, type, lat, lng, areaid FROM locations WHERE name = ? ORDER BY FIELD(type, 'Polygon', 'Postcode', 'Road', 'Line', 'Point'), id LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "8454ffe03ab6": {
       "id": "8454ffe03ab6",
       "file": "iznik-server-go/test/messageoutcome_pending_test.go",
@@ -68142,7 +68098,7 @@
     "846ce190fcf8": {
       "id": "846ce190fcf8",
       "file": "iznik-server-go/user/user.go",
-      "line": 2217,
+      "line": 2253,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -68693,9 +68649,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM helper_sent_messages WHERE batchid = ? AND replierid = ? AND auto = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "85e03cf995bf": {
       "id": "85e03cf995bf",
@@ -68744,7 +68700,7 @@
     "85e640a5f97f": {
       "id": "85e640a5f97f",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 512,
+      "line": 532,
       "function": "upsertBulkItems",
       "receiver": "db",
       "method": "Exec",
@@ -68788,7 +68744,7 @@
     "85f3246d11af": {
       "id": "85f3246d11af",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 180,
+      "line": 187,
       "function": "recordBulkOutcomeIfComplete",
       "receiver": "db",
       "method": "Exec",
@@ -69079,7 +69035,7 @@
     "863ce73a0abc": {
       "id": "863ce73a0abc",
       "file": "iznik-server-go/user/user.go",
-      "line": 2276,
+      "line": 2312,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -69666,9 +69622,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8765e9b1b1f2": {
       "id": "8765e9b1b1f2",
@@ -69803,7 +69759,7 @@
     "8798aebadf32": {
       "id": "8798aebadf32",
       "file": "iznik-server-go/user/user.go",
-      "line": 2369,
+      "line": 2406,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -70153,7 +70109,7 @@
     "889877ad8183": {
       "id": "889877ad8183",
       "file": "iznik-server-go/user/user.go",
-      "line": 470,
+      "line": 475,
       "function": "HasWiderReview",
       "receiver": "db",
       "method": "Raw",
@@ -70511,7 +70467,7 @@
     "896940a53068": {
       "id": "896940a53068",
       "file": "iznik-server-go/user/user.go",
-      "line": 2290,
+      "line": 2326,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -70998,7 +70954,7 @@
     "8a73414000b6": {
       "id": "8a73414000b6",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 481,
+      "line": 488,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -71532,7 +71488,7 @@
     "8bb010b9529b": {
       "id": "8bb010b9529b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2533,
+      "line": 2574,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -71880,9 +71836,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, period FROM giftaid WHERE userid IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8c4b9a825e10": {
       "id": "8c4b9a825e10",
@@ -71902,9 +71858,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT name FROM locations WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8c56feec47f7": {
       "id": "8c56feec47f7",
@@ -71989,9 +71945,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT systemrole FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8c840e8a49b9": {
       "id": "8c840e8a49b9",
@@ -72285,9 +72241,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, groupid, role, added, configid, settings, heldby FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8ce7afb129ea": {
       "id": "8ce7afb129ea",
@@ -72490,7 +72446,7 @@
     "8d21c566d0ae": {
       "id": "8d21c566d0ae",
       "file": "iznik-server-go/user/user.go",
-      "line": 2701,
+      "line": 2747,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -72534,7 +72490,7 @@
     "8d359d691beb": {
       "id": "8d359d691beb",
       "file": "iznik-server-go/message/helper.go",
-      "line": 753,
+      "line": 785,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -72866,7 +72822,7 @@
     "8dc9211fdcbe": {
       "id": "8dc9211fdcbe",
       "file": "iznik-server-go/user/user.go",
-      "line": 2747,
+      "line": 2799,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -72991,9 +72947,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT m.id, m.subject, m.type, m.fromuser, m.arrival, m.lat, m.lng, m.availablenow, m.availableinitially, m.tnpostid FROM messages m WHERE m.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8e072007de59": {
       "id": "8e072007de59",
@@ -73301,6 +73257,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
+    "8eddd54c5c0b": {
+      "id": "8eddd54c5c0b",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "line": 864,
+      "function": "CreateChatMessageLoveJunk",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "chat_images"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE chat_images SET chatmsgid = ? WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -74121,9 +74099,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT * FROM users WHERE ljuserid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "906eee9102de": {
       "id": "906eee9102de",
@@ -74210,9 +74188,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(DISTINCT(messages_reneged.msgid)) AS reneged FROM messages_reneged WHERE userid = ? AND timestamp \u003e ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "908a72f72a36": {
       "id": "908a72f72a36",
@@ -74307,7 +74285,7 @@
     "90c56d7f4ab1": {
       "id": "90c56d7f4ab1",
       "file": "iznik-server-go/user/auth.go",
-      "line": 81,
+      "line": 83,
       "function": "GetLoveJunkUser",
       "receiver": "db",
       "method": "Exec",
@@ -74577,28 +74555,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "9142d5476c03": {
-      "id": "9142d5476c03",
-      "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 711,
-      "function": "CreateChatMessage",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "UPDATE",
-      "tables": [
-        "chat_images"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 2,
-      "goldenSql": "UPDATE chat_images SET chatmsgid = ? WHERE id = ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "9160095306ff": {
       "id": "9160095306ff",
@@ -75795,7 +75751,7 @@
     "93b72dfa783e": {
       "id": "93b72dfa783e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2793,
+      "line": 2849,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -75945,9 +75901,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT userid FROM users_banned WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "93d216c19b6b": {
       "id": "93d216c19b6b",
@@ -75974,7 +75930,7 @@
     "93e40a364c53": {
       "id": "93e40a364c53",
       "file": "iznik-server-go/user/user.go",
-      "line": 2678,
+      "line": 2724,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -76086,7 +76042,7 @@
     "941509171a6e": {
       "id": "941509171a6e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2266,
+      "line": 2302,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -76376,7 +76332,7 @@
     "94b0be1107e0": {
       "id": "94b0be1107e0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2734,
+      "line": 2786,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -76783,7 +76739,7 @@
     "95a87268e014": {
       "id": "95a87268e014",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 70,
+      "line": 72,
       "function": "resolveBulkEditToken",
       "receiver": "db",
       "method": "Raw",
@@ -77110,6 +77066,31 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "961c4c5a214a": {
+      "id": "961c4c5a214a",
+      "file": "iznik-server-go/location/location.go",
+      "line": 177,
+      "function": "ClosestGroups",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "groups"
+      ],
+      "mysqlisms": [
+        "backticks",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 21,
+      "goldenSql": "SELECT id, nameshort, namefull, ontn, settings, ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 FROM `groups` WHERE MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) AND publish = 1 AND listable = 1 HAVING (hav IS NOT NULL AND hav \u003c ? OR hav2 IS NOT NULL AND hav2 \u003c ?) ORDER BY dist ASC, hav ASC, external ASC LIMIT ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "96344b320379": {
       "id": "96344b320379",
       "file": "iznik-server-go/test/partner_test.go",
@@ -77356,7 +77337,7 @@
     "96b1fd8dbd45": {
       "id": "96b1fd8dbd45",
       "file": "iznik-server-go/user/user.go",
-      "line": 3120,
+      "line": 3176,
       "function": "GetUserApplied",
       "receiver": "db",
       "method": "Raw",
@@ -78329,9 +78310,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id FROM helper_repliers WHERE batchid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "993b9ddef840": {
       "id": "993b9ddef840",
@@ -78620,9 +78601,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT availablenow FROM messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "99caa6436d6f": {
       "id": "99caa6436d6f",
@@ -79584,7 +79565,7 @@
     "9bddeb538459": {
       "id": "9bddeb538459",
       "file": "iznik-server-go/user/user.go",
-      "line": 2743,
+      "line": 2795,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -79789,7 +79770,7 @@
     "9c39bf7d978a": {
       "id": "9c39bf7d978a",
       "file": "iznik-server-go/user/user.go",
-      "line": 2488,
+      "line": 2528,
       "function": "handleUnbounce",
       "receiver": "db",
       "method": "Exec",
@@ -79848,14 +79829,14 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT text) FROM logs WHERE user = ? AND type = ? AND subtype = ? AND timestamp \u003e= NOW() - INTERVAL 90 DAY",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9c4b09b388ef": {
       "id": "9c4b09b388ef",
       "file": "iznik-server-go/user/user.go",
-      "line": 1967,
+      "line": 2000,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -80656,7 +80637,7 @@
     "9e4c6da913a4": {
       "id": "9e4c6da913a4",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 453,
+      "line": 473,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "db",
       "method": "Exec",
@@ -81039,7 +81020,7 @@
     "9f0c252974c7": {
       "id": "9f0c252974c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2698,
+      "line": 2744,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -81497,9 +81478,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, userid FROM users_emails WHERE email = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9fecf874d3de": {
       "id": "9fecf874d3de",
@@ -81680,7 +81661,7 @@
     "a03b9302bbb8": {
       "id": "a03b9302bbb8",
       "file": "iznik-server-go/message/helper.go",
-      "line": 752,
+      "line": 784,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -82039,7 +82020,7 @@
     "a0e311646f19": {
       "id": "a0e311646f19",
       "file": "iznik-server-go/user/user.go",
-      "line": 2281,
+      "line": 2317,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -82306,9 +82287,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a192c76d2532": {
       "id": "a192c76d2532",
@@ -82416,9 +82397,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COALESCE(quantity, 1) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a1b57a3babc2": {
       "id": "a1b57a3babc2",
@@ -82687,7 +82668,7 @@
     "a25ca71cf6cc": {
       "id": "a25ca71cf6cc",
       "file": "iznik-server-go/user/user.go",
-      "line": 1263,
+      "line": 1274,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Raw",
@@ -82974,7 +82955,7 @@
     "a2ad9104af21": {
       "id": "a2ad9104af21",
       "file": "iznik-server-go/user/user.go",
-      "line": 2806,
+      "line": 2862,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -83550,7 +83531,7 @@
     "a3b40fe84086": {
       "id": "a3b40fe84086",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 93,
+      "line": 94,
       "function": "saveAccessInstructions",
       "receiver": "db",
       "method": "Exec",
@@ -83835,7 +83816,7 @@
     "a416584a1903": {
       "id": "a416584a1903",
       "file": "iznik-server-go/message/helper.go",
-      "line": 782,
+      "line": 814,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -84454,7 +84435,7 @@
     "a54abf2c60c7": {
       "id": "a54abf2c60c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2776,
+      "line": 2832,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -85337,7 +85318,7 @@
     "a716e0a18fb3": {
       "id": "a716e0a18fb3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2358,
+      "line": 2395,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -85359,7 +85340,7 @@
     "a716e6f7dc57": {
       "id": "a716e6f7dc57",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 499,
+      "line": 506,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -85620,10 +85601,34 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "a77da0b559f8": {
+      "id": "a77da0b559f8",
+      "file": "iznik-server-go/story/story.go",
+      "line": 171,
+      "function": "Group",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "memberships",
+        "users",
+        "users_stories"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "SELECT DISTINCT users_stories.id FROM users_stories INNER JOIN memberships ON memberships.userid = users_stories.userid INNER JOIN users ON users.id = users_stories.userid WHERE memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL ORDER BY date DESC LIMIT ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "a79f147726d0": {
       "id": "a79f147726d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2672,
+      "line": 2718,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -85883,7 +85888,7 @@
     "a80f1b38c186": {
       "id": "a80f1b38c186",
       "file": "iznik-server-go/user/user.go",
-      "line": 1749,
+      "line": 1780,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -86963,9 +86968,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, msgid, offereruserid, status, COALESCE(automode,'automatic') AS automode, briefing, lastpolledat, lastrunat, pausedat FROM helper_batches WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "aa48e42322ed": {
       "id": "aa48e42322ed",
@@ -87127,7 +87132,7 @@
     "aaa43b677e1f": {
       "id": "aaa43b677e1f",
       "file": "iznik-server-go/user/user.go",
-      "line": 1054,
+      "line": 1064,
       "function": "DeleteUserSearch",
       "receiver": "db",
       "method": "Exec",
@@ -87188,9 +87193,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT partner FROM partners_keys WHERE `key`= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "aab00830b8b5": {
       "id": "aab00830b8b5",
@@ -87783,9 +87788,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT * FROM users_aboutme WHERE userid = ? ORDER BY timestamp DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "abc665244a34": {
       "id": "abc665244a34",
@@ -88059,7 +88064,7 @@
     "ac3cfe1aa429": {
       "id": "ac3cfe1aa429",
       "file": "iznik-server-go/user/user.go",
-      "line": 2872,
+      "line": 2929,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -88996,7 +89001,7 @@
     "ae4e50c81157": {
       "id": "ae4e50c81157",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 132,
+      "line": 133,
       "function": "GetUserInfo",
       "receiver": "db",
       "method": "Raw",
@@ -89239,31 +89244,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "aebbef425a2a": {
-      "id": "aebbef425a2a",
-      "file": "iznik-server-go/location/location.go",
-      "line": 177,
-      "function": "ClosestGroups",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "groups"
-      ],
-      "mysqlisms": [
-        "backticks",
-        "spatial"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": false,
-      "args": 21,
-      "goldenSql": "SELECT id, nameshort, namefull, ontn, settings, ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 FROM `groups` WHERE MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) AND publish = 1 AND listable = 1 HAVING (hav IS NOT NULL AND hav \u003c ? OR hav2 IS NOT NULL AND hav2 \u003c ?) ORDER BY dist ASC, hav ASC, external ASC LIMIT ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "aec7a911cc8c": {
       "id": "aec7a911cc8c",
       "file": "iznik-server-go/test/message_test.go",
@@ -89377,7 +89357,7 @@
     "af0ff5e0f4de": {
       "id": "af0ff5e0f4de",
       "file": "iznik-server-go/user/user.go",
-      "line": 2865,
+      "line": 2921,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -90079,7 +90059,7 @@
     "b06cd1b62344": {
       "id": "b06cd1b62344",
       "file": "iznik-server-go/user/user.go",
-      "line": 402,
+      "line": 403,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -90566,9 +90546,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT name, quantity, msgid FROM messages_bulk_items WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b1758c3357f7": {
       "id": "b1758c3357f7",
@@ -91082,10 +91062,32 @@
       "hasParityTest": false,
       "status": "raw"
     },
+    "b262bf75df3c": {
+      "id": "b262bf75df3c",
+      "file": "iznik-server-go/location/location.go",
+      "line": 419,
+      "function": "SearchLocations",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 2,
+      "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? {{expr}} AND l1.name LIKE '% %' LIMIT ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "b26bbbd1f279": {
       "id": "b26bbbd1f279",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 488,
+      "line": 508,
       "function": "upsertBulkItems",
       "receiver": "db",
       "method": "Exec",
@@ -91751,9 +91753,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b3d259fdf818": {
       "id": "b3d259fdf818",
@@ -91845,28 +91847,6 @@
       "hasParityTest": false,
       "status": "raw"
     },
-    "b40badaae389": {
-      "id": "b40badaae389",
-      "file": "iznik-server-go/location/location.go",
-      "line": 567,
-      "function": "Typeahead",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations"
-      ],
-      "mysqlisms": null,
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": true,
-      "args": 2,
-      "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? {{expr}} AND l1.name LIKE '% %' LIMIT ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "b40c84724e68": {
       "id": "b40c84724e68",
       "file": "iznik-server-go/test/stripeipn_test.go",
@@ -91933,6 +91913,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "b443c0f36dd2": {
+      "id": "b443c0f36dd2",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "line": 711,
+      "function": "CreateChatMessage",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "chat_images"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE chat_images SET chatmsgid = ? WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "b45b1dab8f3a": {
       "id": "b45b1dab8f3a",
       "file": "iznik-server-go/test/session_test.go",
@@ -91973,9 +91975,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? AND email LIKE ? ORDER BY preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b4704c62f789": {
       "id": "b4704c62f789",
@@ -92068,7 +92070,7 @@
     "b48b319835d0": {
       "id": "b48b319835d0",
       "file": "iznik-server-go/message/helper.go",
-      "line": 527,
+      "line": 546,
       "function": "helperSetItemState",
       "receiver": "db",
       "method": "Exec",
@@ -92090,7 +92092,7 @@
     "b4968f94d154": {
       "id": "b4968f94d154",
       "file": "iznik-server-go/user/user.go",
-      "line": 1664,
+      "line": 1694,
       "function": "handleRate",
       "receiver": "db",
       "method": "Exec",
@@ -92466,7 +92468,7 @@
     "b51c93157bcf": {
       "id": "b51c93157bcf",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 321,
+      "line": 336,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Exec",
@@ -92621,7 +92623,7 @@
     "b54105bda6de": {
       "id": "b54105bda6de",
       "file": "iznik-server-go/user/user.go",
-      "line": 2738,
+      "line": 2790,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -92775,7 +92777,7 @@
     "b561dab1c2bd": {
       "id": "b561dab1c2bd",
       "file": "iznik-server-go/user/user.go",
-      "line": 2532,
+      "line": 2573,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -93290,28 +93292,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "b6a9ae72c21f": {
-      "id": "b6a9ae72c21f",
-      "file": "iznik-server-go/user/user.go",
-      "line": 992,
-      "function": "GetSearchesForUser",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "users_searches"
-      ],
-      "mysqlisms": null,
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT * FROM(SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) t GROUP BY t.term ORDER BY t.id DESC LIMIT 10;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "b6b8a7bfaaaf": {
       "id": "b6b8a7bfaaaf",
       "file": "iznik-server-go/test/message_test.go",
@@ -93579,7 +93559,7 @@
     "b7320249a46d": {
       "id": "b7320249a46d",
       "file": "iznik-server-go/message/helper.go",
-      "line": 416,
+      "line": 435,
       "function": "helperSetStatus",
       "receiver": "db",
       "method": "Exec",
@@ -93619,29 +93599,6 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
-    },
-    "b74ee55ae2dd": {
-      "id": "b74ee55ae2dd",
-      "file": "iznik-server-go/notification/notification.go",
-      "line": 39,
-      "function": "Count",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "spam_users",
-        "users_notifications"
-      ],
-      "mysqlisms": null,
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 4,
-      "goldenSql": "SELECT COUNT(*) AS count FROM users_notifications LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) WHERE touser = ? AND timestamp \u003e= ? AND seen = 0 AND spam_users.id IS NULL;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
     },
     "b76c98018b78": {
       "id": "b76c98018b78",
@@ -93802,7 +93759,7 @@
     "b7f56ac149be": {
       "id": "b7f56ac149be",
       "file": "iznik-server-go/message/helper.go",
-      "line": 244,
+      "line": 263,
       "function": "GetHelperEscalated",
       "receiver": "db",
       "method": "Raw",
@@ -94650,7 +94607,7 @@
     "b986dc546bdb": {
       "id": "b986dc546bdb",
       "file": "iznik-server-go/user/user.go",
-      "line": 2736,
+      "line": 2788,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -95038,7 +94995,7 @@
     "ba1bd193532a": {
       "id": "ba1bd193532a",
       "file": "iznik-server-go/user/userEmails.go",
-      "line": 66,
+      "line": 68,
       "function": "GetOrCreateInternalEmail",
       "receiver": "db",
       "method": "Exec",
@@ -95130,7 +95087,7 @@
     "ba4ff665bb3c": {
       "id": "ba4ff665bb3c",
       "file": "iznik-server-go/user/user.go",
-      "line": 386,
+      "line": 387,
       "function": "GetExpectedReplies",
       "receiver": "db",
       "method": "Raw",
@@ -95465,36 +95422,6 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM partners_keys WHERE `key` = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "baff8182310f": {
-      "id": "baff8182310f",
-      "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 542,
-      "function": "getFeed",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "communityevents",
-        "newsfeed",
-        "newsfeed_unfollow",
-        "spam_users",
-        "users",
-        "users_stories",
-        "volunteering"
-      ],
-      "mysqlisms": [
-        "force-index"
-      ],
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": true,
-      "args": 1,
-      "goldenSql": "(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (timestamp) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type NOT IN (?, ?, ?) ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT 100 ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (timestamp) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type IN (?, ?) ORDER BY newsfeed.timestamp DESC LIMIT %d ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (timestamp) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type = ? %sORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT %d ) ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -96207,6 +96134,36 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "bc6d923b540d": {
+      "id": "bc6d923b540d",
+      "file": "iznik-server-go/message/groups.go",
+      "line": 63,
+      "function": "Groups",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages",
+        "messages_groups",
+        "messages_likes",
+        "messages_outcomes",
+        "messages_promises",
+        "messages_spatial"
+      ],
+      "mysqlisms": [
+        "any-value",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 1,
+      "goldenSql": "SELECT * FROM (SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival, m.arrival AS posted, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages_spatial INNER JOIN messages m ON m.id = messages_spatial.msgid LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? WHERE 1=1 {{expr}}UNION SELECT lat, lng, messages.id, ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, ANY_VALUE(messages_groups.groupid) AS groupid, messages.type, MAX(messages_groups.arrival) AS arrival, messages.arrival AS posted, ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id LEFT JOIN messages_promises ON messages_promises.msgid = messages.id LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? WHERE fromuser = ? AND messages_groups.arrival \u003e= ? AND messages_outcomes.id IS NULL GROUP BY messages.id ) t ORDER BY unseen DESC, arrival DESC, id DESC",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "bc7de11031d3": {
       "id": "bc7de11031d3",
@@ -97218,9 +97175,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bed5550d663e": {
       "id": "bed5550d663e",
@@ -97509,9 +97466,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT lastlocation FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bf7b61c4c860": {
       "id": "bf7b61c4c860",
@@ -97912,9 +97869,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT msgid FROM helper_batches WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c043dccafb53": {
       "id": "c043dccafb53",
@@ -97961,7 +97918,7 @@
     "c04d965dfd0e": {
       "id": "c04d965dfd0e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2801,
+      "line": 2857,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -98071,7 +98028,7 @@
     "c0bdaf91d946": {
       "id": "c0bdaf91d946",
       "file": "iznik-server-go/user/user.go",
-      "line": 2635,
+      "line": 2677,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -98240,9 +98197,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, batchid, chatmsgid, chatid, replierid, kind, auto, proposalid FROM helper_sent_messages WHERE batchid = ? ORDER BY id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c1005b4e9345": {
       "id": "c1005b4e9345",
@@ -98752,39 +98709,6 @@
       "hasParityTest": false,
       "status": "raw"
     },
-    "c1e60d78bff0": {
-      "id": "c1e60d78bff0",
-      "file": "iznik-server-go/location/location.go",
-      "line": 632,
-      "function": "GetLocationAddresses",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "locations",
-        "paf_addresses",
-        "paf_buildingname",
-        "paf_departmentname",
-        "paf_dependentlocality",
-        "paf_dependentthoroughfaredescriptor",
-        "paf_doubledependentlocality",
-        "paf_organisationname",
-        "paf_pobox",
-        "paf_posttown",
-        "paf_subbuildingname",
-        "paf_thoroughfaredescriptor"
-      ],
-      "mysqlisms": null,
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT paf_addresses.id,locations.name as postcode, buildingname, buildingnumber, p.subbuildingname, departmentname, dependentlocality, doubledependentlocality, dependentthoroughfaredescriptor, organisationname, suorganisationindicator, deliverypointsuffix, udprn, posttown, postcodetype, pobox, thoroughfaredescriptor FROM paf_addresses INNER JOIN locations ON locations.id = paf_addresses.postcodeid LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id LEFT JOIN paf_pobox ON poboxid = paf_pobox.id LEFT JOIN paf_posttown ON posttownid = paf_posttown.id LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id WHERE paf_addresses.postcodeid = ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "c1e9e27ce56c": {
       "id": "c1e9e27ce56c",
       "file": "iznik-server-go/test/message_test.go",
@@ -98832,7 +98756,7 @@
     "c1fca2fe89a0": {
       "id": "c1fca2fe89a0",
       "file": "iznik-server-go/user/partner.go",
-      "line": 117,
+      "line": 121,
       "function": "CreatePartnerUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -99140,7 +99064,7 @@
     "c25d3f0cbd14": {
       "id": "c25d3f0cbd14",
       "file": "iznik-server-go/user/user.go",
-      "line": 1731,
+      "line": 1762,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -99162,7 +99086,7 @@
     "c26ff21a50e2": {
       "id": "c26ff21a50e2",
       "file": "iznik-server-go/user/user.go",
-      "line": 2787,
+      "line": 2843,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -99294,7 +99218,7 @@
     "c29f7adf11f7": {
       "id": "c29f7adf11f7",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 741,
+      "line": 763,
       "function": "upsertBulkSlots",
       "receiver": "db",
       "method": "Exec",
@@ -99448,32 +99372,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "c2e0e8a73c31": {
-      "id": "c2e0e8a73c31",
-      "file": "iznik-server-go/message/message.go",
-      "line": 568,
-      "function": "GetMessagesByIds",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "chat_messages",
-        "messages",
-        "messages_groups",
-        "rippling_held_replies",
-        "users"
-      ],
-      "mysqlisms": null,
-      "complexity": "complex",
-      "wave": 5,
-      "dynamic": false,
-      "args": 5,
-      "goldenSql": "SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname FROM chat_messages INNER JOIN messages ON messages.id = chat_messages.refmsgid INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) AND reviewrequired = 0 AND reviewrejected = 0 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status \u003c\u003e 'released') AND DATEDIFF(chat_messages.date, messages_groups.arrival) \u003c ? GROUP BY userid;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "c2e4ecbc4b64": {
       "id": "c2e4ecbc4b64",
       "file": "iznik-server-go/test/microvolunteering_test.go",
@@ -99602,9 +99500,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(automode, 'automatic') FROM helper_batches WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c3595f19d080": {
       "id": "c3595f19d080",
@@ -99824,9 +99722,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, partner, `domain` FROM partners_keys WHERE `key` = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c3cff12ce730": {
       "id": "c3cff12ce730",
@@ -100048,6 +99946,37 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "c42088f47c61": {
+      "id": "c42088f47c61",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "line": 391,
+      "function": "getFeed",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "communityevents",
+        "newsfeed",
+        "newsfeed_unfollow",
+        "spam_users",
+        "users",
+        "users_stories",
+        "volunteering"
+      ],
+      "mysqlisms": [
+        "force-index",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 63,
+      "goldenSql": "(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type NOT IN (?, ?, ?) ORDER BY timestamp DESC LIMIT 100 ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type IN (?, ?) ORDER BY ST_Distance(position, ST_SRID(POINT(?, ?), ?)) ASC, timestamp DESC LIMIT %d ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL AND newsfeed.type = ? ORDER BY pinned DESC, timestamp DESC LIMIT %d ) UNION (SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, (CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, (CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending FROM newsfeed FORCE INDEX (position) LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id WHERE newsfeed.timestamp \u003e= ? AND replyto IS NULL AND newsfeed.type = ? AND newsfeed.pinned = 1 AND newsfeed.deleted IS NULL AND reviewrequired = 0 AND users.deleted IS NULL AND spam_users.id IS NULL ORDER BY pinned DESC, timestamp DESC LIMIT 5) ORDER BY pinned DESC, timestamp DESC LIMIT 100",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "c425c6e9bac3": {
       "id": "c425c6e9bac3",
@@ -100564,9 +100493,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM users_emails WHERE email = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c5080c78eec7": {
       "id": "c5080c78eec7",
@@ -100839,7 +100768,7 @@
     "c5b11d58ae60": {
       "id": "c5b11d58ae60",
       "file": "iznik-server-go/user/user.go",
-      "line": 1949,
+      "line": 1982,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -101042,7 +100971,7 @@
     "c62fbb94a8ff": {
       "id": "c62fbb94a8ff",
       "file": "iznik-server-go/user/user.go",
-      "line": 2489,
+      "line": 2529,
       "function": "handleUnbounce",
       "receiver": "db",
       "method": "Exec",
@@ -101211,9 +101140,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c6a830b48e43": {
       "id": "c6a830b48e43",
@@ -101570,7 +101499,7 @@
     "c76f7046abbd": {
       "id": "c76f7046abbd",
       "file": "iznik-server-go/user/user.go",
-      "line": 2741,
+      "line": 2793,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -101629,9 +101558,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = ? AND reviewrequired = 0 AND reviewrejected = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c77cdc1a1f5f": {
       "id": "c77cdc1a1f5f",
@@ -102880,7 +102809,7 @@
     "c9c7922e5379": {
       "id": "c9c7922e5379",
       "file": "iznik-server-go/user/user.go",
-      "line": 2000,
+      "line": 2033,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -104005,7 +103934,7 @@
     "cc0b627a2955": {
       "id": "cc0b627a2955",
       "file": "iznik-server-go/user/user.go",
-      "line": 1302,
+      "line": 1314,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Raw",
@@ -104480,7 +104409,7 @@
     "cd31abc88595": {
       "id": "cd31abc88595",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 195,
+      "line": 197,
       "function": "GetUserInfo",
       "receiver": "db",
       "method": "Raw",
@@ -104506,7 +104435,7 @@
     "cd3e53cfadea": {
       "id": "cd3e53cfadea",
       "file": "iznik-server-go/user/user.go",
-      "line": 2693,
+      "line": 2739,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -104565,9 +104494,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, chattype, user1, user2, groupid, latestmessage FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cd54b640d303": {
       "id": "cd54b640d303",
@@ -105881,7 +105810,7 @@
     "cfcce3676000": {
       "id": "cfcce3676000",
       "file": "iznik-server-go/user/user.go",
-      "line": 2575,
+      "line": 2616,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Raw",
@@ -105904,7 +105833,7 @@
     "cfcd2f885279": {
       "id": "cfcd2f885279",
       "file": "iznik-server-go/user/user.go",
-      "line": 2514,
+      "line": 2555,
       "function": "LogGroupLeftForApprovedMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -106150,7 +106079,7 @@
     "d022d4abb6ce": {
       "id": "d022d4abb6ce",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 523,
+      "line": 543,
       "function": "upsertBulkItems",
       "receiver": "db",
       "method": "Exec",
@@ -106172,7 +106101,7 @@
     "d02deddf93b1": {
       "id": "d02deddf93b1",
       "file": "iznik-server-go/user/user.go",
-      "line": 2631,
+      "line": 2673,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -106436,9 +106365,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT userid FROM users_emails WHERE email = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d0b8fb573ea6": {
       "id": "d0b8fb573ea6",
@@ -106549,9 +106478,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, chattype, user1, user2, COALESCE(groupid, 0) AS groupid, latestmessage AS lastdate FROM chat_rooms WHERE (user1 = ? OR user2 = ?) ORDER BY latestmessage DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d0d3890f7698": {
       "id": "d0d3890f7698",
@@ -106622,7 +106551,7 @@
     "d0f1c6abfca1": {
       "id": "d0f1c6abfca1",
       "file": "iznik-server-go/user/user.go",
-      "line": 2661,
+      "line": 2707,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -106996,7 +106925,7 @@
     "d19e540cf33b": {
       "id": "d19e540cf33b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2752,
+      "line": 2804,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -108020,7 +107949,7 @@
     "d3790f53ec52": {
       "id": "d3790f53ec52",
       "file": "iznik-server-go/message/helper.go",
-      "line": 584,
+      "line": 603,
       "function": "insertHelperChat",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -108353,7 +108282,7 @@
     "d45d5de0c8c3": {
       "id": "d45d5de0c8c3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2697,
+      "line": 2743,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -109027,7 +108956,7 @@
     "d5ecca066b1b": {
       "id": "d5ecca066b1b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2861,
+      "line": 2917,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -109216,28 +109145,6 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
-    "d62ba3256fa1": {
-      "id": "d62ba3256fa1",
-      "file": "iznik-server-go/message/message.go",
-      "line": 611,
-      "function": "GetMessagesByIds",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "chat_messages"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT DISTINCT(chatid) FROM chat_messages WHERE refmsgid = ?;",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -109643,7 +109550,7 @@
     "d6cc20019a01": {
       "id": "d6cc20019a01",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 528,
+      "line": 535,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -110086,7 +109993,7 @@
     "d7c9963bd974": {
       "id": "d7c9963bd974",
       "file": "iznik-server-go/user/user.go",
-      "line": 485,
+      "line": 490,
       "function": "GetUserMessageHistory",
       "receiver": "db",
       "method": "Raw",
@@ -110374,30 +110281,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "d878a67df58c": {
-      "id": "d878a67df58c",
-      "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 772,
-      "function": "fetchSingle",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "newsfeed",
-        "newsfeed_images",
-        "users"
-      ],
-      "mysqlisms": null,
-      "complexity": "moderate",
-      "wave": 4,
-      "dynamic": false,
-      "args": 5,
-      "goldenSql": "SELECT newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod FROM newsfeed LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id WHERE newsfeed.id = ?;",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
-    },
     "d886fddaad10": {
       "id": "d886fddaad10",
       "file": "iznik-server-go/test/session_test.go",
@@ -110664,9 +110547,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid FROM users_emails WHERE email = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d8fa348393fe": {
       "id": "d8fa348393fe",
@@ -111404,7 +111287,7 @@
     "da66ba09e8cf": {
       "id": "da66ba09e8cf",
       "file": "iznik-server-go/message/helper.go",
-      "line": 387,
+      "line": 406,
       "function": "helperEnsureBatch",
       "receiver": "db",
       "method": "Exec",
@@ -112029,7 +111912,7 @@
     "dbaf7d925bf5": {
       "id": "dbaf7d925bf5",
       "file": "iznik-server-go/user/user.go",
-      "line": 1686,
+      "line": 1716,
       "function": "handleRatingReviewed",
       "receiver": "db",
       "method": "Exec",
@@ -112365,6 +112248,32 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "dc731a47a66a": {
+      "id": "dc731a47a66a",
+      "file": "iznik-server-go/location/location.go",
+      "line": 475,
+      "function": "SearchLocations",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations",
+        "locations_excluded",
+        "locations_spatial"
+      ],
+      "mysqlisms": [
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, ST_AsText(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END) AS polygon FROM (SELECT DISTINCT locationid FROM locations_spatial INNER JOIN locations l2 ON l2.areaid = locations_spatial.locationid WHERE ST_Intersects(locations_spatial.geometry, ST_GeomFromText(?, ?)) AND l2.type = ?) ls INNER JOIN locations l ON l.id = ls.locationid LEFT JOIN locations_excluded ON ls.locationid = locations_excluded.locationid WHERE locations_excluded.locationid IS NULL LIMIT 500",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "dc8914d8b9d5": {
       "id": "dc8914d8b9d5",
       "file": "iznik-server-go/message/message.go",
@@ -112456,7 +112365,7 @@
     "dcb4fcaa8406": {
       "id": "dcb4fcaa8406",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 411,
+      "line": 429,
       "function": "sendAccessInstructions",
       "receiver": "db",
       "method": "Exec",
@@ -113673,7 +113582,7 @@
     "df3c6bdb7aba": {
       "id": "df3c6bdb7aba",
       "file": "iznik-server-go/user/systemrole.go",
-      "line": 47,
+      "line": 49,
       "function": "SyncSystemRole",
       "receiver": "db",
       "method": "Exec",
@@ -113917,7 +113826,7 @@
     "dfc3d2fdb2ba": {
       "id": "dfc3d2fdb2ba",
       "file": "iznik-server-go/message/helper.go",
-      "line": 518,
+      "line": 537,
       "function": "helperSetItemState",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -114210,7 +114119,7 @@
     "e0386c3b3a9c": {
       "id": "e0386c3b3a9c",
       "file": "iznik-server-go/user/user.go",
-      "line": 2753,
+      "line": 2805,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -114298,7 +114207,7 @@
     "e0558c2c039d": {
       "id": "e0558c2c039d",
       "file": "iznik-server-go/user/user.go",
-      "line": 630,
+      "line": 635,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -114470,6 +114379,30 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l.name, l.type, COALESCE(l.areaid, 0) as areaid FROM locations l INNER JOIN messages m ON m.locationid = l.id WHERE m.id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
+    "e0c033ce3d69": {
+      "id": "e0c033ce3d69",
+      "file": "iznik-server-go/message/message.go",
+      "line": 1524,
+      "function": "Search",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "search_history"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (NULL, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -114699,7 +114632,7 @@
     "e1228c35e4d2": {
       "id": "e1228c35e4d2",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 511,
+      "line": 518,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -115411,7 +115344,7 @@
     "e2d465d97cf9": {
       "id": "e2d465d97cf9",
       "file": "iznik-server-go/message/helper.go",
-      "line": 767,
+      "line": 799,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -116142,14 +116075,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT mailid FROM engage WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e42129621a05": {
       "id": "e42129621a05",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 349,
+      "line": 365,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Exec",
@@ -116592,7 +116525,7 @@
     "e4f7cca3adb8": {
       "id": "e4f7cca3adb8",
       "file": "iznik-server-go/user/systemrole.go",
-      "line": 50,
+      "line": 52,
       "function": "SyncSystemRole",
       "receiver": "db",
       "method": "Exec",
@@ -116698,6 +116631,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "e57197b50601": {
+      "id": "e57197b50601",
+      "file": "iznik-server-go/auth/auth.go",
+      "line": 61,
+      "function": "WhoAmI",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "sessions"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT userid FROM sessions WHERE id = ? AND token = ? LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "e572ba63d232": {
       "id": "e572ba63d232",
@@ -117328,7 +117283,7 @@
     "e6d298a3c77e": {
       "id": "e6d298a3c77e",
       "file": "iznik-server-go/message/helper.go",
-      "line": 148,
+      "line": 150,
       "function": "msgidForReplier",
       "receiver": "db",
       "method": "Raw",
@@ -117713,7 +117668,7 @@
     "e7a34e3dea3b": {
       "id": "e7a34e3dea3b",
       "file": "iznik-server-go/user/user.go",
-      "line": 1984,
+      "line": 2017,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -117845,7 +117800,7 @@
     "e7c6bfbc5607": {
       "id": "e7c6bfbc5607",
       "file": "iznik-server-go/user/user.go",
-      "line": 1798,
+      "line": 1830,
       "function": "handleRemoveEmail",
       "receiver": "db",
       "method": "Exec",
@@ -117889,7 +117844,7 @@
     "e7cb0b1990d3": {
       "id": "e7cb0b1990d3",
       "file": "iznik-server-go/message/helper.go",
-      "line": 407,
+      "line": 426,
       "function": "helperSetStatus",
       "receiver": "db",
       "method": "Exec",
@@ -117946,9 +117901,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT msgid FROM messages_bulk_items WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e7e1abcd91fc": {
       "id": "e7e1abcd91fc",
@@ -120668,7 +120623,7 @@
     "eccba6faf480": {
       "id": "eccba6faf480",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 53,
+      "line": 54,
       "function": "ensureBulkEditToken",
       "receiver": "db",
       "method": "Exec",
@@ -121379,7 +121334,7 @@
     "eebe799ec26b": {
       "id": "eebe799ec26b",
       "file": "iznik-server-go/user/user.go",
-      "line": 227,
+      "line": 228,
       "function": "GetUserByEmail",
       "receiver": "db",
       "method": "Raw",
@@ -123168,9 +123123,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, groupid, role, added, configid, settings, heldby FROM memberships WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f216c717c710": {
       "id": "f216c717c710",
@@ -123993,6 +123948,28 @@
       "hasParityTest": false,
       "status": "raw"
     },
+    "f3bad72ed518": {
+      "id": "f3bad72ed518",
+      "file": "iznik-server-go/user/userEmails.go",
+      "line": 28,
+      "function": "getEmails",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users_emails"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, added, bounced, preferred, email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, email ASC",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "f3d569f16f75": {
       "id": "f3d569f16f75",
       "file": "iznik-server-go/authority/stats.go",
@@ -124520,7 +124497,7 @@
     "f4a8db8dd183": {
       "id": "f4a8db8dd183",
       "file": "iznik-server-go/user/user.go",
-      "line": 2866,
+      "line": 2922,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -125272,9 +125249,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname, firstname, lastname, yahooid, systemrole, added, tnuserid FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f609b79e4932": {
       "id": "f609b79e4932",
@@ -125393,7 +125370,7 @@
     "f619bcea08df": {
       "id": "f619bcea08df",
       "file": "iznik-server-go/user/user.go",
-      "line": 1464,
+      "line": 1487,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Exec",
@@ -125474,9 +125451,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name')) FROM users WHERE id = ? AND settings IS NOT NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f679c9c411fc": {
       "id": "f679c9c411fc",
@@ -126051,7 +126028,7 @@
     "f78aeb6435bd": {
       "id": "f78aeb6435bd",
       "file": "iznik-server-go/user/user.go",
-      "line": 1633,
+      "line": 1663,
       "function": "handleEngaged",
       "receiver": "db",
       "method": "Exec",
@@ -127731,7 +127708,7 @@
     "fa6c771b3c3a": {
       "id": "fa6c771b3c3a",
       "file": "iznik-server-go/user/user.go",
-      "line": 2781,
+      "line": 2837,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -127844,7 +127821,7 @@
     "faa9018435a3": {
       "id": "faa9018435a3",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 493,
+      "line": 513,
       "function": "upsertBulkItems",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128316,7 +128293,7 @@
     "fb65a4932547": {
       "id": "fb65a4932547",
       "file": "iznik-server-go/message/helper.go",
-      "line": 409,
+      "line": 428,
       "function": "helperSetStatus",
       "receiver": "db",
       "method": "Exec",
@@ -128360,7 +128337,7 @@
     "fb88302d28cb": {
       "id": "fb88302d28cb",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 706,
+      "line": 726,
       "function": "ingestBulkItemPhotos",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128452,7 +128429,7 @@
     "fbbd963966cb": {
       "id": "fbbd963966cb",
       "file": "iznik-server-go/user/user.go",
-      "line": 2909,
+      "line": 2967,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -128521,7 +128498,7 @@
     "fbea0c27cf49": {
       "id": "fbea0c27cf49",
       "file": "iznik-server-go/user/user.go",
-      "line": 2145,
+      "line": 2181,
       "function": "ProcessSettingsUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -129097,9 +129074,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT msgid AS id, GREATEST(COALESCE(modified, arrival), arrival) AS lastmod FROM messages_spatial WHERE successful = 0 AND msgtype IN (?, ?) AND arrival IS NOT NULL ORDER BY arrival DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fd2f858c4387": {
       "id": "fd2f858c4387",
@@ -129500,7 +129477,7 @@
     "fde42951834d": {
       "id": "fde42951834d",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 227,
+      "line": 237,
       "function": "handleBulkInterest",
       "receiver": "db",
       "method": "Exec",
@@ -129542,6 +129519,29 @@
       "dynamic": true,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM chat_messages INNER JOIN users ON users.id = chat_messages.userid LEFT JOIN chat_roster ON chat_roster.chatid = chat_messages.chatid AND chat_roster.userid = ? WHERE chat_messages.chatid IN ({{expr}}) AND chat_messages.userid != ? AND chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1 AND chat_messages.id \u003e COALESCE(chat_roster.lastmsgseen, 0) AND chat_messages.date \u003e= ? AND users.deleted IS NULL",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
+    "fdebc3317226": {
+      "id": "fdebc3317226",
+      "file": "iznik-server-go/location/location.go",
+      "line": 513,
+      "function": "SearchLocations",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "locations",
+        "locations_dodgy"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "SELECT ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, l0.name AS name, l1.name AS oldname, l2.name AS newname FROM locations_dodgy ld INNER JOIN locations l0 ON l0.id = ld.locationid INNER JOIN locations l1 ON l1.id = ld.oldlocationid INNER JOIN locations l2 ON l2.id = ld.newlocationid WHERE ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
@@ -130036,7 +130036,7 @@
     "fe953b2b8ed1": {
       "id": "fe953b2b8ed1",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 105,
+      "line": 106,
       "function": "GetUserInfo",
       "receiver": "db",
       "method": "Raw",
@@ -130237,7 +130237,7 @@
     "fec927e74aaa": {
       "id": "fec927e74aaa",
       "file": "iznik-server-go/user/user.go",
-      "line": 1972,
+      "line": 2005,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -130611,9 +130611,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, position, name, quantity, available, `condition`, dimensions, photourl FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ffc319200a8f": {
       "id": "ffc319200a8f",

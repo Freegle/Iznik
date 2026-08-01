@@ -40,8 +40,9 @@ func RelevantOff(c *fiber.Ctx) error {
 
 	// Validate the Link key (constant-ish: single indexed read then compare).
 	var storedKey string
-	db.Raw("SELECT credentials FROM users_logins WHERE userid = ? AND type = ? LIMIT 1",
-		uid, utils.LOGIN_TYPE_LINK).Scan(&storedKey)
+	// ORM migration site 74e53dad60bf (wave 1).
+	db.Table("users_logins").Select("credentials").Where("userid = ? AND type = ?",
+		uid, utils.LOGIN_TYPE_LINK).Limit(1).Scan(&storedKey)
 	if storedKey == "" || storedKey != key {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid key")
 	}

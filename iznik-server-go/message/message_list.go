@@ -241,26 +241,33 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT m.id, m.subject, m.type, m.fromuser, m.arrival, m.lat, m.lng, "+
-					"m.availablenow, m.availableinitially, m.tnpostid "+
-					"FROM messages m WHERE m.id = ?", msgID).Scan(&msg)
+				// ORM migration site 8e02578d3e34 (wave 1).
+				db.Table("messages m").
+					Select("m.id, m.subject, m.type, m.fromuser, m.arrival, m.lat, m.lng, m.availablenow, m.availableinitially, m.tnpostid").
+					Where("m.id = ?", msgID).Scan(&msg)
 			}()
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT groupid, collection, arrival, heldby, rippled_in FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
+				// ORM migration site 74340fd8d8f1 (wave 1).
+				db.Table("messages_groups").Select("groupid, collection, arrival, heldby, rippled_in").
+					Where("msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
 
 			go func() {
 				defer wg.Done()
 				// Fetch first image only for thumbnail.
-				db.Raw("SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC LIMIT 1", msgID).Scan(&attachments)
+				// ORM migration site 005a06f7ad40 (wave 1).
+				db.Table("messages_attachments").Select("id, msgid, archived, externaluid, externalmods").
+					Where("msgid = ?", msgID).Order("`primary` DESC, id ASC").Limit(1).Scan(&attachments)
 			}()
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = ? AND reviewrequired = 0 AND reviewrejected = 0",
-					msgID, utils.MESSAGE_INTERESTED).Scan(&replycount)
+				// ORM migration site c77acb905614 (wave 1).
+				db.Table("chat_messages").
+					Where("refmsgid = ? AND type = ? AND reviewrequired = 0 AND reviewrejected = 0", msgID, utils.MESSAGE_INTERESTED).
+					Count(&replycount)
 			}()
 
 			wg.Wait()

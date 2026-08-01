@@ -32,7 +32,8 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 		if partnerkey != "" {
 			// Find in partners_keys table
 			var partnername string
-			db.Raw("SELECT partner FROM partners_keys WHERE `key`= ?", partnerkey).Scan(&partnername)
+			// ORM migration site aaaa357f296a (wave 1).
+			db.Table("partners_keys").Select("partner").Where("`key`= ?", partnerkey).Scan(&partnername)
 
 			// Change partnername to lower case
 			partnername = strings.ToLower(partnername)
@@ -41,7 +42,8 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 			if strings.Contains(partnername, "lovejunk") {
 				// We have a valid partner key.  See if we have a user with this ljuserid.
 				var ljuser User
-				db.Raw("SELECT * FROM users WHERE ljuserid = ?", ljuserid).Scan(&ljuser)
+				// ORM migration site 90690330271c (wave 1).
+				db.Table("users").Where("ljuserid = ?", ljuserid).Scan(&ljuser)
 
 				if ljuser.ID > 0 {
 					// We do.

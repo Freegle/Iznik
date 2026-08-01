@@ -44,8 +44,9 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 	// Look for an existing internal email that encodes this specific user ID
 	// (format: {local}-{id}@users.ilovefreegle.org).
 	var email string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND email LIKE ? ORDER BY preferred DESC LIMIT 1",
-		id, fmt.Sprintf("%%-%d@%s", id, domain)).Scan(&email)
+	// ORM migration site b4656108f05f (wave 1).
+	db.Table("users_emails").Select("email").Where("userid = ? AND email LIKE ?",
+		id, fmt.Sprintf("%%-%d@%s", id, domain)).Order("preferred DESC").Limit(1).Scan(&email)
 
 	// Validate the returned email actually ends with -{id}@domain (not a merged user's ID).
 	suffix := fmt.Sprintf("-%d@%s", id, domain)
@@ -55,7 +56,8 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 
 	// None found with the correct ID — generate and persist one.
 	var displayname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", id).Scan(&displayname)
+	// ORM migration site 3698e5590b2a (wave 1).
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", id).Scan(&displayname)
 
 	local := SanitiseEmailLocal(displayname)
 	if local == "" {

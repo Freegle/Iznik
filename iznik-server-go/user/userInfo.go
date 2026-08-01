@@ -91,7 +91,8 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		res := db.Raw("SELECT COUNT(DISTINCT(messages_reneged.msgid)) AS reneged FROM messages_reneged WHERE userid = ? AND timestamp > ?", id, start)
+		// ORM migration site 9088f1449d32 (wave 1).
+		res := db.Table("messages_reneged").Select("COUNT(DISTINCT(messages_reneged.msgid)) AS reneged").Where("userid = ? AND timestamp > ?", id, start)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()
@@ -178,7 +179,8 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	go func() {
 		defer wg.Done()
 		// No need to check on the chat room type as we can only get messages of type Interested in a User2User chat.
-		res := db.Raw("SELECT replytime FROM users_replytime WHERE userid = ?", id)
+		// ORM migration site 7c2a4a892c17 (wave 1).
+		res := db.Table("users_replytime").Select("replytime").Where("userid = ?", id)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()
@@ -248,8 +250,8 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 			var counts []Count
 
 			start := time.Now().AddDate(0, 0, -utils.RATINGS_PERIOD).Format("2006-01-02")
-			res := db.Raw("SELECT rating FROM ratings WHERE rater = ? AND ratee = ?"+
-				" AND timestamp >= ?", myid, id, start)
+			// ORM migration site 3c5d23f03c54 (wave 1).
+			res := db.Table("ratings").Select("rating").Where("rater = ? AND ratee = ? AND timestamp >= ?", myid, id, start)
 			res.Scan(&counts)
 
 			mu.Lock()
@@ -273,8 +275,9 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 
 	// Use settings.mylocation.area.name first for the public location display.
 	var areaName *string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name')) "+
-		"FROM users WHERE id = ? AND settings IS NOT NULL", userid).Scan(&areaName)
+	// ORM migration site f66d831e859e (wave 1).
+	db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name'))").
+		Where("id = ? AND settings IS NOT NULL", userid).Scan(&areaName)
 
 	if areaName != nil && *areaName != "" && *areaName != "null" {
 		return &Publiclocation{

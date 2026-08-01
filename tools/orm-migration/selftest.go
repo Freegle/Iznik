@@ -149,6 +149,20 @@ func f() {
 		wantComplex:   "complex",
 	},
 	{
+		// Regression: a trailing semicolon is a statement separator, not part
+		// of the statement. GORM never emits one, so recording it made 30
+		// sites unconvertible without an approved diff apiece.
+		name: "trailing semicolon is not part of the golden",
+		src: `package p
+func f() {
+	db.Raw("SELECT id FROM users WHERE id = ?;", 1).Scan(&u)
+}`,
+		wantSites:     1,
+		wantSQLPrefix: "SELECT id FROM users WHERE id = ?",
+		wantKind:      "SELECT",
+		wantTables:    []string{"users"},
+	},
+	{
 		name: "spatial function forces complex",
 		src: `package p
 func f() {

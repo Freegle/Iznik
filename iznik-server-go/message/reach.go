@@ -121,7 +121,8 @@ func Reach(c *fiber.Ctx) error {
 
 	// Confirm the post exists (and is on a group at all).
 	var groupids []uint64
-	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&groupids)
+	// ORM migration site 52c8694fa39b (wave 1).
+	db.Table("messages_groups").Select("groupid").Where("msgid = ? AND deleted = 0", id).Scan(&groupids)
 	if len(groupids) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -152,7 +153,10 @@ func Reach(c *fiber.Ctx) error {
 			reason = "disabled"
 		} else {
 			var inSpatial int
-			db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", id).Scan(&inSpatial)
+			// ORM migration site 0be1f2f8556d (wave 1). inSpatial is int, not
+			// int64, so this keeps Row().Scan rather than GORM's Count, which
+			// requires *int64.
+			db.Table("messages_spatial").Select("COUNT(*)").Where("msgid = ?", id).Row().Scan(&inSpatial)
 			if inSpatial == 0 {
 				reason = "notbrowsable"
 			}

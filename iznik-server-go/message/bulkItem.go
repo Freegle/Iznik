@@ -202,7 +202,8 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		var itemName string
 		var available uint
 		var itemMsgid uint64
-		db.Raw("SELECT name, quantity, msgid FROM messages_bulk_items WHERE id = ?", in.Bulkitemid).
+		// ORM migration site b169ddebf3b7 (wave 1).
+		db.Table("messages_bulk_items").Select("name, quantity, msgid").Where("id = ?", in.Bulkitemid).
 			Row().Scan(&itemName, &available, &itemMsgid)
 		if itemMsgid != req.ID {
 			// Unknown item or item from another post — ignore it.
@@ -247,7 +248,9 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		// Freegle Helper / AI can map each line straight back to the offer.
 		type orderedItem struct{ ID uint64 }
 		var ordered []orderedItem
-		db.Raw("SELECT id FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", req.ID).Scan(&ordered)
+		// ORM migration site 4c3f0662bf60 (wave 1).
+		db.Table("messages_bulk_items").Select("id").Where("msgid = ?", req.ID).
+			Order("position ASC, id ASC").Scan(&ordered)
 		refByItem := make(map[uint64]int, len(ordered))
 		for i, o := range ordered {
 			refByItem[o.ID] = i + 1
@@ -280,8 +283,10 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 			body += "\n\n" + strings.TrimSpace(*req.Comment)
 		}
 		var existingID uint64
-		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
-			chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
+		// ORM migration site b3c3cfed62ed (wave 1).
+		db.Table("chat_messages").Select("id").
+			Where("chatid = ? AND userid = ? AND refmsgid = ? AND type = ?", chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).
+			Order("id DESC").Limit(1).Scan(&existingID)
 		if existingID > 0 {
 			db.Exec("UPDATE chat_messages SET message = ?, date = ? WHERE id = ?", body, time.Now(), existingID)
 		} else {
@@ -324,8 +329,9 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	}
 
 	var priorState string
-	db.Raw("SELECT COALESCE(state, '') FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
-		*req.Bulkitemid, *req.Userid).Scan(&priorState)
+	// ORM migration site 14de6b4b23b0 (wave 1).
+	db.Table("messages_bulk_items_interest").Select("COALESCE(state, '')").
+		Where("bulkitemid = ? AND userid = ?", *req.Bulkitemid, *req.Userid).Scan(&priorState)
 
 	result := db.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
 		*req.State, *req.Bulkitemid, *req.Userid)
@@ -348,8 +354,9 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	// recompute reflects the collected units.
 	if *req.State == "Collected" && priorState != "Collected" {
 		var qty int
-		db.Raw("SELECT COALESCE(quantity, 1) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
-			*req.Bulkitemid, *req.Userid).Scan(&qty)
+		// ORM migration site a1b05269552d (wave 1).
+		db.Table("messages_bulk_items_interest").Select("COALESCE(quantity, 1)").
+			Where("bulkitemid = ? AND userid = ?", *req.Bulkitemid, *req.Userid).Scan(&qty)
 		if qty < 1 {
 			qty = 1
 		}
@@ -378,7 +385,8 @@ func handleBulkEditLink(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	}
 
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
+	// ORM migration site 6f136c99e5de (wave 1).
+	db.Table("messages").Select("fromuser").Where("id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -388,7 +396,8 @@ func handleBulkEditLink(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 
 	// Only a bulk offer (one with catalogue items) can have an update link.
 	var items int64
-	db.Raw("SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?", req.ID).Scan(&items)
+	// ORM migration site bec9f1bec5e5 (wave 1).
+	db.Table("messages_bulk_items").Where("msgid = ?", req.ID).Count(&items)
 	if items == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Not a bulk offer")
 	}
@@ -424,8 +433,10 @@ func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser u
 // two users, creating it if necessary.
 func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 	var chatID uint64
-	db.Raw("SELECT id FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) LIMIT 1",
-		utils.CHAT_TYPE_USER2USER, a, b, b, a).Scan(&chatID)
+	// ORM migration site 24edbdb077a3 (wave 1).
+	db.Table("chat_rooms").Select("id").
+		Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))", utils.CHAT_TYPE_USER2USER, a, b, b, a).
+		Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
 		sqlDB, err := db.DB()
@@ -730,7 +741,9 @@ var IngestBulkItemPhotosSync = ingestBulkItemPhotos
 // in display order. Returns nil when none are set.
 func LoadBulkSlots(db *gorm.DB, msgid uint64) []string {
 	var slots []string
-	db.Raw("SELECT slot FROM messages_bulk_slots WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&slots)
+	// ORM migration site 7fd0b7c845d2 (wave 1).
+	db.Table("messages_bulk_slots").Select("slot").Where("msgid = ?", msgid).
+		Order("position ASC, id ASC").Scan(&slots)
 	if len(slots) == 0 {
 		return nil
 	}

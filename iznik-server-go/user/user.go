@@ -25,6 +25,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Aboutme struct {
@@ -421,7 +422,8 @@ func GetMemberships(id uint64) []Membership {
 func InventName(db *gorm.DB, id uint64) string {
 	// Try the email local part first (V1 parity: use real email when it's clean).
 	var email string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1", id).Scan(&email)
+	// ORM migration site 55990571c6db (wave 1).
+	db.Table("users_emails").Select("email").Where("userid = ?", id).Order("preferred DESC, id ASC").Limit(1).Scan(&email)
 
 	var name string
 	if at := strings.Index(email, "@"); at > 0 {
@@ -448,9 +450,12 @@ func InventName(db *gorm.DB, id uint64) string {
 func GetActiveModGroupIDs(userid uint64) []uint64 {
 	db := database.DBConn
 	var groupIDs []uint64
-	result := db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? "+
-		"AND (settings IS NULL OR JSON_EXTRACT(settings, '$.active') IS NULL OR JSON_EXTRACT(settings, '$.active') != 0)",
-		userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Pluck("groupid", &groupIDs)
+	// ORM migration site 4a82fa03a4f8 (wave 1).
+	result := db.Table("memberships").
+		Where("userid = ? AND role IN (?, ?) AND collection = ? "+
+			"AND (settings IS NULL OR JSON_EXTRACT(settings, '$.active') IS NULL OR JSON_EXTRACT(settings, '$.active') != 0)",
+			userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+		Pluck("groupid", &groupIDs)
 	if result.Error != nil {
 		log.Printf("Failed to get active mod group IDs for user %d: %v", userid, result.Error)
 	}
@@ -665,9 +670,10 @@ func GetUserById(id uint64, myid uint64) User {
 				// Rewrite misleading/fraudulent names for non-mods on display
 				// (Discourse #9587). Stored fullname is untouched.
 				isGroupMod := false
-				var modCount int
-				db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-					id, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modCount)
+				var modCount int64
+				// ORM migration site 4302277d901e (wave 1).
+				db.Table("memberships").Where("userid = ? AND role IN (?, ?)",
+					id, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Count(&modCount)
 				if modCount > 0 {
 					isGroupMod = true
 				}
@@ -710,7 +716,8 @@ func GetUserById(id uint64, myid uint64) User {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT * FROM users_aboutme WHERE userid = ? ORDER BY timestamp DESC LIMIT 1", id).Scan(&aboutme)
+		// ORM migration site abc4c428b605 (wave 1).
+		db.Table("users_aboutme").Where("userid = ?", id).Order("timestamp DESC").Limit(1).Scan(&aboutme)
 	}()
 
 	var supporter struct {
@@ -749,7 +756,9 @@ func GetUserById(id uint64, myid uint64) User {
 	go func() {
 		defer wg.Done()
 		var rows []spamRow
-		db.Raw("SELECT id, userid, byuserid, collection, reason, added FROM spam_users WHERE userid = ? ORDER BY id ASC LIMIT 1", id).Scan(&rows)
+		// ORM migration site 52fc732564c3 (wave 1).
+		db.Table("spam_users").Select("id, userid, byuserid, collection, reason, added").
+			Where("userid = ?", id).Order("id ASC").Limit(1).Scan(&rows)
 		if len(rows) > 0 {
 			spam = rows[0]
 			spamFound = true
@@ -1039,7 +1048,8 @@ func DeleteUserSearch(c *fiber.Ctx) error {
 
 	// Check ownership.
 	var search Search
-	if err := db.Raw("SELECT * FROM users_searches WHERE id = ?", id).Scan(&search).Error; err != nil || search.ID == 0 {
+	// ORM migration site 495e8285da0a (wave 1).
+	if err := db.Table("users_searches").Where("id = ?", id).Scan(&search).Error; err != nil || search.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
 
@@ -1134,7 +1144,8 @@ func SearchUsers(c *fiber.Ctx) error {
 	// If query is purely numeric, do a fast direct ID lookup first.
 	if numericID > 0 {
 		var exists uint64
-		db.Raw("SELECT id FROM users WHERE id = ?", numericID).Scan(&exists)
+		// ORM migration site c6a69a9f0597 (wave 1).
+		db.Table("users").Select("id").Where("id = ?", numericID).Scan(&exists)
 		if exists > 0 {
 			// Found by ID — skip the slow LIKE searches.
 			return c.JSON(fiber.Map{"users": []uint64{exists}})
@@ -1271,7 +1282,8 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		go func() {
 			defer wg.Done()
 			var lastpushStr *string
-			db.Raw("SELECT MAX(lastsent) FROM users_push_notifications WHERE userid = ?", id).Scan(&lastpushStr)
+			// ORM migration site 1bd00b213b09 (wave 1).
+			db.Table("users_push_notifications").Select("MAX(lastsent)").Where("userid = ?", id).Scan(&lastpushStr)
 			if lastpushStr != nil {
 				if parsed, err := time.Parse("2006-01-02 15:04:05", *lastpushStr); err == nil && !parsed.IsZero() {
 					lastpush = &parsed
@@ -1340,9 +1352,10 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		go func() {
 			defer wg.Done()
 			var n int
-			db.Raw("SELECT COUNT(DISTINCT text) FROM logs "+
-				"WHERE user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 90 DAY",
-				id, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&n)
+			// ORM migration site 9c488a43fc54 (wave 1).
+			db.Table("logs").Select("COUNT(DISTINCT text)").
+				Where("user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 90 DAY",
+					id, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&n)
 			if n > 0 {
 				locationchanges = &n
 			}
@@ -1381,8 +1394,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	if modtools {
 		if privatePos.Lat != 0 || privatePos.Lng != 0 {
 			var locNamePtr *string
-			db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name')) "+
-				"FROM users WHERE id = ? AND settings IS NOT NULL", id).Scan(&locNamePtr)
+			// ORM migration site 192b411b543b (wave 1).
+			db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name'))").
+				Where("id = ? AND settings IS NOT NULL", id).Scan(&locNamePtr)
 
 			locName := ""
 			if locNamePtr != nil && *locNamePtr != "null" {
@@ -1392,18 +1406,22 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			if locName == "" {
 				locName = ""
 				if u.Lastlocation != nil && *u.Lastlocation > 0 {
-					db.Raw("SELECT name FROM locations WHERE id = ?", *u.Lastlocation).Scan(&locName)
+					// ORM migration site 8c4b9a825e10 (wave 1).
+					db.Table("locations").Select("name").Where("id = ?", *u.Lastlocation).Scan(&locName)
 				}
 			}
 
 			if locName == "" && (privatePos.Lat != 0 || privatePos.Lng != 0) {
-				db.Raw("SELECT name FROM locations WHERE type = ? "+
-					"AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? "+
-					"ORDER BY ((lat - ?)*(lat - ?) + (lng - ?)*(lng - ?)) ASC LIMIT 1",
-					utils.LOCATION_TYPE_POSTCODE,
-					float64(privatePos.Lat)-0.1, float64(privatePos.Lat)+0.1,
-					float64(privatePos.Lng)-0.1, float64(privatePos.Lng)+0.1,
-					privatePos.Lat, privatePos.Lat, privatePos.Lng, privatePos.Lng).Scan(&locName)
+				// ORM migration site 753270f0ca22 (wave 1).
+				db.Table("locations").Select("name").
+					Where("type = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+						utils.LOCATION_TYPE_POSTCODE,
+						float64(privatePos.Lat)-0.1, float64(privatePos.Lat)+0.1,
+						float64(privatePos.Lng)-0.1, float64(privatePos.Lng)+0.1).
+					Order(clause.OrderBy{Expression: gorm.Expr(
+						"((lat - ?)*(lat - ?) + (lng - ?)*(lng - ?)) ASC",
+						privatePos.Lat, privatePos.Lat, privatePos.Lng, privatePos.Lng)}).
+					Limit(1).Scan(&locName)
 			}
 
 			u.Privateposition = &PrivatePosition{
@@ -1439,13 +1457,17 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 		if auth.HasPermission(myid, auth.PERM_GIFTAID) {
 			var donations []UserDonation
-			db.Raw("SELECT id, userid, timestamp, GrossAmount, source, TransactionType, giftaidconsent FROM users_donations WHERE userid = ? ORDER BY timestamp DESC", id).Scan(&donations)
+			// ORM migration site 76ca6fde32ec (wave 1).
+			db.Table("users_donations").Select("id, userid, timestamp, GrossAmount, source, TransactionType, giftaidconsent").
+				Where("userid = ?", id).Order("timestamp DESC").Scan(&donations)
 			if len(donations) > 0 {
 				u.Donations = donations
 			}
 
 			var giftaid UserGiftAid
-			result := db.Raw("SELECT id, userid, timestamp, period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1", id).Scan(&giftaid)
+			// ORM migration site 756ee9a859a6 (wave 1).
+			result := db.Table("giftaid").Select("id, userid, timestamp, period").
+				Where("userid = ? AND deleted IS NULL", id).Limit(1).Scan(&giftaid)
 			if result.RowsAffected > 0 {
 				u.Giftaid = &giftaid
 			}
@@ -1458,7 +1480,8 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			canImpersonate := isAdmin || !auth.IsSystemMod(id)
 			if canImpersonate {
 				var key string
-				db.Raw("SELECT credentials FROM users_logins WHERE userid = ? AND type = 'Link' LIMIT 1", id).Scan(&key)
+				// ORM migration site 252dfa1bc658 (wave 1).
+				db.Table("users_logins").Select("credentials").Where("userid = ? AND type = 'Link'", id).Limit(1).Scan(&key)
 				if key == "" {
 					key = generateRandomKey(32)
 					db.Exec("INSERT INTO users_logins (userid, type, credentials) VALUES (?, 'Link', ?)", id, key)
@@ -1494,7 +1517,13 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT userid FROM users_banned WHERE userid = ? AND groupid = ?", userid, groupid).Limit(1).Find(&banned)
+		// ORM migration site 93d100d45d54 (wave 1).
+		// Note: the chained Limit(1) on the pre-conversion db.Raw(...) call was a
+		// no-op — GORM's query builder only applies clauses when Statement.SQL is
+		// still empty, and Raw() sets it immediately, so the real query never
+		// carried a LIMIT. Preserved here as-is (no Limit) to match the recorded
+		// golden SQL and actual prior behaviour exactly.
+		db.Table("users_banned").Select("userid").Where("userid = ? AND groupid = ?", userid, groupid).Find(&banned)
 	}()
 
 	wg.Wait()
@@ -1626,7 +1655,8 @@ func PostUser(c *fiber.Ctx) error {
 func handleEngaged(c *fiber.Ctx, db *gorm.DB, engageid uint64) error {
 	// Record engagement success.
 	var mailid uint64
-	db.Raw("SELECT mailid FROM engage WHERE id = ?", engageid).Scan(&mailid)
+	// ORM migration site e3fbf45b1fee (wave 1).
+	db.Table("engage").Select("mailid").Where("id = ?", engageid).Scan(&mailid)
 
 	if mailid > 0 {
 		db.Exec("UPDATE engage SET succeeded = NOW() WHERE id = ?", engageid)
@@ -1709,7 +1739,8 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	// Check if email already exists in the table.
 	var existingUID *uint64
 	var existingID uint64
-	row := db.Raw("SELECT id, userid FROM users_emails WHERE email = ? LIMIT 1", email).Row()
+	// ORM migration site 9fcec938f21c (wave 1).
+	row := db.Table("users_emails").Select("id, userid").Where("email = ?", email).Limit(1).Row()
 	if row != nil {
 		row.Scan(&existingID, &existingUID)
 	}
@@ -1789,7 +1820,8 @@ func handleRemoveEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostReque
 
 	// Verify email belongs to this user.
 	var emailUserid uint64
-	db.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid = ?", req.Email, targetID).Scan(&emailUserid)
+	// ORM migration site d0b3ffa72211 (wave 1).
+	db.Table("users_emails").Select("userid").Where("email = ? AND userid = ?", req.Email, targetID).Scan(&emailUserid)
 
 	if emailUserid == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 3, "status": "Not on same user"})
@@ -1870,7 +1902,8 @@ func PutUser(c *fiber.Ctx) error {
 
 	// Check if email already exists.
 	var existingUID uint64
-	db.Raw("SELECT userid FROM users_emails WHERE email = ? LIMIT 1", email).Scan(&existingUID)
+	// ORM migration site c4e9446f37d9 (wave 1).
+	db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&existingUID)
 
 	if existingUID > 0 {
 		// Authenticated callers (e.g. moderators using Add Member in ModTools) get the existing
@@ -2086,18 +2119,20 @@ func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
 	}
 
 	var distinct int
-	db.Raw("SELECT COUNT(DISTINCT text) FROM logs WHERE user = ? AND type = ? AND subtype = ? "+
-		"AND timestamp >= NOW() - INTERVAL 24 HOUR",
-		myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&distinct)
+	// ORM migration site 7bd383b9cd2d (wave 1).
+	db.Table("logs").Select("COUNT(DISTINCT text)").
+		Where("user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 24 HOUR",
+			myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&distinct)
 
 	if distinct < RapidLocationChangeThreshold {
 		return
 	}
 
 	// Never flag moderators/owners.
-	var modCount int
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	var modCount int64
+	// ORM migration site 5262aa3b4dc8 (wave 1).
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?)",
+		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 	if modCount > 0 {
 		return
 	}
@@ -2136,7 +2171,8 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 		newSettings.Mylocation.ID != nil {
 
 		var oldLastlocation *uint64
-		db.Raw("SELECT lastlocation FROM users WHERE id = ?", myid).Scan(&oldLastlocation)
+		// ORM migration site bf72f4509ca5 (wave 1).
+		db.Table("users").Select("lastlocation").Where("id = ?", myid).Scan(&oldLastlocation)
 
 		newLocID := *newSettings.Mylocation.ID
 		if oldLastlocation == nil || *oldLastlocation != newLocID {
@@ -2345,7 +2381,8 @@ func PatchUser(c *fiber.Ctx) error {
 		isMod := auth.IsAdminOrSupport(myid)
 		if !isMod {
 			var systemrole string
-			db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+			// ORM migration site 8c8162284405 (wave 1).
+			db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 			if systemrole == utils.SYSTEMROLE_MODERATOR {
 				isMod = true
 			}
@@ -2420,7 +2457,8 @@ func LimboUser(c *fiber.Ctx) error {
 
 		// Cannot delete moderators/owners — they must demote themselves first.
 		var targetModRole string
-		db.Raw("SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1", targetID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&targetModRole)
+		// ORM migration site 120f5981fbeb (wave 1).
+		db.Table("memberships").Select("role").Where("userid = ? AND role IN (?, ?)", targetID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Limit(1).Scan(&targetModRole)
 
 		if targetModRole != "" {
 			return fiber.NewError(fiber.StatusForbidden, "Cannot delete a moderator/owner — they must demote first")
@@ -2441,7 +2479,8 @@ func LimboUser(c *fiber.Ctx) error {
 	// Self-delete: put the user into limbo so they can recover within ~14 days.
 	// A background job (users:cleanup) will call forgetUser() after the grace period.
 	var modRole string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modRole)
+	// ORM migration site 571cbd577434 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Limit(1).Scan(&modRole)
 
 	if modRole != "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -2451,7 +2490,8 @@ func LimboUser(c *fiber.Ctx) error {
 	}
 
 	var spammerCount int64
-	db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_SPAMMER, utils.SPAM_COLLECTION_PENDING_ADD).Scan(&spammerCount)
+	// ORM migration site a17cb4d40d9c (wave 1).
+	db.Table("spam_users").Where("userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_SPAMMER, utils.SPAM_COLLECTION_PENDING_ADD).Count(&spammerCount)
 
 	if spammerCount > 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
@@ -2504,7 +2544,8 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 // acting Freegle user).
 func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uint64) {
 	var groupids []uint64
-	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?",
+	// ORM migration site 3fe8736f1d10 (wave 1).
+	db.Table("memberships").Select("groupid").Where("userid = ? AND collection = ?",
 		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
 	for _, groupid := range groupids {
 		if byUser == 0 {
@@ -2626,7 +2667,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Email merge: move id1's emails to id2.
 	// If id2 already has a preferred email, demote id1's preferred before moving.
 	var id2HasPreferred int64
-	tx.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND preferred = 1", req.ID2).Scan(&id2HasPreferred)
+	// ORM migration site 872f93ca55c3 (wave 1).
+	tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID2).Count(&id2HasPreferred)
 	if id2HasPreferred > 0 {
 		if err := tx.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND preferred = 1", req.ID1).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
@@ -2650,11 +2692,15 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	var id1Membs []MembershipRow
-	tx.Raw("SELECT id, groupid, role, added, configid, settings, heldby FROM memberships WHERE userid = ?", req.ID1).Scan(&id1Membs)
+	// ORM migration site f20fcf2bf293 (wave 1).
+	tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
+		Where("userid = ?", req.ID1).Scan(&id1Membs)
 
 	for _, m1 := range id1Membs {
 		var id2Memb MembershipRow
-		tx.Raw("SELECT id, groupid, role, added, configid, settings, heldby FROM memberships WHERE userid = ? AND groupid = ?", req.ID2, m1.Groupid).Scan(&id2Memb)
+		// ORM migration site 8ce3d260bb10 (wave 1).
+		tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
+			Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Scan(&id2Memb)
 
 		if id2Memb.ID == 0 {
 			// id2 not in this group — just reassign.
@@ -2710,11 +2756,15 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Latestmessage *string
 	}
 	var id1Rooms []ChatRoomRow
-	tx.Raw("SELECT id, chattype, user1, user2, groupid, latestmessage FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", req.ID1, req.ID1).Scan(&id1Rooms)
+	// ORM migration site cd441c119872 (wave 1).
+	tx.Table("chat_rooms").Select("id, chattype, user1, user2, groupid, latestmessage").
+		Where("(user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", req.ID1, req.ID1).Scan(&id1Rooms)
 	for _, room := range id1Rooms {
 		var existingID uint64
 		if room.Chattype == "User2Mod" {
-			tx.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = 'User2Mod'", req.ID2, room.Groupid).Scan(&existingID)
+			// ORM migration site 49504f08b237 (wave 1).
+			tx.Table("chat_rooms").Select("id").
+				Where("user1 = ? AND groupid = ? AND chattype = 'User2Mod'", req.ID2, room.Groupid).Scan(&existingID)
 		} else {
 			var otherUserID uint64
 			if room.User1 == uint64(req.ID1) {
@@ -2725,8 +2775,10 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 				otherUserID = room.User1
 			}
 			if otherUserID > 0 {
-				tx.Raw("SELECT id FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-					req.ID2, otherUserID, otherUserID, req.ID2).Scan(&existingID)
+				// ORM migration site 3e09ec1599a1 (wave 1).
+				tx.Table("chat_rooms").Select("id").
+					Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+						req.ID2, otherUserID, otherUserID, req.ID2).Scan(&existingID)
 			}
 		}
 		if existingID > 0 {
@@ -2765,8 +2817,12 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Tnuserid   *uint64
 	}
 	var u1Attrs, u2Attrs UserAttrs
-	tx.Raw("SELECT fullname, firstname, lastname, yahooid, systemrole, added, tnuserid FROM users WHERE id = ?", req.ID1).Scan(&u1Attrs)
-	tx.Raw("SELECT fullname, firstname, lastname, yahooid, systemrole, added, tnuserid FROM users WHERE id = ?", req.ID2).Scan(&u2Attrs)
+	// ORM migration site f60915fd693a (wave 1).
+	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
+		Where("id = ?", req.ID1).Scan(&u1Attrs)
+	// ORM migration site 7fe526e2a805 (wave 1).
+	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
+		Where("id = ?", req.ID2).Scan(&u2Attrs)
 
 	// fullname: take id1's if id2 is NULL, skip FBUser/-owner placeholder names.
 	if u1Attrs.Fullname != nil && u2Attrs.Fullname == nil {
@@ -2867,7 +2923,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 
 	type MergeBanRow struct{ Groupid uint64 }
 	var mergeBans []MergeBanRow
-	tx.Raw("SELECT groupid FROM users_banned WHERE userid = ?", req.ID2).Scan(&mergeBans)
+	// ORM migration site 4bb399eac601 (wave 1).
+	tx.Table("users_banned").Select("groupid").Where("userid = ?", req.ID2).Scan(&mergeBans)
 	for _, ban := range mergeBans {
 		tx.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", req.ID2, ban.Groupid)
 	}
@@ -2885,7 +2942,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Period string
 	}
 	var giftaids []MergeGiftaidRow
-	tx.Raw("SELECT id, period FROM giftaid WHERE userid IN (?, ?)", req.ID1, req.ID2).Scan(&giftaids)
+	// ORM migration site 8c44fcd5dae1 (wave 1).
+	tx.Table("giftaid").Select("id, period").Where("userid IN (?, ?)", req.ID1, req.ID2).Scan(&giftaids)
 	if len(giftaids) > 0 {
 		best := giftaids[0]
 		for _, g := range giftaids[1:] {
@@ -2974,10 +3032,9 @@ func GetUserChatrooms(c *fiber.Ctx) error {
 	}
 
 	var rooms []ChatroomRow
-	db.Raw("SELECT id, chattype, user1, user2, COALESCE(groupid, 0) AS groupid, latestmessage AS lastdate "+
-		"FROM chat_rooms WHERE (user1 = ? OR user2 = ?) "+
-		"ORDER BY latestmessage DESC",
-		targetid, targetid).Scan(&rooms)
+	// ORM migration site d0d274882c8a (wave 1).
+	db.Table("chat_rooms").Select("id, chattype, user1, user2, COALESCE(groupid, 0) AS groupid, latestmessage AS lastdate").
+		Where("(user1 = ? OR user2 = ?)", targetid, targetid).Order("latestmessage DESC").Scan(&rooms)
 
 	if rooms == nil {
 		rooms = []ChatroomRow{}
@@ -3010,9 +3067,9 @@ func GetUserEmailHistory(c *fiber.Ctx) error {
 	}
 
 	var emails []EmailHistoryRow
-	db.Raw("SELECT id, timestamp, eximid, `from`, `to`, subject, status "+
-		"FROM logs_emails WHERE userid = ? ORDER BY id DESC LIMIT 100",
-		targetid).Scan(&emails)
+	// ORM migration site 3099aa977394 (wave 1).
+	db.Table("logs_emails").Select("id, timestamp, eximid, `from`, `to`, subject, status").
+		Where("userid = ?", targetid).Order("id DESC").Limit(100).Scan(&emails)
 
 	if emails == nil {
 		emails = []EmailHistoryRow{}
@@ -3083,10 +3140,9 @@ func GetUserNewsfeed(c *fiber.Ctx) error {
 	}
 
 	var posts []NewsfeedRow
-	db.Raw("SELECT id, timestamp, message, hidden, hiddenby, deleted, deletedby "+
-		"FROM newsfeed WHERE userid = ? "+
-		"ORDER BY id DESC",
-		targetid).Scan(&posts)
+	// ORM migration site 056be9212962 (wave 1).
+	db.Table("newsfeed").Select("id, timestamp, message, hidden, hiddenby, deleted, deletedby").
+		Where("userid = ?", targetid).Order("id DESC").Scan(&posts)
 
 	if posts == nil {
 		posts = []NewsfeedRow{}
@@ -3245,9 +3301,9 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	var logins []LoginRow
-	db.Raw("SELECT id, userid, type, added, lastaccess FROM users_logins "+
-		"WHERE userid = ? ORDER BY lastaccess DESC LIMIT 50",
-		targetid).Scan(&logins)
+	// ORM migration site 4cd946036f5f (wave 1).
+	db.Table("users_logins").Select("id, userid, type, added, lastaccess").
+		Where("userid = ?", targetid).Order("lastaccess DESC").Limit(50).Scan(&logins)
 
 	if logins == nil {
 		logins = []LoginRow{}

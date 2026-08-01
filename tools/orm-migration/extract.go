@@ -102,6 +102,17 @@ var leadingKeyword = regexp.MustCompile(`(?is)^[\s(]*(?:/\*.*?\*/\s*)?(select|in
 
 var whitespace = regexp.MustCompile(`\s+`)
 
+// normaliseGolden collapses whitespace and drops any trailing statement
+// separator. A semicolon is not part of the statement: GORM never emits one, so
+// recording it made 30 sites impossible to convert without an approved diff
+// apiece, for a difference that carries no meaning. Trimming it here rather
+// than teaching the canonicaliser to ignore it keeps the golden honest about
+// what the statement actually is.
+func normaliseGolden(text string) string {
+	sql := whitespace.ReplaceAllString(strings.TrimSpace(text), " ")
+	return strings.TrimSpace(strings.TrimRight(strings.TrimSpace(sql), ";"))
+}
+
 // mysqlismPatterns are the dialect features called out in the migration plan.
 // Their presence forces a site to complex, because the conversion cannot be
 // mechanical: none of this syntax exists on PostgreSQL.
@@ -309,7 +320,7 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool) ([
 				var sql, source string
 				switch {
 				case ok && leadingKeyword.MatchString(whitespace.ReplaceAllString(strings.TrimSpace(text), " ")):
-					sql = whitespace.ReplaceAllString(strings.TrimSpace(text), " ")
+					sql = normaliseGolden(text)
 					source = "literal"
 
 				case ok && dynamic && isSQLHandle(sel.Sel.Name, recv):
@@ -318,7 +329,7 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool) ([
 					// starts in a variable, so no verb appears at position zero,
 					// but this is unambiguously a SQL call site and must be
 					// inventoried rather than dropped.
-					sql = whitespace.ReplaceAllString(strings.TrimSpace(text), " ")
+					sql = normaliseGolden(text)
 					source = "partial"
 
 				case ok:
