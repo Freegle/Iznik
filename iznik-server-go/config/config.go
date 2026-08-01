@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm/clause"
 	"strconv"
 	"strings"
 )
@@ -151,8 +152,15 @@ func PatchAdminConfig(c *fiber.Ctx) error {
 			strVal = string(b)
 		}
 
-		db.Exec("INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-			key, strVal, strVal)
+		// ORM migration site 4eabda40530c (wave 3), through the portable
+		// upsert wrapper: clause.OnConflict emits ON DUPLICATE KEY UPDATE on
+		// MySQL and ON CONFLICT DO UPDATE on PostgreSQL from this one call.
+		// "key" is a reserved word, so the quoting has to come from the
+		// dialector rather than being hand-written.
+		db.Table("config").Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"value": strVal}),
+		}).Create(map[string]interface{}{"key": key, "value": strVal})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

@@ -2341,6 +2341,16 @@ jobs:
       # support helper - run before anything expensive starts.
       - run-agent-sdk-tests
 
+      # Gate 1 of the raw-SQL-to-ORM migration (plans/database-migration-evaluation-2026-07.md
+      # section 7.1). Go and jq are already on this machine image, so this runs before any
+      # container starts: it fails fast if new raw SQL landed without a manifest update, a
+      # site's golden SQL drifted from what's committed, the raw+in-progress count regressed
+      # past its ratchet baseline, or a keep-raw site has no written reason. See
+      # tools/orm-migration/README.md.
+      - run:
+          name: ORM migration inventory ratchet (Gate 1)
+          command: tools/orm-migration/ci-ratchet.sh
+
       - run:
           name: Determine changed paths
           command: |

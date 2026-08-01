@@ -36,7 +36,14 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Lng *float64
 		}
 		var ul UserLoc
-		db.Raw("SELECT l.lat, l.lng FROM users u LEFT JOIN locations l ON l.id = u.lastlocation WHERE u.id = ?", userid).Scan(&ul)
+		// ORM migration site 1a6871aa02b9 (wave 4). The LEFT JOIN matters: a
+		// user with no lastlocation must still yield a row, with NULL lat/lng,
+		// which is why both fields are pointers.
+		db.Table("users u").
+			Select("l.lat, l.lng").
+			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
+			Where("u.id = ?", userid).
+			Scan(&ul)
 		lat = ul.Lat
 		lng = ul.Lng
 	}

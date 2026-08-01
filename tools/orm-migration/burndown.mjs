@@ -203,7 +203,9 @@ function printReport(report) {
 function main() {
   const args = parseArgs(process.argv.slice(2))
   const scriptDir = dirname(fileURLToPath(import.meta.url))
-  const manifestPath = args.manifest ?? join(scriptDir, 'manifest.json')
+  const manifestPath =
+    args.manifest ??
+    join(scriptDir, '..', '..', 'iznik-server-go', 'ormharness', 'manifest.json')
   const manifest = loadManifest(manifestPath)
   const report = build(manifest, args.top)
 

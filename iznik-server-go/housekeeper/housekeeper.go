@@ -485,7 +485,8 @@ func ListCronJobs(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var statuses []cronJobStatus
-	statusResult := db.Raw(`SELECT * FROM cron_job_status`).Scan(&statuses)
+	// ORM migration site e574518b4ebd (wave 1).
+	statusResult := db.Table("cron_job_status").Scan(&statuses)
 
 	if statusResult.Error != nil {
 		log.Printf("[Housekeeper] ListCronJobs cron_job_status query error: %v", statusResult.Error)

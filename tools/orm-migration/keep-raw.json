@@ -37,6 +37,11 @@
       "reason": "Builds a SQLite export file, not a query against the Percona cluster. Out of scope for the MySQL-to-ORM work and unaffected by the engine migration."
     },
     {
+      "file": "iznik-server-go/tryst/tryst.go",
+      "function": "CreateTryst",
+      "reason": "Deliberately drops to the database/sql handle so that LastInsertId() reports the row the upsert actually touched, and returns it to the caller. GORM's Create does not surface LastInsertId for an ON DUPLICATE KEY UPDATE, and the read/write split makes reading the id back with a follow-up SELECT unsafe. Found during the Wave 0 pilot; needs a per-site redesign rather than a mechanical conversion."
+    },
+    {
       "file": "iznik-server-go/database/retry.go",
       "reason": "Infrastructure wrapper: takes an already-built statement from a caller and retries it. The SQL belongs to the calling site, which is inventoried separately."
     },

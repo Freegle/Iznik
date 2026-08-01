@@ -68,7 +68,8 @@ func GetTeam(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single team with members.
 		var t Team
-		db.Raw("SELECT * FROM teams WHERE id = ?", id).Scan(&t)
+		// ORM migration site 17b90a8329d8 (wave 1).
+		db.Table("teams").Where("id = ?", id).Scan(&t)
 		if t.ID == 0 {
 			return c.JSON(fiber.Map{"ret": 2, "status": "Not found"})
 		}
@@ -353,7 +354,8 @@ func PatchTeam(c *fiber.Ctx) error {
 	default:
 		// Update team attributes.
 		if req.Name != "" {
-			db.Exec("UPDATE teams SET name = ? WHERE id = ?", req.Name, req.ID)
+			// ORM migration site d0644aa6dbe0 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("name", req.Name)
 		}
 		if req.Description != "" {
 			db.Exec("UPDATE teams SET description = ? WHERE id = ?", req.Description, req.ID)
@@ -392,7 +394,9 @@ func DeleteTeam(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM teams WHERE id = ?", id)
+	// ORM migration site 76c84d731809 (wave 2). Team carries no gorm.DeletedAt,
+	// so this stays a hard DELETE rather than becoming a soft-delete UPDATE.
+	db.Where("id = ?", id).Delete(&Team{})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

@@ -32,10 +32,13 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 
 	// Find existing user by email.
 	if email != "" {
-		db.Raw("SELECT u.id FROM users u "+
-			"JOIN users_emails ue ON ue.userid = u.id "+
-			"WHERE ue.email = ? "+
-			"LIMIT 1", email).Scan(&emailUserID)
+		// ORM migration site 242735a48039 (wave 4).
+		db.Table("users u").
+			Select("u.id").
+			Joins("JOIN users_emails ue ON ue.userid = u.id").
+			Where("ue.email = ?", email).
+			Limit(1).
+			Scan(&emailUserID)
 	}
 
 	// Find existing user by social login UID.

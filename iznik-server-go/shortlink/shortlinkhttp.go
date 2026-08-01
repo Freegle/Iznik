@@ -57,7 +57,8 @@ func RedirectShortlink(c *fiber.Ctx) error {
 
 	// Record the click.
 	db.Exec("UPDATE shortlinks SET clicks = clicks + 1 WHERE id = ?", s.ID)
-	db.Exec("INSERT INTO shortlink_clicks (shortlinkid) VALUES (?)", s.ID)
+	// ORM migration site 507986a628ba (wave 2).
+	db.Table("shortlink_clicks").Create(map[string]interface{}{"shortlinkid": s.ID})
 
 	log.Printf("[Shortlink] Redirecting '%s' (id=%d) to %s", name, s.ID, redirectURL)
 	return c.Redirect(redirectURL, fiber.StatusFound)

@@ -22,6 +22,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	geo "github.com/kellydunn/golang-geo"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	xurls "mvdan.cc/xurls/v2"
 )
 
@@ -1145,8 +1146,19 @@ func Post(c *fiber.Ctx) error {
 	case "Report":
 		if req.ID > 0 {
 			db.Exec("UPDATE newsfeed SET reviewrequired = 1 WHERE id = ?", req.ID)
-			db.Exec("INSERT INTO newsfeed_reports (userid, newsfeedid, reason) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?",
-				myid, req.ID, req.Reason, req.Reason)
+			// ORM migration site 958d1d242008 (wave 3), through the portable
+			// upsert wrapper. The conflict target is the composite
+			// (userid, newsfeedid) unique key: PostgreSQL requires it to be
+			// named explicitly, and naming it here keeps the one call site
+			// correct on both engines.
+			db.Table("newsfeed_reports").Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "userid"}, {Name: "newsfeedid"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{"reason": req.Reason}),
+			}).Create(map[string]interface{}{
+				"userid":     myid,
+				"newsfeedid": req.ID,
+				"reason":     req.Reason,
+			})
 
 			// Queue email to ChitChat support.
 			type ReporterInfo struct {

@@ -64,6 +64,18 @@ type Site struct {
 	// tests render the replacement ORM call and compare against this.
 	GoldenSQL string `json:"goldenSql"`
 
+	// PresentInCode is false for a site that the previous manifest knew about
+	// but the current scan no longer finds. Converting a site removes its raw
+	// SQL, so without retaining it the manifest would silently shrink and
+	// "converted" would be indistinguishable from "quietly deleted".
+	PresentInCode bool `json:"presentInCode"`
+
+	// HasParityTest records whether a test anywhere under the scanned tree
+	// names this site ID. This is plan 7.2's Gate 2 checked mechanically: a
+	// site may only be counted converted once a parity test bearing its ID
+	// exists.
+	HasParityTest bool `json:"hasParityTest"`
+
 	Status string `json:"status"`
 	// Reason is required when Status is keep-raw, and explains why.
 	Reason string `json:"reason,omitempty"`
@@ -126,7 +138,10 @@ func main() {
 	var root, out, repo, rules string
 	var selftest bool
 	flag.StringVar(&root, "root", "../../iznik-server-go", "directory to scan")
-	flag.StringVar(&out, "out", "manifest.json", "manifest path")
+	// The manifest lives beside the harness, not beside this tool, because the
+	// Go tests embed it: the apiv2 container mounts iznik-server-go as /app, so
+	// anything above that directory is unreachable at test time.
+	flag.StringVar(&out, "out", "../../iznik-server-go/ormharness/manifest.json", "manifest path")
 	flag.StringVar(&repo, "repo", "../..", "repo root; manifest paths are recorded relative to it")
 	// Kept separate from -out because the ratchet regenerates to a temp path,
 	// and deriving the rules location from the output silently dropped every
@@ -158,13 +173,30 @@ func main() {
 	// manifest. Regenerating must never silently reset a keep-raw decision or
 	// drop the justification that survived review.
 	if prev, err := load(out); err == nil {
-		merge(sites, prev)
+		sites = merge(sites, prev)
+	}
+
+	// Gate 2, checked mechanically: a site whose raw SQL has gone and which is
+	// named by a parity test counts as converted. One that has gone with no
+	// test to vouch for it keeps its old status, so the ratchet can refuse it.
+	tested, err := parityTestedIDs(root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "extract:", err)
+		os.Exit(1)
+	}
+	for _, s := range sites {
+		s.HasParityTest = tested[s.ID]
+		if !s.PresentInCode && s.HasParityTest && (s.Status == StatusRaw || s.Status == StatusInProgress) {
+			s.Status = StatusConverted
+		}
 	}
 
 	// Applied after the carry-forward so that a rule added to keep-raw.json
 	// takes effect on the next run without anyone hand-editing the manifest.
 	if rules == "" {
-		rules = filepath.Join(filepath.Dir(out), "keep-raw.json")
+		// Beside this tool, not beside the manifest: the two now live in
+		// different directories, and the rules are the tool's input.
+		rules = "keep-raw.json"
 	}
 	applied, err := applyKeepRaw(sites, rules)
 	if err != nil {
@@ -322,6 +354,7 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool) ([
 				site.ID = stableID(key, seen[key])
 				seen[key]++
 
+				site.PresentInCode = true
 				if isTest {
 					site.Status = StatusTestFixture
 				} else {
@@ -648,9 +681,45 @@ func load(path string) (*Manifest, error) {
 	return &m, nil
 }
 
-// merge carries reviewer decisions forward across regeneration. Only the
-// human-owned fields survive; everything derived is recomputed from source.
-func merge(sites []*Site, prev *Manifest) {
+// siteIDPattern matches the 12-hex site IDs this tool mints, so that a parity
+// test naming its site can be recognised mechanically.
+var siteIDPattern = regexp.MustCompile(`\b[0-9a-f]{12}\b`)
+
+// parityTestedIDs collects every site ID named by a test under root. Plan 7.2
+// makes this Gate 2: "a site cannot be marked converted unless a parity test
+// bearing its ID exists and passes. The extractor checks test existence
+// mechanically." Existence is what is checked here; passing is the suite's job.
+func parityTestedIDs(root string) (map[string]bool, error) {
+	found := map[string]bool{}
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if name := info.Name(); name == "vendor" || name == ".git" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range siteIDPattern.FindAllString(string(b), -1) {
+			found[m] = true
+		}
+		return nil
+	})
+	return found, err
+}
+
+// merge carries reviewer decisions forward across regeneration, and retains
+// sites the scan no longer finds. Only the human-owned fields survive on a
+// site that still exists; everything derived is recomputed from source.
+func merge(sites []*Site, prev *Manifest) []*Site {
 	for _, s := range sites {
 		old, ok := prev.Sites[s.ID]
 		if !ok {
@@ -668,6 +737,23 @@ func merge(sites []*Site, prev *Manifest) {
 		s.Reason = old.Reason
 		s.ApprovedDiff = old.ApprovedDiff
 	}
+
+	// Retain sites the scan no longer finds. A converted site's raw SQL is
+	// gone by definition, so dropping it here would make the manifest shrink
+	// as work progressed and would hide a site that was simply deleted.
+	seen := make(map[string]bool, len(sites))
+	for _, s := range sites {
+		seen[s.ID] = true
+	}
+	for id, old := range prev.Sites {
+		if seen[id] || old.Status == StatusTestFixture {
+			continue
+		}
+		gone := *old
+		gone.PresentInCode = false
+		sites = append(sites, &gone)
+	}
+	return sites
 }
 
 func write(path string, sites []*Site) error {

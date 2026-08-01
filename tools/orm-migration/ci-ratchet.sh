@@ -66,7 +66,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 EXTRACTOR_DIR="$SCRIPT_DIR"
 
-COMMITTED_MANIFEST="${RATCHET_MANIFEST:-$SCRIPT_DIR/manifest.json}"
+COMMITTED_MANIFEST="${RATCHET_MANIFEST:-$REPO_ROOT/iznik-server-go/ormharness/manifest.json}"
 SOURCE_ROOT="${RATCHET_ROOT:-$REPO_ROOT/iznik-server-go}"
 
 fail_count=0
@@ -184,6 +184,30 @@ if [ "$missing_count" -gt 0 ]; then
   note "fix: add a non-empty 'reason' field to each of these entries in manifest.json"
 else
   note "gate (e) OK: every keep-raw site carries a written reason"
+fi
+
+# --- Gate (f): nothing may leave the inventory without proof -----------------
+# Converting a site deletes its raw SQL, so the site stops being found in the
+# code. That is expected, but it is indistinguishable from the site simply
+# having been deleted, and "it vanished" must never be a route out of the
+# ratchet. A site that is no longer present in the code may only be counted
+# converted when a parity test names its ID (plan 7.2's Gate 2); anything else
+# has to be marked retired or keep-raw deliberately.
+jq -n --slurpfile c "$COMMITTED_MANIFEST" '
+  [ $c[0].sites | to_entries[] |
+    select(.value.presentInCode == false) |
+    select(.value.status == "raw" or .value.status == "in-progress" or
+           (.value.status == "converted" and .value.hasParityTest != true)) |
+    {id: .key, file: .value.file, line: .value.line, status: .value.status} ]
+' >"$WORKDIR/unproven.json"
+
+unproven_count=$(jq 'length' "$WORKDIR/unproven.json")
+if [ "$unproven_count" -gt 0 ]; then
+  fail "$unproven_count site(s) are no longer in the code but have no parity test to account for them:"
+  jq -r '.[] | "  \(.file):\(.line)  [\(.id)]  status=\(.status)"' "$WORKDIR/unproven.json"
+  note "fix: add a parity test naming the site ID (Gate 2), or mark the site retired/keep-raw with a reason if the code was deleted on purpose"
+else
+  note "gate (f) OK: every site missing from the code is accounted for by a parity test"
 fi
 
 # --- Summary -----------------------------------------------------------------
