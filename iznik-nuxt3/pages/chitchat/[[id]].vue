@@ -605,6 +605,12 @@ function runCheck() {
 
 // Watch selectedArea for changes
 watch(selectedArea, async () => {
+  if (!me.value) {
+    // Logout resets the auth store, which flips selectedArea to 0.  Fetching
+    // the feed then would go out without a JWT and 401 → fatal error page.
+    return
+  }
+
   await areaChange()
 })
 
