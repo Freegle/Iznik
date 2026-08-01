@@ -407,26 +407,6 @@
             >
               {{ contextGroup.spamreason }}
             </NoticeMessage>
-            <!-- Why the automated content check left this in the queue. The keyword
-                 that flagged it is recorded per post but was never shown, so a mod
-                 had to guess - a paint post flagged on the word "mineral" looked
-                 like it had been flagged as a medicine for no reason (Discourse
-                 #9988), and a post held purely by a moderation setting said nothing
-                 at all (#9987). The server only sends this to moderators. -->
-            <NoticeMessage
-              v-if="holdReasons.length"
-              variant="warning"
-              class="mb-2"
-            >
-              <p class="mb-1">
-                <strong>Why this is waiting for approval:</strong>
-              </p>
-              <ul class="mb-0 ps-3">
-                <li v-for="(reason, ix) in holdReasons" :key="ix">
-                  {{ reason }}
-                </li>
-              </ul>
-            </NoticeMessage>
             <NoticeMessage
               v-if="
                 pending &&
@@ -480,6 +460,7 @@
               "
               :messageid="message.id"
               :groupid="currentGroupid"
+              :covered="explainedElsewhere"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
@@ -1042,30 +1023,26 @@ const contextGroup = computed(() => {
   )
 })
 
-// What the automated content check found, in plain words. The API only sends
-// contentcheck_reasons to moderators, so this is empty for anyone else.
-const holdReasons = computed(() => {
-  const raw = contextGroup.value?.contentcheck_reasons
+// Hold reasons this component already explains with its own notices above, which
+// use live state - the location we resolved now, the member's current posting
+// status - rather than whatever the content check stored when it ran. Passing
+// them to ModMessageWorry stops the same cause being stated twice, once here and
+// once from the stored reason (Discourse #9989).
+const explainedElsewhere = computed(() => {
+  // Location is always better answered live than from the stored reason: either
+  // we still can't place the post, and the notice above says so in more helpful
+  // words, or a moderator has since added a postcode and the stored reason is
+  // stale - it would claim we don't know where a post with a visible postcode is.
+  const covered = ['NoLocation']
 
-  if (!raw) {
-    return []
+  // Only claim this one when the notice above is actually rendering. The member's
+  // memberships may simply not have loaded, and a post held purely by a setting
+  // with nothing saying so is what Discourse #9987 was about.
+  if (pending.value && membership.value?.ourpostingstatus === 'MODERATED') {
+    covered.push('MemberModerated')
   }
 
-  let parsed = raw
-
-  if (typeof raw === 'string') {
-    try {
-      parsed = JSON.parse(raw)
-    } catch (e) {
-      // Never let a malformed reason take the whole message card down.
-      console.error('Could not parse contentcheck_reasons', e)
-      return []
-    }
-  }
-
-  return Array.isArray(parsed)
-    ? parsed.map((reason) => reason?.detail).filter(Boolean)
-    : []
+  return covered
 })
 
 // The origin group: the earliest arrival across the post's groups (shown as "First

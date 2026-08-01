@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ModMessage from '~/modtools/components/ModMessage.vue'
+// The real child, so tests can assert on what a moderator actually sees rather
+// than on the stub that hid duplicate hold reasons (Discourse 9989).
+import ModMessageWorry from '~/modtools/components/ModMessageWorry.vue'
 
 // Hoisted mocks
 const {
@@ -198,8 +201,14 @@ describe('ModMessage', () => {
     ...overrides,
   })
 
-  // Mount helper with common stubs
-  function mountComponent(props = {}, messageOverrides = {}) {
+  // Mount helper with common stubs. Pass stubOverrides to change or disable one
+  // of them - `{ ModMessageWorry: false }` mounts the real child, which is how
+  // duplicate hold-reason rendering becomes visible (Discourse 9989).
+  function mountComponent(
+    props = {},
+    messageOverrides = {},
+    stubOverrides = {}
+  ) {
     const testMessage = createTestMessage(messageOverrides)
     mockMessageStore.byId.mockReturnValue(testMessage)
     return mount(ModMessage, {
@@ -372,6 +381,11 @@ describe('ModMessage', () => {
             ],
           },
           'client-only': { template: '<div><slot /></div>' },
+          ExternalLink: {
+            template: '<a :href="href"><slot /></a>',
+            props: ['href'],
+          },
+          ...stubOverrides,
         },
         mocks: {
           datetimeshort: (val) => `formatted:${val}`,
@@ -452,7 +466,11 @@ describe('ModMessage', () => {
         {
           spamreason: 'Flagged as spam',
           groups: [
-            { groupid: 789, collection: 'Pending', spamreason: 'Flagged as spam' },
+            {
+              groupid: 789,
+              collection: 'Pending',
+              spamreason: 'Flagged as spam',
+            },
           ],
         }
       )
@@ -465,8 +483,11 @@ describe('ModMessage', () => {
   // The automated content check records WHY it left a post in the queue, but nothing
   // ever showed it. A paint post flagged on the word "mineral" looked to the moderator
   // like it had been called a medicine for no reason (Discourse 9988), and a post held
-  // purely by a moderation setting said nothing at all (9987).
+  // purely by a moderation setting said nothing at all (9987). ModMessageWorry renders
+  // these, so mount the real one rather than the stub used elsewhere in this file.
   describe('Content check hold reasons', () => {
+    const REAL_WORRY = { ModMessageWorry }
+
     it('shows the word that flagged the post', async () => {
       const wrapper = mountComponent(
         {},
@@ -486,11 +507,15 @@ describe('ModMessage', () => {
               ]),
             },
           ],
-        }
+        },
+        REAL_WORRY
       )
       await flushPromises()
-      expect(wrapper.text()).toContain('Why this is waiting for approval')
-      expect(wrapper.text()).toContain("Matched concern keyword 'mineral'")
+      const text = wrapper.text()
+      expect(text).toContain('Medicine or drug')
+      // Named once - the category alone told Emma nothing (9988), but saying it
+      // twice is what 9989 was about.
+      expect(text.split('mineral').length - 1).toBe(1)
     })
 
     it('explains a hold caused by a moderation setting', async () => {
@@ -512,7 +537,8 @@ describe('ModMessage', () => {
               ]),
             },
           ],
-        }
+        },
+        REAL_WORRY
       )
       await flushPromises()
       expect(wrapper.text()).toContain('This group moderates all posts')
@@ -527,24 +553,29 @@ describe('ModMessage', () => {
               groupid: 789,
               collection: 'Pending',
               contentcheck_reasons: [
-                { check: 'PhoneNumber', detail: 'Post contains a phone number' },
+                {
+                  check: 'PhoneNumber',
+                  detail: 'Post contains a phone number',
+                },
               ],
             },
           ],
-        }
+        },
+        REAL_WORRY
       )
       await flushPromises()
-      expect(wrapper.text()).toContain('Post contains a phone number')
+      expect(wrapper.text()).toContain('Phone number')
     })
 
     it('shows nothing when there are no reasons', async () => {
       const wrapper = mountComponent(
         {},
-        { groups: [{ groupid: 789, collection: 'Pending' }] }
+        { groups: [{ groupid: 789, collection: 'Pending' }] },
+        REAL_WORRY
       )
       await flushPromises()
-      expect(wrapper.vm.holdReasons).toEqual([])
-      expect(wrapper.text()).not.toContain('Why this is waiting for approval')
+      expect(wrapper.find('.mod-message-worry').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Flagged')
     })
 
     it('survives malformed reasons rather than breaking the card', async () => {
@@ -561,12 +592,136 @@ describe('ModMessage', () => {
               contentcheck_reasons: 'not json at all',
             },
           ],
-        }
+        },
+        REAL_WORRY
       )
       await flushPromises()
-      expect(wrapper.vm.holdReasons).toEqual([])
-      expect(wrapper.text()).not.toContain('Why this is waiting for approval')
+      expect(wrapper.text()).toContain('OFFER: Test Item')
+      expect(wrapper.text()).not.toContain('Flagged')
       consoleError.mockRestore()
+    })
+  })
+
+  // Discourse 9989 ("All flags waving"): a post with two flags showed four notices.
+  // ModMessageWorry has rendered contentcheck_reasons since June; a second renderer
+  // was added here for the same array, plus hold-reason kinds that repeat notices
+  // this component already shows. Every test below mounts the REAL ModMessageWorry -
+  // the stub used elsewhere in this file is what hid the duplication.
+  describe('Hold reasons are explained exactly once (Discourse 9989)', () => {
+    const REAL_WORRY = { ModMessageWorry }
+
+    function occurrences(text, needle) {
+      return text.split(needle).length - 1
+    }
+
+    function mountWithReasons(reasons, extraMessage = {}, props = {}) {
+      return mountComponent(
+        props,
+        {
+          groups: [
+            {
+              groupid: 789,
+              collection: 'Pending',
+              contentcheck_reasons: reasons,
+            },
+          ],
+          ...extraMessage,
+        },
+        REAL_WORRY
+      )
+    }
+
+    it('states a flagged keyword once, not twice', async () => {
+      const wrapper = mountWithReasons([
+        {
+          check: 'ConcernKeyword',
+          category: null,
+          action: 'flag',
+          keyword: 'jewellery',
+          detail: "Matched concern keyword 'jewellery'",
+        },
+      ])
+      await flushPromises()
+      expect(occurrences(wrapper.text(), 'jewellery')).toBe(1)
+    })
+
+    it('states a money-symbol flag once across both of its sources', async () => {
+      // The stored Money check and the real-time worry word are the same "£".
+      const wrapper = mountWithReasons(
+        [{ check: 'Money', detail: 'Post contains a money symbol' }],
+        { worry: [{ worryword: { keyword: '£', type: 'Other' } }] }
+      )
+      await flushPromises()
+      const text = wrapper.text()
+      expect(occurrences(text, 'Post contains a money symbol')).toBe(1)
+      expect(text).not.toContain('Flagged for review: "£"')
+    })
+
+    it('explains a group moderation setting once, and not as a flag', async () => {
+      const wrapper = mountWithReasons([
+        {
+          check: 'GroupModerated',
+          detail:
+            "This group moderates all posts, whatever the member's setting",
+        },
+      ])
+      await flushPromises()
+      const text = wrapper.text()
+      expect(occurrences(text, 'This group moderates all posts')).toBe(1)
+      expect(text).not.toContain('Flagged: This group moderates all posts')
+    })
+
+    it('leaves the missing-location advice to the notice that already gives it', async () => {
+      const wrapper = mountWithReasons(
+        [
+          {
+            check: 'NoLocation',
+            detail:
+              'We could not work out where this post is - add a postcode before approving',
+          },
+        ],
+        { location: null, lat: 0, lng: 0 },
+        { summary: false }
+      )
+      await flushPromises()
+      const text = wrapper.text()
+      expect(text).toContain("We couldn't work out where this post is")
+      expect(text).not.toContain('add a postcode before approving')
+    })
+
+    it('drops a stale no-location reason once the post has a location', async () => {
+      // A moderator added a postcode after the check ran. Saying we don't know
+      // where a post with a visible postcode is would be worse than saying nothing.
+      const wrapper = mountWithReasons(
+        [
+          {
+            check: 'NoLocation',
+            detail:
+              'We could not work out where this post is - add a postcode before approving',
+          },
+        ],
+        { location: { lat: 54.97, lng: -1.61 } },
+        { summary: false }
+      )
+      await flushPromises()
+      const text = wrapper.text()
+      expect(text).not.toContain('add a postcode before approving')
+      expect(text).not.toContain("We couldn't work out where this post is")
+    })
+
+    it('still explains a member moderation setting when no membership is loaded', async () => {
+      // The "This member is Moderated" notice needs fromUser.memberships. Without
+      // it the stored reason is the only explanation, so it must survive (9987).
+      const wrapper = mountWithReasons([
+        {
+          check: 'MemberModerated',
+          detail: "This member's posts are moderated",
+        },
+      ])
+      await flushPromises()
+      expect(
+        occurrences(wrapper.text(), "This member's posts are moderated")
+      ).toBe(1)
     })
   })
 
@@ -677,7 +832,11 @@ describe('ModMessage', () => {
       // (0,0) and its blurred form are unresolved locations, not foreign ones -
       // they must NOT trip the scam warning (Discourse #9865).
       ['null island (0,0) is not outside UK', { lat: 0, lng: 0 }, false],
-      ['blurred null island (0.004,0) is not outside UK', { lat: 0.004, lng: 0 }, false],
+      [
+        'blurred null island (0.004,0) is not outside UK',
+        { lat: 0.004, lng: 0 },
+        false,
+      ],
     ])('%s returns %s', (_desc, location, expected) => {
       const wrapper = mountComponent({}, { location })
       expect(wrapper.vm.outsideUK).toBe(expected)
@@ -687,7 +846,11 @@ describe('ModMessage', () => {
   describe('Computed: noLocation', () => {
     it.each([
       ['real UK location', { lat: 51.5, lng: -0.1 }, false],
-      ['genuinely foreign location (New York)', { lat: 40.7, lng: -74.0 }, false],
+      [
+        'genuinely foreign location (New York)',
+        { lat: 40.7, lng: -74.0 },
+        false,
+      ],
       ['null island (0,0)', { lat: 0, lng: 0 }, true],
       ['blurred null island (0.004,0)', { lat: 0.004, lng: 0 }, true],
     ])('%s -> %s', (_desc, location, expected) => {
@@ -696,7 +859,10 @@ describe('ModMessage', () => {
     })
 
     it('is true when there is no position at all', () => {
-      const wrapper = mountComponent({}, { location: null, lat: null, lng: null })
+      const wrapper = mountComponent(
+        {},
+        { location: null, lat: null, lng: null }
+      )
       expect(wrapper.vm.noLocation).toBe(true)
     })
   })
@@ -1623,7 +1789,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1648,7 +1819,12 @@ describe('ModMessage', () => {
         { contextGroupid: 789 },
         {
           groups: [
-            { groupid: 999, namedisplay: 'Origin', collection: 'Approved', arrival: rippleEarlier },
+            {
+              groupid: 999,
+              namedisplay: 'Origin',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+            },
             {
               groupid: 789,
               namedisplay: 'Context',
@@ -1661,9 +1837,9 @@ describe('ModMessage', () => {
         }
       )
       expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
-      expect(
-        wrapper.find('[data-test="ripple-proximity-note"]').exists()
-      ).toBe(false)
+      expect(wrapper.find('[data-test="ripple-proximity-note"]').exists()).toBe(
+        false
+      )
     })
 
     it('does not warn when the post has not rippled in', () => {
