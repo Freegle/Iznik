@@ -210,6 +210,34 @@ else
   note "gate (f) OK: every site missing from the code is accounted for by a parity test"
 fi
 
+# --- Gate (g): the committed manifest must not be stale -----------------------
+# The mirror image of gate (f). A site the manifest still calls raw and present
+# in the code, which re-extraction no longer finds, means the manifest was not
+# regenerated after those sites were converted. The manifest is then lying in
+# the safe-looking direction: it under-reports progress, and because the stale
+# entry claims the site is still there, gate (f) has nothing to complain about.
+#
+# This is not hypothetical. Committing with `git add -A` while conversion work
+# was still in flight captured half-converted files alongside a manifest
+# generated before them, and every other gate passed.
+jq -n --slurpfile c "$COMMITTED_MANIFEST" --slurpfile t "$TEMP_MANIFEST" '
+  ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+  [ $committed | keys[] |
+    select($committed[.].presentInCode == true) |
+    select($committed[.].status == "raw" or $committed[.].status == "in-progress") |
+    select($temp[.] == null or $temp[.].presentInCode == false) |
+    {id: ., file: $committed[.].file, line: $committed[.].line} ]
+' >"$WORKDIR/stale.json"
+
+stale_count=$(jq 'length' "$WORKDIR/stale.json")
+if [ "$stale_count" -gt 0 ]; then
+  fail "$stale_count site(s) recorded as raw and present, but re-extraction no longer finds them - the committed manifest is stale:"
+  jq -r '.[] | "  \(.file):\(.line)  [\(.id)]"' "$WORKDIR/stale.json" | head -20
+  note "fix: regenerate the manifest (cd tools/orm-migration && go run .) and commit it together with the conversions"
+else
+  note "gate (g) OK: the committed manifest matches what re-extraction finds"
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"
