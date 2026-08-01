@@ -157,6 +157,14 @@ func main() {
 		merge(sites, prev)
 	}
 
+	// Applied after the carry-forward so that a rule added to keep-raw.json
+	// takes effect on the next run without anyone hand-editing the manifest.
+	applied, err := applyKeepRaw(sites, filepath.Join(filepath.Dir(out), "keep-raw.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "extract:", err)
+		os.Exit(1)
+	}
+
 	sort.Slice(sites, func(i, j int) bool {
 		if sites[i].File != sites[j].File {
 			return sites[i].File < sites[j].File
@@ -168,7 +176,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "extract:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("%d sites written to %s\n", len(sites), out)
+	fmt.Printf("%d sites written to %s (%d marked keep-raw by rule)\n", len(sites), out, applied)
 }
 
 func scan(root, repo string) ([]*Site, error) {
@@ -194,7 +202,11 @@ func scan(root, repo string) ([]*Site, error) {
 			return nil
 		}
 
-		isTest := strings.HasSuffix(path, "_test.go")
+		// Fixture SQL is anything in a _test.go file or living in the test
+		// package. testUtils.go is not named _test.go but is 79 sites of pure
+		// fixture setup, and counting it as production overstates the work.
+		isTest := strings.HasSuffix(path, "_test.go") ||
+			strings.Contains(filepath.ToSlash(path), "/test/")
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return err
@@ -544,6 +556,71 @@ func exprString(e ast.Expr) string {
 	return "?"
 }
 
+// keepRawRules is the declarative form of plan 7.5.
+type keepRawRules struct {
+	Rules []struct {
+		File     string `json:"file"`
+		Function string `json:"function"`
+		Reason   string `json:"reason"`
+	} `json:"rules"`
+}
+
+// applyKeepRaw marks sites that review has decided stay raw. A converted site
+// is never demoted: once a site has a passing parity test, a broad rule added
+// later must not silently undo that work.
+func applyKeepRaw(sites []*Site, path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	var rules keepRawRules
+	if err := json.Unmarshal(b, &rules); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	for i, r := range rules.Rules {
+		if strings.TrimSpace(r.Reason) == "" {
+			return 0, fmt.Errorf("%s: rule %d (%s) has no reason; deferral must always carry a justification", path, i, r.File)
+		}
+	}
+
+	applied := 0
+	hits := make([]int, len(rules.Rules))
+	for _, s := range sites {
+		if s.Status == StatusConverted || s.Status == StatusTestFixture {
+			continue
+		}
+		for ri, r := range rules.Rules {
+			// A trailing slash means the rule covers a whole directory.
+			matchFile := s.File == r.File ||
+				(strings.HasSuffix(r.File, "/") && strings.HasPrefix(s.File, r.File))
+			if !matchFile {
+				continue
+			}
+			if r.Function != "" && s.Function != r.Function {
+				continue
+			}
+			s.Status = StatusKeepRaw
+			s.Reason = r.Reason
+			applied++
+			hits[ri]++
+			break
+		}
+	}
+
+	// A rule that matches nothing is usually a typo in a path. It can also be
+	// legitimate, so warn rather than fail, but never let it pass unnoticed.
+	for i, r := range rules.Rules {
+		if hits[i] == 0 {
+			fmt.Fprintf(os.Stderr, "warning: keep-raw rule %d matched no sites: %s %s\n", i, r.File, r.Function)
+		}
+	}
+	return applied, nil
+}
+
 // Manifest is the on-disk shape.
 type Manifest struct {
 	Generated string           `json:"generated"`
@@ -572,7 +649,13 @@ func merge(sites []*Site, prev *Manifest) {
 		if !ok {
 			continue
 		}
-		if old.Status != "" {
+		// Only decisions a human made are carried forward. The raw versus
+		// test-fixture axis is derived from the file path, so letting a stale
+		// manifest override it would freeze a misclassification permanently:
+		// that is exactly how 79 fixture sites in testUtils.go kept counting
+		// as production work after the path rule was corrected.
+		switch old.Status {
+		case StatusConverted, StatusInProgress, StatusKeepRaw, StatusRetired:
 			s.Status = old.Status
 		}
 		s.Reason = old.Reason

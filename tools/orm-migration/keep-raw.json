@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Deliberate keep-raw decisions, per plan section 7.5. These are the sites",
+    "where forcing the ORM would hurt readability and a rewrite bug would be",
+    "silent and expensive. Every rule must carry a reason: the plan forbids",
+    "silent deferral, so a site can only leave the raw count by being converted",
+    "or by appearing here with a justification that survived review.",
+    "",
+    "Rules match on file plus optional function. The extractor applies them on",
+    "every regeneration, so these decisions are declarative rather than a",
+    "hand-edited state that drifts.",
+    "",
+    "Each keep-raw site becomes an input to migration Phase 4 (the dialect",
+    "port), and per 7.5 should sit behind a thin repository layer with its own",
+    "integration test."
+  ],
+  "rules": [
+    {
+      "file": "iznik-server-go/message/bounds.go",
+      "function": "Bounds",
+      "reason": "Two 20-line spatial/CASE/ANY_VALUE queries over the messages_spatial index. A rewrite bug here silently shows the wrong nearby posts, which no test would obviously catch. Named in plan 7.5."
+    },
+    {
+      "file": "iznik-server-go/message/search.go",
+      "reason": "Embeds utils.AuthorReachCapWhere, the most widely reused WHERE fragment in the codebase: JSON extraction plus haversine trigonometry plus spatial predicates. Named in plan 7.5. Note that reachcap.go itself builds a string and never executes it, so the cost lands on the callers that splice it in."
+    },
+    {
+      "file": "iznik-server-go/isochrone/message.go",
+      "reason": "Embeds utils.AuthorReachCapWhere; see the note on message/search.go. Named in plan 7.5."
+    },
+    {
+      "file": "iznik-server-go/ormharness/",
+      "reason": "Migration harness. These sites execute the original raw SQL by design, in order to compare it against the replacement ORM call, so they are not migration targets."
+    },
+    {
+      "file": "iznik-server-go/userdump/sqlite.go",
+      "reason": "Builds a SQLite export file, not a query against the Percona cluster. Out of scope for the MySQL-to-ORM work and unaffected by the engine migration."
+    },
+    {
+      "file": "iznik-server-go/database/retry.go",
+      "reason": "Infrastructure wrapper: takes an already-built statement from a caller and retries it. The SQL belongs to the calling site, which is inventoried separately."
+    },
+    {
+      "file": "iznik-server-go/database/insert.go",
+      "reason": "Infrastructure wrapper around LAST_INSERT_ID handling for the read/write split. The SQL belongs to the calling site, which is inventoried separately."
+    }
+  ]
+}
