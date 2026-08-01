@@ -342,7 +342,7 @@ func ShadowRowDigest[T any](rows []T, ordered bool) (string, error) {
 	for i, row := range rows {
 		encoded, err := json.Marshal(row)
 		if err != nil {
-			return "", fmt.Errorf("ormharness: encoding row %d for shadow digest: %w", i, err)
+			return "", fmt.Errorf("ormshadow: encoding row %d for shadow digest: %w", i, err)
 		}
 		sum := sha256.Sum256(encoded)
 		rowHashes[i] = hex.EncodeToString(sum[:])

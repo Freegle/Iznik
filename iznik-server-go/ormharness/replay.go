@@ -35,9 +35,10 @@ import (
 )
 
 // ExplainTree runs `EXPLAIN FORMAT=TREE` for sql/args against db and returns
-// the plan text. MySQL names the single result column "EXPLAIN", but that
-// has moved before now, so this scans generically and takes whichever
-// column comes back as a string rather than pinning the name.
+// the plan text. MySQL calls the single result column "EXPLAIN", but column
+// naming for this statement form is not part of any stability guarantee, so
+// this scans generically and takes whichever column comes back as a string
+// rather than pinning the name.
 func ExplainTree(db *gorm.DB, sql string, args ...any) (string, error) {
 	var rows []map[string]any
 	if err := db.Raw("EXPLAIN FORMAT=TREE "+sql, args...).Scan(&rows).Error; err != nil {

@@ -1,6 +1,8 @@
 package test
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -14,10 +16,43 @@ import (
 // they do not depend on, or interfere with, fixture data any other test
 // relies on.
 //
-// Because AssertResultParity calls t.Fatalf on a genuine mismatch, the
-// "should fail" cases below run it inside a nested t.Run and check that
-// sub-test's reported outcome, rather than calling it directly (which would
-// fail this test suite, not just demonstrate that the helper works).
+// The "should fail" cases below cannot use a nested t.Run: a failing subtest
+// fails its parent too, so the suite would go red rather than demonstrating
+// that the helper works. They pass a recorder instead (see
+// resultParityPasses), which is why ormharness.AssertResultParity takes the
+// TestingT interface rather than a concrete *testing.T.
+
+// parityRecorder stands in for *testing.T so a test can assert that
+// AssertResultParity FAILS, without that failure propagating into this suite.
+type parityRecorder struct {
+	failed bool
+	msg    string
+}
+
+var parityAbort = errors.New("ormharness: assertion aborted")
+
+func (r *parityRecorder) Helper() {}
+
+func (r *parityRecorder) Fatalf(format string, args ...any) {
+	r.failed = true
+	r.msg = fmt.Sprintf(format, args...)
+	// Real Fatalf does not return, so neither does this.
+	panic(parityAbort)
+}
+
+// resultParityPasses reports whether AssertResultParity accepted the pair.
+func resultParityPasses(db *gorm.DB, originalSQL string, args []any, replacement ormharness.ReplacementQuery) bool {
+	rec := &parityRecorder{}
+	func() {
+		defer func() {
+			if r := recover(); r != nil && r != parityAbort {
+				panic(r) // a genuine panic, not our controlled unwind
+			}
+		}()
+		ormharness.AssertResultParity(rec, db, originalSQL, args, replacement)
+	}()
+	return !rec.failed
+}
 
 // setupResultParityFixture creates (if missing) and (re)seeds a small fixture
 // table with one row that has a NULL score/note (Bob), so the NULL-sensitive
@@ -86,9 +121,7 @@ func TestAssertResultParity_DifferentDataFails(t *testing.T) {
 			Order("id")
 	}
 
-	passed := t.Run("should_fail_on_genuine_difference", func(t *testing.T) {
-		ormharness.AssertResultParity(t, db, originalSQL, args, replacement)
-	})
+	passed := resultParityPasses(db, originalSQL, args, replacement)
 
 	if passed {
 		t.Fatal("expected AssertResultParity to fail when the replacement returns different data, but it passed")
@@ -112,9 +145,7 @@ func TestAssertResultParity_NullVsEmptyStringFails(t *testing.T) {
 			Order("id")
 	}
 
-	passed := t.Run("should_fail_on_null_vs_empty_string", func(t *testing.T) {
-		ormharness.AssertResultParity(t, db, originalSQL, args, replacement)
-	})
+	passed := resultParityPasses(db, originalSQL, args, replacement)
 
 	if passed {
 		t.Fatal("expected AssertResultParity to fail when NULL becomes an empty string, but it passed")
@@ -158,9 +189,7 @@ func TestAssertResultParity_UnorderedPathCatchesDifference(t *testing.T) {
 			Order("id DESC")
 	}
 
-	passed := t.Run("should_fail_on_missing_row_even_when_unordered", func(t *testing.T) {
-		ormharness.AssertResultParity(t, db, originalSQL, args, replacement)
-	})
+	passed := resultParityPasses(db, originalSQL, args, replacement)
 
 	if passed {
 		t.Fatal("expected AssertResultParity to fail when the replacement is missing a row, but it passed")

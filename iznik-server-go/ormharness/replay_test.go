@@ -107,7 +107,7 @@ func TestReplayRowsEqual_NullDistinctFromEmptyString(t *testing.T) {
 	withEmpty := map[string]any{"id": float64(1), "extra": ""}
 
 	if replayRowsEqual(withNull, withEmpty) {
-		t.Error("expected NULL and empty string to compare unequal, matching ShadowRowDigest's NULL-distinctness")
+		t.Error("expected NULL and empty string to compare unequal, matching ormshadow.ShadowRowDigest's NULL-distinctness")
 	}
 }
 

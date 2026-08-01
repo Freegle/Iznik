@@ -16,7 +16,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"testing"
 
 	"gorm.io/gorm"
 )
@@ -59,7 +58,7 @@ var orderByPattern = regexp.MustCompile(`(?is)\border\s+by\b`)
 // shared canonical order before comparing, because without ORDER BY the
 // engine is free to return rows in any order and the old and new query need
 // not pick the same one.
-func AssertResultParity(t *testing.T, db *gorm.DB, originalSQL string, args []any, replacement ReplacementQuery) {
+func AssertResultParity(t TestingT, db *gorm.DB, originalSQL string, args []any, replacement ReplacementQuery) {
 	t.Helper()
 
 	originalCols, originalRows, err := runRawSQL(db, originalSQL, args)
@@ -149,7 +148,7 @@ func scanRowsGenerically(rows *sql.Rows) ([]string, []resultRow, error) {
 // already pins the SQL text (and therefore column order) for converted
 // sites, so Layer 2's job is to catch data divergence, not re-litigate
 // column ordering.
-func assertSameColumnSet(t *testing.T, originalCols, replacementCols []string) {
+func assertSameColumnSet(t TestingT, originalCols, replacementCols []string) {
 	t.Helper()
 
 	a := append([]string(nil), originalCols...)
@@ -163,7 +162,7 @@ func assertSameColumnSet(t *testing.T, originalCols, replacementCols []string) {
 }
 
 // assertRowsEqualOrdered compares two result sets position by position.
-func assertRowsEqualOrdered(t *testing.T, cols []string, original, replacement []resultRow) {
+func assertRowsEqualOrdered(t TestingT, cols []string, original, replacement []resultRow) {
 	t.Helper()
 
 	if len(original) != len(replacement) {
@@ -181,7 +180,7 @@ func assertRowsEqualOrdered(t *testing.T, cols []string, original, replacement [
 // sides) before comparing position by position. This is only a sort key,
 // not the equality test itself - assertRowEqual still does the real,
 // type-and-NULL-sensitive comparison once the rows are lined up.
-func assertRowsEqualUnordered(t *testing.T, cols []string, original, replacement []resultRow) {
+func assertRowsEqualUnordered(t TestingT, cols []string, original, replacement []resultRow) {
 	t.Helper()
 
 	if len(original) != len(replacement) {
@@ -226,7 +225,7 @@ func canonicalRowKey(cols []string, row resultRow) string {
 // reflect.DeepEqual so that a NULL (nil) never matches "" or 0, and a value
 // that came back as a different Go type on each side (an implicit-cast
 // divergence) is caught even when the two would print the same.
-func assertRowEqual(t *testing.T, cols []string, rowLabel string, original, replacement resultRow) {
+func assertRowEqual(t TestingT, cols []string, rowLabel string, original, replacement resultRow) {
 	t.Helper()
 
 	for _, c := range cols {

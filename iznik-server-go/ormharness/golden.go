@@ -18,11 +18,20 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"testing"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
+
+// TestingT is the part of *testing.T this package needs. Taking an interface
+// rather than the concrete type is what lets the package's own tests assert
+// that a bad conversion FAILS: a failing subtest fails its parent, so
+// "expected failure" cannot be expressed with t.Run, and a recorder has to be
+// substituted instead. *testing.T satisfies this as-is.
+type TestingT interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
 
 // AssertGoldenSQL builds the GORM statement produced by build, renders it
 // without executing it, and fails t unless the result is canonically
@@ -41,7 +50,7 @@ import (
 //	ormharness.AssertGoldenSQL(t, "a1b2c3d4e5f6", func(tx *gorm.DB) *gorm.DB {
 //		return tx.Table("alerts").Where("id = ?", 1).Delete(nil)
 //	})
-func AssertGoldenSQL(t *testing.T, siteID string, build func(tx *gorm.DB) *gorm.DB) {
+func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB) {
 	t.Helper()
 
 	sites, err := loadManifest()

@@ -2,6 +2,8 @@ package ormharness
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,11 +45,45 @@ func withTestManifest(t *testing.T, sites map[string]manifestSite) {
 // based helper fails the test under the right conditions: t.Run executes
 // the subtest synchronously and returns false if it failed, without taking
 // the outer test down with it.
+// abortSentinel is what recordingT panics with to unwind out of the assertion
+// at the point a real *testing.T would have called runtime.Goexit.
+var abortSentinel = errors.New("ormharness: assertion aborted")
+
+// recordingT stands in for *testing.T so a test can assert that an assertion
+// FAILS. t.Run cannot express that: a failing subtest fails its parent too, so
+// every "expected failure" case would turn the suite red.
+type recordingT struct {
+	failed bool
+	msg    string
+}
+
+func (r *recordingT) Helper() {}
+
+func (r *recordingT) Fatalf(format string, args ...any) {
+	r.failed = true
+	r.msg = fmt.Sprintf(format, args...)
+	// Real Fatalf does not return. Panicking preserves that control flow, so
+	// the assertion under test cannot carry on past the point it gave up.
+	panic(abortSentinel)
+}
+
 func runAssertGoldenSQL(t *testing.T, siteID string, build func(tx *gorm.DB) *gorm.DB) (passed bool) {
 	t.Helper()
-	return t.Run(siteID, func(st *testing.T) {
-		AssertGoldenSQL(st, siteID, build)
-	})
+
+	rec := &recordingT{}
+	func() {
+		defer func() {
+			if r := recover(); r != nil && r != abortSentinel {
+				panic(r) // a genuine panic, not our controlled unwind
+			}
+		}()
+		AssertGoldenSQL(rec, siteID, build)
+	}()
+
+	if rec.failed {
+		t.Logf("AssertGoldenSQL reported for %s: %s", siteID, rec.msg)
+	}
+	return !rec.failed
 }
 
 // --- Tests against the real manifest -----------------------------------

@@ -33,13 +33,16 @@ By complexity: simple 1,206, moderate 149, complex 342.
 |---|---|---|---|
 | 1 | Extractor (7.1) | ✅ | Go AST walker, `go run . -selftest` covers 12 regression cases |
 | 2 | Manifest + keep-raw rules (7.1, 7.5) | ✅ | Declarative rules, reviewed as a diff |
-| 3 | CI ratchet, Gate 1 (7.1.3) | 🔄 | |
-| 4 | Harness Layer 1, golden SQL parity (7.2) | 🔄 | |
-| 5 | Harness Layer 2, result parity (7.2) | 🔄 | |
-| 6 | Harness Layers 3 and 4 (7.2) | 🔄 | |
-| 7 | Wave 0 pilot, 10 sites (7.3) | ⬜ | Sites selected below |
-| 8 | Burn-down reporting (7.3) | 🔄 | |
-| 9 | Full Go suite green, PR raised | ⬜ | Humans merge, never me |
+| 3 | CI ratchet, Gate 1 (7.1.3) | ✅ | Gates b, c, d, e, f all pass; orb job wired |
+| 4 | Harness Layer 1, golden SQL parity (7.2) | ✅ | `AssertGoldenSQL(t, siteID, build)` |
+| 5 | Harness Layer 2, result parity (7.2) | ✅ | `AssertResultParity`, NULL- and type-sensitive |
+| 6 | Harness Layers 3 and 4 (7.2) | ✅ | `ormshadow` (production) + `ormharness/replay.go` (CI) |
+| 7 | Wave 0 pilot, 10 sites (7.3) | ✅ | 9 converted, 1 became keep-raw; see retrospective |
+| 8 | Burn-down reporting (7.3) | ✅ | `node tools/orm-migration/burndown.mjs [--json]` |
+| 9 | Full Go suite green, PR raised | 🔄 | Humans merge, never me |
+
+Note the orb still needs publishing by a human:
+`circleci orb publish .circleci/orb/freegle-tests.yml freegle/tests@1.x.x`.
 
 Waves 1 to 5 are deliberately NOT in this branch. Plan 7.3: "Nothing else
 converts until the pilot retrospective."
@@ -72,6 +75,54 @@ SQL that does not parse.
 
 ## Retrospective
 
-To be completed after the pilot, per plan 7.3. Must record measured per-site
-cost so the 4 to 6 week estimate for waves 1 to 4 can be re-forecast from
-evidence rather than left as the original guess.
+Nine of the ten converted cleanly. Site 8 did not, and that is the most useful
+thing the pilot produced.
+
+**Site 8, `tryst.CreateTryst`, became keep-raw.** It deliberately drops to the
+`database/sql` handle so `LastInsertId()` reports the row its upsert touched,
+and returns that id to the caller. GORM does not surface `LastInsertId` for an
+`ON DUPLICATE KEY UPDATE`, and the read/write split makes reading the id back
+with a follow-up SELECT unsafe. A mechanical conversion here would have
+compiled, passed a naive review, and returned wrong ids. It is now recorded in
+`keep-raw.json` with that reasoning, and site 8 was replaced by the
+`newsfeed_reports` upsert to keep ten conversions in the pilot.
+
+**What the harness caught that review would not have.** Four defects, all found
+by running the thing rather than reading it:
+
+1. The dry-run `*gorm.DB` omitted `DisableAutomaticPing`. `gorm.Open` pings
+   unless told otherwise (`gorm.go:236`), so every Layer 1 test would have
+   failed trying to dial `127.0.0.1:3306`.
+2. The manifest sat above `iznik-server-go`, which the apiv2 container mounts
+   as `/app`. It was therefore unreachable from the tests at any cwd. It now
+   lives in the package and is embedded with `go:embed`.
+3. A converted site's raw SQL disappears, so the extractor stopped finding it,
+   and "converted" was indistinguishable from "deleted". Sites are now retained
+   with `presentInCode: false`, and ratchet gate (f) fails if one vanished with
+   no parity test naming it.
+4. `file-sync.sh` could never sync a brand-new package into the dev container,
+   because `docker cp` fails when the parent directory does not exist. The
+   symptom was a build error naming a package that plainly existed on disk.
+
+**Cost.** The conversions themselves were minutes: the mechanical shapes
+(single-table SELECT, UPDATE, DELETE, INSERT) are genuinely mechanical, which
+supports the plan's ~75% estimate. Essentially all the effort went into the
+harness and into the four defects above, i.e. into one-off infrastructure
+rather than per-site work. That is consistent with plan 7.7's shape (3 weeks of
+prerequisites, then 4 to 6 weeks of waves) and gives no reason yet to revise
+the wave estimate. It should be re-checked after the first full batch of ~20,
+which is the first data point with enough sites to measure a real per-site rate.
+
+**Recommendation before Wave 1.** Resolve the Layer 2 protocol caveat below,
+since it will otherwise produce confusing false failures at volume.
+
+## Known caveat to resolve before Wave 1
+
+`go-sql-driver/mysql` returns `[]byte` under the text protocol and native Go
+types under the binary (prepared-statement) protocol. A raw query carrying bind
+args and a GORM chain carrying none can therefore return the same value with
+different Go types, which Layer 2's `reflect.DeepEqual` comparison rejects.
+That strictness is deliberate (it is what catches genuine implicit-cast
+divergence), but it can fire for a reason that has nothing to do with the
+conversion. Either normalise the two protocols before comparing, or report the
+difference with an explicit hint that it may be protocol rather than semantics.
