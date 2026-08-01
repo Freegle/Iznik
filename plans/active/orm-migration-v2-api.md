@@ -113,6 +113,37 @@ prerequisites, then 4 to 6 weeks of waves) and gives no reason yet to revise
 the wave estimate. It should be re-checked after the first full batch of ~20,
 which is the first data point with enough sites to measure a real per-site rate.
 
+## Known limitation: Layer 1 tests re-implement the chain, they do not reference it
+
+A Layer 1 parity test writes its own GORM chain and asserts that it renders the
+site's golden SQL. It does not call the production code. So what the test
+actually proves is "a chain of this shape renders the golden", not "the chain in
+production renders the golden". If the two drift, the test still passes.
+
+This surfaced concretely at site `93a1565d8106` (newsfeed.go). Its destination
+is a `bool`, which GORM's `Count` cannot take, so production keeps
+`Select("COUNT(*)")...Row().Scan(&loved)` while the test uses `Count(&dest)`.
+Both render `SELECT COUNT(*) FROM newsfeed_likes WHERE ...` and canonicalise
+equal, so that site is correct. But it is correct by inspection, not because the
+harness proved it.
+
+What limits the damage today:
+
+- The conversion and its test land in the same diff, so a reviewer sees both.
+- Layer 2 result parity executes the real statements and compares rows, which
+  does not care how either side is spelled.
+- Wave 1 shapes are mechanical enough that chain and test are usually identical
+  text.
+
+None of that is a substitute for the guarantee the plan implies. The fix is to
+extract each converted query into a named builder that production and test both
+call, so the test renders the production chain by construction. That is a
+per-site refactor and was not done for the 170 sites converted so far, which is
+a real gap to weigh when reviewing, not a theoretical one.
+
+Worth deciding before the waves get much further: retrofitting later costs more
+than adopting it now.
+
 ## The `IN ?` sites are convertible, not permanently raw
 
 Every wave 1 batch has skipped the same shape: a Go slice bound to `IN ?`.
