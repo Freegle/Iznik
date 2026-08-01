@@ -16,9 +16,13 @@ describe('NewsConvertedNotice', () => {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
           },
+          // data-to reports the STATE of the `to` prop, not just its value:
+          // Vue drops an attribute bound to null, so `:data-to="to"` could not
+          // tell "no route passed" from "route passed as null" - and null is
+          // exactly what crashed the router.
           'b-button': {
             template:
-              '<button class="b-button" :disabled="disabled" :data-to="to"><slot /></button>',
+              '<button class="b-button" :disabled="disabled" :data-to="to === undefined ? \'absent\' : String(to)"><slot /></button>',
             props: ['variant', 'to', 'disabled'],
           },
         },
@@ -51,7 +55,11 @@ describe('NewsConvertedNotice', () => {
 
     // The moderator is not the one going to My Posts.
     expect(wrapper.find('.b-button').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.b-button').attributes('data-to')).toBeUndefined()
+
+    // No route at all - NOT `to` bound to null. A null `to` still reaches the
+    // router, which does `'path' in to` and throws, taking the page down as
+    // soon as the convert modal opens.
+    expect(wrapper.find('.b-button').attributes('data-to')).toBe('absent')
 
     // Preview must not change the wording - that is the whole point.
     expect(wrapper.text()).toContain(

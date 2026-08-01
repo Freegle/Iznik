@@ -8,12 +8,14 @@
       You'll find it in My Posts, along with any replies, and you can edit or
       withdraw it from there.
     </p>
-    <b-button
-      variant="primary"
-      :to="preview ? null : '/myposts'"
-      :disabled="preview"
-      class="mb-1"
-    >
+    <!-- Two buttons rather than one with :to bound to null. A null `to` still
+         reaches the router, which does `'path' in to` and throws
+         "Cannot use 'in' operator to search for 'path' in null" - that took the
+         whole page down as soon as the convert modal opened. -->
+    <b-button v-if="preview" variant="primary" class="mb-1" disabled>
+      Go to My Posts
+    </b-button>
+    <b-button v-else variant="primary" to="/myposts" class="mb-1">
       Go to My Posts
     </b-button>
   </NoticeMessage>
