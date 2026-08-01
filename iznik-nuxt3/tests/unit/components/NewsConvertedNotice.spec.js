@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import NewsConvertedNotice from '~/components/NewsConvertedNotice.vue'
 
 // This is the note left on a ChitChat thread, in the member's name, when a
-// moderator posts their item properly for them. The convert modal renders the
+// moderator posts an OFFER/WANTED for them. The convert modal renders the
 // same component in preview mode, so a moderator sees exactly what the member
 // will read before committing to it.
 describe('NewsConvertedNotice', () => {
@@ -30,12 +30,34 @@ describe('NewsConvertedNotice', () => {
     })
   }
 
-  it('explains that a volunteer posted it for them', () => {
-    const wrapper = createWrapper()
+  it('says a WANTED was posted when it became a WANTED', () => {
+    const wrapper = createWrapper({ msgtype: 'Wanted' })
     expect(wrapper.text()).toContain(
-      'One of our volunteers has posted this properly for you'
+      'One of our volunteers has posted a WANTED for you'
     )
     expect(wrapper.text()).toContain("You don't need to do anything")
+  })
+
+  it('says an OFFER was posted when it became an OFFER', () => {
+    const wrapper = createWrapper({ msgtype: 'Offer' })
+    expect(wrapper.text()).toContain(
+      'One of our volunteers has posted an OFFER for you'
+    )
+  })
+
+  it('falls back to neutral wording when the post type is unknown', () => {
+    // Notices written before msgid was recorded have no type to show.
+    const wrapper = createWrapper()
+    expect(wrapper.text()).toContain(
+      'One of our volunteers has posted this for you'
+    )
+  })
+
+  it('never says "properly" - that reads as a telling-off', () => {
+    for (const msgtype of ['Wanted', 'Offer', undefined]) {
+      const wrapper = createWrapper(msgtype ? { msgtype } : {})
+      expect(wrapper.text()).not.toContain('properly')
+    }
   })
 
   it('tells them where to find it', () => {
@@ -51,7 +73,7 @@ describe('NewsConvertedNotice', () => {
   })
 
   it('shows the same words in preview, with the button inert', () => {
-    const wrapper = createWrapper({ preview: true })
+    const wrapper = createWrapper({ preview: true, msgtype: 'Wanted' })
 
     // The moderator is not the one going to My Posts.
     expect(wrapper.find('.b-button').attributes('disabled')).toBeDefined()
@@ -63,7 +85,7 @@ describe('NewsConvertedNotice', () => {
 
     // Preview must not change the wording - that is the whole point.
     expect(wrapper.text()).toContain(
-      'One of our volunteers has posted this properly for you'
+      'One of our volunteers has posted a WANTED for you'
     )
   })
 })

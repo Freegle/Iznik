@@ -20,7 +20,10 @@
         section is just for chat and recommendations.
       </p>
     </notice-message>
-    <NewsConvertedNotice v-if="type === 'ConvertedToPost'" />
+    <NewsConvertedNotice
+      v-if="type === 'ConvertedToPost'"
+      :msgtype="reply?.msgtype"
+    />
     <notice-message v-if="type === 'ReferToTaken'">
       <p>
         If your item has been taken, please go to My Posts, click on the item,

@@ -72,8 +72,9 @@ describe('NewsConvertModal', () => {
             template: '<div class="notice-message"><slot /></div>',
           },
           NewsConvertedNotice: {
-            template: '<div class="converted-notice">note preview</div>',
-            props: ['preview'],
+            template:
+              '<div class="converted-notice" :data-msgtype="msgtype || \'\'">note preview</div>',
+            props: ['preview', 'msgtype'],
           },
           SpinButton: {
             template: '<button class="spin-button" :disabled="disabled" />',
@@ -154,6 +155,35 @@ describe('NewsConvertModal', () => {
     await flushPromises()
     expect(wrapper.find('.converted-notice').exists()).toBe(true)
     expect(wrapper.text()).toContain('What goes on this chat')
+  })
+
+  it('previews the note with the type about to be posted', async () => {
+    // "Does anyone have" reads as a WANTED, so the note previews as a WANTED.
+    // The member reads this exact wording, so the preview must track the
+    // moderator's choice rather than showing a generic note.
+    const wrapper = createWrapper({
+      message: 'Does anyone have any bunny ears',
+    })
+    await flushPromises()
+    expect(wrapper.find('.converted-notice').attributes('data-msgtype')).toBe(
+      'Wanted'
+    )
+  })
+
+  describe('photo carry-over', () => {
+    it('tells the moderator the photo comes too', async () => {
+      const wrapper = createWrapper({
+        image: { id: 7, paththumb: 'https://example.com/t.jpg' },
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain("We'll include their photo")
+    })
+
+    it('says nothing about photos when there is none', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('photo')
+    })
   })
 
   // Assert on the SUBJECT line specifically. The description below it is the

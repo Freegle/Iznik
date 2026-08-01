@@ -267,6 +267,142 @@ func TestNewsfeedConvertInfo_UsesTheMembersChosenLocation(t *testing.T) {
 	}
 }
 
+// --- After the convert: what the thread records ---
+//
+// The action must leave a properly-typed notice (a missing enum value truncates
+// the type to '' and the thread renders it as an empty reply from the
+// moderator), point it at the created message so the wording can say WANTED or
+// OFFER, hide the now-redundant ChitChat post, and carry any photo over.
+
+func TestConvertedToPost_TypedNoticeMsgidAndHide(t *testing.T) {
+	prefix := uniquePrefix("convdone")
+	posterID, posterToken := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bunny ears wanted "+prefix)
+	msgID := CreateTestMessageWithoutGroup(t, posterID, "WANTED: bunny ears "+prefix)
+	database.DBConn.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", msgID)
+
+	body, _ := json2.Marshal(map[string]interface{}{
+		"id":     nfID,
+		"msgid":  msgID,
+		"action": "ConvertedToPost",
+	})
+	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req, -1)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db := database.DBConn
+
+	var notice struct {
+		ID    uint64
+		Type  string
+		Msgid uint64
+	}
+	db.Raw("SELECT id, type, msgid FROM newsfeed WHERE replyto = ? ORDER BY id DESC LIMIT 1", nfID).Scan(&notice)
+	assert.Equal(t, "ConvertedToPost", notice.Type,
+		"the notice must survive the enum - '' means the migration is missing")
+	assert.Equal(t, msgID, notice.Msgid,
+		"the notice must point at the post it is about")
+
+	// The real post now exists, so the ChitChat copy is redundant and would
+	// just keep collecting replies the member no longer needs. Hidden exactly
+	// as the mod Hide action does it.
+	var hiddenBy uint64
+	db.Raw("SELECT COALESCE(hiddenby, 0) FROM newsfeed WHERE id = ?", nfID).Scan(&hiddenBy)
+	assert.Equal(t, modID, hiddenBy, "the ChitChat post should be hidden by the converting mod")
+
+	// The member still sees their own hidden thread, and the notice on it must
+	// say what kind of post was made for them.
+	id := strconv.FormatUint(nfID, 10)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"?jwt="+posterToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var thread map[string]interface{}
+	json2.Unmarshal(rsp(resp), &thread)
+
+	replies, _ := thread["replies"].([]interface{})
+	var foundNotice map[string]interface{}
+	for _, r := range replies {
+		reply, _ := r.(map[string]interface{})
+		if reply["type"] == "ConvertedToPost" {
+			foundNotice = reply
+		}
+	}
+
+	if assert.NotNil(t, foundNotice, "the member must see the notice in their thread") {
+		assert.Equal(t, "Wanted", foundNotice["msgtype"],
+			"the thread must know whether it became a WANTED or an OFFER")
+	}
+}
+
+func TestConvertedToPost_CopiesThePhotoOntoTheMessage(t *testing.T) {
+	// If the member put a photo on their ChitChat post, the OFFER/WANTED made
+	// from it must carry the same photo - a photo is often the most useful part
+	// of the post.
+	prefix := uniquePrefix("convphoto")
+	posterID, _ := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	db := database.DBConn
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bunny ears with photo "+prefix)
+	msgID := CreateTestMessageWithoutGroup(t, posterID, "WANTED: bunny ears photo "+prefix)
+
+	uid := "freegletusd-" + prefix
+	db.Exec("INSERT INTO newsfeed_images (newsfeedid, contenttype, externaluid, externalmods) VALUES (?, 'image/jpeg', ?, '{}')", nfID, uid)
+	var imgID uint64
+	db.Raw("SELECT id FROM newsfeed_images WHERE externaluid = ? LIMIT 1", uid).Scan(&imgID)
+	db.Exec("UPDATE newsfeed SET imageid = ? WHERE id = ?", imgID, nfID)
+
+	body, _ := json2.Marshal(map[string]interface{}{
+		"id":     nfID,
+		"msgid":  msgID,
+		"action": "ConvertedToPost",
+	})
+	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req, -1)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var att struct {
+		ID          uint64
+		Externaluid string
+		Primary     bool
+	}
+	db.Raw("SELECT id, externaluid, `primary` FROM messages_attachments WHERE msgid = ? ORDER BY id DESC LIMIT 1", msgID).Scan(&att)
+	assert.Equal(t, uid, att.Externaluid, "the ChitChat photo must arrive on the message")
+	assert.True(t, att.Primary, "and be its primary photo")
+}
+
+func TestConvertedToPost_NoPhotoIsFine(t *testing.T) {
+	// Most ChitChat posts have no photo; the convert must not invent one.
+	prefix := uniquePrefix("convnophoto")
+	posterID, _ := CreateFullTestUser(t, prefix+"_poster")
+	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
+	makeChitChatMod(t, modID)
+
+	nfID := CreateTestNewsfeed(t, posterID, 55.9533, -3.1883, "Bunny ears no photo "+prefix)
+	msgID := CreateTestMessageWithoutGroup(t, posterID, "WANTED: bunny ears nophoto "+prefix)
+
+	body, _ := json2.Marshal(map[string]interface{}{
+		"id":     nfID,
+		"msgid":  msgID,
+		"action": "ConvertedToPost",
+	})
+	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req, -1)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var count int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+}
+
 func TestNewsfeedConvertInfo_RefusesWhenMemberHasNoChosenLocation(t *testing.T) {
 	// No guessing: if the member never set a location we refuse rather than
 	// stamp one on their post.

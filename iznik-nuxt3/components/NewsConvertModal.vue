@@ -55,6 +55,9 @@
           Their area and postcode get added to the subject when it posts, the
           same as any other post.
         </div>
+        <div v-if="newsfeed.image" class="text-muted small mt-1">
+          We'll include their photo on the post.
+        </div>
       </div>
 
       <!-- The server refuses to post for a member it can't place, so say so
@@ -72,7 +75,7 @@
            thread renders, so the two cannot drift apart. -->
       <div class="mt-3">
         <h5>What goes on this chat</h5>
-        <NewsConvertedNotice preview />
+        <NewsConvertedNotice preview :msgtype="type" />
       </div>
 
       <NoticeMessage v-if="error" variant="danger" class="mt-3">

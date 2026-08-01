@@ -198,10 +198,23 @@ describe('NewsRefer', () => {
   // exactly what the member will read. If it were inlined here the two would
   // drift and the moderator would be shown something other than what posts.
   describe('ConvertedToPost type', () => {
-    it('tells the member a volunteer posted it for them', () => {
+    it('says what kind of post the volunteer made for them', () => {
+      // The reply carries msgtype from the server, which knows the message
+      // type even while the post is still pending.
+      mockNewsfeedStore.byId.mockReturnValue({
+        deleted: false,
+        msgtype: 'Wanted',
+      })
       const wrapper = createWrapper({ type: 'ConvertedToPost' })
       expect(wrapper.text()).toContain(
-        'One of our volunteers has posted this properly for you'
+        'One of our volunteers has posted a WANTED for you'
+      )
+    })
+
+    it('survives an old notice with no recorded post type', () => {
+      const wrapper = createWrapper({ type: 'ConvertedToPost' })
+      expect(wrapper.text()).toContain(
+        'One of our volunteers has posted this for you'
       )
     })
 

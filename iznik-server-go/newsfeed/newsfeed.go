@@ -84,6 +84,7 @@ type Newsfeed struct {
 	Imagemods      json.RawMessage   `json:"-"`
 	Image          *NewsImage        `json:"image" gorm:"-"`
 	Msgid          uint64            `json:"msgid"`
+	Msgtype        string            `json:"msgtype,omitempty" gorm:"-"`
 	Replyto        uint64            `json:"replyto"`
 	Groupid        uint64            `json:"groupid"`
 	Eventid        uint64            `json:"eventid"`
@@ -800,6 +801,14 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 			}
 		}
 
+		// A convert-to-post notice needs to say WHAT was posted for the member
+		// - "a WANTED" reads very differently from "an OFFER" - and the client
+		// can't look the message up itself: it's usually still pending, which
+		// only mods and the author can fetch.
+		if newsfeed.Type == "ConvertedToPost" && newsfeed.Msgid > 0 {
+			db.Raw("SELECT type FROM messages WHERE id = ?", newsfeed.Msgid).Scan(&newsfeed.Msgtype)
+		}
+
 		var wg2 sync.WaitGroup
 
 		wg2.Add(2)
@@ -1185,26 +1194,42 @@ func Post(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
 
-		createRefer(db, myid, req.ID, "ConvertedToPost")
+		createRefer(db, myid, req.ID, "ConvertedToPost", req.Msgid)
+
+		// If the member put a photo on their ChitChat post, carry it onto the
+		// OFFER/WANTED - a photo is often the most useful part. Modern images
+		// live in the external store (externaluid); rows without one are
+		// legacy blobs which a fresh ChitChat post can't have.
+		db.Exec("INSERT INTO messages_attachments (msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
+			"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
+			"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+
+			"WHERE n.id = ? AND ni.externaluid IS NOT NULL "+
+			"AND NOT EXISTS (SELECT 1 FROM messages_attachments ma WHERE ma.msgid = ?)",
+			req.Msgid, req.ID, req.Msgid)
+
+		// The real post now exists, so the ChitChat copy is redundant: hide it
+		// exactly as the Hide action does, so it stops collecting replies. The
+		// member still sees their own hidden post, with the notice on it.
+		db.Exec("UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?", myid, req.ID)
 
 		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, ?)",
 			log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_CREATED, myid,
 			fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid))
 	case "ReferToWanted":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToWanted")
+			createRefer(db, myid, req.ID, "ReferToWanted", 0)
 		}
 	case "ReferToOffer":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToOffer")
+			createRefer(db, myid, req.ID, "ReferToOffer", 0)
 		}
 	case "ReferToTaken":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToTaken")
+			createRefer(db, myid, req.ID, "ReferToTaken", 0)
 		}
 	case "ReferToReceived":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToReceived")
+			createRefer(db, myid, req.ID, "ReferToReceived", 0)
 		}
 	case "AttachToThread":
 		// Mod-only: attach a newsfeed item to a different thread
@@ -1439,7 +1464,9 @@ func notifyThreadContributors(db *gorm.DB, posterUserid uint64, newPostID uint64
 }
 
 // createRefer creates a refer-type reply to a newsfeed post and notifies the original poster.
-func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string) {
+// msgid is only set for ConvertedToPost notices, where it names the OFFER/WANTED the notice
+// is about so the thread can say which kind of post was made; pass 0 for the ReferTo family.
+func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid uint64) {
 	// Get user's location
 	latlng := user.GetLatLng(myid)
 	lat := float64(latlng.Lat)
@@ -1454,8 +1481,8 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string) {
 	if err != nil {
 		return
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO newsfeed (type, userid, replyto, position) VALUES (?, ?, ?, %s)", pos),
-		referType, myid, nfID)
+	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO newsfeed (type, userid, replyto, msgid, position) VALUES (?, ?, ?, NULLIF(?, 0), %s)", pos),
+		referType, myid, nfID, msgid)
 	if err != nil {
 		return
 	}

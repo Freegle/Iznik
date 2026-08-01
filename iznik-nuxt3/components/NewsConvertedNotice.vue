@@ -1,8 +1,8 @@
 <template>
   <NoticeMessage variant="primary">
     <p>
-      One of our volunteers has posted this properly for you, so more people
-      will see it. You don't need to do anything.
+      One of our volunteers has posted {{ whatWasPosted }} for you, so more
+      people will see it. You don't need to do anything.
     </p>
     <p>
       You'll find it in My Posts, along with any replies, and you can edit or
@@ -21,16 +21,17 @@
   </NoticeMessage>
 </template>
 <script setup>
-// The note left on a ChitChat thread when a moderator posts the item properly
+// The note left on a ChitChat thread when a moderator posts an OFFER/WANTED
 // for the member.
 //
 // It lives here rather than inline in NewsRefer so that NewsConvertModal can
 // show the moderator exactly what the member will read before they commit to
 // it. Two copies of the wording would drift, and the moderator would end up
 // previewing something other than what actually gets posted.
+import { computed } from 'vue'
 import NoticeMessage from '~/components/NoticeMessage'
 
-defineProps({
+const props = defineProps({
   // Preview mode: rendered inside the convert modal rather than on the thread,
   // so the button is inert - the moderator is not the one going to My Posts.
   preview: {
@@ -38,5 +39,23 @@ defineProps({
     required: false,
     default: false,
   },
+  // 'Offer' or 'Wanted' - what the ChitChat post became. Notices written
+  // before this was recorded have no type, so the wording must survive
+  // without it.
+  msgtype: {
+    type: String,
+    required: false,
+    default: null,
+  },
+})
+
+const whatWasPosted = computed(() => {
+  if (props.msgtype === 'Wanted') {
+    return 'a WANTED'
+  } else if (props.msgtype === 'Offer') {
+    return 'an OFFER'
+  }
+
+  return 'this'
 })
 </script>

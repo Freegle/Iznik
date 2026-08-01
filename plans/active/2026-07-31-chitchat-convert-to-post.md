@@ -50,12 +50,23 @@ pre-populated from the ChitChat text, a preview of the resulting post, and submi
 | 1 | Explore referTo / newsfeed actions / embeddings / message create | ✅ | Primitives all exist |
 | 2 | Plan + branch | ✅ | `feature/chitchat-convert-to-post` |
 | 3 | Go: duplicate-detection endpoint | ✅ | `newsfeed/duplicate.go` + route; same-author, live, cosine ≥ 0.82 |
-| 4 | FE: mod-only duplicate notice | ⬜ | `chitChatMod` gate |
-| 5 | Go: `ConvertToPost` action | 🔄 | BLOCKED ON A DECISION — see "Posting as another member" |
-| 6 | FE: convert modal + preview | ⬜ | prefill item/body |
-| 7 | Thread reply + My Posts pointer | ⬜ | |
-| 8 | Tests (Go + vitest) | ⬜ | |
-| 9 | Screenshots + PR | ⬜ | |
+| 4 | FE: mod-only duplicate notice | ✅ | `chitChatMod` gate |
+| 5 | Go: `ConvertToPost` action | ✅ | option 1: `PutMessageAs`/`JoinAndPostAs` + `?onbehalfof=` |
+| 6 | FE: convert modal + preview | ✅ | prefill item/body |
+| 7 | Thread reply + My Posts pointer | ✅ | |
+| 8 | Tests (Go + vitest) | ✅ | |
+| 9 | Screenshots + PR | ✅ | PR #1216, merged and live |
+
+## Post-ship fixes (2026-08-01, direct on master)
+
+Edward's live test (Gosport WANTED) surfaced four problems, fixed together:
+
+| # | Fix | Status | Notes |
+|---|-----|--------|-------|
+| F1 | `newsfeed.type` ENUM lacked `ConvertedToPost` — MySQL truncated it to `''`, so the notice rendered as an empty reply from the moderator (their header, no body) | ✅ | Laravel migration `2026_08_01_000001` + prod `_migration.sql`; live ALTER + row-repair SQL handed to Edward |
+| F2 | Notice wording said "posted this properly for you" — reads as a telling-off | ✅ | Now "posted a WANTED / an OFFER for you"; `createRefer` stores `msgid`, GET exposes `msgtype` (client can't fetch a pending message itself) |
+| F3 | Original ChitChat post stayed visible after the convert | ✅ | `ConvertedToPost` action now hides it exactly as the Hide action does |
+| F4 | ChitChat photo was dropped | ✅ | Copied `newsfeed_images` → `messages_attachments` (externaluid images) as primary; modal says "We'll include their photo" |
 
 ## Notes
 
