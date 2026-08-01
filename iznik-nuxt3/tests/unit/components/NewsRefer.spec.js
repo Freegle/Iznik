@@ -193,4 +193,21 @@ describe('NewsRefer', () => {
       expect(wrapper.props('threadhead')).toBe(555)
     })
   })
+
+  // The wording lives in NewsConvertedNotice so the convert modal can preview
+  // exactly what the member will read. If it were inlined here the two would
+  // drift and the moderator would be shown something other than what posts.
+  describe('ConvertedToPost type', () => {
+    it('tells the member a volunteer posted it for them', () => {
+      const wrapper = createWrapper({ type: 'ConvertedToPost' })
+      expect(wrapper.text()).toContain(
+        'One of our volunteers has posted this properly for you'
+      )
+    })
+
+    it('points them at My Posts', () => {
+      const wrapper = createWrapper({ type: 'ConvertedToPost' })
+      expect(wrapper.text()).toContain('Go to My Posts')
+    })
+  })
 })

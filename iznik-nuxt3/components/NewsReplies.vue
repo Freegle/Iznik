@@ -24,7 +24,7 @@
         :class="{ 'reply-thread--new': isReplyNew(entry.reply) }"
       >
         <NewsRefer
-          v-if="entry.reply.type && entry.reply.type.indexOf('ReferTo') === 0"
+          v-if="isReferNotice(entry.reply)"
           :id="entry.reply.id"
           :type="entry.reply.type"
           :threadhead="threadhead"
@@ -330,12 +330,18 @@ const renderEntries = computed(() => collapsePlan.value.entries)
 const completedSubtrees = new Set()
 let subtreeSatisfied = false
 
+// A moderator-generated notice rather than someone's reply: the ReferTo family,
+// and the note left when a volunteer posts a ChitChat item properly for the
+// member. Rendered by NewsRefer and excluded from the reply subtree count.
+function isReferNotice(reply) {
+  const type = reply?.type
+  if (!type) return false
+  return type.indexOf('ReferTo') === 0 || type === 'ConvertedToPost'
+}
+
 function expectedSubtreeIds() {
   return renderEntries.value
-    .filter(
-      (e) =>
-        !e.expander && !(e.reply.type && e.reply.type.indexOf('ReferTo') === 0)
-    )
+    .filter((e) => !e.expander && !isReferNotice(e.reply))
     .map((e) => e.reply.id)
 }
 
