@@ -1257,6 +1257,64 @@ func TestMessageModOnlyFields(t *testing.T) {
 	assert.Nil(t, anonMsg.Fromcountry, "Anonymous user should NOT see fromcountry")
 }
 
+// Why a post was held names the keyword that flagged it, which tells a spammer
+// exactly what to avoid next time. It is moderator information (Discourse #9988).
+func TestMessageContentCheckReasonsAreModOnly(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msg_ccreasons")
+
+	groupID := CreateTestGroup(t, prefix)
+	regularUserID := CreateTestUser(t, prefix+"_reg", "User")
+	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, regularUserID, groupID, "Member")
+	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	_, regularToken := CreateTestSession(t, regularUserID)
+	_, modToken := CreateTestSession(t, modUserID)
+
+	msgID := CreateTestMessage(t, regularUserID, groupID, "Test ContentCheck Reasons Item", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NOW(), contentcheck_reasons = ? WHERE msgid = ?",
+		`[{"check":"ConcernKeyword","category":"substance_medicine","action":"flag","keyword":"mineral","detail":"Matched concern keyword 'mineral'"}]`,
+		msgID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var modMsg message.Message
+	json2.Unmarshal(rsp(resp), &modMsg)
+	assert.NotEmpty(t, modMsg.MessageGroups, "mod should get the groups block")
+	foundReasons := false
+	for _, mg := range modMsg.MessageGroups {
+		if mg.ContentcheckReasons != nil {
+			foundReasons = true
+			assert.Contains(t, string(*mg.ContentcheckReasons), "mineral",
+				"a mod needs the word that flagged the post")
+		}
+	}
+	assert.True(t, foundReasons, "mod should see contentcheck_reasons")
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, regularToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var regMsg message.Message
+	json2.Unmarshal(rsp(resp), &regMsg)
+	for _, mg := range regMsg.MessageGroups {
+		assert.Nil(t, mg.ContentcheckReasons, "a member must NOT see why their post was held")
+		assert.Nil(t, mg.ContentcheckCheckedAt, "nor when it was checked")
+	}
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d", msgID), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var anonMsg2 message.Message
+	json2.Unmarshal(rsp(resp), &anonMsg2)
+	for _, mg := range anonMsg2.MessageGroups {
+		assert.Nil(t, mg.ContentcheckReasons, "logged out must NOT see why a post was held")
+	}
+}
+
 // --- Mod action helpers ---
 
 // createPendingMessage creates a message in Pending collection for mod tests.
