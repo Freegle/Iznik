@@ -150,7 +150,8 @@ func CreateSubscription(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT fullname FROM users WHERE id = ?", myid).Scan(&fullname)
+		// ORM migration site 0d395b814481 (wave 1).
+		db.Table("users").Select("fullname").Where("id = ?", myid).Scan(&fullname)
 	}()
 	wg.Wait()
 

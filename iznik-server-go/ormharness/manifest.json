@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 44,
+    "converted": 56,
     "keep-raw": 35,
-    "raw": 1557,
+    "raw": 1545,
     "test-fixture": 4223
   },
   "sites": {
@@ -702,9 +702,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "016078cc3acd": {
       "id": "016078cc3acd",
@@ -3418,7 +3418,7 @@
     "06f02d4d35de": {
       "id": "06f02d4d35de",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 177,
+      "line": 178,
       "function": "ListGiftAid",
       "receiver": "db",
       "method": "Raw",
@@ -4804,7 +4804,7 @@
     "09c76dc0c164": {
       "id": "09c76dc0c164",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 336,
+      "line": 339,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -6689,9 +6689,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0d4747420e3a": {
       "id": "0d4747420e3a",
@@ -11218,7 +11218,7 @@
     "16c4a7f6e566": {
       "id": "16c4a7f6e566",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 411,
+      "line": 414,
       "function": "BulkUploadDonations",
       "receiver": "db",
       "method": "Raw",
@@ -17270,7 +17270,7 @@
     "21e8dbdd136c": {
       "id": "21e8dbdd136c",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 317,
+      "line": 320,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Raw",
@@ -18768,7 +18768,7 @@
     "246bbfcc9225": {
       "id": "246bbfcc9225",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 345,
+      "line": 348,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -19410,7 +19410,7 @@
     "258437a60f5d": {
       "id": "258437a60f5d",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 274,
+      "line": 277,
       "function": "SetGiftAid",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -23790,7 +23790,7 @@
     "2ecbd6874f42": {
       "id": "2ecbd6874f42",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 348,
+      "line": 351,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -25557,7 +25557,7 @@
     "31fea9e6f321": {
       "id": "31fea9e6f321",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 171,
+      "line": 172,
       "function": "GetDonations",
       "receiver": "db",
       "method": "Raw",
@@ -28658,7 +28658,7 @@
     "380a2b8e3fbc": {
       "id": "380a2b8e3fbc",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 163,
+      "line": 164,
       "function": "ListGiftAid",
       "receiver": "db",
       "method": "Raw",
@@ -30250,7 +30250,7 @@
     "3b4f1c2cf9eb": {
       "id": "3b4f1c2cf9eb",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 279,
+      "line": 281,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Raw",
@@ -30652,7 +30652,7 @@
     "3c00a7ee8fd9": {
       "id": "3c00a7ee8fd9",
       "file": "iznik-server-go/donations/stripeipn.go",
-      "line": 178,
+      "line": 180,
       "function": "matchDonorUser",
       "receiver": "gdb",
       "method": "Raw",
@@ -32884,7 +32884,7 @@
     "40da338804c9": {
       "id": "40da338804c9",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 351,
+      "line": 354,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -34114,7 +34114,7 @@
     "433192020fab": {
       "id": "433192020fab",
       "file": "iznik-server-go/donations/stripeipn.go",
-      "line": 237,
+      "line": 240,
       "function": "handleGiftAidNotification",
       "receiver": "gdb",
       "method": "Raw",
@@ -40227,7 +40227,7 @@
     "4f053cd8dd78": {
       "id": "4f053cd8dd78",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 327,
+      "line": 330,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -49608,7 +49608,7 @@
     "6204c4ea5ebe": {
       "id": "6204c4ea5ebe",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 294,
+      "line": 296,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Exec",
@@ -50863,7 +50863,7 @@
     "645c6f681043": {
       "id": "645c6f681043",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 330,
+      "line": 333,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -56288,7 +56288,7 @@
     "6eb0a1069fb6": {
       "id": "6eb0a1069fb6",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 342,
+      "line": 345,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -56913,7 +56913,7 @@
     "6fdb2c3b96f5": {
       "id": "6fdb2c3b96f5",
       "file": "iznik-server-go/donations/paypalipn.go",
-      "line": 111,
+      "line": 112,
       "function": "PayPalIPN",
       "receiver": "gdb",
       "method": "Exec",
@@ -57690,7 +57690,7 @@
     "7104e922999e": {
       "id": "7104e922999e",
       "file": "iznik-server-go/donations/stripeipn.go",
-      "line": 190,
+      "line": 192,
       "function": "matchDonorUser",
       "receiver": "gdb",
       "method": "Raw",
@@ -59968,9 +59968,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT permissions FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "753fbc262f6b": {
       "id": "753fbc262f6b",
@@ -67536,9 +67536,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "83613ed1ad64": {
       "id": "83613ed1ad64",
@@ -69573,9 +69573,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT permissions FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "86fb59ae2933": {
       "id": "86fb59ae2933",
@@ -73406,9 +73406,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, COALESCE(NULLIF(fullname, ''), NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''), '') AS name FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8f0bf053d1b0": {
       "id": "8f0bf053d1b0",
@@ -75535,7 +75535,7 @@
     "9330b7d3045a": {
       "id": "9330b7d3045a",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 261,
+      "line": 263,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Raw",
@@ -79352,9 +79352,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9b6a125d5e6a": {
       "id": "9b6a125d5e6a",
@@ -85966,7 +85966,7 @@
     "a827fcf725a7": {
       "id": "a827fcf725a7",
       "file": "iznik-server-go/donations/stripeipn.go",
-      "line": 241,
+      "line": 244,
       "function": "handleGiftAidNotification",
       "receiver": "gdb",
       "method": "Exec",
@@ -92741,9 +92741,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b560d268dc4e": {
       "id": "b560d268dc4e",
@@ -95239,7 +95239,7 @@
     "ba853e58442d": {
       "id": "ba853e58442d",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 215,
+      "line": 218,
       "function": "SearchGiftAid",
       "receiver": "db",
       "method": "Raw",
@@ -95418,7 +95418,7 @@
     "baf0645f5f91": {
       "id": "baf0645f5f91",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 378,
+      "line": 382,
       "function": "DeleteGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -95560,9 +95560,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(fullname, '') FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bb2aee91fe06": {
       "id": "bb2aee91fe06",
@@ -98638,7 +98638,7 @@
     "c1cf9529710a": {
       "id": "c1cf9529710a",
       "file": "iznik-server-go/donations/stripeipn.go",
-      "line": 213,
+      "line": 215,
       "function": "matchDonorUser",
       "receiver": "gdb",
       "method": "Raw",
@@ -107367,7 +107367,7 @@
     "d21ef86c2517": {
       "id": "d21ef86c2517",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 339,
+      "line": 342,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -108164,9 +108164,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT * FROM giftaid WHERE fullname LIKE ? OR homeaddress LIKE ? OR id LIKE ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d42d9aa90149": {
       "id": "d42d9aa90149",
@@ -112429,7 +112429,7 @@
     "dcb461443c86": {
       "id": "dcb461443c86",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 321,
+      "line": 324,
       "function": "AddDonation",
       "receiver": "db",
       "method": "Exec",
@@ -114332,9 +114332,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fundingtarget FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e064f8839b19": {
       "id": "e064f8839b19",
@@ -115443,9 +115443,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM users_donations WHERE TransactionID = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e2e2c2abbc2c": {
       "id": "e2e2c2abbc2c",
@@ -117439,7 +117439,7 @@
     "e71c28654c59": {
       "id": "e71c28654c59",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 420,
+      "line": 423,
       "function": "BulkUploadDonations",
       "receiver": "db",
       "method": "Exec",
@@ -121820,7 +121820,7 @@
     "ef4a0c1acdcb": {
       "id": "ef4a0c1acdcb",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 333,
+      "line": 336,
       "function": "EditGiftAid",
       "receiver": "db",
       "method": "Exec",

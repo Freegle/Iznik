@@ -12,19 +12,11 @@
     "two statements are equivalent, and that assertion has to be justified.",
     "",
     "`sql` is the statement the ORM emits. It is compared canonically, so keyword",
-    "case, whitespace and identifier quoting do not need to match exactly."
+    "case, whitespace and identifier quoting do not need to match exactly.",
+    "",
+    "NOTE: LIMIT and OFFSET no longer need entries here. golden.go resolves their bound values back into the render (resolveLimitOffset), which is stricter than an approved diff because it catches a changed limit value."
   ],
   "diffs": [
-    {
-      "id": "01adb146166c",
-      "sql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT ?",
-      "reason": "Same LIMIT binding as 242735a48039: GORM renders a literal LIMIT 1 as LIMIT ?, bound to 1. The ORDER BY is unchanged, so the row selected is the same. Confirmed against group.go's Limit(1) call."
-    },
-    {
-      "id": "242735a48039",
-      "sql": "SELECT u.id FROM users u JOIN users_emails ue ON ue.userid = u.id WHERE ue.email = ? LIMIT ?",
-      "reason": "GORM binds LIMIT as a parameter, so a literal LIMIT 1 renders as LIMIT ?. The bound value is the same 1. Recorded per-site rather than taught to the canonicaliser on purpose: treating 'limit N' and 'limit ?' as interchangeable in general would let a conversion that changed the limit pass unnoticed, so a human has to confirm the bound value each time."
-    },
     {
       "id": "958d1d242008",
       "sql": "INSERT INTO newsfeed_reports (newsfeedid, reason, userid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?",

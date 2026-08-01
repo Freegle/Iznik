@@ -136,7 +136,8 @@ func isGiftAidAdmin(myid uint64) bool {
 	}
 
 	var permissions *string
-	db.Raw("SELECT permissions FROM users WHERE id = ?", myid).Scan(&permissions)
+	// ORM migration site 753a53ffa510 (wave 1).
+	db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
 
 	if permissions != nil && strings.Contains(strings.ToLower(*permissions), "giftaid") {
 		return true
@@ -202,8 +203,10 @@ func SearchGiftAid(c *fiber.Ctx) error {
 	searchPattern := "%" + search + "%"
 
 	var giftaids []GiftAidListItem
-	db.Raw("SELECT * FROM giftaid WHERE fullname LIKE ? OR homeaddress LIKE ? OR id LIKE ?",
-		searchPattern, searchPattern, searchPattern).Scan(&giftaids)
+	// ORM migration site d42b2cee70cd (wave 1).
+	db.Table("giftaid").
+		Where("fullname LIKE ? OR homeaddress LIKE ? OR id LIKE ?", searchPattern, searchPattern, searchPattern).
+		Scan(&giftaids)
 
 	if giftaids == nil {
 		giftaids = make([]GiftAidListItem, 0)
@@ -372,7 +375,8 @@ func DeleteGiftAid(c *fiber.Ctx) error {
 
 	// Get user's name for the insert if record doesn't exist
 	var fullname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&fullname)
+	// ORM migration site bb29b5996e58 (wave 1).
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", myid).Scan(&fullname)
 
 	// INSERT or update existing record to mark as Declined.
 	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress)

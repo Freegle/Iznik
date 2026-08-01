@@ -72,10 +72,11 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 		t.Fatalf("ormharness: manifest site %q has no goldenSql to compare against", siteID)
 	}
 
-	rendered, err := RenderDryRunSQL(build)
+	rendered, vars, err := renderDryRun(build)
 	if err != nil {
 		t.Fatalf("ormharness: site %q: rendering GORM statement: %v", siteID, err)
 	}
+	rendered = resolveLimitOffset(rendered, vars)
 
 	wantCanon := Canonical(site.GoldenSQL)
 	gotCanon := Canonical(rendered)
@@ -105,18 +106,25 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 // independently useful: canonical_test.go and golden_test.go exercise it
 // directly to test rendering and canonicalisation separately.
 func RenderDryRunSQL(build func(tx *gorm.DB) *gorm.DB) (string, error) {
+	sql, _, err := renderDryRun(build)
+	return sql, err
+}
+
+// renderDryRun is RenderDryRunSQL plus the bind values, which the golden
+// comparison needs in order to resolve LIMIT and OFFSET placeholders.
+func renderDryRun(build func(tx *gorm.DB) *gorm.DB) (string, []any, error) {
 	db, err := dryRunDB()
 	if err != nil {
-		return "", fmt.Errorf("constructing dry-run *gorm.DB: %w", err)
+		return "", nil, fmt.Errorf("constructing dry-run *gorm.DB: %w", err)
 	}
 
 	session := db.Session(&gorm.Session{DryRun: true, SkipDefaultTransaction: true})
 	tx := build(session)
 	if tx == nil {
-		return "", fmt.Errorf("build function returned a nil *gorm.DB")
+		return "", nil, fmt.Errorf("build function returned a nil *gorm.DB")
 	}
 	if tx.Error != nil {
-		return "", tx.Error
+		return "", nil, tx.Error
 	}
 
 	sql := tx.Statement.SQL.String()
@@ -126,11 +134,100 @@ func RenderDryRunSQL(build func(tx *gorm.DB) *gorm.DB) (string, error) {
 		// finished. Saying so here beats what happens otherwise: the empty
 		// string flows onward and MySQL reports a syntax error "near ''",
 		// which points nowhere near the actual mistake.
-		return "", fmt.Errorf("build function produced no SQL: it must end in a terminal call " +
+		return "", nil, fmt.Errorf("build function produced no SQL: it must end in a terminal call " +
 			"(Find, Count, Create, Delete, Update, Take, First). Note Scan is NOT usable here, " +
 			"since GORM rejects it in dry-run mode")
 	}
-	return sql, nil
+	return sql, tx.Statement.Vars, nil
+}
+
+// resolveLimitOffset puts the bound LIMIT and OFFSET values back into the
+// rendered SQL.
+//
+// GORM always binds these (clause/limit.go calls AddVar), so a handwritten
+// "LIMIT 1" renders as "LIMIT ?" and diverges from its golden. That is a
+// purely mechanical difference affecting a large share of sites, and writing
+// an approved diff for each would be pure toil.
+//
+// Substituting the actual value is not merely less work, it is stricter than
+// the alternatives. A blanket canonicaliser rule treating "limit N" and
+// "limit ?" as equal would let a conversion that changed Limit(1) to Limit(50)
+// pass unnoticed; resolving the value catches exactly that. Only LIMIT and
+// OFFSET placeholders are resolved: every other bind legitimately stays "?" in
+// the golden, because that is how the original was written.
+func resolveLimitOffset(sql string, vars []any) string {
+	if len(vars) == 0 || !strings.Contains(sql, "?") {
+		return sql
+	}
+
+	var out strings.Builder
+	varIdx := 0
+	inQuote := byte(0)
+
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+
+		// Track quoted spans so a "?" inside a string literal is neither
+		// counted as a bind nor rewritten.
+		if inQuote != 0 {
+			out.WriteByte(c)
+			if c == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' || c == '`' {
+			inQuote = c
+			out.WriteByte(c)
+			continue
+		}
+		if c != '?' {
+			out.WriteByte(c)
+			continue
+		}
+
+		// A bind placeholder. Decide whether it is the operand of LIMIT or
+		// OFFSET by looking at the preceding keyword.
+		if varIdx < len(vars) && precededByLimitOrOffset(sql[:i]) {
+			out.WriteString(fmt.Sprintf("%v", vars[varIdx]))
+		} else {
+			out.WriteByte('?')
+		}
+		varIdx++
+	}
+	return out.String()
+}
+
+// precededByLimitOrOffset reports whether the text immediately before a
+// placeholder ends in the LIMIT or OFFSET keyword. MySQL also accepts
+// "LIMIT offset, count", so a comma is stepped over too.
+func precededByLimitOrOffset(before string) bool {
+	trimmed := strings.TrimRight(before, " \t\n\r")
+	trimmed = strings.TrimRight(trimmed, ",")
+	trimmed = strings.TrimRight(trimmed, " \t\n\r")
+
+	// A "LIMIT ?, ?" pair: the second placeholder follows a resolved number.
+	if end := strings.LastIndexAny(trimmed, " \t\n\r"); end >= 0 {
+		word := trimmed[end+1:]
+		if isAllDigits(word) {
+			trimmed = strings.TrimRight(trimmed[:end], " \t\n\r")
+		}
+	}
+
+	upper := strings.ToUpper(trimmed)
+	return strings.HasSuffix(upper, "LIMIT") || strings.HasSuffix(upper, "OFFSET")
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // dryRunDSN is never dialled. gorm.Open only reaches the network if the

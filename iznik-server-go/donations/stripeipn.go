@@ -139,7 +139,8 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 			uid, err := strconv.ParseUint(uidStr, 10, 64)
 			if err == nil && uid > 0 {
 				var exists uint64
-				gdb.Raw("SELECT id FROM users WHERE id = ?", uid).Scan(&exists)
+				// ORM migration site 015d0fcc34c4 (wave 1).
+				gdb.Table("users").Select("id").Where("id = ?", uid).Scan(&exists)
 				if exists > 0 {
 					userID = uid
 					log.Printf("[StripeIPN] Matched user %d from charge metadata", userID)
@@ -165,7 +166,8 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 					uid, err := strconv.ParseUint(uidStr, 10, 64)
 					if err == nil && uid > 0 {
 						var exists uint64
-						gdb.Raw("SELECT id FROM users WHERE id = ?", uid).Scan(&exists)
+						// ORM migration site 83599f80cec3 (wave 1).
+						gdb.Table("users").Select("id").Where("id = ?", uid).Scan(&exists)
 						if exists > 0 {
 							userID = uid
 							log.Printf("[StripeIPN] Matched user %d from customer metadata", userID)
@@ -211,7 +213,8 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 	// Get user name and email for the matched user.
 	if userID > 0 {
 		gdb.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&userEmail)
-		gdb.Raw("SELECT fullname FROM users WHERE id = ?", userID).Scan(&userName)
+		// ORM migration site 9b52d8bd115c (wave 1).
+		gdb.Table("users").Select("fullname").Where("id = ?", userID).Scan(&userName)
 		log.Printf("[StripeIPN] User %d: name=%s email=%s", userID, userName, userEmail)
 	} else {
 		// Use billing details as fallback.

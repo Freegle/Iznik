@@ -130,7 +130,8 @@ func GetDonations(c *fiber.Ctx) error {
 	target = getDonationTarget()
 	if groupID != "" {
 		var fundingtarget *int
-		db.Raw("SELECT fundingtarget FROM `groups` WHERE id = ?", groupID).Scan(&fundingtarget)
+		// ORM migration site e05d3c7dc0c1 (wave 1).
+		db.Table("groups").Select("fundingtarget").Where("id = ?", groupID).Scan(&fundingtarget)
 		if fundingtarget != nil && *fundingtarget > 0 {
 			target = *fundingtarget
 		}
@@ -213,7 +214,8 @@ func AddDonation(c *fiber.Ctx) error {
 	// Permission check: need GiftAid permission for non-zero amounts.
 	if req.Amount > 0 {
 		var permissions *string
-		db.Raw("SELECT permissions FROM users WHERE id = ?", myid).Scan(&permissions)
+		// ORM migration site 86e67ec8afc4 (wave 1).
+		db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
 
 		hasGiftAid := false
 		if permissions != nil {
@@ -237,11 +239,11 @@ func AddDonation(c *fiber.Ctx) error {
 		ID   uint64
 		Name string
 	}
-	db.Raw(`SELECT id,
-		COALESCE(NULLIF(fullname, ''),
-		         NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''),
-		         '') AS name
-		FROM users WHERE id = ?`, req.UserID).Scan(&donor)
+	// ORM migration site 8f09f277831b (wave 1).
+	db.Table("users").
+		Select("id, COALESCE(NULLIF(fullname, ''), NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''), '') AS name").
+		Where("id = ?", req.UserID).
+		Scan(&donor)
 
 	if donor.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid userid")
@@ -304,7 +306,8 @@ func AddDonation(c *fiber.Ctx) error {
 
 	// Get the inserted ID.
 	var donationID uint64
-	db.Raw("SELECT id FROM users_donations WHERE TransactionID = ?", transactionID).Scan(&donationID)
+	// ORM migration site e2d485938df9 (wave 1).
+	db.Table("users_donations").Select("id").Where("TransactionID = ?", transactionID).Scan(&donationID)
 
 	if donationID == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Add failed")

@@ -64,7 +64,8 @@ func PayPalIPN(c *fiber.Ctx) error {
 				if err == nil && pi != nil && pi.Metadata != nil {
 					if uidStr, ok := pi.Metadata["uid"]; ok && uidStr != "" {
 						var uid uint64
-						gdb.Raw("SELECT id FROM users WHERE id = ?", uidStr).Scan(&uid)
+						// ORM migration site b55d22304524 (wave 1).
+						gdb.Table("users").Select("id").Where("id = ?", uidStr).Scan(&uid)
 						if uid > 0 {
 							userID = uid
 							log.Printf("[PayPalIPN] Matched user %d from Stripe metadata", userID)
