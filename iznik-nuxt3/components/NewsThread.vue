@@ -128,7 +128,7 @@
           @rendered="rendered"
           @subtree-rendered="repliesRendered = true"
         />
-        <span v-if="!newsfeed?.closed">
+        <span v-if="!newsfeed?.closed" class="comment-box">
           <div v-if="enterNewLine">
             <OurAtTa
               v-if="!newsfeed.deleted"
@@ -753,6 +753,13 @@ async function unmute() {
 .card__volunteer-opportunity {
   background-color: $color-gray-2;
   border-radius: var(--radius-md, 0.375rem);
+}
+
+/* The comment box sat flush against the last reply, so the two ran together.
+   A span is inline by default, hence display: block for the margin to apply. */
+.comment-box {
+  display: block;
+  margin-top: 0.75rem;
 }
 
 .card__default {
