@@ -90,17 +90,6 @@ const colors = computed(() => {
   return colorPalettes[colorIndex]
 })
 
-/* Only two of the six variants reach these, and which one a member gets is
-   decided by the hash of their name. Whether an end-to-end run happens to render
-   a member whose name lands on "spots" or on "tiles" therefore varies run to
-   run, so these two computeds flip in and out of Playwright coverage and swing
-   the whole suite by ±0.07% - enough to fail Coveralls' "coverage decreased"
-   check on whichever branch records the lower sample (master did it to itself
-   across 6ef68f343 and 53d476e3d). Excluded from V8/Playwright coverage only;
-   vitest uses istanbul, which ignores v8 comments, and
-   GeneratedAvatar.client.spec.js pins both variants by name. Same treatment as
-   SpinButton.vue and ProxyImage.vue (PRs #910/#1007). */
-/* v8 ignore start */
 const spots = computed(() => {
   const h = hash.value
   return [
@@ -147,5 +136,4 @@ const tiles = computed(() => {
     { x: 45 + ((h >> 9) % 10), y: 45 + ((h >> 10) % 10), w: 50, h: 50 },
   ]
 })
-/* v8 ignore stop */
 </script>
