@@ -5,7 +5,7 @@
     "converted": 10,
     "keep-raw": 35,
     "raw": 1591,
-    "test-fixture": 4208
+    "test-fixture": 4213
   },
   "sites": {
     "00053e96d76f": {
@@ -34928,6 +34928,30 @@
       "hasParityTest": false,
       "status": "raw"
     },
+    "44d66116c529": {
+      "id": "44d66116c529",
+      "file": "iznik-server-go/test/ormshadow_test.go",
+      "line": 67,
+      "function": "TestCurrentBatchState_DefaultsOffAndReadsConfigTableThroughCache",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "config"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO config (`key`, value) VALUES (?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "44deaf6c0e25": {
       "id": "44deaf6c0e25",
       "file": "iznik-server-go/amp/amp.go",
@@ -44921,6 +44945,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "raw"
+    },
+    "58e4ce62ada6": {
+      "id": "58e4ce62ada6",
+      "file": "iznik-server-go/test/ormshadow_test.go",
+      "line": 172,
+      "function": "TestShadowRead_Shadow_AsyncTimeoutNeverBlocksTheCaller",
+      "receiver": "tx",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, fullname FROM users WHERE id = ? AND SLEEP(2) = 0",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "58e70578ebc8": {
       "id": "58e70578ebc8",
@@ -79462,6 +79508,32 @@
       "hasParityTest": false,
       "status": "raw"
     },
+    "9c1a1e183c8b": {
+      "id": "9c1a1e183c8b",
+      "file": "iznik-server-go/test/ormshadow_test.go",
+      "line": 47,
+      "function": "setShadowBatchState",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "config",
+        "value"
+      ],
+      "mysqlisms": [
+        "backticks",
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "9c20aba02f9e": {
       "id": "9c20aba02f9e",
       "file": "iznik-server-go/test/changes_test.go",
@@ -85908,6 +85980,30 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM users WHERE id IN (?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "a89c1da0f4db": {
+      "id": "a89c1da0f4db",
+      "file": "iznik-server-go/test/ormshadow_test.go",
+      "line": 68,
+      "function": "TestCurrentBatchState_DefaultsOffAndReadsConfigTableThroughCache",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "config"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM config WHERE `key` = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -106485,6 +106581,30 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, ?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "d17675831f17": {
+      "id": "d17675831f17",
+      "file": "iznik-server-go/test/ormshadow_test.go",
+      "line": 49,
+      "function": "setShadowBatchState",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "config"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM config WHERE `key` = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"

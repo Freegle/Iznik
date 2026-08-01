@@ -53,13 +53,13 @@ func runAssertGoldenSQL(t *testing.T, siteID string, build func(tx *gorm.DB) *go
 // --- Tests against the real manifest -----------------------------------
 //
 // These two prove the actual contract end to end: AssertGoldenSQL looks a
-// site up BY ID in the real tools/orm-migration/manifest.json, and a GORM
-// dry-run render that is only cosmetically different from the recorded
-// goldenSql (backtick quoting, keyword case) still passes. The site IDs are
-// pinned to specific, stable fixture-cleanup call sites (see the comments
-// below) rather than invented, so a passing test here is also a live check
-// that findManifestPath still locates the real manifest from this
-// package's working directory.
+// site up BY ID in the real manifest (embedded from manifest.json - see
+// loadManifest in golden.go), and a GORM dry-run render that is only
+// cosmetically different from the recorded goldenSql (backtick quoting,
+// keyword case) still passes. The site IDs are pinned to specific, stable
+// fixture-cleanup call sites (see the comments below) rather than invented,
+// so a passing test here is also a live check that the embedded manifest
+// still contains what these tests expect.
 
 func TestAssertGoldenSQL_RealManifestSite_Delete(t *testing.T) {
 	// iznik-server-go/test/chat_test.go:2293, TestReviewChatOwnGroupFirst:

@@ -3,7 +3,7 @@ package ormharness
 // Layer 1 assertion (plan section 7.2): renders a GORM call in dry-run mode
 // (no query ever reaches a database) and checks the SQL it would have sent
 // against the goldenSql recorded for that site in
-// tools/orm-migration/manifest.json, via Canonical (canonical.go).
+// this package's manifest.json, via Canonical (canonical.go).
 //
 // Looking the golden up by site ID, rather than letting the caller pass a
 // literal string, is what enforces plan Gate 2: "a site cannot be marked
@@ -51,7 +51,7 @@ func AssertGoldenSQL(t *testing.T, siteID string, build func(tx *gorm.DB) *gorm.
 
 	site, ok := sites[siteID]
 	if !ok {
-		t.Fatalf("ormharness: no manifest entry for site %q; AssertGoldenSQL must be called with a real site id from tools/orm-migration/manifest.json", siteID)
+		t.Fatalf("ormharness: no manifest entry for site %q; AssertGoldenSQL must be called with a real site id from the ORM migration manifest", siteID)
 	}
 	if site.GoldenSQL == "" {
 		t.Fatalf("ormharness: manifest site %q has no goldenSql to compare against", siteID)
@@ -212,7 +212,6 @@ func resetManifestCacheForTest() {
 	manifestData = nil
 	manifestErr = nil
 }
-
 
 // formatMismatch renders a Layer 1 failure: both statements in full, their
 // canonical forms, and a word-level diff of the canonical forms so the

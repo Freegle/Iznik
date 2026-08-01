@@ -4,7 +4,7 @@
 # plans/database-migration-evaluation-2026-07.md lines 104-108).
 #
 # Regenerates the raw-SQL inventory from source and compares it against the
-# manifest committed in this branch/PR (tools/orm-migration/manifest.json).
+# manifest committed in this branch/PR (iznik-server-go/ormharness/manifest.json).
 # Fails the build if any of:
 #
 #   (b) the code contains a raw SQL call site whose ID is absent from the
@@ -27,7 +27,7 @@
 # Env overrides (intended for local testing of the gate itself - see
 # tools/orm-migration/README.md "Testing the ratchet"; CI never sets these):
 #   RATCHET_MANIFEST   Path to the "committed" manifest to check against.
-#                       Default: tools/orm-migration/manifest.json in this repo.
+#                       Default: iznik-server-go/ormharness/manifest.json in this repo.
 #   RATCHET_ROOT        Source root passed to the extractor.
 #                       Default: iznik-server-go in this repo.
 #
@@ -38,7 +38,7 @@
 #   1. Compare against a baseline number stored inside manifest.json itself
 #      (top-level "ratchet": {"baseline": N}).
 #   2. Compare against the manifest as it existed at the PR's merge-base with
-#      master, via `git show <merge-base>:tools/orm-migration/manifest.json`.
+#      master, via `git show <merge-base>:iznik-server-go/ormharness/manifest.json`.
 #
 # This script uses (1). Reasons: it needs no git history (works on shallow
 # clones, fresh worktrees, and - as today - before the manifest has ever been
@@ -131,7 +131,7 @@ new_count=$(jq 'length' "$WORKDIR/new-sites.json")
 if [ "$new_count" -gt 0 ]; then
   fail "$new_count raw SQL site(s) found in code but missing from the committed manifest (new raw SQL must be added deliberately, with a status and reason):"
   jq -r '.[] | "  \(.file):\(.line)  [\(.id)]  \(.function)()  \(.goldenSql)"' "$WORKDIR/new-sites.json"
-  note "fix: run the extractor (cd tools/orm-migration && go run . -out manifest.json) and set an explicit status for each new site, then commit the updated manifest.json"
+  note "fix: run the extractor (cd tools/orm-migration && go run .) and set an explicit status for each new site, then commit the updated manifest.json"
 else
   note "gate (b) OK: no raw SQL sites found in code that are missing from the committed manifest"
 fi

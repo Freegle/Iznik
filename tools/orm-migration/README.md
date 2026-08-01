@@ -129,6 +129,6 @@ The extractor assigns each site a suggested `wave` using this order; see
 touching the committed manifest:
 
 ```bash
-jq '.ratchet = {"baseline": 0}' tools/orm-migration/manifest.json > /tmp/perturbed.json
+jq '.ratchet = {"baseline": 0}' iznik-server-go/ormharness/manifest.json > /tmp/perturbed.json
 RATCHET_MANIFEST=/tmp/perturbed.json tools/orm-migration/ci-ratchet.sh   # exits 1
 ```

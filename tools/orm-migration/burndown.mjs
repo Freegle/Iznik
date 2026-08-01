@@ -2,7 +2,7 @@
 // burndown.mjs - burn-down report for the raw-SQL-to-ORM migration inventory
 // (plan 7.2/7.3, plans/database-migration-evaluation-2026-07.md).
 //
-// Reads tools/orm-migration/manifest.json (the extractor's output) and prints
+// Reads iznik-server-go/ormharness/manifest.json (the extractor's output) and prints
 // counts by status, wave, complexity and kind, plus the modules with the most
 // remaining raw work - "the burn-down (manifest status counts over time) is a
 // dashboard, so progress and any stall are visible, not anecdotal" (plan 7.3).
