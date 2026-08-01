@@ -136,6 +136,12 @@ const fullSrc = computed(() => {
 
 const emit = defineEmits(['error'])
 
+/* Fires only when an image actually fails to load, which depends on network
+   timing during an end-to-end run rather than on anything the tests control, so
+   it flips in and out of Playwright coverage the same way the Sentry block above
+   used to. Excluded from V8/Playwright coverage only - vitest still counts it,
+   and ProxyImage.spec.js triggers a real error event on the img. */
+/* v8 ignore next 3 */
 function brokenImage(e) {
   emit('error', e)
 }

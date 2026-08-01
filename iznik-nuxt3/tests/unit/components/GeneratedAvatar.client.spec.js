@@ -92,48 +92,52 @@ describe('GeneratedAvatar.client', () => {
     })
   })
 
+  // The variant is allVariants[hash(name) % 6], so a name pins it exactly. These
+  // used to guess - 'TestSpots' actually hashes to tiles and 'TilesVariant' to
+  // pixel - and every assertion sat behind an `if`, so the spots computed was
+  // never exercised and a test that hit the wrong variant still passed silently.
+  // Playwright was the only thing covering those lines, by luck, which is what
+  // made the suite's coverage swing (see the v8 ignore in the component).
   describe('custom variants', () => {
-    it('renders spots variant with circles', () => {
-      // Find a name that produces 'spots' variant
-      // The hash determines variant, so we need to test the SVG structure when custom
-      const wrapper = createWrapper({ name: 'TestSpots' })
-      const svg = wrapper.find('svg')
-      if (svg.exists() && !wrapper.find('.boring-avatar').exists()) {
-        // Custom variant - should have rect background
-        expect(svg.find('rect').exists()).toBe(true)
-      }
+    // Verified against hashString: allVariants[hash % 6] is 4 (spots) / 5 (tiles).
+    const SPOTS_NAME = 'User3'
+    const TILES_NAME = 'User4'
+
+    it('picks the spots variant for a name that hashes to it', () => {
+      const wrapper = createWrapper({ name: SPOTS_NAME })
+      expect(wrapper.find('.boring-avatar').exists()).toBe(false)
+      expect(wrapper.find('svg').exists()).toBe(true)
     })
 
-    it('renders tiles variant with rectangles', () => {
-      const wrapper = createWrapper({ name: 'TestTiles' })
-      const svg = wrapper.find('svg')
-      if (svg.exists() && !wrapper.find('.boring-avatar').exists()) {
-        // Custom variant - should have rect elements
-        expect(svg.findAll('rect').length).toBeGreaterThan(0)
-      }
+    it('picks the tiles variant for a name that hashes to it', () => {
+      const wrapper = createWrapper({ name: TILES_NAME })
+      expect(wrapper.find('.boring-avatar').exists()).toBe(false)
+      expect(wrapper.find('svg').exists()).toBe(true)
     })
 
-    it('spots variant has 5 circles plus background', () => {
-      // Create a wrapper and check if it's spots variant
-      const wrapper = createWrapper({ name: 'SpotsTest' })
-      const svg = wrapper.find('svg')
-      if (svg.exists() && svg.findAll('circle').length > 0) {
-        // This is spots variant
-        expect(svg.findAll('circle').length).toBe(5)
-        expect(svg.find('rect').exists()).toBe(true) // background
-      }
+    it('spots variant has 5 circles plus a background rect', () => {
+      const svg = createWrapper({ name: SPOTS_NAME }).find('svg')
+      expect(svg.findAll('circle').length).toBe(5)
+      expect(svg.find('rect').exists()).toBe(true)
     })
 
-    it('tiles variant has 4 rectangles plus background', () => {
-      const wrapper = createWrapper({ name: 'TilesVariant' })
-      const svg = wrapper.find('svg')
-      if (
-        svg.exists() &&
-        !wrapper.find('.boring-avatar').exists() &&
-        svg.findAll('circle').length === 0
-      ) {
-        // This is tiles variant (has rects but no circles)
-        expect(svg.findAll('rect').length).toBe(5) // 1 background + 4 tiles
+    it('tiles variant has 4 rects plus a background rect and no circles', () => {
+      const svg = createWrapper({ name: TILES_NAME }).find('svg')
+      expect(svg.findAll('circle').length).toBe(0)
+      expect(svg.findAll('rect').length).toBe(5)
+    })
+
+    it('keeps every spot and tile inside the viewBox', () => {
+      // Exercises the arithmetic in both computeds rather than only their shape.
+      const spots = createWrapper({ name: SPOTS_NAME }).find('svg')
+      for (const c of spots.findAll('circle')) {
+        expect(Number(c.attributes('cx'))).toBeGreaterThan(0)
+        expect(Number(c.attributes('r'))).toBeGreaterThan(0)
+      }
+      const tiles = createWrapper({ name: TILES_NAME }).find('svg')
+      for (const r of tiles.findAll('rect').slice(1)) {
+        expect(Number(r.attributes('width'))).toBeGreaterThan(0)
+        expect(Number(r.attributes('height'))).toBeGreaterThan(0)
       }
     })
   })
