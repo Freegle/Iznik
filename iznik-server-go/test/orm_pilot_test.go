@@ -25,21 +25,21 @@ import (
 func TestPilotSite17b90a8329d8_TeamByID(t *testing.T) {
 	var dest map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "17b90a8329d8", func(tx *gorm.DB) *gorm.DB {
-		return tx.Table("teams").Where("id = ?", 1).Scan(&dest)
+		return tx.Table("teams").Where("id = ?", 1).Find(&dest)
 	})
 }
 
 func TestPilotSiteB43c5d4c54a2_LatestMessageDate(t *testing.T) {
 	var dest map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "b43c5d4c54a2", func(tx *gorm.DB) *gorm.DB {
-		return tx.Table("messages").Select("MAX(date)").Scan(&dest)
+		return tx.Table("messages").Select("MAX(date)").Find(&dest)
 	})
 }
 
 func TestPilotSiteE574518b4ebd_CronJobStatus(t *testing.T) {
 	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "e574518b4ebd", func(tx *gorm.DB) *gorm.DB {
-		return tx.Table("cron_job_status").Scan(&dest)
+		return tx.Table("cron_job_status").Find(&dest)
 	})
 }
 
@@ -104,7 +104,7 @@ func TestPilotSite242735a48039_UserByEmailJoin(t *testing.T) {
 			Joins("JOIN users_emails ue ON ue.userid = u.id").
 			Where("ue.email = ?", "a@b.c").
 			Limit(1).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
@@ -115,7 +115,7 @@ func TestPilotSite1a6871aa02b9_UserLocationLeftJoin(t *testing.T) {
 			Select("l.lat, l.lng").
 			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
 			Where("u.id = ?", 1).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 

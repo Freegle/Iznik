@@ -72,12 +72,24 @@ Without this, converting a site and quietly deleting one look identical.
 | 3 | It agrees with the old query on live production reads | `ormshadow/shadow.go` |
 | 4 | Write sites agree when replayed against a restore | `ormharness/replay.go` |
 
-Layers 1 and 2 use **opposite conventions** for the function you hand them.
-Layer 1's `build` must include the terminal call (`Scan`, `Find`, `Create`,
-`Delete`), because GORM only assembles a statement when one runs; dry-run mode
-intercepts it so nothing reaches a database. Layer 2's `ReplacementQuery` must
-stop short of a terminal call, because `AssertResultParity` calls `Rows()`
-itself.
+Layers 1 and 2 use **opposite conventions** for the function you hand them, and
+getting it wrong is the single most common mistake when writing a parity test.
+
+Layer 1's `build` (and Layer 4's `AssertPlanParity`) **must** end in a terminal
+call, because GORM only assembles a statement when one runs; dry-run mode
+intercepts it so nothing reaches a database. Use `Find`, `Count`, `Create`,
+`Delete`, `Update`, `Take` or `First`.
+
+**`Scan` does not work here.** GORM rejects it under dry-run with "dry run mode
+unsupported". Production code may keep using `Scan` where that is natural; only
+the parity test's build function needs a different terminal, and `Find` renders
+identical SQL for these shapes. Omitting the terminal entirely is worse: the
+render comes back empty and MySQL reports a syntax error `near ''`, naming
+nothing useful. Both helpers now detect that and say so explicitly.
+
+Layer 2's `ReplacementQuery` is the opposite: it must stop **short** of a
+terminal call, because `AssertResultParity` genuinely executes and calls
+`Rows()` itself.
 
 `ormshadow` is a separate package from `ormharness` because it is production
 code that runs on live read paths, while `ormharness` imports the `testing`

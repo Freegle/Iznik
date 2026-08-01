@@ -76704,7 +76704,8 @@
       "goldenSql": "INSERT INTO newsfeed_reports (userid, newsfeedid, reason) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?",
       "presentInCode": false,
       "hasParityTest": true,
-      "status": "converted"
+      "status": "converted",
+      "approvedDiff": "INSERT INTO newsfeed_reports (newsfeedid, reason, userid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?"
     },
     "9594738c51bd": {
       "id": "9594738c51bd",

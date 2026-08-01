@@ -204,6 +204,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	diffs, err := applyApprovedDiffs(sites, filepath.Join(filepath.Dir(rules), "approved-diffs.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "extract:", err)
+		os.Exit(1)
+	}
+
 	sort.Slice(sites, func(i, j int) bool {
 		if sites[i].File != sites[j].File {
 			return sites[i].File < sites[j].File
@@ -215,7 +221,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "extract:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("%d sites written to %s (%d marked keep-raw by rule)\n", len(sites), out, applied)
+	fmt.Printf("%d sites written to %s (%d keep-raw by rule, %d approved diffs)\n", len(sites), out, applied, diffs)
 }
 
 func scan(root, repo string) ([]*Site, error) {
@@ -656,6 +662,62 @@ func applyKeepRaw(sites []*Site, path string) (int, error) {
 	for i, r := range rules.Rules {
 		if hits[i] == 0 {
 			fmt.Fprintf(os.Stderr, "warning: keep-raw rule %d matched no sites: %s %s\n", i, r.File, r.Function)
+		}
+	}
+	return applied, nil
+}
+
+// approvedDiffRules is the declarative form of plan 7.2's approved-diff
+// escape hatch.
+type approvedDiffRules struct {
+	Diffs []struct {
+		ID     string `json:"id"`
+		SQL    string `json:"sql"`
+		Reason string `json:"reason"`
+	} `json:"diffs"`
+}
+
+// applyApprovedDiffs records reviewer-justified divergences between a site's
+// golden SQL and what the ORM emits. Kept declarative, like the keep-raw
+// rules, so the justification is reviewed as a diff rather than hand-edited
+// into the manifest and silently lost on the next regeneration.
+func applyApprovedDiffs(sites []*Site, path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	var rules approvedDiffRules
+	if err := json.Unmarshal(b, &rules); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+
+	byID := map[string]string{}
+	for i, r := range rules.Diffs {
+		if strings.TrimSpace(r.Reason) == "" {
+			return 0, fmt.Errorf("%s: diff %d (%s) has no reason; an approved diff asserts two statements are equivalent, which must be justified", path, i, r.ID)
+		}
+		if strings.TrimSpace(r.SQL) == "" {
+			return 0, fmt.Errorf("%s: diff %d (%s) has no sql", path, i, r.ID)
+		}
+		byID[r.ID] = r.SQL
+	}
+
+	applied := 0
+	seen := map[string]bool{}
+	for _, s := range sites {
+		if sql, ok := byID[s.ID]; ok {
+			s.ApprovedDiff = sql
+			seen[s.ID] = true
+			applied++
+		}
+	}
+	for id := range byID {
+		if !seen[id] {
+			fmt.Fprintf(os.Stderr, "warning: approved-diff entry %s matches no site\n", id)
 		}
 	}
 	return applied, nil

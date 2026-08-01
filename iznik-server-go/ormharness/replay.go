@@ -106,16 +106,19 @@ func (r *PlanParityReport) Diff() string {
 }
 
 // AssertPlanParity runs EXPLAIN FORMAT=TREE for the old raw-SQL statement
-// and the new GORM statement (built by newQuery, following the same "build
-// up to but not including a terminal call" convention as
-// resultparity.go's ReplacementQuery) and returns a report plus a non-nil
+// and the new GORM statement and returns a report plus a non-nil
 // error if their normalised shapes differ. Intended for CI on manifest sites
 // tagged "hot" (plan 7.2, Layer 4): a plan-shape regression on a hot path -
 // a dropped index, an accidental full scan - is worth catching even though
 // layers 1-2 only look at SQL text and result rows, not the execution plan.
 //
 // newQuery is rendered to literal SQL via db.ToSQL before EXPLAIN runs, so
-// the new statement never actually executes.
+// the new statement never actually executes. Because ToSQL renders in dry-run
+// mode, newQuery MUST end in a terminal call (Find, Count, Create, Delete,
+// Update, Take, First) or GORM assembles nothing. Note Scan does not work:
+// GORM rejects it under dry-run. This is the opposite of resultparity.go's
+// ReplacementQuery, which must stop short of a terminal call because
+// AssertResultParity really executes and calls Rows() itself.
 func AssertPlanParity(db *gorm.DB, oldSQL string, oldArgs []any, newQuery func(tx *gorm.DB) *gorm.DB) (*PlanParityReport, error) {
 	oldPlan, err := ExplainTree(db, oldSQL, oldArgs...)
 	if err != nil {
@@ -123,6 +126,16 @@ func AssertPlanParity(db *gorm.DB, oldSQL string, oldArgs []any, newQuery func(t
 	}
 
 	newSQL := db.ToSQL(newQuery)
+	if strings.TrimSpace(newSQL) == "" {
+		// Same trap as RenderDryRunSQL guards: ToSQL renders in dry-run mode,
+		// and GORM only assembles a statement when a terminal call runs. An
+		// empty render would otherwise reach EXPLAIN and come back as a MySQL
+		// syntax error "near ''", which names nothing useful.
+		return nil, fmt.Errorf("ormharness: newQuery produced no SQL: it must end in a terminal call " +
+			"(Find, Count, Create, Delete, Update, Take, First). Scan is NOT usable here, " +
+			"since GORM rejects it in dry-run mode")
+	}
+
 	newPlan, err := ExplainTree(db, newSQL)
 	if err != nil {
 		return nil, fmt.Errorf("ormharness: new statement: %w", err)
@@ -232,7 +245,7 @@ type TableDiff struct {
 }
 
 // replayValidIdentifier guards the table names DiffTables interpolates into
-// a `SELECT * FROM `table`` (table names cannot be bind parameters in
+// a `SELECT * FROM `table“ (table names cannot be bind parameters in
 // MySQL). Table names here come from the replay runbook's own
 // configuration, not end-user input, but there is no reason not to check.
 var replayValidIdentifier = regexp.MustCompile(`^[A-Za-z0-9_]+$`)

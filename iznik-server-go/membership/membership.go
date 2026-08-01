@@ -41,7 +41,8 @@ func getRoleForGroup(myid uint64, groupid uint64) string {
 	}
 	db := database.DBConn
 	var role string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+	// ORM migration site b93b47daeb87 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?",
 		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
 	return role
 }
@@ -63,7 +64,8 @@ func isModOfGroup(myid uint64, groupid uint64) bool {
 	}
 
 	var role string
-	result := db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+	// ORM migration site 57cbae19bf26 (wave 1).
+	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?",
 		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
@@ -132,11 +134,13 @@ func PostMemberships(c *fiber.Ctx) error {
 	switch req.Action {
 	case "Approve", "Reject", "Delete Approved Member", "Ban", "Hold", "ReviewHold", "ReviewIgnore":
 		var holder uint64
-		db.Raw("SELECT COALESCE(heldby, 0) FROM memberships WHERE userid = ? AND groupid = ?",
+		// ORM migration site e472a5457ade (wave 1).
+		db.Table("memberships").Select("COALESCE(heldby, 0)").Where("userid = ? AND groupid = ?",
 			req.Userid, req.Groupid).Scan(&holder)
 		if holder != 0 && holder != myid {
 			var holderName string
-			db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&holderName)
+			// ORM migration site 8c02651afe8b (wave 1).
+			db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&holderName)
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"ret":        1,
 				"status":     "Held by another moderator",
@@ -1185,7 +1189,8 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 
 	// Check the group exists.
 	var groupExists int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
+	// ORM migration site cf56bf438429 (wave 1).
+	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
 	if groupExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
@@ -1206,15 +1211,17 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// or log row anywhere, so a banned member's join attempt vanishes with
 	// nothing for a moderator to find while the partner is told it worked.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
-		userid, groupid).Scan(&bannedCount)
+	// ORM migration site dd226f0cacca (wave 1).
+	db.Table("users_banned").Where("userid = ? AND groupid = ?",
+		userid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
 	// Check if already a member.
 	var existingRole string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+	// ORM migration site 553e621a63b0 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
@@ -1241,14 +1248,16 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
 	// Check the group exists.
 	var groupExists int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
+	// ORM migration site 927556278e70 (wave 1).
+	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
 	if groupExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
 
 	// Check if already a member.
 	var existingRole string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+	// ORM migration site 5b811f0c2cc6 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
@@ -1261,8 +1270,9 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	// like TrashNothing, or a moderator using the Add button) is told it worked. Return
 	// a real failure so the join doesn't silently disappear.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
-		userid, groupid).Scan(&bannedCount)
+	// ORM migration site 4651063e075b (wave 1).
+	db.Table("users_banned").Where("userid = ? AND groupid = ?",
+		userid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
@@ -1489,8 +1499,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 
 	// Verify the membership exists.
 	var membershipExists int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-		userid, req.Groupid, utils.COLLECTION_APPROVED).Scan(&membershipExists)
+	// ORM migration site d52f362bd794 (wave 1).
+	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
+		userid, req.Groupid, utils.COLLECTION_APPROVED).Count(&membershipExists)
 	if membershipExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not a member of this group")
 	}
@@ -1545,7 +1556,8 @@ func PatchMemberships(c *fiber.Ctx) error {
 		}
 		// Verify the config exists.
 		var configID uint64
-		db.Raw("SELECT id FROM mod_configs WHERE id = ?", *req.Configid).Scan(&configID)
+		// ORM migration site a35651ab9f60 (wave 1).
+		db.Table("mod_configs").Select("id").Where("id = ?", *req.Configid).Scan(&configID)
 		if configID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Config not found")
 		}
@@ -1611,9 +1623,10 @@ func PatchMemberships(c *fiber.Ctx) error {
 			// longer holds Moderator / Owner on ANY other approved group.
 			// Otherwise they're still a mod elsewhere and stay Moderator.
 			var remaining int64
-			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+			// ORM migration site 01aaf9fe55ea (wave 1).
+			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?",
 				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
-				Scan(&remaining)
+				Count(&remaining)
 			if remaining == 0 {
 				db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
 					utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)

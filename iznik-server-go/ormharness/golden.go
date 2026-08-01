@@ -39,11 +39,17 @@ type TestingT interface {
 // manifest - or matches the site's approvedDiff, if one has been reviewed
 // and recorded (see manifest.Site.ApprovedDiff in tools/orm-migration).
 //
-// build MUST include the terminal call (Find, First, Create, Save, Delete,
-// Scan, Row, Rows, ...). GORM only finishes assembling a statement when a
-// terminal call runs, so without one Statement.SQL is empty and there is
-// nothing to compare; dry-run mode intercepts the call so no connection is
-// touched. Note this is the opposite convention to Layer 2's
+// build MUST include a terminal call: Find, Count, Create, Delete, Update,
+// Take or First. GORM only finishes assembling a statement when one runs, so
+// without it Statement.SQL is empty and there is nothing to compare; dry-run
+// mode intercepts the call so no connection is touched.
+//
+// Scan is NOT usable here: GORM rejects it under dry-run with "dry run mode
+// unsupported". Production code can keep using Scan where that reads best;
+// only this build function needs a different terminal, and Find renders the
+// same SQL for the shapes these sites use.
+//
+// Note this is the opposite convention to Layer 2's
 // ReplacementQuery (resultparity.go), which must stop SHORT of a terminal
 // call because AssertResultParity invokes Rows() itself. For example:
 //
@@ -112,7 +118,19 @@ func RenderDryRunSQL(build func(tx *gorm.DB) *gorm.DB) (string, error) {
 	if tx.Error != nil {
 		return "", tx.Error
 	}
-	return tx.Statement.SQL.String(), nil
+
+	sql := tx.Statement.SQL.String()
+	if sql == "" {
+		// GORM only assembles a statement when a terminal call runs, so an
+		// empty string means the build function returned a chain that never
+		// finished. Saying so here beats what happens otherwise: the empty
+		// string flows onward and MySQL reports a syntax error "near ''",
+		// which points nowhere near the actual mistake.
+		return "", fmt.Errorf("build function produced no SQL: it must end in a terminal call " +
+			"(Find, Count, Create, Delete, Update, Take, First). Note Scan is NOT usable here, " +
+			"since GORM rejects it in dry-run mode")
+	}
+	return sql, nil
 }
 
 // dryRunDSN is never dialled. gorm.Open only reaches the network if the

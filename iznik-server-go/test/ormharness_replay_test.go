@@ -39,13 +39,14 @@ func TestExplainTree_ReturnsPlanText(t *testing.T) {
 }
 
 func TestAssertPlanParity_IdenticalPrimaryKeyLookupsMatch(t *testing.T) {
+	var planDest []map[string]interface{}
 	db := database.DBConn
 	userID := CreateTestUser(t, uniquePrefix("ormharness_planparity_match"), "User")
 
 	report, err := ormharness.AssertPlanParity(db,
 		"SELECT id FROM users WHERE id = ?", []any{userID},
 		func(tx *gorm.DB) *gorm.DB {
-			return tx.Table("users").Select("id").Where("id = ?", userID)
+			return tx.Table("users").Select("id").Where("id = ?", userID).Find(&planDest)
 		},
 	)
 	require.NoError(t, err)
@@ -53,6 +54,7 @@ func TestAssertPlanParity_IdenticalPrimaryKeyLookupsMatch(t *testing.T) {
 }
 
 func TestAssertPlanParity_DifferentAccessPathsMismatch(t *testing.T) {
+	var planDest []map[string]interface{}
 	db := database.DBConn
 	userID := CreateTestUser(t, uniquePrefix("ormharness_planparity_mismatch"), "User")
 
@@ -63,7 +65,7 @@ func TestAssertPlanParity_DifferentAccessPathsMismatch(t *testing.T) {
 			// predicate, forcing a different access path from the old
 			// statement's index lookup - a genuine plan-shape difference the
 			// helper must catch, proving it is not just always passing.
-			return tx.Table("users").Select("id").Where("id + 0 = ?", userID)
+			return tx.Table("users").Select("id").Where("id + 0 = ?", userID).Find(&planDest)
 		},
 	)
 	assert.Error(t, err, "expected a genuinely different access path to be reported as a plan mismatch")

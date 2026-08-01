@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Reviewer-approved divergences between a site's recorded golden SQL and what",
+    "the ORM actually emits, per plan 7.2 Layer 1: 'Where the ORM legitimately",
+    "emits different-but-equivalent SQL, the reviewer records the approved diff",
+    "and a justification in the manifest entry; CI fails on any unapproved",
+    "divergence.'",
+    "",
+    "Declarative, like keep-raw.json, so the decision survives manifest",
+    "regeneration and is reviewed as a diff rather than hand-edited into the",
+    "manifest. Every entry needs a reason: an approved diff is an assertion that",
+    "two statements are equivalent, and that assertion has to be justified.",
+    "",
+    "`sql` is the statement the ORM emits. It is compared canonically, so keyword",
+    "case, whitespace and identifier quoting do not need to match exactly."
+  ],
+  "diffs": [
+    {
+      "id": "958d1d242008",
+      "sql": "INSERT INTO newsfeed_reports (newsfeedid, reason, userid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?",
+      "reason": "GORM emits the columns of a map-valued Create in alphabetical key order, so newsfeedid/reason/userid replaces the handwritten userid/newsfeedid/reason. The bind values are emitted in the same order as the columns, so the row written is identical. Equivalent, not merely similar."
+    }
+  ]
+}
