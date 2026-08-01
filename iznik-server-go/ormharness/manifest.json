@@ -3,8 +3,8 @@
   "root": "iznik-server-go",
   "counts": {
     "converted": 170,
-    "keep-raw": 35,
-    "raw": 1431,
+    "keep-raw": 40,
+    "raw": 1426,
     "test-fixture": 4223
   },
   "sites": {
@@ -13962,7 +13962,8 @@
       "goldenSql": "INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."
     },
     "1c3b4894ce64": {
       "id": "1c3b4894ce64",
@@ -18719,7 +18720,8 @@
       "goldenSql": "UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."
     },
     "246600bac110": {
       "id": "246600bac110",
@@ -44477,7 +44479,8 @@
       "goldenSql": "INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."
     },
     "58060aa7bdc7": {
       "id": "58060aa7bdc7",
@@ -51684,7 +51687,8 @@
       "goldenSql": "SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = ? FOR UPDATE",
       "presentInCode": true,
       "hasParityTest": true,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."
     },
     "6600a09b1b67": {
       "id": "6600a09b1b67",
@@ -53731,7 +53735,8 @@
       "goldenSql": "INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."
     },
     "69f6acdc5a6b": {
       "id": "69f6acdc5a6b",
