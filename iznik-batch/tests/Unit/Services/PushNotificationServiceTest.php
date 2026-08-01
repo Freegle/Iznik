@@ -1043,6 +1043,74 @@ class PushNotificationServiceTest extends TestCase
         $this->assertEquals('1', (string) $payload['modtools']);
     }
 
+    /**
+     * Emoji reached the phone as raw twem escapes: a member saw
+     * "No worries, I'll delete it for you \\u1f642\\u" in a push. The front end
+     * stores emoji that way (untwem in useTwem.js) and the email path for this
+     * same column already decodes it; only push did not.
+     */
+    public function test_chat_payload_decodes_emoji(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "No worries, I'll delete it for you \\\\u1f642\\\\u",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringContainsString("\u{1F642}", $payload['message'],
+            'the emoji itself must reach the phone');
+        $this->assertStringNotContainsString('1f642', $payload['message'],
+            'no raw codepoint may survive');
+        $this->assertStringNotContainsString('\\u', $payload['message'],
+            'no twem escape markers may survive');
+    }
+
+    public function test_chat_payload_decodes_multi_codepoint_emoji(): void
+    {
+        // Flags and ZWJ sequences encode as several codepoints joined by '-'.
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "Flag \\\\u1f1ec-1f1e7\\\\u",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringContainsString("\u{1F1EC}\u{1F1E7}", $payload['message']);
+        $this->assertStringNotContainsString('1f1ec', $payload['message']);
+    }
+
+    /**
+     * Decoding must happen BEFORE the 256-char truncation. Truncating the encoded
+     * form could cut an escape in half and leave a fragment like "\\u1f6" on screen,
+     * and the limit should apply to what the member actually sees.
+     */
+    public function test_chat_payload_truncates_after_decoding_so_no_escape_is_severed(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        // Pad so that an emoji sits right around the 256-char boundary of the
+        // ENCODED string but well inside it once decoded.
+        $padding = str_repeat('a', 250);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => $padding . "\\\\u1f642\\\\u tail",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringNotContainsString('\\u', $payload['message'],
+            'a severed escape must never appear');
+        $this->assertStringContainsString("\u{1F642}", $payload['message'],
+            'the emoji survives because decoding happens first');
+        $this->assertLessThanOrEqual(256, mb_strlen($payload['message']));
+    }
+
     public function test_chat_payload_uses_chatid_as_notid(): void
     {
         // V1: notId = chatid so a second message in the same chat REPLACES
