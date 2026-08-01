@@ -186,11 +186,26 @@ function onJobClicked(clickedId) {
 
 .jobs-slot {
   width: 100%;
-  /* Muted (not pure white) so the job-ads block reads as distinct sponsored content and
-     separates from the white nav bar that can sit directly above it on Browse. */
-  background: $color-gray--lighter;
-  border: 1px solid $gray-200;
+  /* Muted so the job-ads block reads as distinct sponsored content and separates
+     from the mobile nav bar, which is pure white and sits directly above it.
+     $color-gray--lighter (#F5F5F5) was too close to white to do that - against
+     the white bar the two ran together into one surface. */
+  background: $gray-200;
+  border: 1px solid $gray-300;
   overflow-y: auto;
+}
+
+/* JobOne paints its rows white, which covered the muted background above and
+   left the block looking white again. Inside this slot the rows sit ON the
+   muted background instead; elsewhere (the /jobs page, the sidebar) they keep
+   their own white. */
+.jobs-slot :deep(.job-summary) {
+  background: transparent;
+
+  &:hover,
+  &:focus-visible {
+    background: $gray-300;
+  }
 }
 
 .jobs-slot-header {
@@ -198,11 +213,13 @@ function onJobClicked(clickedId) {
   align-items: center;
   gap: 0.5rem;
   padding: 0.6rem 0.75rem;
-  background: $gray-100;
+  /* Sits a step darker than the body so the block reads as a labelled panel
+     rather than a lighter strip inside a darker one. */
+  background: $gray-300;
   color: $gray-700;
   font-weight: 600;
   font-size: 0.85rem;
-  border-bottom: 1px solid $gray-200;
+  border-bottom: 1px solid $gray-400;
 }
 
 .jobs-slot-icon {
