@@ -25,40 +25,40 @@ import (
 // --- getRoleForGroup / isModOfGroup: role lookup by userid+groupid+collection ---
 
 func TestWave1Membership_b93b47daeb87(t *testing.T) {
-	var dest string
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "b93b47daeb87", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("memberships").Select("role").
 			Where("userid = ? AND groupid = ? AND collection = ?", 1, 2, "Approved").
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
 func TestWave1Membership_57cbae19bf26(t *testing.T) {
-	var dest string
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "57cbae19bf26", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("memberships").Select("role").
 			Where("userid = ? AND groupid = ? AND collection = ?", 1, 2, "Approved").
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
 // --- PostMemberships hold check: heldby lookup and holder's name -----------
 
 func TestWave1Membership_e472a5457ade(t *testing.T) {
-	var dest uint64
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "e472a5457ade", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("memberships").Select("COALESCE(heldby, 0)").
 			Where("userid = ? AND groupid = ?", 1, 2).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
 func TestWave1Membership_8c02651afe8b(t *testing.T) {
-	var dest string
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "8c02651afe8b", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("users").Select("fullname").
 			Where("id = ?", 1).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
@@ -79,11 +79,11 @@ func TestWave1Membership_dd226f0cacca(t *testing.T) {
 }
 
 func TestWave1Membership_553e621a63b0(t *testing.T) {
-	var dest string
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "553e621a63b0", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("memberships").Select("role").
 			Where("userid = ? AND groupid = ?", 1, 2).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
@@ -97,11 +97,11 @@ func TestWave1Membership_927556278e70(t *testing.T) {
 }
 
 func TestWave1Membership_5b811f0c2cc6(t *testing.T) {
-	var dest string
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "5b811f0c2cc6", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("memberships").Select("role").
 			Where("userid = ? AND groupid = ?", 1, 2).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 
@@ -124,11 +124,11 @@ func TestWave1Membership_d52f362bd794(t *testing.T) {
 }
 
 func TestWave1Membership_a35651ab9f60(t *testing.T) {
-	var dest uint64
+	var dest []map[string]interface{}
 	ormharness.AssertGoldenSQL(t, "a35651ab9f60", func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("mod_configs").Select("id").
 			Where("id = ?", 1).
-			Scan(&dest)
+			Find(&dest)
 	})
 }
 

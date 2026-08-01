@@ -187,7 +187,11 @@ func GetGroup(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT * FROM groups_sponsorship WHERE groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1 ORDER BY amount DESC", id).Scan(&filteredSponsors)
+			// ORM migration site 21406c23a191 (wave 1).
+			db.Table("groups_sponsorship").
+				Where("groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1", id).
+				Order("amount DESC").
+				Scan(&filteredSponsors)
 		}()
 	}
 
@@ -260,7 +264,8 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT poly, polyofficial FROM `groups` WHERE id = ?", id).Scan(&polyResult)
+				// ORM migration site 7c5c81bc5dc0 (wave 1).
+				db.Table("groups").Select("poly, polyofficial").Where("id = ?", id).Scan(&polyResult)
 			}()
 		}
 
@@ -268,7 +273,10 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).Scan(&myrole)
+				// ORM migration site 06597ffa764d (wave 1).
+				db.Table("memberships").Select("role").
+					Where("userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).
+					Scan(&myrole)
 			}()
 		}
 
@@ -276,7 +284,12 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1", myid).Scan(&email)
+				// ORM migration site 01adb146166c (wave 1).
+				db.Table("users_emails").Select("email").
+					Where("userid = ?", myid).
+					Order("preferred DESC, id ASC").
+					Limit(1).
+					Scan(&email)
 			}()
 		}
 
@@ -411,7 +424,10 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 
 			if myid > 0 {
 				var myrole string
-				db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).Scan(&myrole)
+				// ORM migration site 3f55e9081ae4 (wave 1).
+				db.Table("memberships").Select("role").
+					Where("userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).
+					Scan(&myrole)
 				if myrole != "" {
 					g.Myrole = myrole
 				} else {
@@ -502,13 +518,20 @@ func ListGroups(c *fiber.Ctx) error {
 
 	if isAdminOrSupport {
 		// Support mode: return all groups (not just published/onhere) with extra fields.
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
-			"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
-			"founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, "+
-			"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby "+
-			"FROM `groups` WHERE type = ?", FREEGLE).Scan(&groups)
+		// ORM migration site 1a4bd532caa4 (wave 1).
+		db.Table("groups").
+			Select("id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
+				"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
+				"founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, "+
+				"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby").
+			Where("type = ?", FREEGLE).
+			Scan(&groups)
 	} else {
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
+		// ORM migration site d7629b3fa332 (wave 1).
+		db.Table("groups").
+			Select("id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin").
+			Where("publish = 1 AND onhere = 1 AND type = ?", FREEGLE).
+			Scan(&groups)
 	}
 
 	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
@@ -535,14 +558,20 @@ func ListGroups(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start31, "Message", "Autoapproved").Scan(&autoApproves)
+			// ORM migration site f207e41516c4 (wave 1).
+			db.Table("logs").Select("COUNT(*) AS count, groupid").
+				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Autoapproved").
+				Group("groupid").
+				Scan(&autoApproves)
 		}()
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start31, "Message", "Approved").Scan(&manualApproves)
+			// ORM migration site a1d28f99a959 (wave 1).
+			db.Table("logs").Select("COUNT(*) AS count, groupid").
+				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Approved").
+				Group("groupid").
+				Scan(&manualApproves)
 		}()
 
 		go func() {
@@ -550,12 +579,12 @@ func ListGroups(c *fiber.Ctx) error {
 			// Count messages where a moderator manually approved (approvedby IS NOT NULL)
 			// vs total messages arriving in the past 30 days, grouped by community.
 			// Uses arrival rather than approvedat so the denominator is consistent.
-			db.Raw(`SELECT groupid,
-				SUM(approvedby IS NOT NULL) AS moderated_count,
-				COUNT(*) AS total_count
-				FROM messages_groups
-				WHERE arrival >= ?
-				GROUP BY groupid`, start30).Scan(&moderatedCounts)
+			// ORM migration site 9ab327a70a09 (wave 1).
+			db.Table("messages_groups").
+				Select("groupid, SUM(approvedby IS NOT NULL) AS moderated_count, COUNT(*) AS total_count").
+				Where("arrival >= ?", start30).
+				Group("groupid").
+				Scan(&moderatedCounts)
 		}()
 
 		wg.Wait()
@@ -732,7 +761,8 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Verify group exists
 	var groupCount int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", req.ID).Scan(&groupCount)
+	// ORM migration site 88ec4f8b3364 (wave 1).
+	db.Table("groups").Where("id = ?", req.ID).Count(&groupCount)
 	if groupCount == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
@@ -904,7 +934,8 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	if !isAdmin {
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modCount)
+		// ORM migration site fcf7a3fd9364 (wave 1).
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Count(&modCount)
 		if modCount == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator to create groups")
 		}

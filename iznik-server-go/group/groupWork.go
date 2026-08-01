@@ -85,8 +85,11 @@ func GetGroupWork(c *fiber.Ctx) error {
 		Settings *string `json:"settings"`
 	}
 	var memberships []membershipRow
-	db.Raw("SELECT groupid, settings FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
-		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&memberships)
+	// ORM migration site dfcf063d9320 (wave 1).
+	db.Table("memberships").Select("groupid, settings").
+		Where("userid = ? AND role IN (?, ?) AND collection = ?",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+		Scan(&memberships)
 
 	if len(memberships) == 0 {
 		return c.JSON([]GroupWork{})

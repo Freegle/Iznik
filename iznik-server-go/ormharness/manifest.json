@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 10,
+    "converted": 36,
     "keep-raw": 35,
-    "raw": 1591,
+    "raw": 1565,
     "test-fixture": 4223
   },
   "sites": {
@@ -485,7 +485,7 @@
     "00cfcc43186b": {
       "id": "00cfcc43186b",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 140,
+      "line": 142,
       "function": "TestRunUpsertParity_ConditionalCounterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -834,9 +834,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "01adb146166c": {
       "id": "01adb146166c",
@@ -856,9 +856,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "01bedb9d631d": {
       "id": "01bedb9d631d",
@@ -1212,7 +1212,7 @@
     "02963d1e570a": {
       "id": "02963d1e570a",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1507,
+      "line": 1518,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -1990,7 +1990,7 @@
     "0477a681ffd6": {
       "id": "0477a681ffd6",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 745,
+      "line": 749,
       "function": "getRelatedMembers",
       "receiver": "db",
       "method": "Exec",
@@ -2348,7 +2348,7 @@
     "0510fa1a8a85": {
       "id": "0510fa1a8a85",
       "file": "iznik-server-go/group/group.go",
-      "line": 775,
+      "line": 805,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -3144,9 +3144,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "065aaa2bbf95": {
       "id": "065aaa2bbf95",
@@ -4082,7 +4082,7 @@
     "083af5c9e0a1": {
       "id": "083af5c9e0a1",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 247,
+      "line": 250,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -7322,7 +7322,7 @@
     "0e9905e6f0ce": {
       "id": "0e9905e6f0ce",
       "file": "iznik-server-go/group/group.go",
-      "line": 817,
+      "line": 847,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -8014,7 +8014,7 @@
     "0fe2da6629e8": {
       "id": "0fe2da6629e8",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1425,
+      "line": 1435,
       "function": "deleteMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -8993,7 +8993,7 @@
     "11cd46e11f5a": {
       "id": "11cd46e11f5a",
       "file": "iznik-server-go/group/group.go",
-      "line": 784,
+      "line": 814,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -12417,7 +12417,7 @@
     "19356cdf20b2": {
       "id": "19356cdf20b2",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 159,
+      "line": 163,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -12439,7 +12439,7 @@
     "193930b7821a": {
       "id": "193930b7821a",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 733,
+      "line": 737,
       "function": "getRelatedMembers",
       "receiver": "db",
       "method": "Raw",
@@ -12483,7 +12483,7 @@
     "194062f24f48": {
       "id": "194062f24f48",
       "file": "iznik-server-go/group/group.go",
-      "line": 935,
+      "line": 966,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -12912,7 +12912,7 @@
     "1a000d04649b": {
       "id": "1a000d04649b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1070,
+      "line": 1074,
       "function": "getVisibleRatings",
       "receiver": "db",
       "method": "Raw",
@@ -13125,9 +13125,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby FROM `groups` WHERE type = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1a5b7a9f8895": {
       "id": "1a5b7a9f8895",
@@ -14852,7 +14852,7 @@
     "1de7b48d433b": {
       "id": "1de7b48d433b",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 198,
+      "line": 201,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -14868,7 +14868,7 @@
       "args": 2,
       "goldenSql": "SELECT groupid, COUNT(*) as count FROM memberships WHERE groupid IN ? AND collection = ? GROUP BY groupid",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "1de7e639029b": {
@@ -15188,7 +15188,7 @@
     "1e4d0a106c72": {
       "id": "1e4d0a106c72",
       "file": "iznik-server-go/group/group.go",
-      "line": 793,
+      "line": 823,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -15675,7 +15675,7 @@
     "1f1e8962edcb": {
       "id": "1f1e8962edcb",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 341,
+      "line": 344,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -15966,7 +15966,7 @@
     "1f888c4d9a0a": {
       "id": "1f888c4d9a0a",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 269,
+      "line": 272,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -16926,9 +16926,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT * FROM groups_sponsorship WHERE groupid = ? AND startdate \u003c= NOW() AND enddate \u003e= DATE(NOW()) AND visible = 1 ORDER BY amount DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "216edd50bc02": {
       "id": "216edd50bc02",
@@ -17489,7 +17489,7 @@
     "22727b8ed343": {
       "id": "22727b8ed343",
       "file": "iznik-server-go/group/group.go",
-      "line": 820,
+      "line": 850,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -18363,7 +18363,7 @@
     "23cf0e34c542": {
       "id": "23cf0e34c542",
       "file": "iznik-server-go/group/group.go",
-      "line": 796,
+      "line": 826,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -18629,7 +18629,8 @@
       "goldenSql": "SELECT u.id FROM users u JOIN users_emails ue ON ue.userid = u.id WHERE ue.email = ? LIMIT 1",
       "presentInCode": false,
       "hasParityTest": true,
-      "status": "converted"
+      "status": "converted",
+      "approvedDiff": "SELECT u.id FROM users u JOIN users_emails ue ON ue.userid = u.id WHERE ue.email = ? LIMIT ?"
     },
     "24313a6bfbc7": {
       "id": "24313a6bfbc7",
@@ -20369,7 +20370,7 @@
     "277fffd43546": {
       "id": "277fffd43546",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 206,
+      "line": 208,
       "function": "TestDiffTables_NoDifferencesWhenBothSidesReadTheSameData",
       "receiver": "db",
       "method": "Exec",
@@ -20457,7 +20458,7 @@
     "27aa0e237120": {
       "id": "27aa0e237120",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1271,
+      "line": 1281,
       "function": "addMemberToGroup",
       "receiver": "db",
       "method": "Exec",
@@ -20567,7 +20568,7 @@
     "2811b4d3acf7": {
       "id": "2811b4d3acf7",
       "file": "iznik-server-go/group/group.go",
-      "line": 208,
+      "line": 212,
       "function": "GetGroup",
       "receiver": "q",
       "method": "Raw",
@@ -22571,7 +22572,7 @@
     "2c3b155f346b": {
       "id": "2c3b155f346b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 386,
+      "line": 390,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -23368,7 +23369,7 @@
     "2e011a3ca233": {
       "id": "2e011a3ca233",
       "file": "iznik-server-go/group/group.go",
-      "line": 781,
+      "line": 811,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -23879,7 +23880,7 @@
     "2f0c55ec88d6": {
       "id": "2f0c55ec88d6",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1279,
+      "line": 1289,
       "function": "addMemberToGroup",
       "receiver": "db",
       "method": "Exec",
@@ -24409,7 +24410,7 @@
     "2fb19be4ef0b": {
       "id": "2fb19be4ef0b",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 380,
+      "line": 383,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -25022,7 +25023,7 @@
     "3119115f3abe": {
       "id": "3119115f3abe",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 933,
+      "line": 937,
       "function": "getHappinessMembers",
       "receiver": "db",
       "method": "Raw",
@@ -25509,7 +25510,7 @@
     "31e336f98156": {
       "id": "31e336f98156",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 145,
+      "line": 148,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -26015,7 +26016,7 @@
     "32d907621f09": {
       "id": "32d907621f09",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1231,
+      "line": 1238,
       "function": "putMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -27130,7 +27131,7 @@
     "34c2c6e9128b": {
       "id": "34c2c6e9128b",
       "file": "iznik-server-go/group/group.go",
-      "line": 860,
+      "line": 890,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -28282,7 +28283,7 @@
     "3747c49ac43e": {
       "id": "3747c49ac43e",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 247,
+      "line": 251,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -29438,7 +29439,7 @@
     "39aa0175d3ce": {
       "id": "39aa0175d3ce",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 254,
+      "line": 258,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -30204,7 +30205,7 @@
     "3b43ce5f3f6c": {
       "id": "3b43ce5f3f6c",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 179,
+      "line": 183,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -31292,7 +31293,7 @@
     "3d8f2d88b42d": {
       "id": "3d8f2d88b42d",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1536,
+      "line": 1547,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -32148,9 +32149,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3f5842a7fcec": {
       "id": "3f5842a7fcec",
@@ -35133,7 +35134,7 @@
     "450c5b5fca94": {
       "id": "450c5b5fca94",
       "file": "iznik-server-go/group/group.go",
-      "line": 839,
+      "line": 869,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -35225,7 +35226,7 @@
     "45342427d03d": {
       "id": "45342427d03d",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 208,
+      "line": 210,
       "function": "TestDiffTables_NoDifferencesWhenBothSidesReadTheSameData",
       "receiver": "db",
       "method": "Exec",
@@ -35401,7 +35402,7 @@
     "45bb8a4c8133": {
       "id": "45bb8a4c8133",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 215,
+      "line": 218,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -35683,9 +35684,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "46523ed1cbc3": {
       "id": "46523ed1cbc3",
@@ -37853,7 +37854,7 @@
     "4a525e0d44db": {
       "id": "4a525e0d44db",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 417,
+      "line": 421,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -39289,7 +39290,7 @@
     "4d11adfa11a8": {
       "id": "4d11adfa11a8",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 957,
+      "line": 961,
       "function": "getHappinessMembers",
       "receiver": "db",
       "method": "Raw",
@@ -40473,7 +40474,7 @@
     "4fd65f2418a6": {
       "id": "4fd65f2418a6",
       "file": "iznik-server-go/group/group.go",
-      "line": 761,
+      "line": 791,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -42100,7 +42101,7 @@
     "535641088fb3": {
       "id": "535641088fb3",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1375,
+      "line": 1385,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -42456,7 +42457,7 @@
     "54535c67055f": {
       "id": "54535c67055f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1512,
+      "line": 1523,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -42522,7 +42523,7 @@
     "547458a591ae": {
       "id": "547458a591ae",
       "file": "iznik-server-go/group/group.go",
-      "line": 385,
+      "line": 398,
       "function": "getMultipleGroups",
       "receiver": "db.Preload()",
       "method": "Raw",
@@ -42591,7 +42592,7 @@
     "548090e97d00": {
       "id": "548090e97d00",
       "file": "iznik-server-go/group/group.go",
-      "line": 857,
+      "line": 887,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -43075,9 +43076,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5549d44a65c4": {
       "id": "5549d44a65c4",
@@ -44383,9 +44384,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "57cda8e30715": {
       "id": "57cda8e30715",
@@ -44728,7 +44729,7 @@
     "585a51354a68": {
       "id": "585a51354a68",
       "file": "iznik-server-go/group/group.go",
-      "line": 800,
+      "line": 830,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -44886,7 +44887,7 @@
     "58a93e92bdd0": {
       "id": "58a93e92bdd0",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1607,
+      "line": 1619,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -45530,7 +45531,7 @@
     "5a1f3cd17397": {
       "id": "5a1f3cd17397",
       "file": "iznik-server-go/group/group.go",
-      "line": 790,
+      "line": 820,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -45576,7 +45577,7 @@
     "5a436bd174af": {
       "id": "5a436bd174af",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1563,
+      "line": 1575,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -45713,7 +45714,7 @@
     "5a728147fbaf": {
       "id": "5a728147fbaf",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 153,
+      "line": 155,
       "function": "TestRunUpsertParity_ConditionalCounterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -46358,9 +46359,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5b87fbb750b4": {
       "id": "5b87fbb750b4",
@@ -48250,7 +48251,7 @@
     "5f6ca1b9022f": {
       "id": "5f6ca1b9022f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 557,
+      "line": 561,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -48297,7 +48298,7 @@
     "5f742c0fcf1f": {
       "id": "5f742c0fcf1f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 490,
+      "line": 494,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -49158,7 +49159,7 @@
     "6110f539c46b": {
       "id": "6110f539c46b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 972,
+      "line": 976,
       "function": "getHappinessMembers",
       "receiver": "db",
       "method": "Raw",
@@ -52916,7 +52917,7 @@
     "683e16a0d881": {
       "id": "683e16a0d881",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1552,
+      "line": 1564,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -53116,7 +53117,7 @@
     "6898b056582a": {
       "id": "6898b056582a",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 179,
+      "line": 181,
       "function": "TestRunUpsertParity_ConditionalCounterUpdate",
       "receiver": "sideDB",
       "method": "Raw",
@@ -53670,7 +53671,7 @@
     "69e4378e5a50": {
       "id": "69e4378e5a50",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 78,
+      "line": 80,
       "function": "setupUpsertFixture",
       "receiver": "db",
       "method": "Exec",
@@ -53981,7 +53982,7 @@
     "6a4f5b776c87": {
       "id": "6a4f5b776c87",
       "file": "iznik-server-go/group/group.go",
-      "line": 814,
+      "line": 844,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -55406,7 +55407,7 @@
     "6d0982e798b5": {
       "id": "6d0982e798b5",
       "file": "iznik-server-go/group/group.go",
-      "line": 670,
+      "line": 699,
       "function": "validateGeometry",
       "receiver": "db",
       "method": "Raw",
@@ -55881,7 +55882,7 @@
     "6de535f15717": {
       "id": "6de535f15717",
       "file": "iznik-server-go/group/group.go",
-      "line": 804,
+      "line": 834,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -56977,7 +56978,7 @@
     "70059ac9a4bb": {
       "id": "70059ac9a4bb",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 697,
+      "line": 701,
       "function": "getRelatedMembers",
       "receiver": "db",
       "method": "Raw",
@@ -58092,7 +58093,7 @@
     "7233641f67ad": {
       "id": "7233641f67ad",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 298,
+      "line": 301,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -58655,7 +58656,7 @@
     "7301cba96a50": {
       "id": "7301cba96a50",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 151,
+      "line": 155,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -60149,7 +60150,7 @@
     "759766c83c01": {
       "id": "759766c83c01",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1224,
+      "line": 1231,
       "function": "putMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -61307,7 +61308,7 @@
     "772ef0c51226": {
       "id": "772ef0c51226",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 189,
+      "line": 191,
       "function": "TestRunUpsertParity_ConditionalCounterUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -61936,7 +61937,7 @@
     "784f22ddac08": {
       "id": "784f22ddac08",
       "file": "iznik-server-go/ormharness/replay.go",
-      "line": 337,
+      "line": 350,
       "function": "replayFetchTableRows",
       "receiver": "db",
       "method": "Raw",
@@ -62363,7 +62364,7 @@
     "79439b175c19": {
       "id": "79439b175c19",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 198,
+      "line": 200,
       "function": "TestDiffTables_NoDifferencesWhenBothSidesReadTheSameData",
       "receiver": "db",
       "method": "Exec",
@@ -62649,7 +62650,7 @@
     "7993248ef4e6": {
       "id": "7993248ef4e6",
       "file": "iznik-server-go/group/group.go",
-      "line": 834,
+      "line": 864,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -63116,7 +63117,7 @@
     "7a9e12196036": {
       "id": "7a9e12196036",
       "file": "iznik-server-go/group/group.go",
-      "line": 755,
+      "line": 785,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -64082,9 +64083,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT poly, polyofficial FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7c6e312c8e3e": {
       "id": "7c6e312c8e3e",
@@ -66695,7 +66696,7 @@
     "8190a1ccc42c": {
       "id": "8190a1ccc42c",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 260,
+      "line": 264,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -67585,7 +67586,7 @@
     "836dc8807739": {
       "id": "836dc8807739",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 478,
+      "line": 482,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -70365,9 +70366,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "88f194d2a1d7": {
       "id": "88f194d2a1d7",
@@ -71694,9 +71695,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fullname FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8c0428bf888a": {
       "id": "8c0428bf888a",
@@ -72145,7 +72146,7 @@
     "8cbeeeb7e32f": {
       "id": "8cbeeeb7e32f",
       "file": "iznik-server-go/group/group.go",
-      "line": 920,
+      "line": 951,
       "function": "CreateGroup",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -72573,7 +72574,7 @@
     "8d3cfe20b403": {
       "id": "8d3cfe20b403",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 226,
+      "line": 230,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -74993,7 +74994,7 @@
     "9237ecd90317": {
       "id": "9237ecd90317",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 188,
+      "line": 190,
       "function": "TestRunUpsertParity_ConditionalCounterUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -75213,9 +75214,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9275b04ebe3b": {
       "id": "9275b04ebe3b",
@@ -75648,7 +75649,7 @@
     "93875f6e74f0": {
       "id": "93875f6e74f0",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 270,
+      "line": 274,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -76279,7 +76280,7 @@
     "948119564065": {
       "id": "948119564065",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1589,
+      "line": 1601,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -76345,7 +76346,7 @@
     "9494e3480fa0": {
       "id": "9494e3480fa0",
       "file": "iznik-server-go/group/group.go",
-      "line": 467,
+      "line": 483,
       "function": "getMultipleGroups",
       "receiver": "db",
       "method": "Raw",
@@ -76363,7 +76364,7 @@
       "args": 1,
       "goldenSql": "SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "94b0be1107e0": {
@@ -78197,7 +78198,7 @@
     "98ee705a8a74": {
       "id": "98ee705a8a74",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 235,
+      "line": 239,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -78967,9 +78968,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groupid, SUM(approvedby IS NOT NULL) AS moderated_count, COUNT(*) AS total_count FROM messages_groups WHERE arrival \u003e= ? GROUP BY groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9ab656eb40d0": {
       "id": "9ab656eb40d0",
@@ -82519,9 +82520,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp \u003e= ? AND type = ? AND subtype = ? GROUP BY groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a1dae2c02fdc": {
       "id": "a1dae2c02fdc",
@@ -83360,9 +83361,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM mod_configs WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a3636893afa4": {
       "id": "a3636893afa4",
@@ -85482,7 +85483,7 @@
     "a7496f46878c": {
       "id": "a7496f46878c",
       "file": "iznik-server-go/group/group.go",
-      "line": 621,
+      "line": 650,
       "function": "ListGroups",
       "receiver": "db",
       "method": "Raw",
@@ -85500,7 +85501,7 @@
       "args": 1,
       "goldenSql": "SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "a74bfa8a19c1": {
@@ -85766,7 +85767,7 @@
     "a7dec15999b7": {
       "id": "a7dec15999b7",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 200,
+      "line": 204,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -86525,7 +86526,7 @@
     "a9a8c24df5e0": {
       "id": "a9a8c24df5e0",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 483,
+      "line": 486,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -88695,7 +88696,7 @@
     "adbbb9dadd0c": {
       "id": "adbbb9dadd0c",
       "file": "iznik-server-go/group/group.go",
-      "line": 938,
+      "line": 969,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -90742,7 +90743,7 @@
     "b1c25f5b67a9": {
       "id": "b1c25f5b67a9",
       "file": "iznik-server-go/group/group.go",
-      "line": 749,
+      "line": 779,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -93705,7 +93706,7 @@
     "b7a7c29b7611": {
       "id": "b7a7c29b7611",
       "file": "iznik-server-go/group/group.go",
-      "line": 771,
+      "line": 801,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -94570,9 +94571,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b950effeb06b": {
       "id": "b950effeb06b",
@@ -95785,7 +95786,7 @@
     "bbc55cf96110": {
       "id": "bbc55cf96110",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 521,
+      "line": 525,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -96204,7 +96205,7 @@
     "bc7de11031d3": {
       "id": "bc7de11031d3",
       "file": "iznik-server-go/group/group.go",
-      "line": 752,
+      "line": 782,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -99824,7 +99825,7 @@
     "c3cff12ce730": {
       "id": "c3cff12ce730",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1500,
+      "line": 1511,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -103910,7 +103911,7 @@
     "cbad92a90c0d": {
       "id": "cbad92a90c0d",
       "file": "iznik-server-go/group/group.go",
-      "line": 682,
+      "line": 711,
       "function": "logGroupEdit",
       "receiver": "db",
       "method": "Exec",
@@ -105560,7 +105561,7 @@
     "cf14153e46ac": {
       "id": "cf14153e46ac",
       "file": "iznik-server-go/group/group.go",
-      "line": 811,
+      "line": 841,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -105713,9 +105714,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM `groups` WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cf6f9c8db1e0": {
       "id": "cf6f9c8db1e0",
@@ -105985,7 +105986,7 @@
     "cff1d8adacf1": {
       "id": "cff1d8adacf1",
       "file": "iznik-server-go/group/group.go",
-      "line": 845,
+      "line": 875,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -106436,7 +106437,7 @@
     "d0b8fb573ea6": {
       "id": "d0b8fb573ea6",
       "file": "iznik-server-go/test/ormharness_replay_test.go",
-      "line": 121,
+      "line": 123,
       "function": "TestRunUpsertParity_ConditionalCounterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -108858,9 +108859,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d533dd101d62": {
       "id": "d533dd101d62",
@@ -109150,7 +109151,7 @@
     "d60d7b2e0f2a": {
       "id": "d60d7b2e0f2a",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1356,
+      "line": 1366,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -109959,9 +109960,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d76fd282b316": {
       "id": "d76fd282b316",
@@ -110032,7 +110033,7 @@
     "d788d299a578": {
       "id": "d788d299a578",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1357,
+      "line": 1367,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -112113,7 +112114,7 @@
     "dbd2165e28c7": {
       "id": "dbd2165e28c7",
       "file": "iznik-server-go/group/group.go",
-      "line": 787,
+      "line": 817,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -112660,9 +112661,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dd251d18a878": {
       "id": "dd251d18a878",
@@ -112797,7 +112798,7 @@
     "dd57ad0485df": {
       "id": "dd57ad0485df",
       "file": "iznik-server-go/group/group.go",
-      "line": 826,
+      "line": 856,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -112887,7 +112888,7 @@
     "dd9f2b939bce": {
       "id": "dd9f2b939bce",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 207,
+      "line": 211,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -113308,7 +113309,7 @@
     "de52b33ad2c2": {
       "id": "de52b33ad2c2",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 320,
+      "line": 323,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -113324,7 +113325,7 @@
       "args": 1,
       "goldenSql": "SELECT groupid, COUNT(DISTINCT id) as count FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL GROUP BY groupid",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "de6e235aa5a0": {
@@ -113958,7 +113959,7 @@
     "dfc985e8ea67": {
       "id": "dfc985e8ea67",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 239,
+      "line": 243,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -113998,9 +113999,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT groupid, settings FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dfcfcdfea8dc": {
       "id": "dfcfcdfea8dc",
@@ -115382,7 +115383,7 @@
     "e28d4a7241be": {
       "id": "e28d4a7241be",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1618,
+      "line": 1631,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -116398,9 +116399,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COALESCE(heldby, 0) FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e4a79ed03656": {
       "id": "e4a79ed03656",
@@ -116539,7 +116540,7 @@
     "e4f0bcf9f2eb": {
       "id": "e4f0bcf9f2eb",
       "file": "iznik-server-go/group/group.go",
-      "line": 850,
+      "line": 880,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -116918,7 +116919,7 @@
     "e5fa7f0e05bd": {
       "id": "e5fa7f0e05bd",
       "file": "iznik-server-go/group/group.go",
-      "line": 823,
+      "line": 853,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -119045,7 +119046,7 @@
     "e9cc5186c0a5": {
       "id": "e9cc5186c0a5",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 425,
+      "line": 428,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -119339,7 +119340,7 @@
     "ea603dbc3fe0": {
       "id": "ea603dbc3fe0",
       "file": "iznik-server-go/group/group.go",
-      "line": 943,
+      "line": 974,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -121350,7 +121351,7 @@
     "eeb78024d807": {
       "id": "eeb78024d807",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 185,
+      "line": 189,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -122838,7 +122839,7 @@
     "f15eacecdc43": {
       "id": "f15eacecdc43",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 283,
+      "line": 287,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -123139,9 +123140,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp \u003e= ? AND type = ? AND subtype = ? GROUP BY groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f20fcf2bf293": {
       "id": "f20fcf2bf293",
@@ -125864,7 +125865,7 @@
     "f749b5bc26ed": {
       "id": "f749b5bc26ed",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 179,
+      "line": 182,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -128194,7 +128195,7 @@
     "fb4e48c03bee": {
       "id": "fb4e48c03bee",
       "file": "iznik-server-go/group/group.go",
-      "line": 758,
+      "line": 788,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -129044,14 +129045,14 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fd0917d06441": {
       "id": "fd0917d06441",
       "file": "iznik-server-go/group/group.go",
-      "line": 778,
+      "line": 808,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -129451,7 +129452,7 @@
     "fdd14a1656c7": {
       "id": "fdd14a1656c7",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 649,
+      "line": 653,
       "function": "getSpamMembers",
       "receiver": "db",
       "method": "Raw",
@@ -130163,7 +130164,7 @@
     "febb90feb157": {
       "id": "febb90feb157",
       "file": "iznik-server-go/ormharness/replay.go",
-      "line": 325,
+      "line": 338,
       "function": "replayPrimaryKeyColumns",
       "receiver": "db",
       "method": "Raw",
