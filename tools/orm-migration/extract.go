@@ -1254,6 +1254,7 @@ var parityAssertions = map[string]bool{
 	"AssertGoldenShapes":            true,
 	"AssertGoldenParametrizedShape": true,
 	"AssertGoldenFieldwise":         true,
+	"AssertGoldenWhereFieldwise":    true,
 }
 
 // parityTestedIDs collects every site ID actually asserted on by a test under

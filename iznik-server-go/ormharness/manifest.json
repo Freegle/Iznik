@@ -5,7 +5,7 @@
     "converted": 1595,
     "keep-raw": 39,
     "retired": 41,
-    "test-fixture": 4265
+    "test-fixture": 4261
   },
   "ratchet": {
     "baseline": 0,
@@ -999,7 +999,7 @@
     "01fff707feb4": {
       "id": "01fff707feb4",
       "file": "iznik-server-go/database/retry.go",
-      "line": 138,
+      "line": 145,
       "function": "RetryExecResult",
       "receiver": "db",
       "method": "Exec",
@@ -1961,7 +1961,7 @@
     "044f9a836b2f": {
       "id": "044f9a836b2f",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 290,
+      "line": 282,
       "function": "CreateTestJob",
       "receiver": "db",
       "method": "Raw",
@@ -2609,7 +2609,7 @@
     "0557f560dfee": {
       "id": "0557f560dfee",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 705,
+      "line": 693,
       "function": "CreateTestMessageWithArrival",
       "receiver": "db",
       "method": "Raw",
@@ -3102,7 +3102,7 @@
     "062e87bea485": {
       "id": "062e87bea485",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 543,
+      "line": 532,
       "function": "CreateTestMessage",
       "receiver": "db",
       "method": "Exec",
@@ -7333,7 +7333,7 @@
     "0e6f3f028ed5": {
       "id": "0e6f3f028ed5",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 789,
+      "line": 777,
       "function": "CreateTestNotification",
       "receiver": "db",
       "method": "Exec",
@@ -8960,7 +8960,7 @@
     "1182ae3dee34": {
       "id": "1182ae3dee34",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 651,
+      "line": 639,
       "function": "CreateTestItem",
       "receiver": "db",
       "method": "Exec",
@@ -12175,7 +12175,7 @@
     "18612258b458": {
       "id": "18612258b458",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 522,
+      "line": 511,
       "function": "CreateTestMessage",
       "receiver": "db",
       "method": "Exec",
@@ -12456,28 +12456,6 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO ai_images (name, externaluid, usage_count) VALUES (?, ?, 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
-    "19122634ce97": {
-      "id": "19122634ce97",
-      "file": "iznik-server-go/test/testUtils.go",
-      "line": 405,
-      "function": "CreateTestChatRoom",
-      "receiver": "db",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "chat_rooms"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 1,
-      "goldenSql": "SELECT id FROM chat_rooms WHERE user1 = ? ORDER BY id DESC LIMIT 1",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -12883,7 +12861,7 @@
     "19afca795523": {
       "id": "19afca795523",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 580,
+      "line": 569,
       "function": "indexMessageWords",
       "receiver": "db",
       "method": "Raw",
@@ -13787,7 +13765,7 @@
     "1b5ed0866c04": {
       "id": "1b5ed0866c04",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 595,
+      "line": 583,
       "function": "CreateTestNewsfeed",
       "receiver": "db",
       "method": "Exec",
@@ -14195,7 +14173,7 @@
     "1c4e0b61b4f4": {
       "id": "1c4e0b61b4f4",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 672,
+      "line": 660,
       "function": "CreateTestMessageItem",
       "receiver": "db",
       "method": "Exec",
@@ -15452,7 +15430,7 @@
     "1e31506b04d0": {
       "id": "1e31506b04d0",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 468,
+      "line": 458,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Exec",
@@ -18348,7 +18326,7 @@
     "23324a075b94": {
       "id": "23324a075b94",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 138,
+      "line": 134,
       "function": "CreateTestUser",
       "receiver": "db",
       "method": "Raw",
@@ -19994,7 +19972,7 @@
     "25e02ee91c1c": {
       "id": "25e02ee91c1c",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 281,
+      "line": 273,
       "function": "CreateTestJob",
       "receiver": "db",
       "method": "Exec",
@@ -22897,7 +22875,7 @@
     "2c114cf747d2": {
       "id": "2c114cf747d2",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 859,
+      "line": 847,
       "function": "CreateTestMessageWithoutGroup",
       "receiver": "db",
       "method": "Raw",
@@ -25168,7 +25146,7 @@
     "30238940ab8e": {
       "id": "30238940ab8e",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 469,
+      "line": 459,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Exec",
@@ -27850,7 +27828,7 @@
     "35076ce3344b": {
       "id": "35076ce3344b",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 63,
+      "line": 61,
       "function": "findLog",
       "receiver": "db",
       "method": "Raw",
@@ -28343,7 +28321,7 @@
     "360cb8657329": {
       "id": "360cb8657329",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 431,
+      "line": 421,
       "function": "CreateTestChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -29373,7 +29351,7 @@
     "385769c73ec6": {
       "id": "385769c73ec6",
       "file": "iznik-server-go/ormshadow/shadow.go",
-      "line": 233,
+      "line": 245,
       "function": "ShadowRead",
       "receiver": "db",
       "method": "Raw",
@@ -29937,7 +29915,7 @@
     "399ef792c5a8": {
       "id": "399ef792c5a8",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 427,
+      "line": 417,
       "function": "CreateTestChatMessage",
       "receiver": "db",
       "method": "Raw",
@@ -30609,7 +30587,7 @@
     "3ae731f36c3d": {
       "id": "3ae731f36c3d",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 452,
+      "line": 442,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Raw",
@@ -30981,6 +30959,26 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "3b9c0e5b4bbb": {
+      "id": "3b9c0e5b4bbb",
+      "file": "iznik-server-go/logs/logs_wherefieldwise_tier9_test.go",
+      "line": 61,
+      "function": "TestWhereFieldwiseGetLogs_6cf1b5aded22",
+      "receiver": "tx",
+      "method": "Raw",
+      "sqlSource": "variable",
+      "kind": "DYNAMIC",
+      "tables": [],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 1,
+      "goldenSql": "{{built at runtime: sql}}",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "3bb5bf0c5009": {
       "id": "3bb5bf0c5009",
@@ -31365,7 +31363,7 @@
     "3c5c38342a1c": {
       "id": "3c5c38342a1c",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 539,
+      "line": 528,
       "function": "CreateTestMessage",
       "receiver": "db",
       "method": "Exec",
@@ -32552,7 +32550,7 @@
     "3f09927bec54": {
       "id": "3f09927bec54",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 196,
+      "line": 190,
       "function": "CreateTestUserWithEmail",
       "receiver": "db",
       "method": "Exec",
@@ -32596,7 +32594,7 @@
     "3f1a4830d904": {
       "id": "3f1a4830d904",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 490,
+      "line": 480,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Raw",
@@ -33282,7 +33280,7 @@
     "407a96633da1": {
       "id": "407a96633da1",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 604,
+      "line": 592,
       "function": "CreateTestNewsfeed",
       "receiver": "db",
       "method": "Raw",
@@ -33436,7 +33434,7 @@
     "40ac87c82867": {
       "id": "40ac87c82867",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 206,
+      "line": 199,
       "function": "CreateTestMembership",
       "receiver": "db",
       "method": "Exec",
@@ -34195,7 +34193,7 @@
     "420da617a823": {
       "id": "420da617a823",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 111,
+      "line": 108,
       "function": "CreateTestGroup",
       "receiver": "db",
       "method": "Raw",
@@ -35744,7 +35742,7 @@
     "4500480f464f": {
       "id": "4500480f464f",
       "file": "iznik-server-go/database/retry.go",
-      "line": 117,
+      "line": 122,
       "function": "RetryExec",
       "receiver": "db",
       "method": "Exec",
@@ -36128,7 +36126,7 @@
     "45d863036025": {
       "id": "45d863036025",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 575,
+      "line": 564,
       "function": "indexMessageWords",
       "receiver": "db",
       "method": "Exec",
@@ -37111,7 +37109,7 @@
     "47c5b77c2702": {
       "id": "47c5b77c2702",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 443,
+      "line": 433,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Exec",
@@ -40415,7 +40413,7 @@
     "4df0fd7eb9b7": {
       "id": "4df0fd7eb9b7",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 77,
+      "line": 75,
       "function": "findLogByMsg",
       "receiver": "db",
       "method": "Raw",
@@ -42891,7 +42889,7 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "Runtime-varying: the statement has more than one possible rendered form (the statement is assembled from a variable-length `unions` slice (one UNION arm appended per matching chat-room shape) joined with \" UNION \", so both the number of arms and the final SQL text vary per call), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction. EVIDENCE (researched, not assumed): GORM v1.31.0 contains no UNION support at all - zero occurrences of the word anywhere in its source, and the query clause list is the fixed set SELECT/FROM/WHERE/GROUP BY/ORDER BY/LIMIT/FOR in callbacks/callbacks.go. Upstream issues go-gorm/gorm#5552 and #6759 both request it and both remain open. A third-party plugin (WinterYukky/gorm-extra-clause-plugin) does register a real UNION clause properly, but it does not rescue these sites: GORM's Statement has ONE ORDER BY slot and ONE LIMIT slot, so an arm carrying its own LIMIT has it silently discarded rather than rejected - confirmed by rendering. Every arm here carries its own LIMIT, so this is a structural property of the statement model, not a missing feature a plugin patches. Converting the UNION keyword alone would also not reduce the raw surface: it trades one raw statement for several raw arms plus raw glue.",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the statement is assembled from a variable-length `unions` slice (one UNION arm appended per matching chat-room shape) joined with \" UNION \", so both the number of arms and the final SQL text vary per call), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction. EVIDENCE (researched, not assumed): GORM v1.31.0 contains no UNION support at all - zero occurrences of the word anywhere in its source, and the query clause list is the fixed set SELECT/FROM/WHERE/GROUP BY/ORDER BY/LIMIT/FOR in callbacks/callbacks.go. Upstream issues go-gorm/gorm#5552 and #6759 both request it and both remain open. A third-party plugin (WinterYukky/gorm-extra-clause-plugin) does register a real UNION clause properly, but it does not rescue these sites: GORM's Statement has ONE ORDER BY slot and ONE LIMIT slot, so an arm carrying its own LIMIT has it silently discarded rather than rejected - confirmed by rendering. Every arm here carries its own LIMIT, so this is a structural property of the statement model, not a missing feature a plugin patches. Converting the UNION keyword alone would also not reduce the raw surface: it trades one raw statement for several raw arms plus raw glue. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: UNION and UNION ALL are standard and port unchanged. Raw here because GORM ships no UNION clause, not because of dialect.",
       "category": "Top-level UNION"
     },
@@ -44337,7 +44335,7 @@
     "566568bd2212": {
       "id": "566568bd2212",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 641,
+      "line": 629,
       "function": "CreateTestNewsfeedWithType",
       "receiver": "db",
       "method": "Exec",
@@ -45942,7 +45940,7 @@
     "594f5d105b89": {
       "id": "594f5d105b89",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 467,
+      "line": 457,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Exec",
@@ -47246,7 +47244,7 @@
     "5be63964e6df": {
       "id": "5be63964e6df",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 225,
+      "line": 217,
       "function": "CreateTestSession",
       "receiver": "db",
       "method": "Exec",
@@ -55289,7 +55287,7 @@
     "6b07d7949c25": {
       "id": "6b07d7949c25",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 822,
+      "line": 810,
       "function": "CreateTestStory",
       "receiver": "db",
       "method": "Exec",
@@ -56339,7 +56337,7 @@
     "6cf1b5aded22": {
       "id": "6cf1b5aded22",
       "file": "iznik-server-go/logs/logs.go",
-      "line": 230,
+      "line": 250,
       "function": "GetLogs",
       "receiver": "db",
       "method": "Raw",
@@ -56353,11 +56351,11 @@
       "args": 1,
       "goldenSql": "{{built at runtime: query}}",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Not a small fixed-toggle bucket: the WHERE is built from at least six independently optional fragments (logtype-driven types/subtypes selection with its own multi-case switch, groupid scoping vs mod-group IN-list, modmailsonly's compound OR, a date cutoff, context pagination, a userid filter, and a search JOIN+LIKE), which multiply to well over 32 reachable shapes - past the largest bounded site converted in this wave (membership.go, ~16). Same class of problem as session.go's PatchSession and modconfig.go's PatchModConfig: needs a policy call on partial shape coverage (or a parametrized-shape harness primitive) before authoring, not a straightforward enumeration.",
-      "porting": "PostgreSQL: nothing dialect-specific blocks a port here - every fragment is ordinary SQL/string concatenation. The size of the shape space is a testing-infrastructure problem, not a portability one.",
-      "category": "Runtime-varying SQL"
+      "reason": "Proven, but still raw - NOT converted. The WHERE is assembled from a logtype switch plus five independently optional fragments, 352 reachable combinations, far past what AssertGoldenShapes can enumerate. That is now covered rather than deferred: buildGetLogsQuery is extracted as a pure builder and AssertGoldenWhereFieldwise proves it in 11 cases instead of 352, verifying each factor's contribution in isolation against a full rendered statement. Two hand-rolled placeholder loops also became native IN (?) slice binds, removing the failure mode where the placeholder count and the bind count are maintained separately. What has NOT changed is that the statement is still built as text and executed by db.Raw, so ratchet gate (n) correctly refuses to count it as converted - and did exactly that when the rule was briefly cleared. Converting it properly needs a GORM composition for a WHERE built at runtime, which is a different problem from proving the text is right.",
+      "porting": "PostgreSQL: the builder is the porting unit, one function rather than fragments scattered through the handler. The statement is ordinary parameterised SQL - the pieces to check on port are the date arithmetic and the LIKE search, not the structure.",
+      "category": "Proven builder, still raw"
     },
     "6d02776a0472": {
       "id": "6d02776a0472",
@@ -60059,7 +60057,7 @@
     "737f42128220": {
       "id": "737f42128220",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 716,
+      "line": 704,
       "function": "CreateTestMessageWithArrival",
       "receiver": "db",
       "method": "Raw",
@@ -64198,7 +64196,7 @@
     "7a553612ba54": {
       "id": "7a553612ba54",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 724,
+      "line": 712,
       "function": "CreateTestMessageWithArrival",
       "receiver": "db",
       "method": "Exec",
@@ -64615,7 +64613,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n.",
+      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: SOUNDEX is available via fuzzystrmatch; damlevlim is a MySQL UDF with no direct equivalent and needs replacing (levenshtein_less_equal in fuzzystrmatch is the closest). The OR-list structure itself ports unchanged.",
       "category": "Variable-length predicate list"
     },
@@ -64856,7 +64854,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright.",
+      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: the builder is the porting unit, not the call site - one function to rewrite rather than a scattered set of fragments, which is the main practical benefit of having extracted it. Check the dialect-specific pieces inside it (LIMIT/OFFSET are fine; any MySQL-only function or index hint is not).",
       "category": "Proven builder, still raw"
     },
@@ -65522,7 +65520,7 @@
     "7cc532a02648": {
       "id": "7cc532a02648",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 831,
+      "line": 819,
       "function": "CreateTestStory",
       "receiver": "db",
       "method": "Raw",
@@ -68405,7 +68403,7 @@
     "827ccbc62afa": {
       "id": "827ccbc62afa",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 419,
+      "line": 409,
       "function": "CreateTestChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -68539,7 +68537,7 @@
     "82cdd31d8789": {
       "id": "82cdd31d8789",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 520,
+      "line": 509,
       "function": "CreateTestMessage",
       "receiver": "db",
       "method": "Raw",
@@ -69588,7 +69586,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n.",
+      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: SOUNDEX is available via fuzzystrmatch; damlevlim is a MySQL UDF with no direct equivalent and needs replacing (levenshtein_less_equal in fuzzystrmatch is the closest). The OR-list structure itself ports unchanged.",
       "category": "Variable-length predicate list"
     },
@@ -70336,7 +70334,7 @@
     "8619acd97c87": {
       "id": "8619acd97c87",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 507,
+      "line": 497,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Exec",
@@ -70490,7 +70488,7 @@
     "8668ba74e56a": {
       "id": "8668ba74e56a",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 145,
+      "line": 141,
       "function": "CreateTestUser",
       "receiver": "db",
       "method": "Exec",
@@ -71481,7 +71479,7 @@
     "88622678faa4": {
       "id": "88622678faa4",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 497,
+      "line": 487,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Exec",
@@ -75351,7 +75349,7 @@
     "90042debafb1": {
       "id": "90042debafb1",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 531,
+      "line": 520,
       "function": "CreateTestMessage",
       "receiver": "db",
       "method": "Raw",
@@ -77082,7 +77080,7 @@
     "9331fc747d7a": {
       "id": "9331fc747d7a",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 266,
+      "line": 258,
       "function": "getToken",
       "receiver": "db",
       "method": "Raw",
@@ -78265,7 +78263,7 @@
     "9594738c51bd": {
       "id": "9594738c51bd",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 229,
+      "line": 221,
       "function": "CreateTestSession",
       "receiver": "db",
       "method": "Raw",
@@ -79419,7 +79417,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n.",
+      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: SOUNDEX is available via fuzzystrmatch; damlevlim is a MySQL UDF with no direct equivalent and needs replacing (levenshtein_less_equal in fuzzystrmatch is the closest). The OR-list structure itself ports unchanged.",
       "category": "Variable-length predicate list"
     },
@@ -79692,7 +79690,7 @@
     "988556fc6f4f": {
       "id": "988556fc6f4f",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 633,
+      "line": 621,
       "function": "CreateTestNewsfeedWithType",
       "receiver": "db",
       "method": "Raw",
@@ -84346,7 +84344,7 @@
     "a232e8da4d5c": {
       "id": "a232e8da4d5c",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 248,
+      "line": 240,
       "function": "CreatePersistentToken",
       "receiver": "db",
       "method": "Raw",
@@ -85030,28 +85028,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "a33a8adfcc96": {
-      "id": "a33a8adfcc96",
-      "file": "iznik-server-go/test/testUtils.go",
-      "line": 374,
-      "function": "CreateTestChatRoom",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "chat_rooms"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
     "a35651ab9f60": {
       "id": "a35651ab9f60",
       "file": "iznik-server-go/membership/membership.go",
@@ -85209,7 +85185,7 @@
     "a3a9d489115c": {
       "id": "a3a9d489115c",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 180,
+      "line": 174,
       "function": "CreateTestUserWithEmail",
       "receiver": "db",
       "method": "Exec",
@@ -87106,7 +87082,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright.",
+      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: the builder is the porting unit, not the call site - one function to rewrite rather than a scattered set of fragments, which is the main practical benefit of having extracted it. Check the dialect-specific pieces inside it (LIMIT/OFFSET are fine; any MySQL-only function or index hint is not).",
       "category": "Proven builder, still raw"
     },
@@ -87150,28 +87126,6 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT hidden FROM newsfeed WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
-    "a7289b06dad9": {
-      "id": "a7289b06dad9",
-      "file": "iznik-server-go/test/testUtils.go",
-      "line": 388,
-      "function": "CreateTestChatRoom",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "chat_rooms"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -87318,7 +87272,7 @@
     "a74da1d0a2f0": {
       "id": "a74da1d0a2f0",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 312,
+      "line": 303,
       "function": "CreateTestAddress",
       "receiver": "db",
       "method": "Exec",
@@ -87940,7 +87894,7 @@
     "a88cbf5a5d76": {
       "id": "a88cbf5a5d76",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 506,
+      "line": 496,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Exec",
@@ -88032,7 +87986,7 @@
     "a89e02b83f92": {
       "id": "a89e02b83f92",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 850,
+      "line": 838,
       "function": "CreateTestMessageWithoutGroup",
       "receiver": "db",
       "method": "Exec",
@@ -88712,7 +88666,7 @@
     "aa2fe0068356": {
       "id": "aa2fe0068356",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 739,
+      "line": 727,
       "function": "MarkMessageAsViewed",
       "receiver": "db",
       "method": "Exec",
@@ -89854,7 +89808,7 @@
     "ac260c1dde4d": {
       "id": "ac260c1dde4d",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 728,
+      "line": 716,
       "function": "CreateTestMessageWithArrival",
       "receiver": "db",
       "method": "Exec",
@@ -90927,7 +90881,7 @@
     "ae75674bf3a1": {
       "id": "ae75674bf3a1",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 683,
+      "line": 671,
       "function": "CreateTestAttachment",
       "receiver": "db",
       "method": "Exec",
@@ -92125,7 +92079,7 @@
     "b0dbf7904b35": {
       "id": "b0dbf7904b35",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 505,
+      "line": 495,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Exec",
@@ -92453,7 +92407,7 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "listChats builds one enormous SELECT (chat_rooms.go:1148-1205) by string concatenation across ~60 lines, not a fixed template: it embeds a WITH-CTE (\"WITH cm AS (... ROW_NUMBER() OVER (PARTITION BY chatid ORDER BY id DESC) AS rn ...) SELECT * FROM cm WHERE rn = 1\") inside a derived-table LEFT JOIN to get each chat rooms most recent visible message, alongside 8 other LEFT JOINs (groups, two user rows, three image lookups, chat_messages, messages) and 11 positional bind args threaded through by hand (myid appears 6 times at different positions). The chatid/chat_rooms.id IN-list (idlist) is ALSO spliced as literal decimal text via strings.Join, twice, into this same statement - not a second independent site, the same one. GORM has no CTE or window-function builder, so this cannot become a chain; it could in principle be rewritten with db.Raw plus a bound []uint64 slice for idlist (mechanically identical to the literal-int fix applied elsewhere in this file - handleAllSeen 3519e352775b, getModeratorChatIDs d44b753b35c8), but the surrounding 11-bind, 9-join CTE is large enough that a hand conversion risks a silently wrong bind position or a dropped join condition in the live chat list, with no fixed golden to catch it - Layer 1 text parity is impossible by construction (no single form), and Layer 2 result parity would need a GORM chain to compare against, which does not exist here. Left raw deliberately, not for lack of trying: see plans/active/orm-keepraw-adversarial-review.md Tier 9.",
+      "reason": "listChats builds one enormous SELECT (chat_rooms.go:1148-1205) by string concatenation across ~60 lines, not a fixed template: it embeds a WITH-CTE (\"WITH cm AS (... ROW_NUMBER() OVER (PARTITION BY chatid ORDER BY id DESC) AS rn ...) SELECT * FROM cm WHERE rn = 1\") inside a derived-table LEFT JOIN to get each chat rooms most recent visible message, alongside 8 other LEFT JOINs (groups, two user rows, three image lookups, chat_messages, messages) and 11 positional bind args threaded through by hand (myid appears 6 times at different positions). The chatid/chat_rooms.id IN-list (idlist) is ALSO spliced as literal decimal text via strings.Join, twice, into this same statement - not a second independent site, the same one. GORM has no CTE or window-function builder, so this cannot become a chain; it could in principle be rewritten with db.Raw plus a bound []uint64 slice for idlist (mechanically identical to the literal-int fix applied elsewhere in this file - handleAllSeen 3519e352775b, getModeratorChatIDs d44b753b35c8), but the surrounding 11-bind, 9-join CTE is large enough that a hand conversion risks a silently wrong bind position or a dropped join condition in the live chat list, with no fixed golden to catch it - Layer 1 text parity is impossible by construction (no single form), and Layer 2 result parity would need a GORM chain to compare against, which does not exist here. Left raw deliberately, not for lack of trying: see plans/active/orm-keepraw-adversarial-review.md Tier 9. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: the WITH-CTE and ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...) both carry over unchanged - this is standard SQL, not a MySQL extension. JSON_EXTRACT(col, '$.path') becomes col-\u003e\u003e'path' (or col#\u003e\u003e'{path}' for nested paths). The real port risk is the same as everywhere else in this file: an implicit reliance on MySQL correlated-subquery evaluation order or its permissive JSON-in-boolean-context coercion (CASE WHEN JSON_EXTRACT(...) IS NULL THEN 0 ELSE JSON_EXTRACT(...) END used directly as a boolean) that Postgres will reject or evaluate differently and needs an explicit cast.",
       "category": "CTE-heavy SELECT"
     },
@@ -93997,7 +93951,7 @@
     "b4c7e487772c": {
       "id": "b4c7e487772c",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 265,
+      "line": 257,
       "function": "getToken",
       "receiver": "db",
       "method": "Exec",
@@ -96514,7 +96468,7 @@
     "b9959f58a6f3": {
       "id": "b9959f58a6f3",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 352,
+      "line": 342,
       "function": "CreateTestIsochrone",
       "receiver": "db",
       "method": "Exec",
@@ -97133,7 +97087,7 @@
     "baa8bc2221a4": {
       "id": "baa8bc2221a4",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 189,
+      "line": 183,
       "function": "CreateTestUserWithEmail",
       "receiver": "db",
       "method": "Raw",
@@ -97538,7 +97492,7 @@
     "bbb820cac63a": {
       "id": "bbb820cac63a",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 214,
+      "line": 207,
       "function": "CreateTestMembership",
       "receiver": "db",
       "method": "Raw",
@@ -101654,28 +101608,6 @@
       "hasParityTest": true,
       "status": "converted"
     },
-    "c3dc59fbe7bd": {
-      "id": "c3dc59fbe7bd",
-      "file": "iznik-server-go/test/testUtils.go",
-      "line": 394,
-      "function": "CreateTestChatRoom",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "chat_rooms"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 4,
-      "goldenSql": "INSERT INTO chat_rooms (user1, user2, groupid, chattype, latestmessage) VALUES (?, ?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
     "c3ebfc0529ce": {
       "id": "c3ebfc0529ce",
       "file": "iznik-server-go/test/message_test.go",
@@ -103981,7 +103913,7 @@
     "c8705915b05b": {
       "id": "c8705915b05b",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 690,
+      "line": 678,
       "function": "CreateTestAttachment",
       "receiver": "db",
       "method": "Raw",
@@ -104713,7 +104645,7 @@
     "c9b295c5ab11": {
       "id": "c9b295c5ab11",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 481,
+      "line": 471,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Exec",
@@ -106837,7 +106769,7 @@
     "ce1f46a282bc": {
       "id": "ce1f46a282bc",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 848,
+      "line": 836,
       "function": "CreateTestMessageWithoutGroup",
       "receiver": "db",
       "method": "Raw",
@@ -108224,7 +108156,7 @@
     "d05e3bb00e55": {
       "id": "d05e3bb00e55",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 338,
+      "line": 328,
       "function": "CreateTestIsochrone",
       "receiver": "db",
       "method": "Exec",
@@ -109239,28 +109171,6 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_roster WHERE chatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
-    "d1e29bec1f93": {
-      "id": "d1e29bec1f93",
-      "file": "iznik-server-go/test/testUtils.go",
-      "line": 368,
-      "function": "CreateTestChatRoom",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "chat_rooms"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 2,
-      "dynamic": false,
-      "args": 3,
-      "goldenSql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -111683,7 +111593,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright.",
+      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: the builder is the porting unit, not the call site - one function to rewrite rather than a scattered set of fragments, which is the main practical benefit of having extracted it. Check the dialect-specific pieces inside it (LIMIT/OFFSET are fine; any MySQL-only function or index hint is not).",
       "category": "Proven builder, still raw"
     },
@@ -111712,7 +111622,7 @@
     "d6cf4baa4795": {
       "id": "d6cf4baa4795",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 319,
+      "line": 310,
       "function": "CreateTestAddress",
       "receiver": "db",
       "method": "Raw",
@@ -112833,7 +112743,7 @@
     "d91ea5e2d2bc": {
       "id": "d91ea5e2d2bc",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 500,
+      "line": 490,
       "function": "CreateTestCommunityEvent",
       "receiver": "db",
       "method": "Exec",
@@ -115538,7 +115448,7 @@
     "deef8b532ea4": {
       "id": "deef8b532ea4",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 707,
+      "line": 695,
       "function": "CreateTestMessageWithArrival",
       "receiver": "db",
       "method": "Exec",
@@ -116299,7 +116209,7 @@
     "e04076976a1e": {
       "id": "e04076976a1e",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 624,
+      "line": 612,
       "function": "CreateTestNewsfeedWithType",
       "receiver": "db",
       "method": "Exec",
@@ -116810,7 +116720,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright.",
+      "reason": "Proven, but still raw - NOT converted. The statement cannot be expressed as a GORM chain (ListMessagesMT assembles it at runtime: a UNION whose arm count follows the input, or a SET list built one fragment per optional field). The technique used instead was to extract a pure builder function and prove its output against an independently-written expectation with a parametrized-shape or fieldwise parity test, which is genuine verification and is why this site has a test naming it. What it is not is a conversion: the raw db.Raw/db.Exec call is still there, and the builder just moved the SQL text one function along. It was briefly recorded as converted, which double-counted the statement - once as converted under the id the text used to hash to, and again as raw under the id the extractor assigns now the text lives in the builder. Ratchet gate (n) now refuses that combination outright. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: the builder is the porting unit, not the call site - one function to rewrite rather than a scattered set of fragments, which is the main practical benefit of having extracted it. Check the dialect-specific pieces inside it (LIMIT/OFFSET are fine; any MySQL-only function or index hint is not).",
       "category": "Proven builder, still raw"
     },
@@ -118443,7 +118353,7 @@
     "e438df87ccbd": {
       "id": "e438df87ccbd",
       "file": "iznik-server-go/database/retry.go",
-      "line": 85,
+      "line": 90,
       "function": "RetryQuery",
       "receiver": "db",
       "method": "Raw",
@@ -119133,7 +119043,7 @@
     "e5e442081810": {
       "id": "e5e442081810",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 306,
+      "line": 297,
       "function": "CreateTestAddress",
       "receiver": "db",
       "method": "Raw",
@@ -119492,7 +119402,7 @@
     "e69031a2101b": {
       "id": "e69031a2101b",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 165,
+      "line": 160,
       "function": "CreateDeletedTestUser",
       "receiver": "db",
       "method": "Raw",
@@ -120367,7 +120277,7 @@
     "e82cc8d7cb2e": {
       "id": "e82cc8d7cb2e",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 798,
+      "line": 786,
       "function": "CreateTestNotification",
       "receiver": "db",
       "method": "Raw",
@@ -122238,7 +122148,7 @@
     "eb7b0d4b16c4": {
       "id": "eb7b0d4b16c4",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 584,
+      "line": 573,
       "function": "indexMessageWords",
       "receiver": "db",
       "method": "Exec",
@@ -123477,7 +123387,7 @@
     "ee280a55e943": {
       "id": "ee280a55e943",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 459,
+      "line": 449,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Exec",
@@ -126558,7 +126468,7 @@
     "f42278cd857f": {
       "id": "f42278cd857f",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 102,
+      "line": 99,
       "function": "CreateTestGroup",
       "receiver": "db",
       "method": "Exec",
@@ -128441,7 +128351,7 @@
     "f78d6877eafe": {
       "id": "f78d6877eafe",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 345,
+      "line": 335,
       "function": "CreateTestIsochrone",
       "receiver": "db",
       "method": "Raw",
@@ -130605,7 +130515,7 @@
     "fb4e1fce2796": {
       "id": "fb4e1fce2796",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 462,
+      "line": 452,
       "function": "CreateTestVolunteering",
       "receiver": "db",
       "method": "Exec",
@@ -131447,7 +131357,7 @@
     "fce4960cbad5": {
       "id": "fce4960cbad5",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 156,
+      "line": 151,
       "function": "CreateDeletedTestUser",
       "receiver": "db",
       "method": "Exec",
@@ -132317,7 +132227,7 @@
     "fe34f061c248": {
       "id": "fe34f061c248",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 659,
+      "line": 647,
       "function": "CreateTestItem",
       "receiver": "db",
       "method": "Raw",
@@ -132405,7 +132315,7 @@
     "fe5f535999f4": {
       "id": "fe5f535999f4",
       "file": "iznik-server-go/test/testUtils.go",
-      "line": 129,
+      "line": 125,
       "function": "CreateTestUser",
       "receiver": "db",
       "method": "Exec",
@@ -132621,7 +132531,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n.",
+      "reason": "Variable-length OR-ed predicate list, NOT a UNION. The previous reason came from a shared template describing the wider category and did not fit these four: each is a single SELECT whose WHERE gains one predicate per input word (word LIKE ?, damlevlim(...), soundex = ...), so the arm-count reasoning that applies to a real UNION does not apply at all. Recorded accurately so nobody later reasons about it as a UNION case and reaches for a UNION mechanism that would not help. Still raw: the statements embed damlevlim and SOUNDEX alongside the shared boxFilter/groupFilter fragments, which are independently raw for their own reasons, and each already carries a parametrized-shape parity test proving the built text for arbitrary n. SECURITY (reviewed): this statement interpolates values into SQL TEXT rather than binding them, so it was checked for injection. Every interpolated value is numeric and formatted through strconv or a %d/%f verb - group ids as uint64 via FormatUint, bounding-box coordinates as float32 via FormatFloat, keepChat/onlyChat as uint64 parsed with ParseUint - and no numeric type can carry a SQL metacharacter. That makes it safe TODAY, but the safety comes entirely from the parameter TYPES and nothing enforces it: changing any of these parameters to a string, or adding a string-typed fragment alongside them, opens an injection with no test that would fail. Treat the numeric types as load-bearing when editing this code.",
       "porting": "PostgreSQL: SOUNDEX is available via fuzzystrmatch; damlevlim is a MySQL UDF with no direct equivalent and needs replacing (levenshtein_less_equal in fuzzystrmatch is the closest). The OR-list structure itself ports unchanged.",
       "category": "Variable-length predicate list"
     },

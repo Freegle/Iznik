@@ -220,6 +220,18 @@ type ShadowOptions struct {
 // nullable columns so NULL and the zero value hash differently, matching how
 // this codebase already models nullable columns elsewhere (e.g. LogEntry in
 // systemlogs/systemlogs.go).
+// SECURITY, for whoever wires up the first caller. ShadowRead has none today -
+// nothing outside this package imports it - so it carries no live attack
+// surface, and a review of the raw-SQL surface correctly recorded it as
+// unreachable. That changes the moment it is called from a request path.
+//
+// As the contract above says, oldSQL/oldArgs is exactly what the raw call site
+// passes to db.Raw, and ShadowRead runs it UNCHANGED. It neither parses nor
+// sanitises that text. So its safety is entirely the caller's: values belonging
+// to the request must arrive in oldArgs as bind parameters, never interpolated
+// into oldSQL. Wiring it up is the point at which that needs checking, because
+// the raw statement being shadowed is by definition one the migration could not
+// convert - which is where the hand-built SQL lives.
 func ShadowRead[T any](ctx context.Context, db *gorm.DB, batchID, siteID, oldSQL string, oldArgs []any, newQuery ShadowNewQuery, opts ShadowOptions) ([]T, error) {
 	state := CurrentBatchState(db, batchID)
 

@@ -13,74 +13,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// GetLogs handles GET /logs for moderator log viewing.
-//
-// @Summary Get logs
-// @Description Returns moderator logs filtered by type, group, search, with pagination
-// @Tags logs
-// @Produce json
-// @Param logtype query string false "Log type: messages, memberships, user"
-// @Param groupid query integer false "Group ID"
-// @Param userid query integer false "User ID"
-// @Param logsubtype query string false "Log subtype filter"
-// @Param date query integer false "Days ago"
-// @Param search query string false "Search term"
-// @Param limit query integer false "Result limit (default 20)"
-// @Param context query string false "Pagination context (last log ID)"
-// @Success 200 {object} map[string]interface{}
-// @Router /api/logs [get]
-func GetLogs(c *fiber.Ctx) error {
-	myid := user.WhoAmI(c)
-	if myid == 0 {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Not moderator"})
-	}
-
-	db := database.DBConn
-
-	logtype := c.Query("logtype", "")
-	groupid, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
-	userid, _ := strconv.ParseUint(c.Query("userid", "0"), 10, 64)
-	logsubtype := c.Query("logsubtype", "")
-	dateStr := c.Query("date", "")
-	search := c.Query("search", "")
-	modmailsonly := c.Query("modmailsonly", "") == "true"
-	limit, _ := strconv.Atoi(c.Query("limit", "20"))
-	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
-
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-
-	// Permission check: must be moderator/owner of the group, or admin/support.
-	isAdmin := auth.IsAdminOrSupport(myid)
-
-	// Non-admins need either a group or user filter, and can only see logs for groups they moderate.
-	var modGroupIDs []uint64
-
-	if !isAdmin {
-		if groupid == 0 && userid == 0 {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Not moderator"})
-		}
-
-		// Get all groups this user moderates.
-		// ORM migration site 5dc370f37ed3 (wave 1).
-		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Pluck("groupid", &modGroupIDs)
-
-		if groupid > 0 {
-			// Check they moderate the specific group requested.
-			found := false
-			for _, gid := range modGroupIDs {
-				if gid == groupid {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Not moderator"})
-			}
-		}
-	}
-
+// buildGetLogsQuery is a pure SQL-builder: no database needed - see
+// message/message.go's buildApplyPatchMessageCoreUpdate for the established
+// convention this follows. Extracted from GetLogs (a pure
+// behaviour-preserving refactor - the actual SQL and db.Raw call are
+// unchanged) so its independently-optional WHERE factors can be proven via
+// ormharness.AssertGoldenWhereFieldwise (logs_wherefieldwise_tier9_test.go)
+// rather than left as an unproven "352 reachable combinations" policy
+// decision - see keep-raw site 6cf1b5aded22. isAdmin and modGroupIDs are
+// the caller's already-resolved permission check (site 5dc370f37ed3,
+// unchanged, still in GetLogs) - this function only assembles the query
+// from whatever the caller resolved.
+func buildGetLogsQuery(logtype string, groupid uint64, userid uint64, logsubtype string, dateStr string, search string, modmailsonly bool, limit int, contextID uint64, isAdmin bool, modGroupIDs []uint64) (string, []interface{}) {
 	// Build query based on logtype.
 	var types []string
 	var subtypes []string
@@ -210,6 +154,82 @@ func GetLogs(c *fiber.Ctx) error {
 	query += "WHERE " + strings.Join(where, " AND ") +
 		" ORDER BY logs.id DESC LIMIT ?"
 	args = append(args, limit)
+
+	return query, args
+}
+
+// GetLogs handles GET /logs for moderator log viewing.
+//
+// @Summary Get logs
+// @Description Returns moderator logs filtered by type, group, search, with pagination
+// @Tags logs
+// @Produce json
+// @Param logtype query string false "Log type: messages, memberships, user"
+// @Param groupid query integer false "Group ID"
+// @Param userid query integer false "User ID"
+// @Param logsubtype query string false "Log subtype filter"
+// @Param date query integer false "Days ago"
+// @Param search query string false "Search term"
+// @Param limit query integer false "Result limit (default 20)"
+// @Param context query string false "Pagination context (last log ID)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/logs [get]
+func GetLogs(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Not moderator"})
+	}
+
+	db := database.DBConn
+
+	logtype := c.Query("logtype", "")
+	groupid, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
+	userid, _ := strconv.ParseUint(c.Query("userid", "0"), 10, 64)
+	logsubtype := c.Query("logsubtype", "")
+	dateStr := c.Query("date", "")
+	search := c.Query("search", "")
+	modmailsonly := c.Query("modmailsonly", "") == "true"
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
+
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	// Permission check: must be moderator/owner of the group, or admin/support.
+	isAdmin := auth.IsAdminOrSupport(myid)
+
+	// Non-admins need either a group or user filter, and can only see logs for groups they moderate.
+	var modGroupIDs []uint64
+
+	if !isAdmin {
+		if groupid == 0 && userid == 0 {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Not moderator"})
+		}
+
+		// Get all groups this user moderates.
+		// ORM migration site 5dc370f37ed3 (wave 1).
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Pluck("groupid", &modGroupIDs)
+
+		if groupid > 0 {
+			// Check they moderate the specific group requested.
+			found := false
+			for _, gid := range modGroupIDs {
+				if gid == groupid {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Not moderator"})
+			}
+		}
+	}
+
+	// ORM migration site 6cf1b5aded22 (where-fieldwise coverage, not
+	// exhaustive shapes) - see buildGetLogsQuery above for the query
+	// assembly itself, factored out for fieldwise proof.
+	query, args := buildGetLogsQuery(logtype, groupid, userid, logsubtype, dateStr, search, modmailsonly, limit, contextID, isAdmin, modGroupIDs)
 
 	type LogRow struct {
 		ID         uint64  `json:"id"`

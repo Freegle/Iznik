@@ -80,6 +80,11 @@ func dbBackoff() {
 //
 //	var results []MyType
 //	err := database.RetryQuery(db, &results, "SELECT * FROM foo WHERE id = ?", id)
+// NOTE: RetryQuery has no production callers today - only tests. It is kept
+// because it is one of a coherent trio with RetryExec (which IS used, by
+// message/markseen.go) and completes the API, but that means it is not
+// battle-tested in the way its sibling is. Read it before relying on it rather
+// than assuming production has already proven it.
 func RetryQuery(db *gorm.DB, dest interface{}, sql string, args ...interface{}) error {
 	for attempt := 0; attempt < DBRetries; attempt++ {
 		result := db.Raw(sql, args...).Scan(dest)
@@ -133,6 +138,8 @@ func RetryExec(db *gorm.DB, sql string, args ...interface{}) error {
 }
 
 // RetryExecResult is like RetryExec but also returns the RowsAffected count.
+//
+// As with RetryQuery above, this has no production callers today - only tests.
 func RetryExecResult(db *gorm.DB, sql string, args ...interface{}) (int64, error) {
 	for attempt := 0; attempt < DBRetries; attempt++ {
 		result := db.Exec(sql, args...)
