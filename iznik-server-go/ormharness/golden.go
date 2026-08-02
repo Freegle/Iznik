@@ -278,6 +278,20 @@ func matchParen(s string, open int) int {
 func normaliseColumnOrder(sql string) string {
 	trimmed := strings.TrimSpace(sql)
 
+	// An upsert has TWO ordered lists, and for a long time this function only
+	// normalised one of them. The INSERT branch below rebuilds the column and
+	// value lists but copies everything after the closing parenthesis through
+	// verbatim, which is where ON DUPLICATE KEY UPDATE lives. GORM sorts the
+	// keys of clause.Assignments(map) exactly as it sorts Updates(map), so the
+	// upsert tail came out alphabetical while the golden kept the order the
+	// original was written in, and every multi-assignment upsert failed on
+	// text that described the same statement.
+	//
+	// Normalising the tail first means the INSERT branch carries the fixed
+	// version through in its verbatim copy, and a statement with an upsert tail
+	// but no reorderable column list still gets handled.
+	trimmed = normaliseDuplicateKeyUpdate(trimmed)
+
 	if loc := insertPrefixPattern.FindStringIndex(trimmed); loc != nil {
 		colOpen := loc[1] - 1
 		colClose := matchParen(trimmed, colOpen)
@@ -336,6 +350,40 @@ func normaliseColumnOrder(sql string) string {
 		}
 	}
 	return trimmed
+}
+
+// normaliseDuplicateKeyUpdate sorts the assignment list of an
+// ON DUPLICATE KEY UPDATE clause, moving each column with its value, so that
+// GORM's alphabetical ordering can be compared against a golden that kept the
+// order its author wrote.
+//
+// It declines for exactly the same reason the UPDATE branch declines: MySQL
+// evaluates these assignments left to right too, so where one reads a column
+// another assigns, the order is part of what the statement means. abtest.go is
+// the live case - "shown = shown + 1, rate = COALESCE(100 * action / shown, 0)"
+// computes rate from the incremented value, and alphabetical order would
+// reverse that. Those sites use an explicit ordered clause.Set rather than a
+// map, which is why they render in the original order and do not need this.
+func normaliseDuplicateKeyUpdate(sql string) string {
+	const marker = "on duplicate key update"
+	lower := strings.ToLower(sql)
+	i := strings.Index(lower, marker)
+	if i < 0 {
+		return sql
+	}
+
+	head, tail := sql[:i+len(marker)], sql[i+len(marker):]
+	assignments := splitList(tail)
+	if len(assignments) < 2 || setOrderIsLoadBearing(assignments) {
+		return sql
+	}
+
+	trimmedAssignments := make([]string, len(assignments))
+	for j, a := range assignments {
+		trimmedAssignments[j] = strings.TrimSpace(a)
+	}
+	sort.Strings(trimmedAssignments)
+	return head + " " + strings.Join(trimmedAssignments, ", ")
 }
 
 // setOrderIsLoadBearing reports whether an UPDATE's SET list means something

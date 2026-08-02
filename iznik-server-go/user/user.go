@@ -2445,9 +2445,19 @@ func PatchUser(c *fiber.Ctx) error {
 		salt := auth.GetPasswordSalt()
 		hashed := auth.HashPassword(*req.Password, salt)
 		uid := strconv.FormatUint(targetID, 10)
-		db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE credentials = ?, salt = ?",
-			targetID, utils.LOGIN_TYPE_NATIVE, uid, hashed, salt, hashed, salt)
+		// ORM migration site 51fa5d2c1016 (wave 3).
+		db.Table("users_logins").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"credentials": hashed,
+				"salt":        salt,
+			}),
+		}).Create(map[string]interface{}{
+			"userid":      targetID,
+			"type":        utils.LOGIN_TYPE_NATIVE,
+			"uid":         uid,
+			"credentials": hashed,
+			"salt":        salt,
+		})
 	}
 
 	// Trustlevel mirrors the legacy V1 PHP user API endpoint.

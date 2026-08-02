@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const TYPE_PAYPAL = "PayPal"
@@ -298,11 +299,22 @@ func AddDonation(c *fiber.Ctx) error {
 		req.UserID, time.Now().UTC().Format("2006-01-02 15:04:05"), SOURCE_BANK_TRANSFER)
 
 	// Insert donation with ON DUPLICATE KEY UPDATE (TransactionID is unique).
-	result := db.Exec(`INSERT INTO users_donations
-		(userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, type, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE userid = VALUES(userid), timestamp = VALUES(timestamp)`,
-		req.UserID, preferredEmail, name, req.Date, transactionID, req.Amount, TYPE_EXTERNAL, SOURCE_BANK_TRANSFER)
+	// ORM migration site 6204c4ea5ebe (wave 3).
+	result := db.Table("users_donations").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},
+			{Column: clause.Column{Name: "timestamp"}, Value: clause.Column{Table: "excluded", Name: "timestamp"}},
+		},
+	}).Create(map[string]interface{}{
+		"userid":           req.UserID,
+		"Payer":            preferredEmail,
+		"PayerDisplayName": name,
+		"timestamp":        req.Date,
+		"TransactionID":    transactionID,
+		"GrossAmount":      req.Amount,
+		"type":             TYPE_EXTERNAL,
+		"source":           SOURCE_BANK_TRANSFER,
+	})
 
 	if result.Error != nil {
 		log.Printf("Failed to add donation for user %d: %v", req.UserID, result.Error)
@@ -432,15 +444,24 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		// PayPal Giving Fund donations: type=PayPal, source from program mapping.
 		// Gift Aid is already claimed by PayPal — giftaidconsent defaults to 0
 		// which means GiftAidClaimService will never try to reclaim it.
-		result := db.Exec(`INSERT INTO users_donations
-			(userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, type, source)
-			VALUES (?, ?, ?, ?, ?, ?, 'PayPal', ?)
-			ON DUPLICATE KEY UPDATE
-				userid = VALUES(userid),
-				timestamp = VALUES(timestamp),
-				source = VALUES(source),
-				GrossAmount = VALUES(GrossAmount)`,
-			userID, d.Email, d.DonorName, d.Date, d.TransactionID, d.Amount, source)
+		// ORM migration site e71c28654c59 (wave 3).
+		result := db.Table("users_donations").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},
+				{Column: clause.Column{Name: "timestamp"}, Value: clause.Column{Table: "excluded", Name: "timestamp"}},
+				{Column: clause.Column{Name: "source"}, Value: clause.Column{Table: "excluded", Name: "source"}},
+				{Column: clause.Column{Name: "GrossAmount"}, Value: clause.Column{Table: "excluded", Name: "GrossAmount"}},
+			},
+		}).Create(map[string]interface{}{
+			"userid":           userID,
+			"Payer":            d.Email,
+			"PayerDisplayName": d.DonorName,
+			"timestamp":        d.Date,
+			"TransactionID":    d.TransactionID,
+			"GrossAmount":      d.Amount,
+			"type":             gorm.Expr("'PayPal'"),
+			"source":           source,
+		})
 
 		if result.Error != nil {
 			log.Printf("Bulk donation insert failed for txid %s: %v", d.TransactionID, result.Error)

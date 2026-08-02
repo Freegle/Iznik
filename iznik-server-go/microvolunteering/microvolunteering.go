@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AIImageChallenge represents an AI image to review
@@ -732,11 +733,21 @@ func PostResponse(c *fiber.Ctx) error {
 				comments = *req.Comments
 			}
 
-			db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
-				VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-				ON DUPLICATE KEY UPDATE result = ?, comments = ?, version = ?, msgcategory = ?`,
-				ChallengeCheckMessage, myid, req.Msgid, response, msgcategory, comments, Version,
-				response, comments, Version, msgcategory)
+			// ORM migration site e78fcf444c47 (wave 3).
+			db.Table("microactions").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"result": response, "comments": comments, "version": Version, "msgcategory": msgcategory,
+				}),
+			}).Create(map[string]interface{}{
+				"actiontype":     ChallengeCheckMessage,
+				"userid":         myid,
+				"msgid":          req.Msgid,
+				"result":         response,
+				"msgcategory":    msgcategory,
+				"comments":       comments,
+				"version":        Version,
+				"score_negative": gorm.Expr("0"),
+			})
 
 			// If rejection, check if we have quorum to send for review
 			if response == "Reject" {
@@ -763,10 +774,20 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to a SearchTerm challenge.
 		// The result column is enum('Approve','Reject') NOT NULL with no default.
 		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Exec(`INSERT INTO microactions (actiontype, userid, item1, item2, version, result, score_negative)
-			VALUES (?, ?, ?, ?, ?, 'Approve', 0)
-			ON DUPLICATE KEY UPDATE userid = userid, version = ?`,
-			ChallengeSearchTerm, myid, req.Searchterm1, req.Searchterm2, Version, Version)
+		// ORM migration site 4bc6d0615816 (wave 3).
+		db.Table("microactions").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"userid": gorm.Expr("userid"), "version": Version,
+			}),
+		}).Create(map[string]interface{}{
+			"actiontype":     ChallengeSearchTerm,
+			"userid":         myid,
+			"item1":          req.Searchterm1,
+			"item2":          req.Searchterm2,
+			"version":        Version,
+			"result":         gorm.Expr("'Approve'"),
+			"score_negative": gorm.Expr("0"),
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -793,9 +814,15 @@ func PostResponse(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this photo")
 		}
 
-		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, rotatedimage, result, version, score_negative)
-			VALUES (?, ?, ?, ?, ?, 0)`,
-			ChallengePhotoRotate, myid, req.Photoid, response, Version)
+		// ORM migration site f82ee651d4b9 (wave 3).
+		db.Table("microactions").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"actiontype":     ChallengePhotoRotate,
+			"userid":         myid,
+			"rotatedimage":   req.Photoid,
+			"result":         response,
+			"version":        Version,
+			"score_negative": gorm.Expr("0"),
+		})
 
 		// Check if we have enough votes to rotate the photo
 		rotated := false
@@ -826,11 +853,20 @@ func PostResponse(c *fiber.Ctx) error {
 				}
 			}
 
-			db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative)
-				VALUES (?, ?, ?, ?, ?, ?, 0)
-				ON DUPLICATE KEY UPDATE result = ?, containspeople = ?, version = ?`,
-				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
-				response, containsPeople, Version)
+			// ORM migration site 6dadb189bddc (wave 3).
+			db.Table("microactions").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"result": response, "containspeople": containsPeople, "version": Version,
+				}),
+			}).Create(map[string]interface{}{
+				"actiontype":     ChallengeAIImageReview,
+				"userid":         myid,
+				"aiimageid":      req.AIImageID,
+				"result":         response,
+				"containspeople": containsPeople,
+				"version":        Version,
+				"score_negative": gorm.Expr("0"),
+			})
 
 			// After recording the vote, check the quorums. 'Suppress' ("this item
 			// should never have an AI image") is terminal, so check it first; 'Reject'
@@ -851,11 +887,22 @@ func PostResponse(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid EEE label values")
 		}
 
-		db.Exec(`INSERT INTO microactions (actiontype, userid, eee_attachment_id, eee_condition, eee_weight, eee_size, result, version, score_negative)
-			VALUES (?, ?, ?, ?, ?, ?, 'Approve', ?, 0)
-			ON DUPLICATE KEY UPDATE eee_condition = ?, eee_weight = ?, eee_size = ?, version = ?`,
-			ChallengeEEELabel, myid, req.EEEAttachmentID, *req.EEECondition, *req.EEEWeight, *req.EEESize, Version,
-			*req.EEECondition, *req.EEEWeight, *req.EEESize, Version)
+		// ORM migration site 9b0560d85c4d (wave 3).
+		db.Table("microactions").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"eee_condition": *req.EEECondition, "eee_weight": *req.EEEWeight, "eee_size": *req.EEESize, "version": Version,
+			}),
+		}).Create(map[string]interface{}{
+			"actiontype":        ChallengeEEELabel,
+			"userid":            myid,
+			"eee_attachment_id": req.EEEAttachmentID,
+			"eee_condition":     *req.EEECondition,
+			"eee_weight":        *req.EEEWeight,
+			"eee_size":          *req.EEESize,
+			"result":            gorm.Expr("'Approve'"),
+			"version":           Version,
+			"score_negative":    gorm.Expr("0"),
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -863,9 +910,13 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to an Invite challenge.
 		// The result column is enum('Approve','Reject') NOT NULL. Set to 'Approve' as
 		// the default value since invite responses don't map to approve/reject.
-		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, version, result)
-			VALUES (?, ?, ?, 'Approve')`,
-			ChallengeInvite, myid, Version)
+		// ORM migration site 6602f9905a74 (wave 3).
+		db.Table("microactions").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"actiontype": ChallengeInvite,
+			"userid":     myid,
+			"version":    Version,
+			"result":     gorm.Expr("'Approve'"),
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -1017,10 +1068,21 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 	if comments == "" {
 		comments = "Reported via the website"
 	}
-	db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
-			VALUES (?, ?, ?, 'Reject', 'ShouldntBeHere', ?, ?, 0)
-			ON DUPLICATE KEY UPDATE result = 'Reject', msgcategory = 'ShouldntBeHere', comments = ?, version = ?`,
-		ChallengeCheckMessage, reporterID, msgid, comments, Version, comments, Version)
+	// ORM migration site 062b91c70acc (wave 3).
+	db.Table("microactions").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"result": gorm.Expr("'Reject'"), "msgcategory": gorm.Expr("'ShouldntBeHere'"), "comments": comments, "version": Version,
+		}),
+	}).Create(map[string]interface{}{
+		"actiontype":     ChallengeCheckMessage,
+		"userid":         reporterID,
+		"msgid":          msgid,
+		"result":         gorm.Expr("'Reject'"),
+		"msgcategory":    gorm.Expr("'ShouldntBeHere'"),
+		"comments":       comments,
+		"version":        Version,
+		"score_negative": gorm.Expr("0"),
+	})
 
 	const reason = "Members or moderators think there is something wrong with this message."
 
@@ -1127,10 +1189,22 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 // (poster or moderator) deletes an AI-generated attachment from a message. This signals
 // that the AI illustration was inappropriate for the item.
 func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
-	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
-		VALUES (?, ?, ?, 'Reject', ?, 0)
-		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
-		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+	// ORM migration site c2b7425e88e0 (wave 3). Converted together with its
+	// identical twin in ForceRejectAIImage (98a9897d62e5): a half-converted
+	// pair renumbers the survivor's site ID, so gate (h) refuses the split
+	// state.
+	db.Table("microactions").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"result": gorm.Expr("'Reject'"), "version": Version,
+		}),
+	}).Create(map[string]interface{}{
+		"actiontype":     ChallengeAIImageReview,
+		"userid":         userID,
+		"aiimageid":      aiImageID,
+		"result":         gorm.Expr("'Reject'"),
+		"version":        Version,
+		"score_negative": gorm.Expr("0"),
+	})
 	checkAIImageRejectQuorum(db, aiImageID)
 }
 
@@ -1141,10 +1215,19 @@ func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
 func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
 	// ORM migration site 92faccbe5a21 (wave 2).
 	db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
-	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
-		VALUES (?, ?, ?, 'Reject', ?, 0)
-		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
-		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+	// ORM migration site 98a9897d62e5 (wave 3). Twin of c2b7425e88e0 above.
+	db.Table("microactions").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"result": gorm.Expr("'Reject'"), "version": Version,
+		}),
+	}).Create(map[string]interface{}{
+		"actiontype":     ChallengeAIImageReview,
+		"userid":         userID,
+		"aiimageid":      aiImageID,
+		"result":         gorm.Expr("'Reject'"),
+		"version":        Version,
+		"score_negative": gorm.Expr("0"),
+	})
 }
 
 // checkAIImageRejectQuorum checks whether an AI image has reached the reject quorum

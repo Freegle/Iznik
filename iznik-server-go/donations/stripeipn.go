@@ -10,6 +10,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	stripe "github.com/stripe/stripe-go/v82"
 	stripecustomer "github.com/stripe/stripe-go/v82/customer"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // MANUAL_THANKS is the minimum one-off donation amount (GBP) that triggers a thank-you request.
@@ -245,7 +247,13 @@ func handleGiftAidNotification(userID uint64) {
 
 	if giftaid.Period == "" || giftaid.Period == PERIOD_THIS {
 		// No gift aid declaration or only a temporary one — prompt them.
-		gdb.Exec("INSERT IGNORE INTO users_notifications (fromuser, touser, type, timestamp) VALUES (NULL, ?, 'GiftAid', NOW())", userID)
+		// ORM migration site a827fcf725a7 (wave 3).
+		gdb.Table("users_notifications").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"fromuser":  gorm.Expr("NULL"),
+			"touser":    userID,
+			"type":      gorm.Expr("'GiftAid'"),
+			"timestamp": gorm.Expr("NOW()"),
+		})
 		log.Printf("[StripeIPN] Created gift aid notification for user %d (period=%s)", userID, giftaid.Period)
 	}
 }

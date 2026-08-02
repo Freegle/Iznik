@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Isochrones struct {
@@ -72,9 +73,12 @@ func ListIsochrones(c *fiber.Ctx) error {
 
 			if isoID > 0 {
 				// Link user to isochrone.
-				result := db.Exec("INSERT INTO isochrones_users (userid, isochroneid) VALUES (?, ?) "+
-					"ON DUPLICATE KEY UPDATE isochroneid = VALUES(isochroneid)",
-					myid, isoID)
+				// ORM migration site 56093182f920 (wave 3).
+				result := db.Table("isochrones_users").Clauses(clause.OnConflict{
+					DoUpdates: clause.Set{
+						{Column: clause.Column{Name: "isochroneid"}, Value: clause.Column{Table: "excluded", Name: "isochroneid"}},
+					},
+				}).Create(map[string]interface{}{"userid": myid, "isochroneid": isoID})
 				if result.Error != nil {
 					log.Printf("Failed to link user %d to isochrone %d: %v", myid, isoID, result.Error)
 				}

@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"html"
 	"log"
 	"os"
@@ -404,7 +405,11 @@ func Create(c *fiber.Ctx) error {
 	}
 
 	if id > 0 && req.GroupID > 0 {
-		db.Exec("INSERT IGNORE INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", id, req.GroupID)
+		// ORM migration site c77cdc1a1f5f (wave 3). Converted together with its
+		// identical twin below (316bb6807874): a half-converted pair renumbers
+		// the survivor's site ID, so gate (h) refuses the split state.
+		db.Table("volunteering_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).
+			Create(map[string]interface{}{"volunteeringid": id, "groupid": req.GroupID})
 	}
 
 	return c.JSON(fiber.Map{"id": id})
@@ -561,7 +566,9 @@ func Update(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not a member of the specified group")
 			}
 
-			db.Exec("INSERT IGNORE INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", req.ID, req.GroupID)
+			// ORM migration site 316bb6807874 (wave 3). Twin of c77cdc1a1f5f above.
+			db.Table("volunteering_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{"volunteeringid": req.ID, "groupid": req.GroupID})
 
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this volunteering opportunity.

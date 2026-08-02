@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // saveProfileImage inserts a profile picture URL for a user.
@@ -128,21 +129,36 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		}
 
 		// Add social login record.
-		db.Exec("INSERT IGNORE INTO users_logins (userid, type, uid) VALUES (?, ?, ?)",
-			userID, loginType, uid)
+		// ORM migration site c86a6d9efeb3 (wave 3).
+		db.Table("users_logins").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"userid": userID,
+			"type":   loginType,
+			"uid":    uid,
+		})
 	} else {
 		// User exists. Ensure they have the email and social login records.
 		if email != "" && emailUserID == 0 {
 			// They logged in via social UID but we don't have this email yet.
 			canon := user.CanonicalizeEmail(email)
-			db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
-				userID, email, canon, user.ReverseString(canon))
+			// ORM migration site 1013ca206ab1 (wave 3).
+			db.Table("users_emails").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"userid":    userID,
+				"email":     email,
+				"preferred": gorm.Expr("0"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": user.ReverseString(canon),
+			})
 		}
 
 		if loginUserID == 0 {
 			// They were found by email but don't have a social login record yet.
-			db.Exec("INSERT IGNORE INTO users_logins (userid, type, uid) VALUES (?, ?, ?)",
-				userID, loginType, uid)
+			// ORM migration site 9cb4eab12012 (wave 3).
+			db.Table("users_logins").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"userid": userID,
+				"type":   loginType,
+				"uid":    uid,
+			})
 		}
 	}
 

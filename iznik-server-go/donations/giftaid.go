@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GiftAid represents a user's Gift Aid declaration
@@ -390,10 +391,18 @@ func DeleteGiftAid(c *fiber.Ctx) error {
 	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", myid).Scan(&fullname)
 
 	// INSERT or update existing record to mark as Declined.
-	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress)
-		VALUES (?, 'Declined', ?, '')
-		ON DUPLICATE KEY UPDATE period = 'Declined', deleted = NOW()`,
-		myid, fullname)
+	// ORM migration site baf0645f5f91 (wave 3).
+	db.Table("giftaid").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"period":  gorm.Expr("'Declined'"),
+			"deleted": gorm.Expr("NOW()"),
+		}),
+	}).Create(map[string]interface{}{
+		"userid":      myid,
+		"period":      gorm.Expr("'Declined'"),
+		"fullname":    fullname,
+		"homeaddress": gorm.Expr("''"),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

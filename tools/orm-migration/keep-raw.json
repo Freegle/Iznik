@@ -345,6 +345,18 @@
       "file": "iznik-server-go/modconfig/modconfig.go",
       "function": "PostModConfig",
       "reason": "INSERT ... SELECT: PostModConfig copies the bulkops rows of the template config into the new one in a single statement. GORM has no builder that expresses INSERT ... SELECT as one atomic statement - Create takes values, not a query - so converting it would mean reading the rows and inserting them separately, which is a different statement with a different concurrency story, not a port. No INSERT ... SELECT site anywhere in the manifest has been converted; they are all still raw. Note this is NOT a LastInsertId site: an earlier version of check-lastinsertid.sh flagged it by proximity, because the LastInsertId in this function belongs to the mod_configs INSERT below it, not to this one."
+    },
+    {
+      "id": "08d12a748d01",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "Post",
+      "reason": "INSERT ... SELECT: copies the message attachment rows into the newsfeed post in one statement. GORM has no builder that keeps INSERT ... SELECT atomic - Create takes values, not a query - so a conversion would become a read followed by a separate insert, which is a different statement with a different concurrency story. No INSERT ... SELECT site anywhere in the manifest has been converted."
+    },
+    {
+      "id": "c4e30fd6a513",
+      "file": "iznik-server-go/noticeboard/noticeboard.go",
+      "function": "PatchNoticeboard",
+      "reason": "Dynamic SQL (manifest records dynamic: true). The position value is assembled with fmt.Sprintf, embedding lng, lat and the SRID as literal text into the statement before it is ever executed, so the recorded goldenSql is the pre-format Go source text rather than SQL. There is nothing a GORM render could be compared against, which makes Layer 1 parity impossible for this site by construction rather than by difficulty. Plan 7.4 requires a passing parity test before a site counts as converted, so it stays raw."
     }
   ]
 }

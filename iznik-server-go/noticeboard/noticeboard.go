@@ -379,6 +379,14 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 
 			if addedby > 0 {
 				// Create newsfeed entry with type 'Noticeboard'.
+				// Left raw (site c4e30fd6a513, wave 3): the position value is
+				// built by fmt.Sprintf embedding lng/lat/SRID as literals
+				// straight into the SQL text (%f %f %d), not as bind
+				// parameters - the manifest extractor marks this "dynamic":
+				// true because the recorded goldenSql is that literal
+				// pre-format Go source text, not real SQL. There is nothing a
+				// golden-SQL parity test could compare a GORM render against.
+				// See keep-raw.json.
 				db.Exec(
 					fmt.Sprintf("INSERT INTO newsfeed (type, userid, message, added, position) VALUES ('Noticeboard', ?, ?, NOW(), ST_GeomFromText('POINT(%f %f)', %d))",
 						lng, lat, utils.SRID),

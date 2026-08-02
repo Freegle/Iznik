@@ -10,6 +10,8 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"regexp"
 	"strconv"
 	"strings"
@@ -323,11 +325,25 @@ func RecordJobClick(c *fiber.Ctx) error {
 
 	// Use IGNORE to handle clicks for purged jobs gracefully
 	if userID != nil {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link, placement, source, page) VALUES (?, ?, ?, ?, ?, ?)",
-			*userID, jobID, link, placementVal, sourceVal, pageVal)
+		// ORM migration site 427bf8bd0bc7 (wave 3).
+		db.Table("logs_jobs").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"userid":    *userID,
+			"jobid":     jobID,
+			"link":      link,
+			"placement": placementVal,
+			"source":    sourceVal,
+			"page":      pageVal,
+		})
 	} else {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link, placement, source, page) VALUES (NULL, ?, ?, ?, ?, ?)",
-			jobID, link, placementVal, sourceVal, pageVal)
+		// ORM migration site 9d84c4751dd8 (wave 3).
+		db.Table("logs_jobs").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"userid":    gorm.Expr("NULL"),
+			"jobid":     jobID,
+			"link":      link,
+			"placement": placementVal,
+			"source":    sourceVal,
+			"page":      pageVal,
+		})
 	}
 
 	return c.JSON(fiber.Map{

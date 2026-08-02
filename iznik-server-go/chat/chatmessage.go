@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
 )
 
@@ -396,8 +397,13 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasHome)
 
 	if !rippling.AttributionSchemaReady(db) {
-		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
-			"VALUES (?, ?, NOW(), ?)", refmsgid, myid, wasHome)
+		// ORM migration site 49e43e92d1e5 (wave 3).
+		db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"msgid":           refmsgid,
+			"userid":          myid,
+			"replied_at":      gorm.Expr("NOW()"),
+			"was_home_member": wasHome,
+		})
 		return
 	}
 
@@ -462,12 +468,20 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 
 	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, postHadRippled, inOrigin, inReach)
 
-	db.Exec("INSERT IGNORE INTO rippling_reply_attribution "+
-		"(msgid, userid, replied_at, was_home_member, was_notified, was_ripple_group_member, "+
-		"in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) "+
-		"VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
-		refmsgid, myid, wasHome, wasNotified, wasRippleGroup, inOrigin, inReach, postHadRippled,
-		attribution, rippling.SanitizeClientSource(clientSource))
+	// ORM migration site db03a274a8a2 (wave 3).
+	db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"msgid":                   refmsgid,
+		"userid":                  myid,
+		"replied_at":              gorm.Expr("NOW()"),
+		"was_home_member":         wasHome,
+		"was_notified":            wasNotified,
+		"was_ripple_group_member": wasRippleGroup,
+		"in_origin_catchment":     inOrigin,
+		"in_reach":                inReach,
+		"post_had_rippled":        postHadRippled,
+		"attribution":             attribution,
+		"client_source":           rippling.SanitizeClientSource(clientSource),
+	})
 }
 
 func CreateChatMessage(c *fiber.Ctx) error {
@@ -661,8 +675,14 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			"status":        gorm.Expr("'held'"),
 			"created_at":    gorm.Expr("NOW()"),
 		})
-		db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'held', 1) " +
-			"ON DUPLICATE KEY UPDATE count = count + 1")
+		// ORM migration site ac238fc96e7e (wave 3).
+		db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+		}).Create(map[string]interface{}{
+			"day":   gorm.Expr("CURDATE()"),
+			"event": gorm.Expr("'held'"),
+			"count": gorm.Expr("1"),
+		})
 	}
 
 	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the
@@ -1580,7 +1600,11 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	// Whitelist the message text so similar messages aren't flagged again
 	//.
 	if msg.Message != "" {
-		db.Exec("INSERT IGNORE INTO spam_whitelist_subjects (subject, comment) VALUES (?, 'Marked as not spam')", msg.Message)
+		// ORM migration site af7676dc1734 (wave 3).
+		db.Table("spam_whitelist_subjects").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"subject": msg.Message,
+			"comment": gorm.Expr("'Marked as not spam'"),
+		})
 	}
 
 	if approveAllFuture {

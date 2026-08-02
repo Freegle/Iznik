@@ -18,6 +18,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	geo "github.com/kellydunn/golang-geo"
+	"gorm.io/gorm/clause"
 )
 
 const TYPE_POSTCODE = "Postcode"
@@ -924,8 +925,11 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Exclude the specified location.
-	db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
-		req.ID, req.GroupID, myid)
+	// ORM migration site 666504e10980 (wave 3). Converted together with its
+	// identical twin below (59411a155371): a half-converted pair renumbers
+	// the survivor's site ID, so gate (h) refuses the split state.
+	db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
+		Create(map[string]interface{}{"locationid": req.ID, "groupid": req.GroupID, "userid": myid})
 
 	queueExcludeRemap(req.ID)
 
@@ -939,8 +943,10 @@ func ExcludeLocation(c *fiber.Ctx) error {
 			// ORM migration site 2f3a9cd57a29 (wave 1).
 			db.Table("locations").Where("name = ? AND id != ?", name, req.ID).Pluck("id", &otherIDs)
 			for _, otherID := range otherIDs {
-				db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
-					otherID, req.GroupID, myid)
+				// ORM migration site 59411a155371 (wave 3). Twin of
+				// 666504e10980 above.
+				db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
+					Create(map[string]interface{}{"locationid": otherID, "groupid": req.GroupID, "userid": myid})
 				queueExcludeRemap(otherID)
 			}
 		}

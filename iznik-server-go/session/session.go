@@ -23,6 +23,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // FetchEmailHealth returns the incoming and outgoing email alert flags
@@ -795,7 +796,9 @@ func handleRelated(c *fiber.Ctx, userlist []uint64) error {
 	// Insert related records for each pair.
 	for _, otherID := range userlist {
 		if otherID != myid && otherID > 0 {
-			db.Exec("INSERT IGNORE INTO users_related (user1, user2) VALUES (?, ?)", myid, otherID)
+			// ORM migration site 39a4f93e1455 (wave 3).
+			db.Table("users_related").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{"user1": myid, "user2": otherID})
 		}
 	}
 
@@ -885,9 +888,14 @@ func GetSession(c *fiber.Ctx) error {
 	// Throttled client-side via lastversiontime; we just insert/update.
 	webversion := c.Query("webversion")
 	if webversion != "" || appversion != "" {
-		db.Exec("INSERT INTO users_builddates (userid, webversion, appversion) VALUES (?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE timestamp = NOW(), webversion = ?, appversion = ?",
-			myid, webversion, appversion, webversion, appversion)
+		// ORM migration site b4d495e2284e (wave 3).
+		db.Table("users_builddates").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"), "webversion": webversion, "appversion": appversion,
+			}),
+		}).Create(map[string]interface{}{
+			"userid": myid, "webversion": webversion, "appversion": appversion,
+		})
 	}
 
 	// Parallel fetches for user data.
@@ -1978,9 +1986,12 @@ func PatchSession(c *fiber.Ctx) error {
 			salt := auth.GetPasswordSalt()
 			hashed := auth.HashPassword(*req.Password, salt)
 			uid := strconv.FormatUint(myid, 10)
-			db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?) "+
-				"ON DUPLICATE KEY UPDATE credentials = ?, salt = ?",
-				myid, utils.LOGIN_TYPE_NATIVE, uid, hashed, salt, hashed, salt)
+			// ORM migration site 69fb1ebb3a73 (wave 3).
+			db.Table("users_logins").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{"credentials": hashed, "salt": salt}),
+			}).Create(map[string]interface{}{
+				"userid": myid, "type": utils.LOGIN_TYPE_NATIVE, "uid": uid, "credentials": hashed, "salt": salt,
+			})
 		}()
 	}
 
@@ -2020,9 +2031,14 @@ func PatchSession(c *fiber.Ctx) error {
 				// first and the current user gets no push (and pushes for the old
 				// user are delivered to this device). Reassign userid/type/apptype
 				// to the currently-logged-in user.
-				db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
-					"ON DUPLICATE KEY UPDATE userid = ?, type = ?, apptype = ?",
-					myid, pushSub.Type, pushSub.Subscription, apptype, myid, pushSub.Type, apptype)
+				// ORM migration site 5fb6e8fa85fd (wave 3).
+				db.Table("users_push_notifications").Clauses(clause.OnConflict{
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"userid": myid, "type": pushSub.Type, "apptype": apptype,
+					}),
+				}).Create(map[string]interface{}{
+					"userid": myid, "type": pushSub.Type, "subscription": pushSub.Subscription, "apptype": apptype,
+				})
 			}
 		}()
 	}

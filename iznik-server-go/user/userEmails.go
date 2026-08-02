@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type UserEmail struct {
@@ -67,7 +68,14 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 	}
 	email = fmt.Sprintf("%s-%d@%s", local, id, domain)
 
-	db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, added, validatetime) VALUES (?, ?, 0, NOW(), NOW())", id, email)
+	// ORM migration site ba1bd193532a (wave 3).
+	db.Table("users_emails").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"userid":       id,
+		"email":        email,
+		"preferred":    gorm.Expr("0"),
+		"added":        gorm.Expr("NOW()"),
+		"validatetime": gorm.Expr("NOW()"),
+	})
 
 	return email
 }

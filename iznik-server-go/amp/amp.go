@@ -30,6 +30,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AMPChatMessage extends ChatMessageQuery with AMP-specific display fields.
@@ -335,10 +336,14 @@ func GetChatMessages(c *fiber.Ctx) error {
 				"opened_via": gorm.Expr("'amp'"),
 			})
 			// Also record in clicks table for analytics (won't duplicate due to unique tracking)
-			db.Exec(`
-				INSERT IGNORE INTO email_tracking_clicks (email_tracking_id, link_url, action, clicked_at)
-				VALUES (?, 'amp://render', 'amp_render', NOW())
-			`, tid)
+			// ORM migration site a1ba47046192 (wave 3).
+			db.Table("email_tracking_clicks").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{
+					"email_tracking_id": tid,
+					"link_url":          gorm.Expr("'amp://render'"),
+					"action":            gorm.Expr("'amp_render'"),
+					"clicked_at":        gorm.Expr("NOW()"),
+				})
 		}
 	}
 

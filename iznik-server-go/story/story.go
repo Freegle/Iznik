@@ -13,6 +13,8 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type StoryImage struct {
@@ -240,11 +242,17 @@ func createStoryNewsfeedEntry(userid uint64, storyID uint64) {
 		return
 	}
 
-	result := db.Exec(
-		"INSERT INTO newsfeed (`type`, userid, storyid, position, hidden, deleted, reviewrequired, pinned) "+
-			"VALUES ('Story', ?, ?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), ?), NULL, NULL, 0, 0)",
-		userid, storyID, *lng, *lat, utils.SRID,
-	)
+	// ORM migration site 9263f0bb43fb (wave 3).
+	result := db.Table("newsfeed").Create(map[string]interface{}{
+		"type":           gorm.Expr("'Story'"),
+		"userid":         userid,
+		"storyid":        storyID,
+		"position":       gorm.Expr("ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), ?)", *lng, *lat, utils.SRID),
+		"hidden":         gorm.Expr("NULL"),
+		"deleted":        gorm.Expr("NULL"),
+		"reviewrequired": gorm.Expr("0"),
+		"pinned":         gorm.Expr("0"),
+	})
 
 	if result.Error != nil {
 		log.Printf("Failed to create story newsfeed entry: %v", result.Error)
@@ -437,9 +445,12 @@ func LikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// Left raw: wave 3 (INSERT IGNORE with a duplicate at PostStory's Like case,
-	// site 0d3865cbb34e), not wave 2 - not this batch's scope.
-	db.Exec("INSERT IGNORE INTO users_stories_likes (storyid, userid) VALUES (?, ?)", req.ID, myid)
+	// ORM migration site 713e8b8dab08 (wave 3). Converted together with its
+	// identical twin at PostStory's Like case (0d3865cbb34e): a half-converted
+	// pair renumbers the survivor's site ID, so gate (h) refuses the split
+	// state.
+	db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
+		Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -498,9 +509,9 @@ func PostStory(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Like":
-		// Left raw: wave 3 (INSERT IGNORE with a duplicate at LikeStory,
-		// site 713e8b8dab08), not wave 2 - not this batch's scope.
-		db.Exec("INSERT IGNORE INTO users_stories_likes (storyid, userid) VALUES (?, ?)", req.ID, myid)
+		// ORM migration site 0d3865cbb34e (wave 3). Twin of 713e8b8dab08 above.
+		db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
+			Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
 	case "Unlike":
 		// ORM migration site 941fa556061a (wave 2).
 		db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)

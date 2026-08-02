@@ -34,6 +34,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
 )
 
@@ -185,8 +186,12 @@ func scrapeTNPhotosToAttachments(db *gorm.DB, msgID uint64, picPageURLs []string
 				primary = 1
 				isPrimary = false
 			}
-			db.Exec("INSERT IGNORE INTO messages_attachments (msgid, externaluid, `primary`) VALUES (?, ?, ?)",
-				msgID, externaluid, primary)
+			// ORM migration site fa561d9680e2 (wave 3).
+			db.Table("messages_attachments").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"msgid":       msgID,
+				"externaluid": externaluid,
+				"primary":     primary,
+			})
 		}
 	}
 }
@@ -994,8 +999,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			// Q5 (§15): count reply-blocked-by-reach events (one per post the member
 			// can't reply to yet). Best-effort — errors ignored so it never affects the
 			// response.
-			db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'reply_blocked', ?) "+
-				"ON DUPLICATE KEY UPDATE count = count + ?", n, n)
+			// ORM migration site 1bdbafed31fa (wave 3).
+			db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"count": gorm.Expr("count + ?", n),
+				}),
+			}).Create(map[string]interface{}{
+				"day":   gorm.Expr("CURDATE()"),
+				"event": gorm.Expr("'reply_blocked'"),
+				"count": n,
+			})
 		}
 
 		// Banned-blocked: the viewer is banned from every group the post is on. Only run
@@ -2167,11 +2180,20 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 		}
 
 		// groupid is part of the unique key, so it is never updated on conflict.
-		db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
-			"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE point = VALUES(point), "+
-			"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
-			msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
+		// ORM migration site b00f9d848435 (wave 3).
+		db.Table("messages_spatial").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "point"}, Value: clause.Column{Table: "excluded", Name: "point"}},
+				{Column: clause.Column{Name: "msgtype"}, Value: clause.Column{Table: "excluded", Name: "msgtype"}},
+				{Column: clause.Column{Name: "arrival"}, Value: clause.Column{Table: "excluded", Name: "arrival"}},
+			},
+		}).Create(map[string]interface{}{
+			"msgid":   msgid,
+			"point":   gorm.Expr("ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)", row.Lng, row.Lat),
+			"groupid": row.Groupid,
+			"msgtype": row.Msgtype,
+			"arrival": row.Arrival,
+		})
 	}
 }
 
@@ -2517,8 +2539,14 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 // "instrument from day one"), surfaced read-only in sysadmin. Best-effort: errors are
 // ignored so instrumentation never affects the request (e.g. before the table ships).
 func RecordRippleEvent(db *gorm.DB, event string) {
-	db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) "+
-		"ON DUPLICATE KEY UPDATE count = count + 1", event)
+	// ORM migration site 6c9b19809e6c (wave 3).
+	db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+	}).Create(map[string]interface{}{
+		"day":   gorm.Expr("CURDATE()"),
+		"event": event,
+		"count": gorm.Expr("1"),
+	})
 }
 
 // handleDeleteMessage deletes a message (mod action).
@@ -2890,7 +2918,11 @@ func handlePartnerConsent(c *fiber.Ctx, myid uint64, req PostMessageRequest) err
 	}
 
 	// Record consent in partners_messages.
-	db.Exec("INSERT IGNORE INTO partners_messages (partnerid, msgid) VALUES (?, ?)", partnerID, req.ID)
+	// ORM migration site dc26aeceefa9 (wave 3).
+	db.Table("partners_messages").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"partnerid": partnerID,
+		"msgid":     req.ID,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2993,8 +3025,12 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// JoinAndPost the owner picks the destination group(s) again. INSERT IGNORE
 	// keeps an existing draft row intact.
 	if len(groupids) > 0 {
-		if err := tx.Exec("INSERT IGNORE INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
-			req.ID, groupids[0], myid).Error; err != nil {
+		// ORM migration site b9a68fc74595 (wave 3).
+		if err := tx.Table("messages_drafts").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"msgid":   req.ID,
+			"groupid": groupids[0],
+			"userid":  myid,
+		}).Error; err != nil {
 			tx.Rollback()
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
 		}
@@ -3153,8 +3189,13 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Join group if not already a member.
-	result := db.Exec("INSERT IGNORE INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		myid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	// ORM migration site 419abfa0cef3 (wave 3).
+	result := db.Table("memberships").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"userid":     myid,
+		"groupid":    groupid,
+		"role":       utils.ROLE_MEMBER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	// Log the join event when a new membership row was created.
 	if result.RowsAffected > 0 {
@@ -3218,8 +3259,13 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Submit: insert into messages_groups and clean up draft.
-	db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
-		req.ID, groupid, collection)
+	// ORM migration site 578ac6d80c06 (wave 3).
+	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"msgid":      req.ID,
+		"groupid":    groupid,
+		"collection": collection,
+		"arrival":    gorm.Expr("NOW()"),
+	})
 
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
 	// ORM migration site dc8914d8b9d5 (wave 2). Identical golden to 854c7e93efe3
@@ -3252,8 +3298,18 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db.Table("messages").Where("id = ?", req.ID).Update("fromaddr", fromaddr)
 
 	// V1 parity: messages_history.fromaddr also uses the invented @users email, not the preferred email.
-	db.Exec("INSERT IGNORE INTO messages_history (msgid, groupid, source, fromuser, fromname, fromaddr, subject, arrival, fromip) VALUES (?, ?, 'Platform', ?, ?, ?, ?, NOW(), ?)",
-		req.ID, groupid, myid, histFromname, fromaddr, histSubject, c.IP())
+	// ORM migration site cb477fe8b7d2 (wave 3).
+	db.Table("messages_history").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"msgid":    req.ID,
+		"groupid":  groupid,
+		"source":   gorm.Expr("'Platform'"),
+		"fromuser": myid,
+		"fromname": histFromname,
+		"fromaddr": fromaddr,
+		"subject":  histSubject,
+		"arrival":  gorm.Expr("NOW()"),
+		"fromip":   c.IP(),
+	})
 
 	// ORM migration site 2aaca5a913de (wave 2).
 	db.Table("messages_drafts").Where("msgid = ?", req.ID).Delete(nil)
@@ -3289,8 +3345,19 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		hashed := auth.HashPassword(password, salt)
 
 		// uid must be the user ID (not email) so that VerifyPassword can find the row.
-		db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE credentials = VALUES(credentials), salt = VALUES(salt)",
-			myid, utils.LOGIN_TYPE_NATIVE, myid, hashed, salt)
+		// ORM migration site 92e739e16c30 (wave 3).
+		db.Table("users_logins").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "credentials"}, Value: clause.Column{Table: "excluded", Name: "credentials"}},
+				{Column: clause.Column{Name: "salt"}, Value: clause.Column{Table: "excluded", Name: "salt"}},
+			},
+		}).Create(map[string]interface{}{
+			"userid":      myid,
+			"type":        utils.LOGIN_TYPE_NATIVE,
+			"uid":         myid,
+			"credentials": hashed,
+			"salt":        salt,
+		})
 		resp["newuser"] = true
 		resp["newpassword"] = password
 	}
@@ -4533,7 +4600,11 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 		itemID, _ := database.ExecInsertGetID(db,
 			"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
 		if itemID > 0 {
-			db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", newMsgID, itemID)
+			// ORM migration site e7f18e30931f (wave 3).
+			db.Table("messages_items").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"msgid":  newMsgID,
+				"itemid": itemID,
+			})
 		}
 	}
 
@@ -4999,8 +5070,15 @@ func handleOutcomeIntended(c *fiber.Ctx, myid uint64, req PostMessageRequest) er
 	}
 
 	// Simple insert-or-update.
-	db.Exec("INSERT INTO messages_outcomes_intended (msgid, outcome) VALUES (?, ?) ON DUPLICATE KEY UPDATE outcome = VALUES(outcome)",
-		req.ID, req.Outcome)
+	// ORM migration site 62d2f10ad97c (wave 3).
+	db.Table("messages_outcomes_intended").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "outcome"}, Value: clause.Column{Table: "excluded", Name: "outcome"}},
+		},
+	}).Create(map[string]interface{}{
+		"msgid":   req.ID,
+		"outcome": req.Outcome,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -5364,8 +5442,21 @@ func handleView(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// existing source so a later organic view never clears the notification attribution.
 	if recentCount == 0 {
 		// First view in the window: create/refresh the row as a genuine page-open.
-		db.Exec("INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES (?, ?, 'View', 1, ?) ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1, pageview = 1, source = COALESCE(?, source)",
-			req.ID, myid, src, src)
+		// ORM migration site e8a9588d340c (wave 3).
+		db.Table("messages_likes").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "timestamp"}, Value: gorm.Expr("NOW()")},
+				{Column: clause.Column{Name: "count"}, Value: gorm.Expr("count + 1")},
+				{Column: clause.Column{Name: "pageview"}, Value: gorm.Expr("1")},
+				{Column: clause.Column{Name: "source"}, Value: gorm.Expr("COALESCE(?, source)", src)},
+			},
+		}).Create(map[string]interface{}{
+			"msgid":    req.ID,
+			"userid":   myid,
+			"type":     gorm.Expr("'View'"),
+			"pageview": gorm.Expr("1"),
+			"source":   src,
+		})
 	} else {
 		// A recent 'View' row already exists, so we de-duplicate the count - but that row
 		// may be a list-scroll impression (pageview=0) or legacy (NULL). A real page-open
@@ -5529,7 +5620,10 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 	// Mirror V1 (Message.php:3974–3989): whenever an AI attachment is removed,
 	// protect the message from the illustrations cron re-injecting a cached image.
 	if foundAI {
-		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgID)
+		// ORM migration site 44a89f7db2ae (wave 3).
+		db.Table("messages_ai_declined").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"msgid": msgID,
+		})
 	}
 }
 

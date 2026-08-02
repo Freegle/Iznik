@@ -58,8 +58,14 @@ const walk = (d) => fs.readdirSync(d, {withFileTypes: true}).flatMap((e) => {
 
 // Column order of the SET list in a raw UPDATE, e.g.
 // "UPDATE t SET a = a + 1, rate = ... WHERE id = ?" -> ["a", "rate"]
-const goldenSetOrder = (sql) => {
-  const m = /\bset\b([\s\S]*?)(?:\bwhere\b|$)/i.exec(sql || "");
+const goldenSetOrder = (sql, kind) => {
+  // An UPDATE keeps its assignments after SET; an upsert keeps them after
+  // ON DUPLICATE KEY UPDATE. Both are ordered lists that MySQL evaluates left
+  // to right, and GORM sorts the keys of both Updates(map) and
+  // clause.Assignments(map), so the same question applies to each.
+  const m = kind === "assignments"
+    ? /\bon\s+duplicate\s+key\s+update\b([\s\S]*)$/i.exec(sql || "")
+    : /\bset\b([\s\S]*?)(?:\bwhere\b|$)/i.exec(sql || "");
   if (!m) return null;
   const parts = [];
   let depth = 0, cur = "", inQuote = false;
@@ -92,7 +98,19 @@ const stripStrings = (s) => {
 let flagged = 0, checked = 0, benign = 0;
 for (const file of walk(root)) {
   const src = fs.readFileSync(file, "utf8");
-  const re = /Updates\(\s*map\[string\]interface\{\}\{/g;
+  // Both map-valued forms, not just Updates. clause.Assignments(map...) sorts
+  // its keys exactly as Updates(map...) does, and the wave 3 ON DUPLICATE KEY
+  // UPDATE sites are where it appears - so scanning only Updates left the
+  // upsert half of the codebase unguarded. abtest.go is the live case: rate is
+  // computed from a column the same statement assigns, and the alphabetical
+  // order really does differ from the original. It was caught by hand during a
+  // conversion batch, which is precisely the kind of catch that should not
+  // depend on someone remembering.
+  //
+  // An explicit ordered clause.Set literal is the FIX for these, not a case to
+  // flag: it states the order rather than deriving it from a map, so there is
+  // nothing for a sort to reorder.
+  const re = /(?:Updates|clause\.Assignments)\(\s*map\[string\]interface\{\}\{/g;
   let m;
   while ((m = re.exec(src)) !== null) {
     let depth = 1, i = m.index + m[0].length;
@@ -102,6 +120,7 @@ for (const file of walk(root)) {
       i++;
     }
     const body = src.slice(m.index + m[0].length, i - 1);
+    const kind = m[0].startsWith("clause.Assignments") ? "assignments" : "updates";
     checked++;
 
     const keys = [...body.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"\s*:/g)].map((k) => k[1]);
@@ -148,7 +167,7 @@ for (const file of walk(root)) {
       continue;
     }
     const site = manifest.sites[idm[1]];
-    const want = site ? goldenSetOrder(site.goldenSql) : null;
+    const want = site ? goldenSetOrder(site.goldenSql, kind) : null;
     if (!want) {
       console.log(`SET ORDER  ${rel}:${line}  site ${idm[1]} has no usable goldenSql to check the SET order against`);
       flagged++;
@@ -165,6 +184,6 @@ for (const file of walk(root)) {
   }
 }
 
-console.log(`check-set-order: ${checked} Updates(map) sites checked, ${benign} order-dependent but unchanged by sorting, ${flagged} flagged`);
+console.log(`check-set-order: ${checked} map-valued assignment sites checked (Updates and clause.Assignments), ${benign} order-dependent but unchanged by sorting, ${flagged} flagged`);
 process.exit(flagged ? 1 : 0);
 ' "$ROOT" "$MANIFEST"

@@ -6,6 +6,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"time"
 )
 
@@ -71,7 +72,9 @@ func List(c *fiber.Ctx) error {
 	// users_active (userid, timestamp) with timestamp truncated to the hour. This is used by
 	// Stats.php for active-users-per-group counts and the moderator activity leaderboard.
 	hourTimestamp := time.Now().UTC().Truncate(time.Hour).Format("2006-01-02 15:04:05")
-	db.Exec("INSERT IGNORE INTO users_active (userid, timestamp) VALUES (?, ?)", myid, hourTimestamp)
+	// ORM migration site b0bc94eb01e8 (wave 3).
+	db.Table("users_active").Clauses(clause.Insert{Modifier: "IGNORE"}).
+		Create(map[string]interface{}{"userid": myid, "timestamp": hourTimestamp})
 
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 

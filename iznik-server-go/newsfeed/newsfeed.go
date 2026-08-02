@@ -1110,7 +1110,9 @@ func Post(c *fiber.Ctx) error {
 	switch req.Action {
 	case "Love":
 		if req.ID > 0 {
-			db.Exec("INSERT IGNORE INTO newsfeed_likes (newsfeedid, userid) VALUES (?, ?)", req.ID, myid)
+			// ORM migration site 520be22ce5db (wave 3).
+			db.Table("newsfeed_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{"newsfeedid": req.ID, "userid": myid})
 
 			// Send notification to the post/comment author.
 			type PostOwner struct {
@@ -1252,6 +1254,10 @@ func Post(c *fiber.Ctx) error {
 		// OFFER/WANTED - a photo is often the most useful part. Modern images
 		// live in the external store (externaluid); rows without one are
 		// legacy blobs which a fresh ChitChat post can't have.
+		// Left raw (site 08d12a748d01, wave 3): INSERT ... SELECT. No GORM
+		// builder keeps an INSERT and its source SELECT as one atomic
+		// statement - splitting it into a read then a write would open a
+		// race between the existence check and the copy. See keep-raw.json.
 		db.Exec("INSERT INTO messages_attachments (msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
 			"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
 			"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+

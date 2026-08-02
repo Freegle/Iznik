@@ -26,6 +26,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // helperDisclosure is appended to the FIRST message the Helper auto-sends to a
@@ -622,8 +623,20 @@ func insertHelperChat(db *gorm.DB, batchid, chatid, offerer, msgid, replierid ui
 	if replierid > 0 {
 		rid = replierid
 	}
-	db.Exec("INSERT INTO helper_sent_messages (batchid, chatmsgid, chatid, replierid, kind, auto, proposalid) VALUES (?, ?, ?, ?, ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE kind = VALUES(kind)", batchid, uint64(cmid), chatid, rid, kind, auto, proposalid)
+	// ORM migration site 82f73ff0af1b (wave 3).
+	db.Table("helper_sent_messages").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "kind"}, Value: clause.Column{Table: "excluded", Name: "kind"}},
+		},
+	}).Create(map[string]interface{}{
+		"batchid":    batchid,
+		"chatmsgid":  uint64(cmid),
+		"chatid":     chatid,
+		"replierid":  rid,
+		"kind":       kind,
+		"auto":       auto,
+		"proposalid": proposalid,
+	})
 	return uint64(cmid)
 }
 

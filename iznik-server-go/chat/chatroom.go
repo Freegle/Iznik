@@ -16,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const chatActiveLimitMT = 365
@@ -421,9 +422,17 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatID := uint64(lastID)
 
 		// Create roster entry for the chat owner.
-		db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE date = VALUES(date)",
-			chatID, chatUserID, utils.CHAT_STATUS_ONLINE, now)
+		// ORM migration site afaa0e49a541 (wave 3). Converted together with its
+		// two identical twins below (e611588b2309, 60aa69c60334): a
+		// half-converted group renumbers the survivors' site IDs, so gate (h)
+		// refuses the split state.
+		db.Table("chat_roster").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "date"}, Value: clause.Column{Table: "excluded", Name: "date"}},
+			},
+		}).Create(map[string]interface{}{
+			"chatid": chatID, "userid": chatUserID, "status": utils.CHAT_STATUS_ONLINE, "date": now,
+		})
 
 		// add ALL group moderators to the roster so they get notifications.
 		var modIDs []uint64
@@ -431,8 +440,10 @@ func PutChatRoom(c *fiber.Ctx) error {
 		db.Table("memberships").Where("groupid = ? AND role IN (?, ?) AND collection = ?",
 			req.Groupid, utils.ROLE_OWNER, utils.ROLE_MODERATOR, utils.COLLECTION_APPROVED).Pluck("userid", &modIDs)
 		for _, modID := range modIDs {
-			db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, ?)",
-				chatID, modID, utils.CHAT_STATUS_ONLINE, now)
+			// ORM migration site 21c0c56448e8 (wave 3).
+			db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"chatid": chatID, "userid": modID, "status": utils.CHAT_STATUS_ONLINE, "date": now,
+			})
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": chatID})
@@ -486,12 +497,22 @@ func PutChatRoom(c *fiber.Ctx) error {
 	}
 
 	// Create roster entries for both users.
-	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE date = VALUES(date)",
-		chatID, myid, utils.CHAT_STATUS_ONLINE, now)
-	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE date = VALUES(date)",
-		chatID, req.Userid, utils.CHAT_STATUS_ONLINE, now)
+	// ORM migration site e611588b2309 (wave 3). Twin of afaa0e49a541 above.
+	db.Table("chat_roster").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "date"}, Value: clause.Column{Table: "excluded", Name: "date"}},
+		},
+	}).Create(map[string]interface{}{
+		"chatid": chatID, "userid": myid, "status": utils.CHAT_STATUS_ONLINE, "date": now,
+	})
+	// ORM migration site 60aa69c60334 (wave 3). Twin of afaa0e49a541 above.
+	db.Table("chat_roster").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "date"}, Value: clause.Column{Table: "excluded", Name: "date"}},
+		},
+	}).Create(map[string]interface{}{
+		"chatid": chatID, "userid": req.Userid, "status": utils.CHAT_STATUS_ONLINE, "date": now,
+	})
 
 	// If updateRoster is true, unblock the chat for the current user after creation
 	// (opening a chat unblocks it).
@@ -607,10 +628,15 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 	}
 
 	// Seed roster entries for both participants so notifications fire.
-	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
-		chatID, userA, utils.CHAT_STATUS_ONLINE)
-	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
-		chatID, userB, utils.CHAT_STATUS_ONLINE)
+	// ORM migration site e71799673a73 (wave 3). Converted together with its
+	// identical twin below (a70cf3624bdb).
+	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"chatid": chatID, "userid": userA, "status": utils.CHAT_STATUS_ONLINE, "date": gorm.Expr("NOW()"),
+	})
+	// ORM migration site a70cf3624bdb (wave 3). Twin of e71799673a73 above.
+	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"chatid": chatID, "userid": userB, "status": utils.CHAT_STATUS_ONLINE, "date": gorm.Expr("NOW()"),
+	})
 
 	return chatID, nil
 }
@@ -1511,24 +1537,36 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 
 	// Insert or update roster entry
 	if status == utils.CHAT_STATUS_BLOCKED {
-		db.Exec(
-			"INSERT INTO chat_roster (chatid, userid, status, lastip, date) VALUES (?, ?, ?, ?, NOW()) "+
-				"ON DUPLICATE KEY UPDATE status = ?, lastip = ?, date = NOW()",
-			req.ID, myid, status, ip, status, ip,
-		)
+		// ORM migration site 7db50195bb3c (wave 3). Converted together with its
+		// identical twin below (9c86a991eb7c): a half-converted pair renumbers
+		// the survivor's site ID, so gate (h) refuses the split state.
+		db.Table("chat_roster").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+			}),
+		}).Create(map[string]interface{}{
+			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+		})
 	} else if status == utils.CHAT_STATUS_CLOSED {
 		// Don't overwrite BLOCKED with CLOSED
-		db.Exec(
-			"INSERT INTO chat_roster (chatid, userid, status, lastip, date) VALUES (?, ?, ?, ?, NOW()) "+
-				"ON DUPLICATE KEY UPDATE status = IF(status = ?, status, ?), lastip = ?, date = NOW()",
-			req.ID, myid, status, ip, utils.CHAT_STATUS_BLOCKED, status, ip,
-		)
+		// ORM migration site e6d3316c800c (wave 3).
+		db.Table("chat_roster").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"status": gorm.Expr("IF(status = ?, status, ?)", utils.CHAT_STATUS_BLOCKED, status),
+				"lastip": ip, "date": gorm.Expr("NOW()"),
+			}),
+		}).Create(map[string]interface{}{
+			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+		})
 	} else {
-		db.Exec(
-			"INSERT INTO chat_roster (chatid, userid, status, lastip, date) VALUES (?, ?, ?, ?, NOW()) "+
-				"ON DUPLICATE KEY UPDATE status = ?, lastip = ?, date = NOW()",
-			req.ID, myid, status, ip, status, ip,
-		)
+		// ORM migration site 9c86a991eb7c (wave 3). Twin of 7db50195bb3c above.
+		db.Table("chat_roster").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+			}),
+		}).Create(map[string]interface{}{
+			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+		})
 	}
 
 	// Update lastmsgseen if provided

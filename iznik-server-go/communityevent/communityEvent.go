@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"log"
 	"os"
 	"strconv"
@@ -324,7 +325,11 @@ func Create(c *fiber.Ctx) error {
 	}
 
 	if id > 0 && req.GroupID > 0 {
-		db.Exec("INSERT IGNORE INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", id, req.GroupID)
+		// ORM migration site 74c3a59d2291 (wave 3).
+		db.Table("communityevents_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"eventid": id,
+			"groupid": req.GroupID,
+		})
 	}
 
 	return c.JSON(fiber.Map{"id": id})
@@ -469,7 +474,11 @@ func Update(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not a member of the specified group")
 			}
 
-			db.Exec("INSERT IGNORE INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", req.ID, req.GroupID)
+			// ORM migration site 154548bd2551 (wave 3).
+			db.Table("communityevents_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"eventid": req.ID,
+				"groupid": req.GroupID,
+			})
 
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this community event.

@@ -23,6 +23,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // generateEditToken returns a 32-char URL-safe random secret (192 bits of
@@ -51,8 +52,15 @@ func ensureBulkEditToken(db *gorm.DB, msgid uint64) string {
 		return ""
 	}
 	// COALESCE keeps any token another request set first (unique index also guards).
-	db.Exec("INSERT INTO messages_bulk_access (msgid, edittoken) VALUES (?, ?) "+
-		"ON DUPLICATE KEY UPDATE edittoken = COALESCE(edittoken, VALUES(edittoken))", msgid, newTok)
+	// ORM migration site eccba6faf480 (wave 3).
+	db.Table("messages_bulk_access").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"edittoken": gorm.Expr("COALESCE(edittoken, VALUES(edittoken))"),
+		}),
+	}).Create(map[string]interface{}{
+		"msgid":     msgid,
+		"edittoken": newTok,
+	})
 	// ORM migration site 52538d138ab2 (wave 1).
 	db.Table("messages_bulk_access").Select("COALESCE(edittoken, '')").Where("msgid = ?", msgid).Scan(&token)
 	return token

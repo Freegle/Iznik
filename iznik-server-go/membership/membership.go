@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // logMembershipAction inserts a mod log entry for membership actions.
@@ -263,9 +264,18 @@ func PostMemberships(c *fiber.Ctx) error {
 			Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to delete membership for ban user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
-		// users_banned INSERT ... ON DUPLICATE KEY UPDATE left raw: wave 3 (upsert), not wave 2.
-		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
-			req.Userid, req.Groupid, myid)
+		// ORM migration site dfc985e8ea67 (wave 3). Converted together with its
+		// identical twin in DeleteMemberships (d788d299a578): a half-converted
+		// pair renumbers the survivor's site ID, so gate (h) refuses the split
+		// state.
+		db.Table("users_banned").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "byuser"}, Value: clause.Column{Table: "excluded", Name: "byuser"}},
+				{Column: clause.Column{Name: "date"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"userid": req.Userid, "groupid": req.Groupid, "byuser": myid,
+		})
 		// V1 parity: removeMembership($ban=true) logs type=Group/subtype=Left/text="via ban"
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, req.Userid, myid, "via ban")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1434,9 +1444,15 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		// ORM migration site d60d7b2e0f2a (wave 2). Converted together with its
 		// identical twin in PostMemberships's Ban action (98ee705a8a74).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).Delete(nil)
-		// users_banned INSERT ... ON DUPLICATE KEY UPDATE left raw: wave 3 (upsert), not wave 2.
-		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
-			userid, req.Groupid, myid)
+		// ORM migration site d788d299a578 (wave 3). Twin of dfc985e8ea67 above.
+		db.Table("users_banned").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "byuser"}, Value: clause.Column{Table: "excluded", Name: "byuser"}},
+				{Column: clause.Column{Name: "date"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"userid": userid, "groupid": req.Groupid, "byuser": myid,
+		})
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "via ban")
 		// A ban removes this membership; if it was the user's last Owner/Moderator
 		// role, demote a now-stale Moderator systemrole (V1 updateSystemRole parity).

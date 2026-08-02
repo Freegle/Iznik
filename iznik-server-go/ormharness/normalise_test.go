@@ -159,3 +159,46 @@ func TestResolveLimitOffset(t *testing.T) {
 		t.Errorf("a non-LIMIT bind was wrongly substituted: %q", got)
 	}
 }
+
+func TestNormaliseDuplicateKeyUpdate(t *testing.T) {
+	// An upsert carries two ordered lists, and normaliseColumnOrder used to
+	// normalise only the INSERT column list, copying the ON DUPLICATE KEY
+	// UPDATE tail through untouched. GORM sorts clause.Assignments(map) keys
+	// exactly as it sorts Updates(map), so every multi-assignment upsert failed
+	// on text that described the same statement. Eleven wave 3 sites at once.
+	golden := "insert into chat_roster(chatid, userid, status, lastip, date) values (?, ?, ?, ?, now()) on duplicate key update status = ?, lastip = ?, date = now()"
+	render := "insert into chat_roster(chatid, date, lastip, status, userid) values (?, now(), ?, ?, ?) on duplicate key update date = now(), lastip = ?, status = ?"
+
+	if normaliseColumnOrder(golden) != normaliseColumnOrder(render) {
+		t.Fatalf("upsert not normalised:\n golden -> %s\n render -> %s",
+			normaliseColumnOrder(golden), normaliseColumnOrder(render))
+	}
+}
+
+func TestNormaliseDuplicateKeyUpdate_KeepsLoadBearingOrder(t *testing.T) {
+	// The abtest.go shape: rate is computed from shown, which the same clause
+	// assigns, so MySQL's left-to-right evaluation makes the order part of the
+	// meaning. Sorting would put rate first and change the answer, so the
+	// normalisation must decline and let the exact text be compared.
+	sql := "insert into abtest(uid) values (?) on duplicate key update shown = shown + 1, rate = coalesce(100 * action / shown, 0)"
+	if normaliseColumnOrder(sql) != sql {
+		t.Fatalf("an order-dependent upsert tail was reordered:\n in  %s\n out %s", sql, normaliseColumnOrder(sql))
+	}
+
+	swapped := "insert into abtest(uid) values (?) on duplicate key update rate = coalesce(100 * action / shown, 0), shown = shown + 1"
+	if normaliseColumnOrder(sql) == normaliseColumnOrder(swapped) {
+		t.Fatal("two upsert tails that compute different values were treated as equal")
+	}
+}
+
+func TestNormaliseDuplicateKeyUpdate_KeepsValuesReferences(t *testing.T) {
+	// "col = VALUES(col)" reads the row being inserted, not the stored column,
+	// so it is NOT a cross-reference and reordering is safe. Treating it as
+	// load-bearing would leave every VALUES()-style upsert uncomparable.
+	golden := "insert into t(a, b) values (?, ?) on duplicate key update b = values (b), a = values (a)"
+	render := "insert into t(a, b) values (?, ?) on duplicate key update a = values (a), b = values (b)"
+	if normaliseColumnOrder(golden) != normaliseColumnOrder(render) {
+		t.Fatalf("VALUES() upsert not normalised:\n golden -> %s\n render -> %s",
+			normaliseColumnOrder(golden), normaliseColumnOrder(render))
+	}
+}

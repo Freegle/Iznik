@@ -16,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // BulkItem is one catalogue item within a bulk-offer ("clearance") message.
@@ -76,8 +77,15 @@ func interestIsActive(state string) bool {
 // column with a separate join table so the core attachments table is untouched.
 // One attachment belongs to at most one item (unique attachmentid).
 func linkBulkItemAttachment(db *gorm.DB, bulkitemid uint64, attachmentid uint64) {
-	db.Exec("INSERT INTO messages_bulk_item_attachments (bulkitemid, attachmentid) VALUES (?, ?) "+
-		"ON DUPLICATE KEY UPDATE bulkitemid = VALUES(bulkitemid)", bulkitemid, attachmentid)
+	// ORM migration site 48b8f4df0768 (wave 3).
+	db.Table("messages_bulk_item_attachments").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "bulkitemid"}, Value: clause.Column{Table: "excluded", Name: "bulkitemid"}},
+		},
+	}).Create(map[string]interface{}{
+		"bulkitemid":   bulkitemid,
+		"attachmentid": attachmentid,
+	})
 }
 
 // loadAccessInstructions / saveAccessInstructions replace the former
@@ -91,8 +99,15 @@ func loadAccessInstructions(db *gorm.DB, msgid uint64) string {
 }
 
 func saveAccessInstructions(db *gorm.DB, msgid uint64, instructions string) {
-	db.Exec("INSERT INTO messages_bulk_access (msgid, accessinstructions) VALUES (?, ?) "+
-		"ON DUPLICATE KEY UPDATE accessinstructions = VALUES(accessinstructions)", msgid, instructions)
+	// ORM migration site a3b40fe84086 (wave 3).
+	db.Table("messages_bulk_access").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "accessinstructions"}, Value: clause.Column{Table: "excluded", Name: "accessinstructions"}},
+		},
+	}).Create(map[string]interface{}{
+		"msgid":              msgid,
+		"accessinstructions": instructions,
+	})
 }
 
 // LoadBulkItems returns the catalogue for a message, grouping the supplied
@@ -235,11 +250,23 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		for _, p := range picked {
 			// Preserve an offerer-set state (Reserved/Collected/Rejected) — a
 			// replier re-expressing interest must not reset their allocation.
-			db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, cancollect, chatid, state) "+
-				"VALUES (?, ?, ?, ?, ?, ?, 'Interested') "+
-				"ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), cancollect = VALUES(cancollect), chatid = VALUES(chatid), "+
-				"state = IF(state IN ('Reserved','Collected','Rejected'), state, 'Interested')",
-				p.bulkitemid, req.ID, target, p.qty, p.cancollect, chatid)
+			// ORM migration site fde42951834d (wave 3).
+			db.Table("messages_bulk_items_interest").Clauses(clause.OnConflict{
+				DoUpdates: clause.Set{
+					{Column: clause.Column{Name: "quantity"}, Value: clause.Column{Table: "excluded", Name: "quantity"}},
+					{Column: clause.Column{Name: "cancollect"}, Value: clause.Column{Table: "excluded", Name: "cancollect"}},
+					{Column: clause.Column{Name: "chatid"}, Value: clause.Column{Table: "excluded", Name: "chatid"}},
+					{Column: clause.Column{Name: "state"}, Value: gorm.Expr("IF(state IN ('Reserved','Collected','Rejected'), state, 'Interested')")},
+				},
+			}).Create(map[string]interface{}{
+				"bulkitemid": p.bulkitemid,
+				"msgid":      req.ID,
+				"userid":     target,
+				"quantity":   p.qty,
+				"cancollect": p.cancollect,
+				"chatid":     chatid,
+				"state":      gorm.Expr("'Interested'"),
+			})
 		}
 
 		// Map each item to its catalogue reference number (1-based, in catalogue
@@ -370,8 +397,16 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		if qty < 1 {
 			qty = 1
 		}
-		db.Exec("INSERT INTO messages_by (msgid, userid, count) VALUES (?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE count = count + VALUES(count)", msgid, *req.Userid, qty)
+		// ORM migration site 35b87def61f8 (wave 3).
+		db.Table("messages_by").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"count": gorm.Expr("count + VALUES(count)"),
+			}),
+		}).Create(map[string]interface{}{
+			"msgid":  msgid,
+			"userid": *req.Userid,
+			"count":  qty,
+		})
 		// ORM migration site e42129621a05 (wave 2).
 		db.Table("messages_bulk_items").Where("id = ?", *req.Bulkitemid).
 			Update("quantity", gorm.Expr("GREATEST(0, quantity - ?)", qty))
@@ -487,12 +522,28 @@ func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 	// this bulk-offer-interest path previously created the room WITHOUT them, which
 	// stranded the offerer's reply as un-clearable unread. Idempotent
 	// (ON DUPLICATE KEY UPDATE no-op) so it also heals a pre-existing roster-less room.
-	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW()) "+
-		"ON DUPLICATE KEY UPDATE date = date",
-		chatID, a, utils.CHAT_STATUS_ONLINE)
-	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW()) "+
-		"ON DUPLICATE KEY UPDATE date = date",
-		chatID, b, utils.CHAT_STATUS_ONLINE)
+	// ORM migration site 239d2cb0036e (wave 3).
+	db.Table("chat_roster").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "date"}, Value: clause.Column{Name: "date"}},
+		},
+	}).Create(map[string]interface{}{
+		"chatid": chatID,
+		"userid": a,
+		"status": utils.CHAT_STATUS_ONLINE,
+		"date":   gorm.Expr("NOW()"),
+	})
+	// ORM migration site 9e4c6da913a4 (wave 3).
+	db.Table("chat_roster").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "date"}, Value: clause.Column{Name: "date"}},
+		},
+	}).Create(map[string]interface{}{
+		"chatid": chatID,
+		"userid": b,
+		"status": utils.CHAT_STATUS_ONLINE,
+		"date":   gorm.Expr("NOW()"),
+	})
 
 	return chatID
 }
