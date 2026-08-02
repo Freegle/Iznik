@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 576,
+    "converted": 694,
     "keep-raw": 55,
-    "raw": 1005,
+    "raw": 887,
     "test-fixture": 4223
   },
   "sites": {
@@ -1125,7 +1125,7 @@
     "02506a663a0e": {
       "id": "02506a663a0e",
       "file": "iznik-server-go/session/session.go",
-      "line": 663,
+      "line": 673,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -1228,9 +1228,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET eventsallowed = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "02b3821ea3b9": {
       "id": "02b3821ea3b9",
@@ -2007,9 +2007,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users_related SET notified = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0486830f6eda": {
       "id": "0486830f6eda",
@@ -3397,7 +3397,7 @@
     "06d02e94fa4a": {
       "id": "06d02e94fa4a",
       "file": "iznik-server-go/user/user.go",
-      "line": 1002,
+      "line": 1003,
       "function": "GetSearchesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -3640,7 +3640,7 @@
     "076c5c70eb8e": {
       "id": "076c5c70eb8e",
       "file": "iznik-server-go/session/session.go",
-      "line": 1224,
+      "line": 1244,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -3886,7 +3886,7 @@
     "07c4bef29c2f": {
       "id": "07c4bef29c2f",
       "file": "iznik-server-go/user/user.go",
-      "line": 1781,
+      "line": 1790,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -4624,7 +4624,7 @@
     "09515916c939": {
       "id": "09515916c939",
       "file": "iznik-server-go/session/session.go",
-      "line": 1427,
+      "line": 1447,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5160,7 +5160,7 @@
     "0a6ca0656195": {
       "id": "0a6ca0656195",
       "file": "iznik-server-go/session/session.go",
-      "line": 985,
+      "line": 1005,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5470,7 +5470,7 @@
     "0ae47e468828": {
       "id": "0ae47e468828",
       "file": "iznik-server-go/session/session.go",
-      "line": 1104,
+      "line": 1124,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5531,9 +5531,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM memberships WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0b13a647b680": {
       "id": "0b13a647b680",
@@ -6134,7 +6134,7 @@
     "0c7fcde60aa8": {
       "id": "0c7fcde60aa8",
       "file": "iznik-server-go/user/user.go",
-      "line": 3274,
+      "line": 3342,
       "function": "GetUserMembershipHistory",
       "receiver": "db",
       "method": "Raw",
@@ -6240,9 +6240,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM giftaid WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c9400aa9c2e": {
       "id": "0c9400aa9c2e",
@@ -6293,7 +6293,7 @@
     "0c9e859752d0": {
       "id": "0c9e859752d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 1165,
+      "line": 1167,
       "function": "SearchUsers",
       "receiver": "db",
       "method": "Raw",
@@ -8028,9 +8028,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0ff77545225c": {
       "id": "0ff77545225c",
@@ -8123,7 +8123,7 @@
     "1013ca206ab1": {
       "id": "1013ca206ab1",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 108,
+      "line": 130,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -8162,9 +8162,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE engage SET succeeded = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "102535ad9bab": {
       "id": "102535ad9bab",
@@ -9770,7 +9770,7 @@
     "13b31d721901": {
       "id": "13b31d721901",
       "file": "iznik-server-go/user/user.go",
-      "line": 830,
+      "line": 831,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -10212,9 +10212,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "14de6b4b23b0": {
       "id": "14de6b4b23b0",
@@ -10597,7 +10597,7 @@
     "15c4586ac31e": {
       "id": "15c4586ac31e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2632,
+      "line": 2660,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Raw",
@@ -12105,7 +12105,7 @@
     "18a18b50e638": {
       "id": "18a18b50e638",
       "file": "iznik-server-go/user/user.go",
-      "line": 2271,
+      "line": 2285,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Raw",
@@ -12320,9 +12320,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM memberships WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "191828c6aafb": {
       "id": "191828c6aafb",
@@ -12408,9 +12408,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "193930b7821a": {
       "id": "193930b7821a",
@@ -12888,7 +12888,7 @@
     "1a000d04649b": {
       "id": "1a000d04649b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1078,
+      "line": 1101,
       "function": "getVisibleRatings",
       "receiver": "db",
       "method": "Raw",
@@ -13241,7 +13241,7 @@
     "1a851f316859": {
       "id": "1a851f316859",
       "file": "iznik-server-go/user/user.go",
-      "line": 959,
+      "line": 960,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -14177,9 +14177,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1cbaddb2ed2a": {
       "id": "1cbaddb2ed2a",
@@ -14271,9 +14271,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET relevantallowed = 0 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1cd22c49ea29": {
       "id": "1cd22c49ea29",
@@ -14825,9 +14825,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET trustlevel = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1de7b48d433b": {
       "id": "1de7b48d433b",
@@ -15471,9 +15471,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_emails SET preferred = 0 WHERE userid = ? AND id != ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1ec8adb8065f": {
       "id": "1ec8adb8065f",
@@ -16282,7 +16282,7 @@
     "2045fb2e0152": {
       "id": "2045fb2e0152",
       "file": "iznik-server-go/session/session.go",
-      "line": 1076,
+      "line": 1096,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -18770,7 +18770,7 @@
     "24704432f4d4": {
       "id": "24704432f4d4",
       "file": "iznik-server-go/user/user.go",
-      "line": 1973,
+      "line": 1985,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -18853,9 +18853,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET lastname = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "247ca4edda3a": {
       "id": "247ca4edda3a",
@@ -19810,9 +19810,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_emails SET preferred = 0 WHERE userid = ? AND email != ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2655d8e3768e": {
       "id": "2655d8e3768e",
@@ -20439,7 +20439,7 @@
     "27aa0e237120": {
       "id": "27aa0e237120",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1285,
+      "line": 1317,
       "function": "addMemberToGroup",
       "receiver": "db",
       "method": "Exec",
@@ -20705,7 +20705,7 @@
     "286f80414bd5": {
       "id": "286f80414bd5",
       "file": "iznik-server-go/user/user.go",
-      "line": 737,
+      "line": 738,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -21439,7 +21439,7 @@
     "29d38c03b5c7": {
       "id": "29d38c03b5c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2291,
+      "line": 2305,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -22575,7 +22575,7 @@
     "2c3b155f346b": {
       "id": "2c3b155f346b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 390,
+      "line": 412,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -22613,9 +22613,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE chat_roster SET chatid = ? WHERE chatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2c533d06ef7d": {
       "id": "2c533d06ef7d",
@@ -22923,9 +22923,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET onholidaytill = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2d365f21d47d": {
       "id": "2d365f21d47d",
@@ -23814,7 +23814,7 @@
     "2edb182648ba": {
       "id": "2edb182648ba",
       "file": "iznik-server-go/session/session.go",
-      "line": 1212,
+      "line": 1232,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -23883,7 +23883,7 @@
     "2f0c55ec88d6": {
       "id": "2f0c55ec88d6",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1293,
+      "line": 1327,
       "function": "addMemberToGroup",
       "receiver": "db",
       "method": "Exec",
@@ -24008,9 +24008,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET fullname = ?, inventedname = 1 WHERE id = ? AND (fullname IS NULL OR fullname = '' OR fullname = 'A freegler' OR fullname LIKE 'FBUser%' OR (CHAR_LENGTH(fullname) = 32 AND fullname REGEXP '[A-Za-z].*[0-9]|[0-9].*[A-Za-z]'))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2f3851ae4624": {
       "id": "2f3851ae4624",
@@ -24147,7 +24147,7 @@
     "2f4ae0de2f36": {
       "id": "2f4ae0de2f36",
       "file": "iznik-server-go/user/user.go",
-      "line": 2013,
+      "line": 2025,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -25026,7 +25026,7 @@
     "3119115f3abe": {
       "id": "3119115f3abe",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 939,
+      "line": 962,
       "function": "getHappinessMembers",
       "receiver": "db",
       "method": "Raw",
@@ -25105,9 +25105,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET tnuserid = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3157418b1d37": {
       "id": "3157418b1d37",
@@ -25490,7 +25490,7 @@
     "31e0b23915a9": {
       "id": "31e0b23915a9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1398,
+      "line": 1418,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -26019,7 +26019,7 @@
     "32d907621f09": {
       "id": "32d907621f09",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1242,
+      "line": 1272,
       "function": "putMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -26173,7 +26173,7 @@
     "33201edc2a80": {
       "id": "33201edc2a80",
       "file": "iznik-server-go/user/user.go",
-      "line": 1695,
+      "line": 1700,
       "function": "handleRate",
       "receiver": "db",
       "method": "Exec",
@@ -28273,9 +28273,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM users_banned WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "374932713da4": {
       "id": "374932713da4",
@@ -29212,7 +29212,7 @@
     "395499023142": {
       "id": "395499023142",
       "file": "iznik-server-go/user/user.go",
-      "line": 3241,
+      "line": 3309,
       "function": "GetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -29269,9 +29269,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE sessions SET lastactive = NOW() WHERE id = ? AND lastactive \u003c DATE_SUB(NOW(), INTERVAL 10 MINUTE)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3980462c8d5b": {
       "id": "3980462c8d5b",
@@ -29369,7 +29369,7 @@
     "39a4f93e1455": {
       "id": "39a4f93e1455",
       "file": "iznik-server-go/session/session.go",
-      "line": 750,
+      "line": 770,
       "function": "handleRelated",
       "receiver": "db",
       "method": "Exec",
@@ -29408,9 +29408,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "39b6cb8e42d2": {
       "id": "39b6cb8e42d2",
@@ -30151,7 +30151,7 @@
     "3b43ce5f3f6c": {
       "id": "3b43ce5f3f6c",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 183,
+      "line": 185,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -30188,9 +30188,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_rooms SET user2 = ? WHERE user2 = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3b4f1c2cf9eb": {
       "id": "3b4f1c2cf9eb",
@@ -30745,9 +30745,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE sessions SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3c4828e01db8": {
       "id": "3c4828e01db8",
@@ -31255,9 +31255,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3db13b1ea84d": {
       "id": "3db13b1ea84d",
@@ -31363,9 +31363,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET newslettersallowed = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3e09ec1599a1": {
       "id": "3e09ec1599a1",
@@ -31568,7 +31568,7 @@
     "3e8f726f0ef8": {
       "id": "3e8f726f0ef8",
       "file": "iznik-server-go/session/session.go",
-      "line": 1931,
+      "line": 1961,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -31995,7 +31995,7 @@
     "3f3696f3bba4": {
       "id": "3f3696f3bba4",
       "file": "iznik-server-go/session/session.go",
-      "line": 1353,
+      "line": 1373,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -32250,9 +32250,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET bouncing = 0 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3fe1d9a5d0a3": {
       "id": "3fe1d9a5d0a3",
@@ -32301,7 +32301,7 @@
     "3ff417c41f7c": {
       "id": "3ff417c41f7c",
       "file": "iznik-server-go/user/user.go",
-      "line": 1712,
+      "line": 1718,
       "function": "handleRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -34031,9 +34031,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET lastaccess = NOW() WHERE id = ? AND (lastaccess IS NULL OR lastaccess \u003c DATE_SUB(NOW(), INTERVAL 10 MINUTE))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "433192020fab": {
       "id": "433192020fab",
@@ -36450,9 +36450,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE chat_roster SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "47dc4934704e": {
       "id": "47dc4934704e",
@@ -36679,7 +36679,7 @@
     "4853849663f1": {
       "id": "4853849663f1",
       "file": "iznik-server-go/user/authMiddleware.go",
-      "line": 46,
+      "line": 47,
       "function": "NewAuthMiddleware",
       "receiver": "db",
       "method": "Raw",
@@ -37731,7 +37731,7 @@
     "4a525e0d44db": {
       "id": "4a525e0d44db",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 421,
+      "line": 443,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -38359,7 +38359,7 @@
     "4b310a4913e0": {
       "id": "4b310a4913e0",
       "file": "iznik-server-go/session/session.go",
-      "line": 1091,
+      "line": 1111,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -38626,9 +38626,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM memberships WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4c0d1cfde6eb": {
       "id": "4c0d1cfde6eb",
@@ -38984,9 +38984,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET trustlevel = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4cc65cd38f93": {
       "id": "4cc65cd38f93",
@@ -39035,7 +39035,7 @@
     "4ccf389828b7": {
       "id": "4ccf389828b7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2248,
+      "line": 2261,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Raw",
@@ -40585,9 +40585,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET deleted = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "507134780009": {
       "id": "507134780009",
@@ -41256,7 +41256,7 @@
     "51fa5d2c1016": {
       "id": "51fa5d2c1016",
       "file": "iznik-server-go/user/user.go",
-      "line": 2368,
+      "line": 2388,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -41838,7 +41838,7 @@
     "532b0ba4ba45": {
       "id": "532b0ba4ba45",
       "file": "iznik-server-go/user/user.go",
-      "line": 968,
+      "line": 969,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -41922,9 +41922,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "535f17531ab1": {
       "id": "535f17531ab1",
@@ -42128,7 +42128,7 @@
     "540382023ce6": {
       "id": "540382023ce6",
       "file": "iznik-server-go/user/user.go",
-      "line": 902,
+      "line": 903,
       "function": "GetProfileRecord",
       "receiver": "db",
       "method": "Raw",
@@ -42256,9 +42256,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "54535c67055f": {
       "id": "54535c67055f",
@@ -42278,9 +42278,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET volunteeringallowed = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "546ce43e7cff": {
       "id": "546ce43e7cff",
@@ -42638,9 +42638,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users_emails SET bounced = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5501a717a2cf": {
       "id": "5501a717a2cf",
@@ -43422,7 +43422,7 @@
     "564e5329c133": {
       "id": "564e5329c133",
       "file": "iznik-server-go/user/user.go",
-      "line": 2557,
+      "line": 2583,
       "function": "LogGroupLeftForApprovedMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -43619,7 +43619,7 @@
     "56c15677ea5b": {
       "id": "56c15677ea5b",
       "file": "iznik-server-go/session/session.go",
-      "line": 1889,
+      "line": 1916,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -44687,9 +44687,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "58b30a838772": {
       "id": "58b30a838772",
@@ -45377,9 +45377,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET ourPostingStatus = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5a4706a34749": {
       "id": "5a4706a34749",
@@ -46041,7 +46041,7 @@
     "5b72a0acad8e": {
       "id": "5b72a0acad8e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2860,
+      "line": 2920,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -47421,9 +47421,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM sessions WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5e48cfaf7091": {
       "id": "5e48cfaf7091",
@@ -48036,7 +48036,7 @@
     "5f6ca1b9022f": {
       "id": "5f6ca1b9022f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 561,
+      "line": 583,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -48056,7 +48056,7 @@
     "5f742c0fcf1f": {
       "id": "5f742c0fcf1f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 494,
+      "line": 516,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -48093,9 +48093,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM sessions WHERE id = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5f8494d16cbc": {
       "id": "5f8494d16cbc",
@@ -48255,7 +48255,7 @@
     "5fb6e8fa85fd": {
       "id": "5fb6e8fa85fd",
       "file": "iznik-server-go/session/session.go",
-      "line": 1956,
+      "line": 1986,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -52721,9 +52721,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6840558b1ce5": {
       "id": "6840558b1ce5",
@@ -53454,9 +53454,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET configid = COALESCE(configid, ?) WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "69e4378e5a50": {
       "id": "69e4378e5a50",
@@ -53546,7 +53546,7 @@
     "69fb1ebb3a73": {
       "id": "69fb1ebb3a73",
       "file": "iznik-server-go/session/session.go",
-      "line": 1921,
+      "line": 1948,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -53681,7 +53681,7 @@
     "6a225df4a259": {
       "id": "6a225df4a259",
       "file": "iznik-server-go/user/user.go",
-      "line": 3112,
+      "line": 3180,
       "function": "GetUserBans",
       "receiver": "db",
       "method": "Raw",
@@ -54284,7 +54284,7 @@
     "6b1f5e2ded05": {
       "id": "6b1f5e2ded05",
       "file": "iznik-server-go/session/session.go",
-      "line": 1368,
+      "line": 1388,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -56529,7 +56529,7 @@
     "6f9705358ae3": {
       "id": "6f9705358ae3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2982,
+      "line": 3050,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -56840,7 +56840,7 @@
     "70059ac9a4bb": {
       "id": "70059ac9a4bb",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 701,
+      "line": 723,
       "function": "getRelatedMembers",
       "receiver": "db",
       "method": "Raw",
@@ -57501,9 +57501,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET newsfeedmodstatus = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "70f3e477b457": {
       "id": "70f3e477b457",
@@ -57978,7 +57978,7 @@
     "721c27468383": {
       "id": "721c27468383",
       "file": "iznik-server-go/session/merge.go",
-      "line": 74,
+      "line": 83,
       "function": "mergeChatRooms",
       "receiver": "tx",
       "method": "Raw",
@@ -58578,9 +58578,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "731ddd6956c5": {
       "id": "731ddd6956c5",
@@ -58695,7 +58695,7 @@
     "735b4f446b8e": {
       "id": "735b4f446b8e",
       "file": "iznik-server-go/session/session.go",
-      "line": 669,
+      "line": 682,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -60087,7 +60087,7 @@
     "759766c83c01": {
       "id": "759766c83c01",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1235,
+      "line": 1261,
       "function": "putMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -60531,7 +60531,7 @@
     "76555fe088e5": {
       "id": "76555fe088e5",
       "file": "iznik-server-go/session/session.go",
-      "line": 1355,
+      "line": 1375,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -61734,7 +61734,7 @@
     "783eedfa7e23": {
       "id": "783eedfa7e23",
       "file": "iznik-server-go/user/user.go",
-      "line": 937,
+      "line": 938,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -61952,9 +61952,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "DELETE FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "787b51b81ed0": {
       "id": "787b51b81ed0",
@@ -62708,9 +62708,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7a0acefe51bb": {
       "id": "7a0acefe51bb",
@@ -63308,9 +63308,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET source = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7b2625051878": {
       "id": "7b2625051878",
@@ -64401,9 +64401,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET heldby = COALESCE(heldby, ?) WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7d446f2a2618": {
       "id": "7d446f2a2618",
@@ -66120,7 +66120,7 @@
     "80bda541244b": {
       "id": "80bda541244b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2149,
+      "line": 2161,
       "function": "CheckLocationChangeVelocity",
       "receiver": "db",
       "method": "Exec",
@@ -66321,7 +66321,7 @@
     "812775236c88": {
       "id": "812775236c88",
       "file": "iznik-server-go/session/session.go",
-      "line": 534,
+      "line": 537,
       "function": "getOrCreateLoginKey",
       "receiver": "db",
       "method": "Exec",
@@ -66600,9 +66600,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "81c778344769": {
       "id": "81c778344769",
@@ -67010,7 +67010,7 @@
     "8278f05f07af": {
       "id": "8278f05f07af",
       "file": "iznik-server-go/user/user.go",
-      "line": 2978,
+      "line": 3046,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -67535,7 +67535,7 @@
     "836dc8807739": {
       "id": "836dc8807739",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 482,
+      "line": 504,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -68122,9 +68122,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET newsfeedmodstatus = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8470a47d6949": {
       "id": "8470a47d6949",
@@ -69059,9 +69059,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET onholidaytill = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "864cfd2f32aa": {
       "id": "864cfd2f32aa",
@@ -69783,9 +69783,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET trustlevel = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "87bade41a9be": {
       "id": "87bade41a9be",
@@ -70476,7 +70476,7 @@
     "896940a53068": {
       "id": "896940a53068",
       "file": "iznik-server-go/user/user.go",
-      "line": 2331,
+      "line": 2349,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -71047,9 +71047,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_roster WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8a7e20814a11": {
       "id": "8a7e20814a11",
@@ -71497,7 +71497,7 @@
     "8bb010b9529b": {
       "id": "8bb010b9529b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2579,
+      "line": 2607,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -72470,9 +72470,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE logs SET byuser = ? WHERE byuser = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8d29622060ac": {
       "id": "8d29622060ac",
@@ -72545,7 +72545,7 @@
     "8d3cfe20b403": {
       "id": "8d3cfe20b403",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 230,
+      "line": 236,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -72846,9 +72846,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8dedf1ef2ccd": {
       "id": "8dedf1ef2ccd",
@@ -74263,9 +74263,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET chatid = ? WHERE chatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "90b0f0bb3029": {
       "id": "90b0f0bb3029",
@@ -74309,9 +74309,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET lastlocation = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "90c6473f5cfc": {
       "id": "90c6473f5cfc",
@@ -75481,7 +75481,7 @@
     "93161dacd118": {
       "id": "93161dacd118",
       "file": "iznik-server-go/session/session.go",
-      "line": 1238,
+      "line": 1258,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -75620,7 +75620,7 @@
     "93875f6e74f0": {
       "id": "93875f6e74f0",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 274,
+      "line": 291,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -75635,9 +75635,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "938d9dc56c71": {
       "id": "938d9dc56c71",
@@ -75775,9 +75775,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET systemrole = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "93b7b6090b79": {
       "id": "93b7b6090b79",
@@ -75954,9 +75954,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET settings = COALESCE(settings, ?) WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "93f0effa4f16": {
       "id": "93f0effa4f16",
@@ -76051,7 +76051,7 @@
     "941509171a6e": {
       "id": "941509171a6e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2307,
+      "line": 2321,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -76266,9 +76266,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "948c386a078b": {
       "id": "948c386a078b",
@@ -76356,9 +76356,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET chatid = ? WHERE chatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "94d2aaa6a692": {
       "id": "94d2aaa6a692",
@@ -77346,7 +77346,7 @@
     "96b1fd8dbd45": {
       "id": "96b1fd8dbd45",
       "file": "iznik-server-go/user/user.go",
-      "line": 3185,
+      "line": 3253,
       "function": "GetUserApplied",
       "receiver": "db",
       "method": "Raw",
@@ -78209,9 +78209,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "98fbc324c1c2": {
       "id": "98fbc324c1c2",
@@ -78372,7 +78372,7 @@
     "994ffacdcb47": {
       "id": "994ffacdcb47",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 125,
+      "line": 152,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -79589,9 +79589,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_rooms SET user2 = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9beaa0265ff1": {
       "id": "9beaa0265ff1",
@@ -79794,9 +79794,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET bouncing = 0 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9c4509d846b1": {
       "id": "9c4509d846b1",
@@ -79845,7 +79845,7 @@
     "9c4b09b388ef": {
       "id": "9c4b09b388ef",
       "file": "iznik-server-go/user/user.go",
-      "line": 2005,
+      "line": 2017,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -80024,7 +80024,7 @@
     "9cb4eab12012": {
       "id": "9cb4eab12012",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 114,
+      "line": 136,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -80070,7 +80070,7 @@
     "9ccb23bbcdaf": {
       "id": "9ccb23bbcdaf",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 18,
+      "line": 25,
       "function": "saveProfileImage",
       "receiver": "database.DBConn",
       "method": "Exec",
@@ -81044,9 +81044,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE memberships_history SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9f0e18d00b6b": {
       "id": "9f0e18d00b6b",
@@ -81073,7 +81073,7 @@
     "9f1d1bde8950": {
       "id": "9f1d1bde8950",
       "file": "iznik-server-go/session/session.go",
-      "line": 726,
+      "line": 745,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -81208,7 +81208,7 @@
     "9f50349c1378": {
       "id": "9f50349c1378",
       "file": "iznik-server-go/session/session.go",
-      "line": 1184,
+      "line": 1204,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -82044,9 +82044,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET relevantallowed = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a0fa07f0a4b9": {
       "id": "a0fa07f0a4b9",
@@ -82979,9 +82979,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET tnuserid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a2be5132eedd": {
       "id": "a2be5132eedd",
@@ -84459,9 +84459,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET fullname = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a552d87cd591": {
       "id": "a552d87cd591",
@@ -85342,9 +85342,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET trustlevel = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a716e6f7dc57": {
       "id": "a716e6f7dc57",
@@ -85637,7 +85637,7 @@
     "a79f147726d0": {
       "id": "a79f147726d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2723,
+      "line": 2755,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -85787,7 +85787,7 @@
     "a7dec15999b7": {
       "id": "a7dec15999b7",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 204,
+      "line": 209,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -85912,9 +85912,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_emails SET preferred = 0 WHERE userid = ? AND id != ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a8117deeb6e3": {
       "id": "a8117deeb6e3",
@@ -87156,9 +87156,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_searches SET deleted = 1 WHERE userid = ? AND term = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "aaa73d4bd902": {
       "id": "aaa73d4bd902",
@@ -88088,9 +88088,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ac3d30d5420c": {
       "id": "ac3d30d5420c",
@@ -89337,9 +89337,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "af0d637313b1": {
       "id": "af0d637313b1",
@@ -89381,9 +89381,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE users_banned SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "af113510cde0": {
       "id": "af113510cde0",
@@ -92116,9 +92116,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET lastupdated = NOW() WHERE id IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b4a6e0949729": {
       "id": "b4a6e0949729",
@@ -92276,7 +92276,7 @@
     "b4d495e2284e": {
       "id": "b4d495e2284e",
       "file": "iznik-server-go/session/session.go",
-      "line": 840,
+      "line": 860,
       "function": "GetSession",
       "receiver": "db",
       "method": "Exec",
@@ -92647,9 +92647,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b54d9ecc4e81": {
       "id": "b54d9ecc4e81",
@@ -92801,9 +92801,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET deleted = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b57e0054c7a2": {
       "id": "b57e0054c7a2",
@@ -94631,9 +94631,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_rooms SET latestmessage = GREATEST(latestmessage, ?) WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b98a9c0eae92": {
       "id": "b98a9c0eae92",
@@ -95706,7 +95706,7 @@
     "bbbc465b075c": {
       "id": "bbbc465b075c",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 81,
+      "line": 99,
       "function": "socialMatchOrCreate",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -95728,7 +95728,7 @@
     "bbc55cf96110": {
       "id": "bbc55cf96110",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 525,
+      "line": 547,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -97326,7 +97326,7 @@
     "bf1cd8bf4627": {
       "id": "bf1cd8bf4627",
       "file": "iznik-server-go/session/merge.go",
-      "line": 101,
+      "line": 115,
       "function": "mergeChatRooms",
       "receiver": "tx",
       "method": "Exec",
@@ -97942,9 +97942,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET lastupdated = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c04e7d769eda": {
       "id": "c04e7d769eda",
@@ -98052,9 +98052,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_emails SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c0becdf00fad": {
       "id": "c0becdf00fad",
@@ -99089,9 +99089,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_emails SET preferred = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c26ff21a50e2": {
       "id": "c26ff21a50e2",
@@ -99111,9 +99111,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET yahooid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c2850f9f890a": {
       "id": "c2850f9f890a",
@@ -99598,9 +99598,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET deleted = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c3bcfbaceb1a": {
       "id": "c3bcfbaceb1a",
@@ -99754,9 +99754,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET emailfrequency = ? WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c3dc59fbe7bd": {
       "id": "c3dc59fbe7bd",
@@ -100295,9 +100295,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM sessions WHERE userid = ? AND series = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c49c6ad6e71d": {
       "id": "c49c6ad6e71d",
@@ -100778,7 +100778,7 @@
     "c5b11d58ae60": {
       "id": "c5b11d58ae60",
       "file": "iznik-server-go/user/user.go",
-      "line": 1987,
+      "line": 1999,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -100996,9 +100996,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users_emails SET bounced = NULL WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c63c765247aa": {
       "id": "c63c765247aa",
@@ -101524,9 +101524,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_rooms SET user1 = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c7744c3f304d": {
       "id": "c7744c3f304d",
@@ -101997,7 +101997,7 @@
     "c86a6d9efeb3": {
       "id": "c86a6d9efeb3",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 101,
+      "line": 123,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -102819,7 +102819,7 @@
     "c9c7922e5379": {
       "id": "c9c7922e5379",
       "file": "iznik-server-go/user/user.go",
-      "line": 2038,
+      "line": 2050,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -103135,7 +103135,7 @@
     "ca92bd0ba27d": {
       "id": "ca92bd0ba27d",
       "file": "iznik-server-go/session/session.go",
-      "line": 960,
+      "line": 980,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -103945,7 +103945,7 @@
     "cc0b627a2955": {
       "id": "cc0b627a2955",
       "file": "iznik-server-go/user/user.go",
-      "line": 1319,
+      "line": 1321,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Raw",
@@ -104461,9 +104461,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET fromuser = ? WHERE fromuser = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cd41f68491dd": {
       "id": "cd41f68491dd",
@@ -104679,9 +104679,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_logins SET lastaccess = NOW() WHERE userid = ? AND type = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cdcca0f62989": {
       "id": "cdcca0f62989",
@@ -105821,7 +105821,7 @@
     "cfcce3676000": {
       "id": "cfcce3676000",
       "file": "iznik-server-go/user/user.go",
-      "line": 2621,
+      "line": 2649,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Raw",
@@ -105844,7 +105844,7 @@
     "cfcd2f885279": {
       "id": "cfcd2f885279",
       "file": "iznik-server-go/user/user.go",
-      "line": 2560,
+      "line": 2586,
       "function": "LogGroupLeftForApprovedMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -106127,9 +106127,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users_emails SET preferred = 0 WHERE userid = ? AND preferred = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d0449f1f5bb0": {
       "id": "d0449f1f5bb0",
@@ -106577,9 +106577,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE memberships SET userid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d0fb8ea8e991": {
       "id": "d0fb8ea8e991",
@@ -106951,9 +106951,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_logins SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d1a1d099f7b1": {
       "id": "d1a1d099f7b1",
@@ -107783,7 +107783,7 @@
     "d3280ea8d71b": {
       "id": "d3280ea8d71b",
       "file": "iznik-server-go/session/session.go",
-      "line": 549,
+      "line": 552,
       "function": "handleEmailPasswordLogin",
       "receiver": "db",
       "method": "Raw",
@@ -108308,9 +108308,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_history SET fromuser = ? WHERE fromuser = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d46006694c3b": {
       "id": "d46006694c3b",
@@ -108967,7 +108967,7 @@
     "d5ecca066b1b": {
       "id": "d5ecca066b1b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2923,
+      "line": 2986,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -109112,9 +109112,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d613d8d0e239": {
       "id": "d613d8d0e239",
@@ -109772,9 +109772,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET fromuser = ? WHERE fromuser = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d734a4f6c18a": {
       "id": "d734a4f6c18a",
@@ -109957,7 +109957,7 @@
     "d788d299a578": {
       "id": "d788d299a578",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1371,
+      "line": 1408,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -110004,7 +110004,7 @@
     "d7c9963bd974": {
       "id": "d7c9963bd974",
       "file": "iznik-server-go/user/user.go",
-      "line": 491,
+      "line": 492,
       "function": "GetUserMessageHistory",
       "receiver": "db",
       "method": "Raw",
@@ -110178,9 +110178,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET refchatid = ? WHERE refchatid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d825142662c8": {
       "id": "d825142662c8",
@@ -110565,7 +110565,7 @@
     "d8fa348393fe": {
       "id": "d8fa348393fe",
       "file": "iznik-server-go/session/session.go",
-      "line": 1125,
+      "line": 1145,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -111246,9 +111246,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET deleted = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "da4e84db1bb9": {
       "id": "da4e84db1bb9",
@@ -111657,7 +111657,7 @@
     "db15655f044f": {
       "id": "db15655f044f",
       "file": "iznik-server-go/session/session.go",
-      "line": 1802,
+      "line": 1827,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -111939,9 +111939,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ratings SET reviewrequired = 0 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dbbc88968cb0": {
       "id": "dbbc88968cb0",
@@ -112830,9 +112830,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dda30f19b4b6": {
       "id": "dda30f19b4b6",
@@ -113609,9 +113609,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "df45225481cc": {
       "id": "df45225481cc",
@@ -113886,7 +113886,7 @@
     "dfc985e8ea67": {
       "id": "dfc985e8ea67",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 243,
+      "line": 253,
       "function": "PostMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -114146,9 +114146,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE users_logins SET uid = ? WHERE userid = ? AND type = 'Native'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e04076976a1e": {
       "id": "e04076976a1e",
@@ -114177,7 +114177,7 @@
     "e04bf70e7bee": {
       "id": "e04bf70e7bee",
       "file": "iznik-server-go/user/authMiddleware.go",
-      "line": 55,
+      "line": 56,
       "function": "NewAuthMiddleware",
       "receiver": "db.Clauses()",
       "method": "Raw",
@@ -114219,7 +114219,7 @@
     "e0558c2c039d": {
       "id": "e0558c2c039d",
       "file": "iznik-server-go/user/user.go",
-      "line": 636,
+      "line": 637,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -115349,9 +115349,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e2d465d97cf9": {
       "id": "e2d465d97cf9",
@@ -115931,9 +115931,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE memberships SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e3e36bebc853": {
       "id": "e3e36bebc853",
@@ -116552,9 +116552,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e51c2a27b091": {
       "id": "e51c2a27b091",
@@ -116819,9 +116819,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_rooms SET user1 = ? WHERE user1 = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e5ceef3a6f57": {
       "id": "e5ceef3a6f57",
@@ -117680,7 +117680,7 @@
     "e7a34e3dea3b": {
       "id": "e7a34e3dea3b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2022,
+      "line": 2034,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -117827,9 +117827,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM users_emails WHERE email = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e7c8643dae72": {
       "id": "e7c8643dae72",
@@ -118649,9 +118649,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_rooms WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e92aea693cb8": {
       "id": "e92aea693cb8",
@@ -119195,9 +119195,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_emails SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ea229afa9ff9": {
       "id": "ea229afa9ff9",
@@ -121341,9 +121341,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE memberships SET collection = ?, heldby = NULL WHERE userid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "eebe799ec26b": {
       "id": "eebe799ec26b",
@@ -122830,9 +122830,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_outcomes SET reviewed = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f161527def38": {
       "id": "f161527def38",
@@ -123814,9 +123814,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE chat_roster SET userid = ? WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f3765766c00b": {
       "id": "f3765766c00b",
@@ -124259,7 +124259,7 @@
     "f43d5f680ef9": {
       "id": "f43d5f680ef9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1288,
+      "line": 1308,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -124527,9 +124527,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE IGNORE users_banned SET byuser = ? WHERE byuser = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f4ade2d71466": {
       "id": "f4ade2d71466",
@@ -125385,7 +125385,7 @@
     "f619bcea08df": {
       "id": "f619bcea08df",
       "file": "iznik-server-go/user/user.go",
-      "line": 1492,
+      "line": 1494,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Exec",
@@ -125625,7 +125625,7 @@
     "f6bd87f2df8e": {
       "id": "f6bd87f2df8e",
       "file": "iznik-server-go/session/social_auth.go",
-      "line": 96,
+      "line": 118,
       "function": "socialMatchOrCreate",
       "receiver": "db",
       "method": "Exec",
@@ -126058,9 +126058,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE engage_mails SET action = action + 1, rate = COALESCE(100 * action / shown, 0) WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f78d6877eafe": {
       "id": "f78d6877eafe",
@@ -126597,7 +126597,7 @@
     "f85b0b8ed693": {
       "id": "f85b0b8ed693",
       "file": "iznik-server-go/session/session.go",
-      "line": 1906,
+      "line": 1933,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -127738,9 +127738,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET firstname = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fa782b2436ae": {
       "id": "fa782b2436ae",
@@ -128459,9 +128459,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE giftaid SET userid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fbd1e554cd4f": {
       "id": "fbd1e554cd4f",
@@ -128528,9 +128528,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM isochrones_users WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fbf8a34131ef": {
       "id": "fbf8a34131ef",
@@ -128579,7 +128579,7 @@
     "fc02dfb79aa4": {
       "id": "fc02dfb79aa4",
       "file": "iznik-server-go/session/session.go",
-      "line": 670,
+      "line": 683,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -128841,9 +128841,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users_emails SET preferred = 0 WHERE userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fca98ce66367": {
       "id": "fca98ce66367",
@@ -129450,7 +129450,7 @@
     "fdd14a1656c7": {
       "id": "fdd14a1656c7",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 653,
+      "line": 675,
       "function": "getSpamMembers",
       "receiver": "db",
       "method": "Raw",
@@ -130252,7 +130252,7 @@
     "fec927e74aaa": {
       "id": "fec927e74aaa",
       "file": "iznik-server-go/user/user.go",
-      "line": 2010,
+      "line": 2022,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",

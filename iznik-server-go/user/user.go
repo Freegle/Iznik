@@ -441,8 +441,9 @@ func InventName(db *gorm.DB, id uint64) string {
 
 	// Store so subsequent reads return the correct name.
 	// Also overwrites legacy bad names: "A freegler", FBUser*, and 32-char Yahoo hex strings.
-	db.Exec("UPDATE users SET fullname = ?, inventedname = 1 WHERE id = ? AND (fullname IS NULL OR fullname = '' OR fullname = 'A freegler' OR fullname LIKE 'FBUser%' OR (CHAR_LENGTH(fullname) = 32 AND fullname REGEXP '[A-Za-z].*[0-9]|[0-9].*[A-Za-z]'))",
-		name, id)
+	// ORM migration site 2f3126db180a (wave 2).
+	db.Table("users").Where("id = ? AND (fullname IS NULL OR fullname = '' OR fullname = 'A freegler' OR fullname LIKE 'FBUser%' OR (CHAR_LENGTH(fullname) = 32 AND fullname REGEXP '[A-Za-z].*[0-9]|[0-9].*[A-Za-z]'))", id).
+		Updates(map[string]interface{}{"fullname": name, "inventedname": gorm.Expr("1")})
 
 	return name
 }
@@ -1062,7 +1063,8 @@ func DeleteUserSearch(c *fiber.Ctx) error {
 	}
 
 	// Soft-delete: mark all searches with the same userid and term as deleted.
-	db.Exec("UPDATE users_searches SET deleted = 1 WHERE userid = ? AND term = ?", search.Userid, search.Term)
+	// ORM migration site aaa43b677e1f (wave 2).
+	db.Table("users_searches").Where("userid = ? AND term = ?", search.Userid, search.Term).Update("deleted", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1664,8 +1666,11 @@ func handleEngaged(c *fiber.Ctx, db *gorm.DB, engageid uint64) error {
 	db.Table("engage").Select("mailid").Where("id = ?", engageid).Scan(&mailid)
 
 	if mailid > 0 {
-		db.Exec("UPDATE engage SET succeeded = NOW() WHERE id = ?", engageid)
-		db.Exec("UPDATE engage_mails SET action = action + 1, rate = COALESCE(100 * action / shown, 0) WHERE id = ?", mailid)
+		// ORM migration site 10216b47378d (wave 2).
+		db.Table("engage").Where("id = ?", engageid).Update("succeeded", gorm.Expr("NOW()"))
+		// ORM migration site f78aeb6435bd (wave 2).
+		db.Table("engage_mails").Where("id = ?", mailid).
+			Updates(map[string]interface{}{"action": gorm.Expr("action + 1"), "rate": gorm.Expr("COALESCE(100 * action / shown, 0)")})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1696,7 +1701,8 @@ func handleRate(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest) err
 		myid, req.Ratee, req.Rating, req.Reason, req.Text, reviewRequired)
 
 	// Update lastupdated for both users.
-	db.Exec("UPDATE users SET lastupdated = NOW() WHERE id IN (?, ?)", myid, req.Ratee)
+	// ORM migration site b4968f94d154 (wave 2).
+	db.Table("users").Where("id IN (?, ?)", myid, req.Ratee).Update("lastupdated", gorm.Expr("NOW()"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1718,7 +1724,8 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 		}
 	}
 
-	db.Exec("UPDATE ratings SET reviewrequired = 0 WHERE id = ?", req.Ratingid)
+	// ORM migration site dbaf7d925bf5 (wave 2).
+	db.Table("ratings").Where("id = ?", req.Ratingid).Update("reviewrequired", gorm.Expr("0"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1764,8 +1771,10 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		if existingUID != nil && *existingUID == targetID {
 			// Already on this user — update preferred if needed.
 			if isPrimary {
-				db.Exec("UPDATE users_emails SET preferred = ? WHERE id = ?", primaryVal, existingID)
-				db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND id != ?", targetID, existingID)
+				// ORM migration site c25d3f0cbd14 (wave 2).
+				db.Table("users_emails").Where("id = ?", existingID).Update("preferred", primaryVal)
+				// ORM migration site 1eb5dd8ca162 (wave 2).
+				db.Table("users_emails").Where("userid = ? AND id != ?", targetID, existingID).Update("preferred", gorm.Expr("0"))
 			}
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
 		}
@@ -1782,7 +1791,8 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 			targetID, primaryVal, canon, reverseString(canon), existingID)
 
 		if isPrimary {
-			db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND id != ?", targetID, existingID)
+			// ORM migration site a80f1b38c186 (wave 2).
+			db.Table("users_emails").Where("userid = ? AND id != ?", targetID, existingID).Update("preferred", gorm.Expr("0"))
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
@@ -1800,7 +1810,8 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	}
 
 	if isPrimary {
-		db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND email != ?", targetID, email)
+		// ORM migration site 265058d37c74 (wave 2).
+		db.Table("users_emails").Where("userid = ? AND email != ?", targetID, email).Update("preferred", gorm.Expr("0"))
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": emailID})
@@ -1832,7 +1843,8 @@ func handleRemoveEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostReque
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 3, "status": "Not on same user"})
 	}
 
-	db.Exec("DELETE FROM users_emails WHERE email = ? AND userid = ?", req.Email, targetID)
+	// ORM migration site e7c6bfbc5607 (wave 2).
+	db.Table("users_emails").Where("email = ? AND userid = ?", req.Email, targetID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2183,7 +2195,8 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 		if oldLastlocation == nil || *oldLastlocation != newLocID {
 			*setClauses = append(*setClauses, "lastlocation = ?")
 			*setArgs = append(*setArgs, newLocID)
-			db.Exec("DELETE FROM isochrones_users WHERE userid = ?", myid)
+			// ORM migration site fbea0c27cf49 (wave 2).
+			db.Table("isochrones_users").Where("userid = ?", myid).Delete(nil)
 
 			var textPtr *string
 			if newSettings.Mylocation.Name != nil {
@@ -2255,7 +2268,8 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 		}
 
-		db.Exec("UPDATE users SET newsfeedmodstatus = ? WHERE id = ?", *req.Newsfeedmodstatus, req.ID)
+		// ORM migration site 846ce190fcf8 (wave 2).
+		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
@@ -2312,18 +2326,22 @@ func PatchUser(c *fiber.Ctx) error {
 
 	if req.Onholidaytill != nil {
 		if *req.Onholidaytill == "" {
-			db.Exec("UPDATE users SET onholidaytill = NULL WHERE id = ?", myid)
+			// ORM migration site 2d1aadd1887d (wave 2).
+			db.Table("users").Where("id = ?", myid).Update("onholidaytill", gorm.Expr("NULL"))
 		} else {
-			db.Exec("UPDATE users SET onholidaytill = ? WHERE id = ?", *req.Onholidaytill, myid)
+			// ORM migration site 863ce73a0abc (wave 2).
+			db.Table("users").Where("id = ?", myid).Update("onholidaytill", *req.Onholidaytill)
 		}
 	}
 
 	if req.Relevantallowed != nil {
-		db.Exec("UPDATE users SET relevantallowed = ? WHERE id = ?", int(*req.Relevantallowed), targetID)
+		// ORM migration site a0e311646f19 (wave 2).
+		db.Table("users").Where("id = ?", targetID).Update("relevantallowed", int(*req.Relevantallowed))
 	}
 
 	if req.Newslettersallowed != nil {
-		db.Exec("UPDATE users SET newslettersallowed = ? WHERE id = ?", int(*req.Newslettersallowed), targetID)
+		// ORM migration site 3df9a32dc731 (wave 2).
+		db.Table("users").Where("id = ?", targetID).Update("newslettersallowed", int(*req.Newslettersallowed))
 	}
 
 	if req.Aboutme != nil {
@@ -2333,7 +2351,8 @@ func PatchUser(c *fiber.Ctx) error {
 
 	if req.Newsfeedmodstatus != nil {
 		// Self-update (no req.ID or req.ID == myid).
-		db.Exec("UPDATE users SET newsfeedmodstatus = ? WHERE id = ?", *req.Newsfeedmodstatus, myid)
+		// ORM migration site 70eeb41b22a3 (wave 2).
+		db.Table("users").Where("id = ?", myid).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 	}
 
 	if req.Email != nil && *req.Email != "" {
@@ -2349,7 +2368,8 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	if req.Source != nil {
-		db.Exec("UPDATE users SET source = ? WHERE id = ?", *req.Source, myid)
+		// ORM migration site 7b1efa32121d (wave 2).
+		db.Table("users").Where("id = ?", myid).Update("source", *req.Source)
 	}
 
 	if req.Password != nil && *req.Password != "" {
@@ -2395,9 +2415,11 @@ func PatchUser(c *fiber.Ctx) error {
 
 		if isMod {
 			if *req.Trustlevel == "" {
-				db.Exec("UPDATE users SET trustlevel = NULL WHERE id = ?", trustTarget)
+				// ORM migration site 1dc8cf0d9098 (wave 2).
+				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", gorm.Expr("NULL"))
 			} else {
-				db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", *req.Trustlevel, trustTarget)
+				// ORM migration site a716e0a18fb3 (wave 2).
+				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", *req.Trustlevel)
 			}
 		} else {
 			// Non-moderator: self only, Basic/Declined/empty only.
@@ -2406,9 +2428,11 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 			tl := *req.Trustlevel
 			if tl == "" {
-				db.Exec("UPDATE users SET trustlevel = NULL WHERE id = ?", myid)
+				// ORM migration site 4cc44cc47cbe (wave 2).
+				db.Table("users").Where("id = ?", myid).Update("trustlevel", gorm.Expr("NULL"))
 			} else if tl == "Basic" || tl == "Declined" {
-				db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", tl, myid)
+				// ORM migration site 8798aebadf32 (wave 2).
+				db.Table("users").Where("id = ?", myid).Update("trustlevel", tl)
 			} else {
 				return fiber.NewError(fiber.StatusForbidden, "Only moderators can set elevated trust levels")
 			}
@@ -2530,8 +2554,10 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// timestamps, matching the canonical reset (UnbounceDomainCommand). Leaving
 	// users_emails.bounced set would let processBouncedEmails re-mark the address
 	// invalid and re-flag the user as bouncing.
-	db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", req.ID)
-	db.Exec("UPDATE users_emails SET bounced = NULL WHERE userid = ?", req.ID)
+	// ORM migration site 9c39bf7d978a (wave 2).
+	db.Table("users").Where("id = ?", req.ID).Update("bouncing", gorm.Expr("0"))
+	// ORM migration site c62fbb94a8ff (wave 2).
+	db.Table("users_emails").Where("userid = ?", req.ID).Update("bounced", gorm.Expr("NULL"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2574,8 +2600,10 @@ func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
 	// V1 parity: record a per-group (Group, Left) audit log before the eager bulk
 	// delete drops the memberships (see LogGroupLeftForApprovedMemberships).
 	LogGroupLeftForApprovedMemberships(db, targetID, byUser)
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
-	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
+	// ORM migration site 79f72a928ca3 (wave 2).
+	db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
+	// ORM migration site b561dab1c2bd (wave 2).
+	db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
 	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
 		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, byUser)
 }
@@ -2675,11 +2703,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// ORM migration site 872f93ca55c3 (wave 1).
 	tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID2).Count(&id2HasPreferred)
 	if id2HasPreferred > 0 {
-		if err := tx.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND preferred = 1", req.ID1).Error; err != nil {
+		// ORM migration site d02deddf93b1 (wave 2).
+		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID1).Update("preferred", gorm.Expr("0")).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
 		}
 	}
-	if err := tx.Exec("UPDATE users_emails SET userid = ? WHERE userid = ?", req.ID2, req.ID1).Error; err != nil {
+	// ORM migration site c0bdaf91d946 (wave 2).
+	if err := tx.Table("users_emails").Where("userid = ?", req.ID1).Update("userid", req.ID2).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge emails")
 	}
 
@@ -2709,7 +2739,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 
 		if id2Memb.ID == 0 {
 			// id2 not in this group — just reassign.
-			if err := tx.Exec("UPDATE memberships SET userid = ? WHERE id = ?", req.ID2, m1.ID).Error; err != nil {
+			// ORM migration site d0f1c6abfca1 (wave 2).
+			if err := tx.Table("memberships").Where("id = ?", m1.ID).Update("userid", req.ID2).Error; err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to transfer membership")
 			}
 		} else {
@@ -2718,39 +2749,52 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			if roleWeight[m1.Role] > roleWeight[id2Memb.Role] {
 				newRole = m1.Role
 			}
-			tx.Exec("UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ?", newRole, req.ID2, m1.Groupid)
+			// ORM migration site 1ca61377ab9d (wave 2).
+			tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Update("role", newRole)
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			tx.Exec("UPDATE memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid SET m2.added = LEAST(m2.added, m1.added) WHERE m2.userid = ? AND m2.groupid = ?", req.ID1, req.ID2, m1.Groupid)
 			// Take non-null attrs from id1 if id2 doesn't have them.
 			if m1.Configid != nil {
-				tx.Exec("UPDATE memberships SET configid = COALESCE(configid, ?) WHERE userid = ? AND groupid = ?", *m1.Configid, req.ID2, m1.Groupid)
+				// ORM migration site 69e208d229bf (wave 2).
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
+					Update("configid", gorm.Expr("COALESCE(configid, ?)", *m1.Configid))
 			}
 			if m1.Settings != nil {
-				tx.Exec("UPDATE memberships SET settings = COALESCE(settings, ?) WHERE userid = ? AND groupid = ?", *m1.Settings, req.ID2, m1.Groupid)
+				// ORM migration site 93e40a364c53 (wave 2).
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
+					Update("settings", gorm.Expr("COALESCE(settings, ?)", *m1.Settings))
 			}
 			if m1.Heldby != nil {
-				tx.Exec("UPDATE memberships SET heldby = COALESCE(heldby, ?) WHERE userid = ? AND groupid = ?", *m1.Heldby, req.ID2, m1.Groupid)
+				// ORM migration site 7d3ed9c6a8df (wave 2).
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
+					Update("heldby", gorm.Expr("COALESCE(heldby, ?)", *m1.Heldby))
 			}
 			// Delete the now-redundant id1 row.
-			tx.Exec("DELETE FROM memberships WHERE id = ?", m1.ID)
+			// ORM migration site 0b0cfc4af179 (wave 2).
+			tx.Table("memberships").Where("id = ?", m1.ID).Delete(nil)
 		}
 	}
 	// Clean up any remaining id1 memberships.
-	tx.Exec("DELETE FROM memberships WHERE userid = ?", req.ID1)
+	// ORM migration site 4c001e1eeba2 (wave 2).
+	tx.Table("memberships").Where("userid = ?", req.ID1).Delete(nil)
 
 	// ── SECTION B: messages, history, chat, sessions, logins ────────────────────
 
 	// Messages.
-	if err := tx.Exec("UPDATE messages SET fromuser = ? WHERE fromuser = ?", req.ID2, req.ID1).Error; err != nil {
+	// ORM migration site cd3e53cfadea (wave 2).
+	if err := tx.Table("messages").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge messages")
 	}
 	// History tables.
-	tx.Exec("UPDATE messages_history SET fromuser = ? WHERE fromuser = ?", req.ID2, req.ID1)
-	tx.Exec("UPDATE memberships_history SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
+	// ORM migration site d45d5de0c8c3 (wave 2).
+	tx.Table("messages_history").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
+	// ORM migration site 9f0c252974c7 (wave 2).
+	tx.Table("memberships_history").Where("userid = ?", req.ID1).Update("userid", req.ID2)
 	// Log references.
 	// ORM migration site 4718b42d0c88 (wave 2).
 	tx.Table("logs").Where("user = ?", req.ID1).Update("user", req.ID2)
-	tx.Exec("UPDATE logs SET byuser = ? WHERE byuser = ?", req.ID2, req.ID1)
+	// ORM migration site 8d21c566d0ae (wave 2).
+	tx.Table("logs").Where("byuser = ?", req.ID1).Update("byuser", req.ID2)
 
 	// Chat room merge with deduplication (V1 parity).
 	type ChatRoomRow struct {
@@ -2789,26 +2833,37 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 		if existingID > 0 {
 			// Duplicate room — move messages into surviving room and delete duplicate.
-			tx.Exec("UPDATE chat_messages SET chatid = ? WHERE chatid = ?", existingID, room.ID)
+			// ORM migration site 94b0be1107e0 (wave 2).
+			tx.Table("chat_messages").Where("chatid = ?", room.ID).Update("chatid", existingID)
 			if room.Latestmessage != nil {
-				tx.Exec("UPDATE chat_rooms SET latestmessage = GREATEST(latestmessage, ?) WHERE id = ?", *room.Latestmessage, existingID)
+				// ORM migration site b986dc546bdb (wave 2).
+				tx.Table("chat_rooms").Where("id = ?", existingID).
+					Update("latestmessage", gorm.Expr("GREATEST(latestmessage, ?)", *room.Latestmessage))
 			}
-			tx.Exec("DELETE FROM chat_rooms WHERE id = ?", room.ID)
+			// ORM migration site b54105bda6de (wave 2).
+			tx.Table("chat_rooms").Where("id = ?", room.ID).Delete(nil)
 		} else {
 			if room.User1 == uint64(req.ID1) {
-				tx.Exec("UPDATE chat_rooms SET user1 = ? WHERE id = ?", req.ID2, room.ID)
+				// ORM migration site c76f7046abbd (wave 2).
+				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user1", req.ID2)
 			} else {
-				tx.Exec("UPDATE chat_rooms SET user2 = ? WHERE id = ?", req.ID2, room.ID)
+				// ORM migration site 9bddeb538459 (wave 2).
+				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user2", req.ID2)
 			}
 		}
 	}
-	tx.Exec("UPDATE chat_messages SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
-	tx.Exec("UPDATE IGNORE chat_roster SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
+	// ORM migration site 8dc9211fdcbe (wave 2).
+	tx.Table("chat_messages").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	// ORM migration site 47daaacbf97d (wave 2).
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("chat_roster").Where("userid = ?", req.ID1).Update("userid", req.ID2)
 
 	// Sessions and logins.
-	tx.Exec("UPDATE IGNORE sessions SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
-	tx.Exec("UPDATE users_logins SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
-	tx.Exec("UPDATE IGNORE users_logins SET uid = ? WHERE userid = ? AND type = 'Native'", req.ID2, req.ID2)
+	// ORM migration site 3c462363aa82 (wave 2).
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("sessions").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	// ORM migration site d19e540cf33b (wave 2).
+	tx.Table("users_logins").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	// ORM migration site e0386c3b3a9c (wave 2).
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_logins").Where("userid = ? AND type = 'Native'", req.ID2).Update("uid", req.ID2)
 
 	// ── SECTION C: user attributes, simple tables, bans, giftaid, log entries ───
 
@@ -2835,24 +2890,29 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		fn := *u1Attrs.Fullname
 		isBad := strings.HasPrefix(strings.ToLower(fn), "fbuser") || strings.HasSuffix(fn, "-owner")
 		if !isBad {
-			tx.Exec("UPDATE users SET fullname = ? WHERE id = ?", fn, req.ID2)
+			// ORM migration site a54abf2c60c7 (wave 2).
+			tx.Table("users").Where("id = ?", req.ID2).Update("fullname", fn)
 		}
 	}
 	// firstname, lastname, yahooid: take id1's if id2 is NULL.
 	if u1Attrs.Firstname != nil && u2Attrs.Firstname == nil {
-		tx.Exec("UPDATE users SET firstname = ? WHERE id = ?", *u1Attrs.Firstname, req.ID2)
+		// ORM migration site fa6c771b3c3a (wave 2).
+		tx.Table("users").Where("id = ?", req.ID2).Update("firstname", *u1Attrs.Firstname)
 	}
 	if u1Attrs.Lastname != nil && u2Attrs.Lastname == nil {
-		tx.Exec("UPDATE users SET lastname = ? WHERE id = ?", *u1Attrs.Lastname, req.ID2)
+		// ORM migration site 247abd84a59e (wave 2).
+		tx.Table("users").Where("id = ?", req.ID2).Update("lastname", *u1Attrs.Lastname)
 	}
 	if u1Attrs.Yahooid != nil && u2Attrs.Yahooid == nil {
-		tx.Exec("UPDATE users SET yahooid = ? WHERE id = ?", *u1Attrs.Yahooid, req.ID2)
+		// ORM migration site c26ff21a50e2 (wave 2).
+		tx.Table("users").Where("id = ?", req.ID2).Update("yahooid", *u1Attrs.Yahooid)
 	}
 
 	// systemrole: take the max (User < Moderator < Support < Admin).
 	sysRoleOrder := map[string]int{"User": 0, "Moderator": 1, "Support": 2, "Admin": 3}
 	if sysRoleOrder[u1Attrs.Systemrole] > sysRoleOrder[u2Attrs.Systemrole] {
-		tx.Exec("UPDATE users SET systemrole = ? WHERE id = ?", u1Attrs.Systemrole, req.ID2)
+		// ORM migration site 93b72dfa783e (wave 2).
+		tx.Table("users").Where("id = ?", req.ID2).Update("systemrole", u1Attrs.Systemrole)
 	}
 
 	// added: take the older date — read id1's added timestamp and pass it directly.
@@ -2860,12 +2920,15 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	tx.Exec("UPDATE users u2 JOIN users u1 ON u1.id = ? SET u2.added = LEAST(u2.added, u1.added) WHERE u2.id = ?", req.ID1, req.ID2)
 
 	// lastupdated.
-	tx.Exec("UPDATE users SET lastupdated = NOW() WHERE id = ?", req.ID2)
+	// ORM migration site c04d965dfd0e (wave 2).
+	tx.Table("users").Where("id = ?", req.ID2).Update("lastupdated", gorm.Expr("NOW()"))
 
 	// tnuserid: transfer if id2 doesn't have one.
 	if u1Attrs.Tnuserid != nil && u2Attrs.Tnuserid == nil {
-		tx.Exec("UPDATE users SET tnuserid = NULL WHERE id = ?", req.ID1)
-		tx.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", *u1Attrs.Tnuserid, req.ID2)
+		// ORM migration site 313bbe346bf7 (wave 2).
+		tx.Table("users").Where("id = ?", req.ID1).Update("tnuserid", gorm.Expr("NULL"))
+		// ORM migration site a2ad9104af21 (wave 2).
+		tx.Table("users").Where("id = ?", req.ID2).Update("tnuserid", *u1Attrs.Tnuserid)
 	}
 
 	// Simple UPDATE IGNORE tables (V1 parity — ~25 reference tables).
@@ -2924,15 +2987,18 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
-	tx.Exec("UPDATE IGNORE users_banned SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
-	tx.Exec("UPDATE IGNORE users_banned SET byuser = ? WHERE byuser = ?", req.ID2, req.ID1)
+	// ORM migration site af0ff5e0f4de (wave 2).
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	// ORM migration site f4a8db8dd183 (wave 2).
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", req.ID1).Update("byuser", req.ID2)
 
 	type MergeBanRow struct{ Groupid uint64 }
 	var mergeBans []MergeBanRow
 	// ORM migration site 4bb399eac601 (wave 1).
 	tx.Table("users_banned").Select("groupid").Where("userid = ?", req.ID2).Scan(&mergeBans)
 	for _, ban := range mergeBans {
-		tx.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", req.ID2, ban.Groupid)
+		// ORM migration site ac3cfe1aa429 (wave 2).
+		tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, ban.Groupid).Delete(nil)
 	}
 
 	// Giftaid: keep the most favourable declaration (V1 parity).
@@ -2967,10 +3033,12 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 		for _, g := range giftaids {
 			if g.ID != best.ID {
-				tx.Exec("DELETE FROM giftaid WHERE id = ?", g.ID)
+				// ORM migration site 0c8e0836a74b (wave 2).
+				tx.Table("giftaid").Where("id = ?", g.ID).Delete(nil)
 			}
 		}
-		tx.Exec("UPDATE giftaid SET userid = ? WHERE id = ?", req.ID2, best.ID)
+		// ORM migration site fbbd963966cb (wave 2).
+		tx.Table("giftaid").Where("id = ?", best.ID).Update("userid", req.ID2)
 	}
 
 	// Merge log entries (two entries, one per user — V1 parity).

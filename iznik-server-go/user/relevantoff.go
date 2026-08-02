@@ -6,6 +6,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // RelevantOff turns off the matched-posts / "suggestion" emails for a user
@@ -47,7 +48,8 @@ func RelevantOff(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid key")
 	}
 
-	db.Exec("UPDATE users SET relevantallowed = 0 WHERE id = ?", uid)
+	// ORM migration site 1cd19cb774b2 (wave 2).
+	db.Table("users").Where("id = ?", uid).Update("relevantallowed", gorm.Expr("0"))
 
 	// One-click (POST from a mail client) wants a 200; a browser click (GET)
 	// gets a friendly confirmation page.

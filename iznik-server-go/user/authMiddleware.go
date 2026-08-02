@@ -6,6 +6,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 	"gorm.io/plugin/dbresolver"
 	"sync"
 	"time"
@@ -94,7 +95,9 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {
 			db := database.DBConn
-			db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id)
+			// ORM migration site 4319778ec12f (wave 2).
+			db.Table("users").Where("id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id).
+				Update("lastaccess", gorm.Expr("NOW()"))
 		}
 
 		// Refresh sessions.lastactive if older than 10 minutes — this gives the session
@@ -103,7 +106,9 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// active sessions 31 days after login regardless of recent use.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 {
 			db := database.DBConn
-			db.Exec("UPDATE sessions SET lastactive = NOW() WHERE id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT)
+			// ORM migration site 397a8f863bd8 (wave 2).
+			db.Table("sessions").Where("id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT).
+				Update("lastactive", gorm.Expr("NOW()"))
 		}
 
 		return ret
