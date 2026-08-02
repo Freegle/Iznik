@@ -209,7 +209,15 @@ func main() {
 	}
 	for _, s := range sites {
 		s.HasParityTest = tested[s.ID]
-		if !s.PresentInCode && s.HasParityTest && (s.Status == StatusRaw || s.Status == StatusInProgress) {
+		// keep-raw is included deliberately. merge() carries it forward as a
+		// human decision, so it survives the rule that created it being
+		// removed - and a site whose raw SQL has GONE and which a parity test
+		// names was converted, whatever an out-of-date label says. Without
+		// this, withdrawing a keep-raw rule leaves the site stuck in a status
+		// nothing can move it out of, and it silently stops counting as
+		// converted work.
+		if !s.PresentInCode && s.HasParityTest &&
+			(s.Status == StatusRaw || s.Status == StatusInProgress || s.Status == StatusKeepRaw) {
 			s.Status = StatusConverted
 		}
 	}

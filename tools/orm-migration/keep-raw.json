@@ -293,24 +293,6 @@
       "reason": "helperSetItemState() inserts into helper_item_states and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     {
-      "id": "e07a25573e68",
-      "file": "iznik-server-go/modconfig/modconfig.go",
-      "function": "PostModConfig",
-      "reason": "PostModConfig() inserts into logs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
-    },
-    {
-      "id": "e137c396bd13",
-      "file": "iznik-server-go/modconfig/modconfig.go",
-      "function": "PostModConfig",
-      "reason": "PostModConfig() inserts into mod_bulkops and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
-    },
-    {
-      "id": "e7a34e3dea3b",
-      "file": "iznik-server-go/user/user.go",
-      "function": "PutUser",
-      "reason": "PutUser() inserts into memberships_history and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
-    },
-    {
       "id": "f6190b74d8d5",
       "file": "iznik-server-go/story/story.go",
       "function": "CreateStory",
@@ -333,6 +315,36 @@
       "file": "iznik-server-go/message/bulkItem.go",
       "function": "ingestBulkItemPhotos",
       "reason": "ingestBulkItemPhotos() inserts into messages_attachments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "1571f00a4ce8",
+      "file": "iznik-server-go/image/image.go",
+      "function": "doCreate",
+      "reason": "doCreate() inserts into its target table and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "40de8b0d3f98",
+      "file": "iznik-server-go/comment/comment.go",
+      "function": "Create",
+      "reason": "Create() inserts into users_comments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "58cb0a225ebe",
+      "file": "iznik-server-go/amp/amp.go",
+      "function": "PostChatReply",
+      "reason": "PostChatReply() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "6b9a23982cc9",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "PostModConfig",
+      "reason": "PostModConfig() inserts into mod_configs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "e137c396bd13",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "PostModConfig",
+      "reason": "INSERT ... SELECT: PostModConfig copies the bulkops rows of the template config into the new one in a single statement. GORM has no builder that expresses INSERT ... SELECT as one atomic statement - Create takes values, not a query - so converting it would mean reading the rows and inserting them separately, which is a different statement with a different concurrency story, not a port. No INSERT ... SELECT site anywhere in the manifest has been converted; they are all still raw. Note this is NOT a LastInsertId site: an earlier version of check-lastinsertid.sh flagged it by proximity, because the LastInsertId in this function belongs to the mod_configs INSERT below it, not to this one."
     }
   ]
 }

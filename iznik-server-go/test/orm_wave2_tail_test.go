@@ -437,3 +437,24 @@ func TestWave2Tail_cf7be3980e03(t *testing.T) {
 			Updates(map[string]interface{}{"name": "X", "canon": "x"})
 	})
 }
+
+// --- spammers/spammers.go: PatchSpammer -------------------------------------
+
+// This one was left raw by the batch on the strength of a false positive from
+// check-set-order.sh. The "?" inside the heldat CASE is a bind fed from a Go
+// variable named heldby, not a reference to the heldby column being assigned
+// alongside it, so the SET order is not load-bearing and GORM's alphabetical
+// sort is harmless. The checker was scanning gorm.Expr's bind arguments as well
+// as its SQL; it now scans only the SQL literal.
+func TestWave2Tail_2c2dda80b557(t *testing.T) {
+	ormharness.AssertGoldenSQL(t, "2c2dda80b557", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("spam_users").Where("id = ?", 1).
+			Updates(map[string]interface{}{
+				"collection": "Spammer",
+				"reason":     "because",
+				"byuserid":   1,
+				"heldby":     1,
+				"heldat":     gorm.Expr("CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END", 1),
+			})
+	})
+}

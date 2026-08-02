@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1083,
-    "keep-raw": 97,
-    "raw": 456,
+    "converted": 1086,
+    "keep-raw": 99,
+    "raw": 451,
     "test-fixture": 4223
   },
   "sites": {
@@ -10488,7 +10488,8 @@
       "goldenSql": "INSERT INTO `{{expr}}` (`{{expr}}`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "doCreate() inserts into its target table and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "1589569abc4a": {
       "id": "1589569abc4a",
@@ -16738,7 +16739,7 @@
     "20dfce4d2228": {
       "id": "20dfce4d2228",
       "file": "iznik-server-go/spammers/spammers.go",
-      "line": 192,
+      "line": 193,
       "function": "PostSpammer",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -22559,9 +22560,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "UPDATE spam_users SET collection = ?, reason = ?, byuserid = ?, heldby = ?, heldat = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2c37feb50055": {
       "id": "2c37feb50055",
@@ -32862,7 +32863,8 @@
       "goldenSql": "INSERT INTO users_comments (userid, groupid, byuserid, user1, user2, user3, user4, user5, user6, user7, user8, user9, user10, user11, flag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Create() inserts into users_comments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "40e61a4ab0ef": {
       "id": "40e61a4ab0ef",
@@ -44821,7 +44823,8 @@
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, message, type, date, processingsuccessful) VALUES (?, ?, ?, ?, NOW(), 1)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostChatReply() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "58e4ce62ada6": {
       "id": "58e4ce62ada6",
@@ -54548,7 +54551,8 @@
       "goldenSql": "INSERT INTO mod_configs (name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, fromname, subjreg, messageorder) SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, fromname, subjreg, messageorder FROM mod_configs WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostModConfig() inserts into mod_configs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "6ba0b887748c": {
       "id": "6ba0b887748c",
@@ -92552,7 +92556,7 @@
     "b524187a3675": {
       "id": "b524187a3675",
       "file": "iznik-server-go/spammers/spammers.go",
-      "line": 386,
+      "line": 392,
       "function": "ExportSpammers",
       "receiver": "db",
       "method": "Raw",
@@ -109241,7 +109245,7 @@
     "d64650fb9560": {
       "id": "d64650fb9560",
       "file": "iznik-server-go/spammers/spammers.go",
-      "line": 105,
+      "line": 106,
       "function": "GetSpammers",
       "receiver": "db",
       "method": "Raw",
@@ -114383,7 +114387,7 @@
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)",
       "presentInCode": false,
       "hasParityTest": true,
-      "status": "keep-raw",
+      "status": "converted",
       "reason": "PostModConfig() inserts into logs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "e098c8c70062": {
@@ -114764,7 +114768,7 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "PostModConfig() inserts into mod_bulkops and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+      "reason": "INSERT ... SELECT: PostModConfig copies the bulkops rows of the template config into the new one in a single statement. GORM has no builder that expresses INSERT ... SELECT as one atomic statement - Create takes values, not a query - so converting it would mean reading the rows and inserting them separately, which is a different statement with a different concurrency story, not a port. No INSERT ... SELECT site anywhere in the manifest has been converted; they are all still raw. Note this is NOT a LastInsertId site: an earlier version of check-lastinsertid.sh flagged it by proximity, because the LastInsertId in this function belongs to the mod_configs INSERT below it, not to this one."
     },
     "e1391c881024": {
       "id": "e1391c881024",
@@ -117734,7 +117738,7 @@
       "goldenSql": "INSERT INTO memberships_history (userid, groupid, collection, processingrequired, added) VALUES (?, ?, ?, 1, NOW())",
       "presentInCode": false,
       "hasParityTest": true,
-      "status": "keep-raw",
+      "status": "converted",
       "reason": "PutUser() inserts into memberships_history and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "e7a7d75b00f8": {

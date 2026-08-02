@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // GetSpammers handles GET /spammers with search and pagination.
@@ -324,18 +325,23 @@ func PatchSpammer(c *fiber.Ctx) error {
 			heldby = &myid
 		}
 
-		// Left raw (site 2c2dda80b557): the heldat expression's placeholder is
-		// bound from the same `heldby` Go variable as the heldby column's own
-		// assignment, so check-set-order.sh's textual scan sees a cross-key
-		// reference. GORM's Updates(map) sorts assignments alphabetically
-		// (byuserid, collection, heldat, heldby, reason), which does not match
-		// this statement's original SET order (collection, reason, byuserid,
-		// heldby, heldat) - see check-set-order.sh's comparison against the
-		// recorded golden. Reported to the batch owner rather than converted.
-		db.Exec("UPDATE spam_users SET collection = ?, reason = ?, byuserid = ?, "+
-			"heldby = ?, heldat = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END "+
-			"WHERE id = ?",
-			req.Collection, reason, byuserid, heldby, heldby, req.ID)
+		// ORM migration site 2c2dda80b557 (wave 2).
+		//
+		// The SET order here is not load-bearing, though an earlier version of
+		// check-set-order.sh said it was. The "?" inside the heldat CASE is a
+		// bind fed from a Go variable that happens to be called heldby; it is
+		// not a reference to the heldby column, and the SQL names no assigned
+		// column at all. The checker was scanning gorm.Expr's bind arguments
+		// alongside its SQL, so a Go identifier sharing a column name read as a
+		// cross-reference. It now scans only the SQL literal.
+		db.Table("spam_users").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{
+				"collection": req.Collection,
+				"reason":     reason,
+				"byuserid":   byuserid,
+				"heldby":     heldby,
+				"heldat":     gorm.Expr("CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END", heldby),
+			})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

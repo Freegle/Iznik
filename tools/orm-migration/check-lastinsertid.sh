@@ -44,13 +44,57 @@ if [ "${1:-}" = "--regenerate" ]; then
     const [work, listPath, lookahead, mb] = process.argv.slice(1);
     const m = JSON.parse(fs.readFileSync(work + "/base.json", "utf8"));
     const out = {};
+
+    // Link THIS Exec to the LastInsertId read, rather than guessing by
+    // proximity. Two earlier attempts got this wrong in opposite directions:
+    //
+    //   - a 12-line lookahead missed comment.go PostComment, where the read is
+    //     13 lines below the write, separated only by error handling and a var
+    //     declaration. How far apart they sit is a property of the surrounding
+    //     code, not of the risk.
+    //   - widening to the enclosing function then flagged the
+    //     noticeboards_checks INSERTs, which are correctly converted: the
+    //     LastInsertId in that function belongs to an entirely different Exec.
+    //
+    // What actually matters is whether the result of this statement is the one
+    // whose id is read. An Exec whose result is assigned to a variable that is
+    // later asked for LastInsertId is unsafe; an Exec whose result is discarded
+    // cannot have its id read at all, however many other statements nearby do.
+    const enclosingFunc = (lines, line) => {
+      let start = 0;
+      for (let i = line - 1; i >= 0; i--) {
+        if (/^func\b/.test(lines[i] || "")) { start = i; break; }
+      }
+      let end = lines.length;
+      for (let i = line; i < lines.length; i++) {
+        if (/^func\b/.test(lines[i] || "")) { end = i; break; }
+      }
+      return {start, end};
+    };
+
     for (const [id, s] of Object.entries(m.sites)) {
       if (s.status === "test-fixture") continue;
       if (!/^\s*(insert|replace)/i.test(s.goldenSql || "")) continue;
       let lines;
       try { lines = fs.readFileSync(path.join(work, s.file), "utf8").split("\n"); } catch { continue; }
-      const w = lines.slice(s.line - 1, s.line + Number(lookahead)).join("\n");
-      if (/LastInsertId|LAST_INSERT_ID/i.test(w)) {
+
+      // MySQL LAST_INSERT_ID() in the statement text is unsafe on its own.
+      if (/LAST_INSERT_ID/i.test(s.goldenSql || "")) {
+        out[id] = {file: s.file, line: s.line, sql: (s.goldenSql || "").slice(0, 90)};
+        continue;
+      }
+
+      // Find the result variable this Exec assigns to. The call may be split
+      // over lines, so look at the site line and the two above it.
+      const head = lines.slice(Math.max(0, s.line - 3), s.line).join("\n");
+      const assign = head.match(/(\w+)\s*,\s*\w+\s*:?=\s*[\w.]*Exec\(/);
+      if (!assign) continue; // result discarded: its id cannot be read
+      const resultVar = assign[1];
+      if (resultVar === "_") continue;
+
+      const {end} = enclosingFunc(lines, s.line);
+      const after = lines.slice(s.line - 1, end).join("\n");
+      if (new RegExp("\\b" + resultVar + "\\s*\\.\\s*LastInsertId\\s*\\(").test(after)) {
         out[id] = {file: s.file, line: s.line, sql: (s.goldenSql || "").slice(0, 90)};
       }
     }

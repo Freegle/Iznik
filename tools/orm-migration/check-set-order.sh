@@ -114,7 +114,20 @@ for (const file of walk(root)) {
       if (!km) continue;
       const [, key, value] = km;
       if (!/gorm\.Expr|clause\./.test(value)) continue;
-      const stripped = stripStrings(value);
+
+      // Scan the SQL only - the Go string literal inside gorm.Expr - and not
+      // the bind arguments that follow it. Those are Go identifiers, and a Go
+      // variable that happens to share a column name is not a reference to
+      // that column. spammers.go PatchSpammer is the case in point:
+      //
+      //   "heldat": gorm.Expr("CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END", heldby)
+      //
+      // The "?" is bound from a Go variable called heldby; the SQL names no
+      // column at all. Scanning the whole expression read that as heldat
+      // depending on the heldby column, and a convertible site was left raw on
+      // the strength of it.
+      const sqlLiterals = [...value.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1]).join(" ");
+      const stripped = stripStrings(sqlLiterals);
       for (const other of keys) {
         if (other !== key && new RegExp("\\b" + other + "\\b").test(stripped)) crossRef = true;
       }
