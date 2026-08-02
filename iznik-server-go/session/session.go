@@ -1830,6 +1830,100 @@ func GetSession(c *fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
+// displayname/firstname/lastname keep the original's exact interaction
+// (Displayname injects "= NULL" for whichever sibling is absent) inside
+// this function, same as the original - that logic does not depend on
+// anything outside these three pointers, so there was nothing to pull out.
+//
+// lastlocationID is different: it is the CALLER's already-resolved decision
+// from user.ProcessSettingsUpdate's postcode-change detection, a live DB
+// read comparing the new location id against the user's CURRENT
+// users.lastlocation. This function only assembles the SET list from
+// whatever the caller resolved; it does not decide whether that lookup
+// fires or what it finds - PatchSession calls ProcessSettingsUpdate with
+// its OWN local scratch slice (not the shared setClauses/setArgs every
+// other field appends to) so the result is inspectable before this
+// function ever runs. That is the same technique user/user.go's PatchUser
+// (site 941509171a6e) already uses for its own, unrelated call to the same
+// helper - ProcessSettingsUpdate's signature and behaviour, and PatchUser
+// itself, are unchanged by this.
+//
+// buildPatchSessionUpdateSet assembles the users UPDATE's SET list as a
+// clause.Set (a slice of clause.Assignment, gorm.io/gorm/clause), one
+// assignment appended per field the request actually supplies - the same
+// field-by-field branching the string-concatenation version this replaced
+// used, just emitting an assignment instead of a "col = ?" text fragment +
+// bound arg. clause.Set is order-preserving (it is a plain slice; Build()
+// walks it in slice order, see gorm.io/gorm/clause/set.go), so the
+// left-to-right assignment order MySQL evaluates a SET list in is exactly
+// the order fields are appended below - unchanged from the string version.
+//
+// ORM migration site 64dbb28e0d7b / f85b0b8ed693. Previously kept raw with
+// the reasoning that a dynamic SET list built by string concatenation has
+// 2^n possible shapes and so cannot be a fixed GORM chain - true for a FIXED
+// chain, but irrelevant here: the chain itself is fixed
+// (.Table("users").Where(...).Clauses(set).Updates(...)), only the
+// PRE-BUILT clause.Set slice varies at runtime, exactly the way the SQL
+// string used to. Proven against the identical fieldwise.json goldens
+// already recorded for the string version (session_fieldwise_tier9_test.go),
+// via ormharness.AssertGoldenFieldwise - same n+2 cases, same golden SQL per
+// case, now rendered by GORM instead of by hand.
+func buildPatchSessionUpdateSet(displayname, firstname, lastname, settingsJSON *string, lastlocationID *uint64, onholidaytill *string, relevantallowed, newslettersallowed *int, source *string, deletedNull bool, marketingconsent *int) clause.Set {
+	var set clause.Set
+
+	if displayname != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "fullname"}, Value: *displayname})
+		// Clear first/last unless explicitly provided in the same request.
+		if firstname == nil {
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "firstname"}, Value: gorm.Expr("NULL")})
+		}
+		if lastname == nil {
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "lastname"}, Value: gorm.Expr("NULL")})
+		}
+	}
+
+	if firstname != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "firstname"}, Value: *firstname})
+	}
+
+	if lastname != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "lastname"}, Value: *lastname})
+	}
+
+	if settingsJSON != nil {
+		if lastlocationID != nil {
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "lastlocation"}, Value: *lastlocationID})
+		}
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "settings"}, Value: *settingsJSON})
+	}
+
+	if onholidaytill != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "onholidaytill"}, Value: *onholidaytill})
+	}
+
+	if relevantallowed != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "relevantallowed"}, Value: *relevantallowed})
+	}
+
+	if newslettersallowed != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "newslettersallowed"}, Value: *newslettersallowed})
+	}
+
+	if source != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "source"}, Value: *source})
+	}
+
+	if deletedNull {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "deleted"}, Value: gorm.Expr("NULL")})
+	}
+
+	if marketingconsent != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "marketingconsent"}, Value: *marketingconsent})
+	}
+
+	return set
+}
+
 // PatchSession updates session/user settings for the logged-in user.
 //
 // @Summary Update session/user settings
@@ -1958,60 +2052,36 @@ func PatchSession(c *fiber.Ctx) error {
 	// between concurrent goroutines writing conflicting values to the same row.
 	// For example, displayname sets firstname=NULL while a concurrent firstname
 	// goroutine sets firstname to a value — the outcome was non-deterministic.
-	var setClauses []string
-	var setArgs []interface{}
-
-	if req.Displayname != nil {
-		setClauses = append(setClauses, "fullname = ?")
-		setArgs = append(setArgs, *req.Displayname)
-		// Clear first/last unless explicitly provided in the same request.
-		if req.Firstname == nil {
-			setClauses = append(setClauses, "firstname = NULL")
-		}
-		if req.Lastname == nil {
-			setClauses = append(setClauses, "lastname = NULL")
-		}
-	}
-
-	if req.Firstname != nil {
-		setClauses = append(setClauses, "firstname = ?")
-		setArgs = append(setArgs, *req.Firstname)
-	}
-
-	if req.Lastname != nil {
-		setClauses = append(setClauses, "lastname = ?")
-		setArgs = append(setArgs, *req.Lastname)
-	}
-
+	//
+	// ORM migration site 64dbb28e0d7b / f85b0b8ed693 - see
+	// buildPatchSessionUpdateSet above for the SET list assembly itself,
+	// factored out for fieldwise proof and built as a dynamic clause.Set.
+	var settingsJSONStr *string
+	var lastlocationID *uint64
 	if req.Settings != nil {
-		settingsJSON := user.ProcessSettingsUpdate([]byte(*req.Settings), myid, &setClauses, &setArgs)
-		setClauses = append(setClauses, "settings = ?")
-		setArgs = append(setArgs, string(settingsJSON))
+		// Local scratch slices, NOT buildPatchSessionUpdateSet's shared clause.Set
+		// every other field below is appended to - see buildPatchSessionUpdateSet's
+		// doc comment for why isolating this call is what makes
+		// ProcessSettingsUpdate's live-DB-read-gated decision inspectable without
+		// changing its signature.
+		var settingsPrefixClauses []string
+		var settingsPrefixArgs []interface{}
+		settingsJSON := user.ProcessSettingsUpdate([]byte(*req.Settings), myid, &settingsPrefixClauses, &settingsPrefixArgs)
+		s := string(settingsJSON)
+		settingsJSONStr = &s
+		if len(settingsPrefixArgs) > 0 {
+			// ProcessSettingsUpdate appends at most one clause
+			// ("lastlocation = ?", newLocID as a uint64) when it detects a
+			// postcode change - the same invariant user.go's PatchUser
+			// (site 941509171a6e) relies on for its own call.
+			if v, ok := settingsPrefixArgs[0].(uint64); ok {
+				lastlocationID = &v
+			}
+		}
 	}
 
-	if req.Onholidaytill != nil {
-		setClauses = append(setClauses, "onholidaytill = ?")
-		setArgs = append(setArgs, *req.Onholidaytill)
-	}
-
-	if req.Relevantallowed != nil {
-		setClauses = append(setClauses, "relevantallowed = ?")
-		setArgs = append(setArgs, int(*req.Relevantallowed))
-	}
-
-	if req.Newslettersallowed != nil {
-		setClauses = append(setClauses, "newslettersallowed = ?")
-		setArgs = append(setArgs, int(*req.Newslettersallowed))
-	}
-
-	if req.Source != nil {
-		setClauses = append(setClauses, "source = ?")
-		setArgs = append(setArgs, *req.Source)
-	}
-
-	if string(req.Deleted) == "null" {
-		setClauses = append(setClauses, "deleted = NULL")
-
+	deletedNull := string(req.Deleted) == "null"
+	if deletedNull {
 		// Deletion writes a (User, Deleted) audit log; record the matching
 		// reinstatement so mods can see the full story. The INSERT..SELECT only
 		// fires if the account is actually flagged deleted right now (the UPDATE
@@ -2024,19 +2094,31 @@ func PatchSession(c *fiber.Ctx) error {
 			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED, myid)
 	}
 
+	var relevantallowedInt, newslettersallowedInt *int
+	if req.Relevantallowed != nil {
+		v := int(*req.Relevantallowed)
+		relevantallowedInt = &v
+	}
+	if req.Newslettersallowed != nil {
+		v := int(*req.Newslettersallowed)
+		newslettersallowedInt = &v
+	}
+
+	var marketingconsentInt *int
 	if req.Marketingconsent != nil {
 		mc := 0
 		if req.Marketingconsent.Bool() {
 			mc = 1
 		}
-		setClauses = append(setClauses, "marketingconsent = ?")
-		setArgs = append(setArgs, mc)
+		marketingconsentInt = &mc
 	}
 
 	// Execute single users table UPDATE if there are any changes.
-	if len(setClauses) > 0 {
-		setArgs = append(setArgs, myid)
-		if result := db.Exec("UPDATE users SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", setArgs...); result.Error != nil {
+	// ORM migration site 64dbb28e0d7b (see buildPatchSessionUpdateSet above).
+	if set := buildPatchSessionUpdateSet(req.Displayname, req.Firstname, req.Lastname, settingsJSONStr,
+		lastlocationID, req.Onholidaytill, relevantallowedInt, newslettersallowedInt, req.Source, deletedNull,
+		marketingconsentInt); len(set) > 0 {
+		if result := db.Table("users").Where("id = ?", myid).Clauses(set).Updates(map[string]interface{}{}); result.Error != nil {
 			stdlog.Printf("Failed to update user %d: %v", myid, result.Error)
 		}
 	}

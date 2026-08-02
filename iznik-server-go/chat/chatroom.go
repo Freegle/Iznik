@@ -541,57 +541,76 @@ func PutChatRoom(c *fiber.Ctx) error {
 // ChatRoom::createUser2Mod(). The unique key (user1, user2, chattype) does NOT prevent
 // User2Mod duplicates because user2 is NULL and MySQL treats NULLs as distinct in
 // unique indexes. We must lock explicitly.
+//
+// ORM migration sites 65fde41159df (locked SELECT), 2451a0b54d63 (UPDATE),
+// 69ed53a55edc (INSERT). db.Transaction() gives the same single-connection
+// guarantee the previous db.DB().Begin()-based *sql.Tx had: under the
+// read/write split, gorm.io/plugin/dbresolver's routing callbacks
+// (switchSource/switchReplica/switchGuess) all no-op once
+// db.Statement.ConnPool is already a transaction (see dbresolver's
+// isTransaction check in callbacks.go), so every statement below - the
+// locked SELECT, the UPDATE, and the INSERT - runs on the ONE connection
+// Begin() opened, which is always the source/write host (Begin() itself is
+// never routed to a replica). Verified empirically against two
+// distinguishable real MySQL hosts, not just reasoned from source.
 func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64, error) {
-	sqlDB, err := db.DB()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get sql.DB: %w", err)
-	}
-
-	tx, err := sqlDB.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Lock any existing row to close the timing window.
 	var chatID uint64
-	row := tx.QueryRow(
-		"SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = ? FOR UPDATE",
-		userID, groupID, utils.CHAT_TYPE_USER2MOD)
-	if err := row.Scan(&chatID); err == nil && chatID > 0 {
-		// Existing chat found — just update latestmessage and return.
-		tx.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
-		tx.Commit()
-	} else {
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		// Lock any existing row to close the timing window. Preserves the
+		// original's exact corner-case behaviour of falling through to the
+		// create branch below on ANY Scan failure, not just "no rows found" -
+		// chatID stays 0 either way, and only chatID (not the Scan error) is
+		// checked, same as the raw row.Scan(&chatID); err == nil && chatID > 0
+		// condition this replaces.
+		_ = tx.Table("chat_rooms").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id").
+			Where("user1 = ? AND groupid = ? AND chattype = ?", userID, groupID, utils.CHAT_TYPE_USER2MOD).
+			Scan(&chatID)
+
+		if chatID > 0 {
+			// Existing chat found — just update latestmessage and return.
+			return tx.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()")).Error
+		}
+
 		// No existing chat — create one inside the same transaction.
-		result, err := tx.Exec(
-			"INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
-			userID, groupID, utils.CHAT_TYPE_USER2MOD)
-		if err != nil {
-			return 0, fmt.Errorf("failed to insert chat room: %w", err)
+		res := gorm.WithResult()
+		if err := tx.Table("chat_rooms").Clauses(res).Create(map[string]interface{}{
+			"user1": userID, "groupid": groupID, "chattype": utils.CHAT_TYPE_USER2MOD, "latestmessage": gorm.Expr("NOW()"),
+		}).Error; err != nil {
+			return fmt.Errorf("failed to insert chat room: %w", err)
 		}
 
-		lastID, err := result.LastInsertId()
+		lastID, err := res.Result.LastInsertId()
 		if err != nil || lastID == 0 {
-			return 0, fmt.Errorf("failed to get last insert id: %w", err)
+			return fmt.Errorf("failed to get last insert id: %w", err)
 		}
-
-		if err := tx.Commit(); err != nil {
-			return 0, fmt.Errorf("failed to commit transaction: %w", err)
-		}
-
 		chatID = uint64(lastID)
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 
 	// Ensure the user and group mods are in the roster so that
 	// chat notifications reach everyone.
-	db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)", chatID, userID)
+	// ORM migration site 1c2cfaaab39b (Tier 1 batch review). Outside the
+	// row-locked tx above (this runs on the plain db handle after tx.Commit/
+	// Rollback) and its result is discarded - no id to read back, so the
+	// row-lock entanglement above does not apply to this statement.
+	// INSERT IGNORE -> clause.Insert{Modifier: "IGNORE"}, the wave 3
+	// convention (never clause.OnConflict{DoNothing}, see
+	// ormharness/upsert_test.go).
+	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": userID})
 
 	var modUserIDs []uint64
 	// ORM migration site 8df448e1a244 (wave 1).
 	db.Table("memberships").Select("userid").Where("groupid = ? AND role IN (?, ?)", groupID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modUserIDs)
 	for _, modUID := range modUserIDs {
-		db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)", chatID, modUID)
+		// ORM migration site 57f83af68a60 (Tier 1 batch review). Same as
+		// 1c2cfaaab39b above, once per mod; also outside the row-locked tx.
+		db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": modUID})
 	}
 
 	return chatID, nil

@@ -281,6 +281,31 @@ func main() {
 			(s.Status == StatusRaw || s.Status == StatusInProgress || s.Status == StatusKeepRaw) {
 			s.Status = StatusConverted
 		}
+
+		// The invariant behind that rule, enforced in the other direction:
+		// "converted" means the raw SQL is GONE. If the scan still finds the
+		// call site, the site is not converted, whatever it was labelled
+		// before - carry-forward preserves a status, so once a site was
+		// recorded converted nothing could take it back, not even a keep-raw
+		// rule added on purpose.
+		//
+		// Nine sites reached that state legitimately and were wrong anyway.
+		// Where a statement cannot be a GORM chain (a UNION whose arm count
+		// follows the input, a SET list built per optional field), the
+		// technique was to extract a pure builder and prove its output with a
+		// parametrized-shape or fieldwise test. The proof is real; the
+		// conversion is not. Moving the text one function along leaves the raw
+		// db.Raw/db.Exec exactly where it was, and the extractor then assigns
+		// the moved text a NEW id - so the same statement was counted twice,
+		// once as converted under the old id and once as raw under the new one.
+		//
+		// Demoted to keep-raw rather than raw: these are deliberate, reasoned
+		// decisions with tests attached, which is what keep-raw means, and
+		// dropping them to raw would trip the ratchet's raw-count gate for a
+		// bookkeeping correction rather than new debt.
+		if s.PresentInCode && s.Status == StatusConverted {
+			s.Status = StatusKeepRaw
+		}
 	}
 
 	// Applied after the carry-forward so that a rule added to keep-raw.json
@@ -488,6 +513,16 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 			if !ok {
 				continue
 			}
+			// A function that sets Statement.BuildClauses can hand GORM a whole
+			// statement through .Select() and have the FROM it would otherwise
+			// add suppressed - see suppliesOwnFrom. Inside such a function,
+			// .Select() has to be treated as SQL-bearing, or the statement is
+			// invisible to an inventory that only scans Raw/Exec/Query, and a
+			// site stops counting as raw the moment its text moves one method
+			// along. Plan 7.1 claims this inventory is exhaustive by
+			// construction; that claim was false for five sites.
+			overridesBuildClauses := setsBuildClauses(fn)
+
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok || len(call.Args) == 0 {
@@ -498,6 +533,9 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 					return true
 				}
 				argIdx, carriesSQL := sqlArgIndex(sel.Sel.Name)
+				if !carriesSQL && overridesBuildClauses && sel.Sel.Name == "Select" {
+					argIdx, carriesSQL = 0, true
+				}
 				if !carriesSQL || len(call.Args) <= argIdx {
 					return true
 				}
@@ -517,6 +555,17 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 					sql = normaliseGolden(text)
 					source = "literal"
 
+				// The same thing where the statement is assembled from Go
+				// variables, as getReviewQueue does with baseQuery/widerQuery.
+				// Nothing here can be read as a column list, and an unreadable
+				// argument under a BuildClauses override has to count as the
+				// statement: "I cannot tell" must read as raw, or hiding the
+				// text in a variable becomes a way out of the inventory.
+				case overridesBuildClauses && sel.Sel.Name == "Select" && dynamic && suppliesOwnFrom(text):
+					sql = normaliseGolden(text)
+					source = "partial"
+					dynamic = true
+
 				case ok && dynamic && isSQLHandle(sel.Sel.Name, recv):
 					// A fragment that begins with a hole, such as
 					// db.Raw(baseQuery + " GROUP BY cm.id ..."). The statement
@@ -525,6 +574,20 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 					// inventoried rather than dropped.
 					sql = normaliseGolden(text)
 					source = "partial"
+
+				// A .Select() inside a BuildClauses-overriding function that
+				// supplies its OWN top-level FROM is the whole statement, not a
+				// column list: the .Table() beside it is a decoy the override
+				// suppresses. Inventoried as the raw SQL it is.
+				//
+				// The scalar-expression use of the same override is deliberately
+				// NOT caught here - Select("EXISTS(SELECT 1 FROM users WHERE
+				// id = ?)") has no top-level FROM, GORM still builds the
+				// statement, and the render is byte-identical to a statement it
+				// otherwise could not express (ormharness/bareexists_test.go).
+				case ok && overridesBuildClauses && sel.Sel.Name == "Select" && suppliesOwnFrom(text):
+					sql = normaliseGolden(text)
+					source = "literal"
 
 				case ok:
 					return true // not SQL: template.Execute, os/exec, etc.
@@ -1125,10 +1188,26 @@ func applyApprovedDiffs(sites []*Site, path string) (int, error) {
 
 // Manifest is the on-disk shape.
 type Manifest struct {
-	Generated string           `json:"generated"`
-	Root      string           `json:"root"`
-	Counts    map[string]int   `json:"counts"`
-	Sites     map[string]*Site `json:"sites"`
+	Generated string         `json:"generated"`
+	Root      string         `json:"root"`
+	Counts    map[string]int `json:"counts"`
+
+	// Ratchet is the CI gate's explicit raw-count ceiling. It is human-owned
+	// and MUST be carried across regeneration: the struct had no field for it,
+	// so every run silently dropped whatever was set, and the README told
+	// people to set a value that could not survive the next extraction.
+	//
+	// The consequence was not cosmetic. With no explicit baseline the gate
+	// falls back to the committed manifest counts, which makes the ceiling
+	// whatever the last commit happened to contain - so raw drifting from 1 to
+	// 2 during a refactor moved the ceiling to 2 and the gate reported OK. A
+	// ratchet that re-derives its own limit from the thing it is limiting is
+	// not a ratchet. Kept as RawMessage so anything a human writes here
+	// (baseline, a note, a date) survives untouched rather than being
+	// round-tripped through a struct that knows only today's fields.
+	Ratchet json.RawMessage `json:"ratchet,omitempty"`
+
+	Sites map[string]*Site `json:"sites"`
 }
 
 func load(path string) (*Manifest, error) {
@@ -1148,9 +1227,33 @@ func load(path string) (*Manifest, error) {
 var siteIDPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
 // parityAssertions are the harness calls that constitute proof for a site.
+// parityAssertions is the set of harness entry points that constitute proof a
+// site was converted (plan 7.2's Gate 2). It must list EVERY assertion that
+// takes a site ID, because Gate 2 and the extractor's own promotion rule both
+// key off it: a site proven by an assertion missing from this map looks
+// untested, so the ratchet reports it as unaccounted-for and the promotion to
+// "converted" never fires.
+//
+// That is not hypothetical. This map was written in wave 0, when the harness
+// had exactly the two entries below, and was not revisited as Layer 1 grew
+// three more shape-aware assertions. The result was 68 sites with real,
+// passing, ID-bearing tests being reported by gate (f) as "no longer in the
+// code but with no parity test to account for them" - the precise wording of
+// the thing the gate exists to catch, aimed at 68 innocents. Adding an
+// assertion to ormharness means adding it here in the same change.
+//
+// AssertHintSurvivesInRawSQL is deliberately absent: it proves an index hint
+// survives in a statement that is STAYING raw, so counting it as parity would
+// let a keep-raw site be promoted to converted on the strength of a test that
+// asserts the opposite. AssertPlanParity is absent because it is a reporting
+// helper, not a t-assertion, and names no site.
 var parityAssertions = map[string]bool{
-	"AssertGoldenSQL":    true,
-	"AssertResultParity": true,
+	"AssertGoldenSQL":               true,
+	"AssertResultParity":            true,
+	"AssertResultParityForSite":     true,
+	"AssertGoldenShapes":            true,
+	"AssertGoldenParametrizedShape": true,
+	"AssertGoldenFieldwise":         true,
 }
 
 // parityTestedIDs collects every site ID actually asserted on by a test under
@@ -1165,10 +1268,87 @@ var parityAssertions = map[string]bool{
 // it was, which is precisely backwards. Working from the AST excludes comments
 // by construction, and requiring the ID to be a string argument to one of the
 // assertion calls means an incidental mention cannot vouch for anything.
+// A test may also reach an assertion through a local helper of its own, rather
+// than calling ormharness directly: message_list_tier9_test.go's
+// assertUnionAllSiteShape(t, siteID, ...) builds the parametrized cases and
+// forwards to ormharness.AssertGoldenParametrizedShape. That is a real parity
+// test, but the site ID arrives at the assertion as a parameter, so scanning
+// only for string literals at the assertion call site cannot see it, and the
+// site looks unproven.
+//
+// forwardingHelpers finds those helpers: a function in a test file that passes
+// one of its own string parameters straight into a known assertion is itself an
+// assertion, and a call to it with a literal site ID proves that site. It runs
+// to a fixed point so a helper calling a helper resolves too, which costs one
+// extra pass and removes a whole class of "why is this one site unproven"
+// puzzles.
+//
+// Deliberately narrow: the argument must be an identifier naming a parameter of
+// the enclosing function. Anything computed - a concatenation, a slice element,
+// a struct field - does not qualify, because then the ID that reaches the
+// assertion is not the one written at the call site, and the literal we would
+// credit could be unrelated to what was actually asserted.
+func forwardingHelpers(files []*ast.File) map[string]bool {
+	helpers := map[string]bool{}
+
+	isAssertion := func(call *ast.CallExpr) bool {
+		switch fn := call.Fun.(type) {
+		case *ast.SelectorExpr: // ormharness.AssertGoldenSQL(...)
+			return parityAssertions[fn.Sel.Name]
+		case *ast.Ident: // AssertGoldenSQL(...) or a local helper
+			return parityAssertions[fn.Name] || helpers[fn.Name]
+		}
+		return false
+	}
+
+	for changed := true; changed; {
+		changed = false
+		for _, file := range files {
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil || fn.Recv != nil || helpers[fn.Name.Name] {
+					continue
+				}
+
+				// The string-typed parameter names this helper could forward.
+				params := map[string]bool{}
+				for _, field := range fn.Type.Params.List {
+					if id, ok := field.Type.(*ast.Ident); !ok || id.Name != "string" {
+						continue
+					}
+					for _, name := range field.Names {
+						params[name.Name] = true
+					}
+				}
+				if len(params) == 0 {
+					continue
+				}
+
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok || !isAssertion(call) {
+						return true
+					}
+					for _, arg := range call.Args {
+						if id, ok := arg.(*ast.Ident); ok && params[id.Name] {
+							helpers[fn.Name.Name] = true
+							changed = true
+							return false
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	return helpers
+}
+
 func parityTestedIDs(root string) (map[string]bool, error) {
 	found := map[string]bool{}
 	fset := token.NewFileSet()
 
+	var files []*ast.File
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -1187,14 +1367,31 @@ func parityTestedIDs(root string) (map[string]bool, error) {
 		if err != nil {
 			return fmt.Errorf("parse %s: %w", path, err)
 		}
+		files = append(files, file)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
+	helpers := forwardingHelpers(files)
+
+	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !parityAssertions[sel.Sel.Name] {
+			switch fn := call.Fun.(type) {
+			case *ast.SelectorExpr:
+				if !parityAssertions[fn.Sel.Name] {
+					return true
+				}
+			case *ast.Ident:
+				if !parityAssertions[fn.Name] && !helpers[fn.Name] {
+					return true
+				}
+			default:
 				return true
 			}
 			for _, arg := range call.Args {
@@ -1209,9 +1406,8 @@ func parityTestedIDs(root string) (map[string]bool, error) {
 			}
 			return true
 		})
-		return nil
-	})
-	return found, err
+	}
+	return found, nil
 }
 
 // merge carries reviewer decisions forward across regeneration, and retains
@@ -1261,12 +1457,24 @@ func write(path string, sites []*Site) error {
 		counts[s.Status]++
 		byID[s.ID] = s
 	}
+
+	// Carry the human-owned ratchet block across from whatever is already at
+	// path. Everything else in the manifest is derived from source and safe to
+	// rewrite; this one field is a decision someone made, and regenerating must
+	// not quietly discard it. Read from the destination rather than from the
+	// merge input because the ratchet belongs to the committed manifest.
+	var ratchet json.RawMessage
+	if prev, err := load(path); err == nil && prev != nil {
+		ratchet = prev.Ratchet
+	}
+
 	m := Manifest{
 		// No timestamp: a regenerated manifest must be byte-identical when the
 		// code has not changed, or the CI ratchet's diff check is worthless.
 		Generated: "derived-from-source",
 		Root:      "iznik-server-go",
 		Counts:    counts,
+		Ratchet:   ratchet,
 		Sites:     byID,
 	}
 	b, err := json.MarshalIndent(m, "", "  ")
@@ -1317,3 +1525,59 @@ func applySprintf(format string, args []string) (string, bool) {
 	}
 	return b.String(), true
 }
+
+// setsBuildClauses reports whether fn assigns to Statement.BuildClauses. That
+// assignment is the tell for the escape hatch described at its use site: it
+// stops GORM rendering the FROM clause it always registers, which is how a
+// whole statement can be handed to .Select() with the .Table() beside it
+// reduced to decoration.
+func setsBuildClauses(fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Body == nil {
+		return false
+	}
+	found := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, lhs := range assign.Lhs {
+			if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "BuildClauses" {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// suppliesOwnFrom reports whether a SELECT-clause argument carries its own
+// top-level FROM (or a tail clause that only a whole statement can have), which
+// makes it the statement rather than a projection.
+//
+// Parenthesised spans are removed first, because a FROM inside a scalar
+// subquery is perfectly ordinary in a column list -
+// "EXISTS(SELECT 1 FROM users WHERE id = ?)" is an expression, not a statement,
+// and is exactly the legitimate use of the BuildClauses override.
+func suppliesOwnFrom(text string) bool {
+	var top strings.Builder
+	depth := 0
+	for _, r := range text {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				top.WriteRune(r)
+			}
+		}
+	}
+	return topLevelStatementKeyword.MatchString(top.String())
+}
+
+var topLevelStatementKeyword = regexp.MustCompile(`(?i)\b(from|union|group\s+by|order\s+by|having)\b`)

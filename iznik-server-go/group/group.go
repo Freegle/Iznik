@@ -1022,23 +1022,28 @@ func CreateGroup(c *fiber.Ctx) error {
 		}
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 8cbeeeb7e32f (Tier 1 batch review). GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT returned (under
+	// the map key "@id"), the same write-connection guarantee the old
+	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
+	// string via fmt.Sprintf, the shipped idiom this file's PatchGroup
+	// (site 548090e97d00) and location.go's locations_spatial REPLACE sites
+	// already use.
+	row := map[string]interface{}{
+		"nameshort": req.Name,
+		"namefull":  req.Name,
+		"type":      req.GroupType,
+		"publish":   gorm.Expr("1"),
+		"onhere":    gorm.Expr("1"),
+		"polyindex": gorm.Expr(fmt.Sprintf("ST_GeomFromText('POINT(0 0)', %d)", utils.SRID)),
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?, ?, 1, 1, ST_GeomFromText('POINT(0 0)', %d))", utils.SRID),
-		req.Name, req.Name, req.GroupType)
-	if err != nil {
+	if err := db.Table("groups").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create group")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		newID = uint64(idInt64)
 	}
 
 	// Admin/support can set lat/lng.

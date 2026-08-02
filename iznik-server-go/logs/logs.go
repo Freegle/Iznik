@@ -1,7 +1,6 @@
 package logs
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -128,30 +127,37 @@ func GetLogs(c *fiber.Ctx) error {
 		// Non-admins can only see logs for groups they moderate.
 		// Exception: user-specific logs (logtype=user) show all groups
 		//.
-		placeholders := strings.Repeat("?,", len(modGroupIDs))
-		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, fmt.Sprintf("logs.groupid IN (%s)", placeholders))
-		for _, gid := range modGroupIDs {
-			args = append(args, gid)
-		}
+		//
+		// ORM migration note (keep-raw site 6cf1b5aded22 assessment): this
+		// used to hand-build a "?,?,?..." placeholder string sized to
+		// len(modGroupIDs) and append one bind per group. GORM's native
+		// "IN (?)" with a slice argument expands to the same
+		// "IN (?,?,?,...)" at bind time (statement.go's AddVar, reflect.Slice
+		// case) - same rendered SQL for a Layer 1 golden, but it is a real
+		// change to how the statement is assembled, not a tidy-up: the old
+		// form built the placeholder COUNT from len(modGroupIDs) and the SQL
+		// TEXT from fmt.Sprintf, so a mismatch between that count and the
+		// args appended was a hand-maintained invariant one edit away from
+		// breaking; the native form makes the count and the bind count the
+		// same value by construction. It also closes an injection-shaped
+		// pattern: fmt.Sprintf("... IN (%s)", placeholders) building the
+		// SQL text from a runtime-derived string, even though what filled
+		// it here was always literal "?,?,?" never data, is exactly the
+		// shape a future edit could get wrong by interpolating a real value
+		// into that %s instead. Applied the same way to types/subtypes
+		// below.
+		where = append(where, "logs.groupid IN (?)")
+		args = append(args, modGroupIDs)
 	}
 
 	if len(types) > 0 {
-		placeholders := strings.Repeat("?,", len(types))
-		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, fmt.Sprintf("logs.type IN (%s)", placeholders))
-		for _, t := range types {
-			args = append(args, t)
-		}
+		where = append(where, "logs.type IN (?)")
+		args = append(args, types)
 	}
 
 	if len(subtypes) > 0 {
-		placeholders := strings.Repeat("?,", len(subtypes))
-		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, fmt.Sprintf("logs.subtype IN (%s)", placeholders))
-		for _, s := range subtypes {
-			args = append(args, s)
-		}
+		where = append(where, "logs.subtype IN (?)")
+		args = append(args, subtypes)
 	}
 
 	// Apply modmailsonly filter if requested.

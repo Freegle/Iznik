@@ -95,6 +95,12 @@ if [ ! -f "$LIST" ]; then
   exit 1
 fi
 
+# EDITING THE JS BELOW: it is embedded in a single-quoted shell string, so an
+# apostrophe anywhere inside it - including in a // comment - closes that string
+# and bash starts executing the rest of the JS as shell. The failure looks
+# nothing like the cause: you get "//: Is a directory" and a syntax error on a
+# line several below the apostrophe. Write "the id of the row", not "the row's
+# id". (This comment is bash, not JS, which is why it can use one safely.)
 node -e '
 const fs = require("fs");
 const [listPath, manifestPath] = process.argv.slice(1);
@@ -121,17 +127,31 @@ const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 // chat/chatroom.go has four of these sites in one file - exactly the shape
 // where that goes wrong silently.
 //
-// The window starts at the site marker and runs to the end of the statement
-// chain, which is generous enough for a multi-line builder and tight enough
-// that the next site cannot supply the evidence for this one.
+// The window starts at the site marker and runs to the next site marker, which
+// is tight enough that a neighbouring site cannot supply the evidence for this
+// one, with a character cap so an unmarked run of code cannot stretch it.
+//
+// The cap counts CODE, not prose. It used to count raw characters from the
+// marker, which meant the length of the explanatory comment decided the
+// verdict: the tryst comment grew past 1200 characters while documenting
+// why the statement changed, the window ran out inside the comment, and the
+// gate reported a correctly-converted site as "converted without
+// gorm.WithResult()" - the exact false alarm the history of this file is full of
+// (a 12-line lookahead once missed comment.go by one line). Comments on this
+// project are deliberately long, so any gate whose answer depends on their
+// length is measuring the wrong thing.
 const usesWithResult = (file, id) => {
   let src;
   try { src = fs.readFileSync(file, "utf8"); } catch { return false; }
   const at = src.indexOf("ORM migration site " + id);
   if (at < 0) return false;
   const next = src.indexOf("ORM migration site ", at + 1);
-  const end = next < 0 ? Math.min(src.length, at + 1200) : Math.min(next, at + 1200);
-  return /WithResult\(\)/.test(src.slice(at, end));
+  const region = src.slice(at, next < 0 ? src.length : next);
+  const code = region
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"))
+    .join("\n");
+  return /WithResult\(\)/.test(code.slice(0, 1200));
 };
 
 let flagged = 0, missing = 0, viaWithResult = 0;

@@ -725,26 +725,26 @@ func CreateLocation(c *fiber.Ctx) error {
 	canon := strings.ToLower(req.Name)
 
 	db := database.DBConn
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 47417e0f74d7 (Tier 1 batch review). GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT returned (under
+	// the map key "@id"), the same write-connection guarantee the old
+	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
+	// string via fmt.Sprintf, the same idiom this function's own
+	// locations_spatial REPLACE a few lines below (site 25b7b92e33fd) uses.
+	row := map[string]interface{}{
+		"name":       req.Name,
+		"type":       gorm.Expr("'Polygon'"),
+		"geometry":   gorm.Expr(fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), req.Polygon),
+		"canon":      canon,
+		"popularity": gorm.Expr("0"),
 	}
-	sqlResult, err := sqlDB.Exec(
-		fmt.Sprintf("INSERT INTO locations (name, type, geometry, canon, popularity) VALUES (?, 'Polygon', ST_GeomFromText(?, %d), ?, 0)", utils.SRID),
-		req.Name, req.Polygon, canon,
-	)
-
-	if err != nil {
+	if err := db.Table("locations").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create location")
 	}
 
 	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		id = uint64(idInt64)
 	}
 
 	if id > 0 {
@@ -848,18 +848,24 @@ func UpdateLocation(c *fiber.Ctx) error {
 			Unioned     *string
 		}
 		var oldGeom OldGeom
-		db.Raw(fmt.Sprintf(`SELECT
-			ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) AS old_geometry,
-			CASE WHEN ST_Intersects(
-				CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
-				ST_GeomFromText(?, %d))
-			THEN ST_AsText(ST_UNION(
-				CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
-				ST_GeomFromText(?, %d)))
-			ELSE NULL
-			END AS unioned
-			FROM locations WHERE id = ?`, utils.SRID, utils.SRID),
-			*req.Polygon, *req.Polygon, req.ID).Scan(&oldGeom)
+		// ORM migration site 42f88b0d5032 (Tier 1 batch review). Not a SQL
+		// UNION - ST_UNION() is a geometry function inside one ordinary SELECT
+		// - so this needed no BuildClauses override, just the same
+		// fmt.Sprintf-folded-SRID technique as this function's other two
+		// sites (745c0a9ca82e, aa63c688e6b1).
+		db.Table("locations").
+			Select(fmt.Sprintf(`ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) AS old_geometry,
+				CASE WHEN ST_Intersects(
+					CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
+					ST_GeomFromText(?, %d))
+				THEN ST_AsText(ST_UNION(
+					CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
+					ST_GeomFromText(?, %d)))
+				ELSE NULL
+				END AS unioned`, utils.SRID, utils.SRID),
+				*req.Polygon, *req.Polygon).
+			Where("id = ?", req.ID).
+			Scan(&oldGeom)
 
 		// Update ourgeometry (the human-edited override), not geometry (which is from OSM).
 		// ORM migration site aa63c688e6b1 (Tier 1 spatial review, round 3). An

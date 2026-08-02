@@ -8,17 +8,17 @@ package test
 // once a parity test bearing its ID exists and passes - see
 // ormharness.AssertGoldenSQL's doc comment (golden.go) and plan 7.2's Gate 2.
 //
-// One site from this module's wave-1 inventory is deliberately NOT converted
-// and has no test here: 65fde41159df (chatroom.go, GetOrCreateUser2ModChat).
-// Its SELECT ... FOR UPDATE runs on a raw *sql.Tx obtained via db.DB().Begin()
-// (not a *gorm.DB) so it can share a transaction with a following raw INSERT
-// that needs sql.Result.LastInsertId() - the same reason plan section 7's
-// keep-raw list cites for tryst.CreateTryst. Porting just the SELECT to GORM
-// would mean either running it outside the lock's transaction (defeating the
-// lock) or restructuring the whole function onto db.Transaction(), which
-// contorts far more production code than one call site's conversion
-// warrants. Left as raw SQL; reported to the parent session instead of
-// forced.
+// GetOrCreateUser2ModChat's three tx-scoped statements - 65fde41159df (the
+// SELECT ... FOR UPDATE), 2451a0b54d63 (the existing-chat UPDATE), and
+// 69ed53a55edc (the new-chat INSERT) - were originally left raw here on the
+// theory that porting them required either running the locked SELECT
+// outside its transaction (defeating the lock) or restructuring the whole
+// function onto db.Transaction(). That restructuring turned out to be a
+// mechanical, safe conversion after all: db.Transaction() gives the same
+// single-connection guarantee the raw db.DB().Begin() + *sql.Tx had, even
+// under the dbresolver read/write split (its routing callbacks no-op inside
+// any transaction - verified empirically, not just reasoned from source).
+// All three are now converted; see test/orm_insertid_readback_test.go.
 //
 // chatmessage.go and chatroom.go also contain dynamic query builders that
 // pass a prebuilt string variable to db.Raw (e.g. ListForUserMT, the review

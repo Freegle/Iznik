@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Tryst struct {
@@ -192,27 +193,63 @@ func CreateTryst(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Verify a chat exists between the two users.
+	// ORM migration site f06281f794b9 (Tier 1 batch review). An ordinary
+	// literal-WHERE COUNT, swept into the "INSERT id read back" category by
+	// this function also containing CreateTryst's INSERT (site b0e6f29b54bd,
+	// was 938d9dc56c71 before its bug fix) further down - this statement
+	// doesn't touch that INSERT or read back any id.
 	var chatCount int64
-	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		req.User1, req.User2, req.User2, req.User1).Scan(&chatCount)
+	db.Table("chat_rooms").
+		Select("COUNT(*)").
+		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
+		Scan(&chatCount)
 	if chatCount == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "No chat exists between these users")
 	}
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO trysts (user1, user2, arrangedfor) VALUES (?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE arrangedat = NOW()",
-		req.User1, req.User2, req.Arrangedfor)
-
-	if err != nil {
+	// BUG FIX + ORM migration site 938d9dc56c71. Changing the SQL text would
+	// rehash this to b0e6f29b54bd, but that id describes a fixed-but-still-raw
+	// statement that never existed in any committed tree (the fix and the
+	// conversion landed together), and the manifest must only ever record raw
+	// SQL that was really there. So the site keeps the identity it had, and the
+	// gap between its golden and what we now render is recorded as this site's
+	// approvedDiff, marked as a deliberate behaviour change.
+	//
+	// It was kept raw with a wrong reason claiming GORM couldn't surface
+	// LastInsertId for an ODKU insert: the ODKU clause used to be just
+	// "arrangedat = NOW()" with no
+	// "id = LAST_INSERT_ID(id)" forcing, so on a duplicate-key hit (unique
+	// key arrangedfor_2 on (arrangedfor, user1, user2) - reachable any time a
+	// caller re-arranges the SAME tryst) MySQL's LAST_INSERT_ID() reported 0,
+	// not the existing row's id, and this handler returned {"id": 0} straight
+	// to the client. Confirmed live against the test DB before this change:
+	// the unfixed clause returns id 0 on the second (duplicate) insert; the
+	// same sequence with "id = LAST_INSERT_ID(id)" added returns the original
+	// row's id both times - see test/tryst_test.go's
+	// TestCreateTrystDuplicateReturnsExistingID. Forcing the id is the same
+	// idiom already used by every other ODKU/INSERT-IGNORE id-read-back site
+	// in this codebase (chatroom.go's GetOrCreateUser2ModChat/User2UserChat,
+	// group.go's CreateGroup) - .Clauses(res) is required, not
+	// .Set("gorm:result", res), which silently does nothing.
+	res := gorm.WithResult()
+	tx := db.Table("trysts").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			{Column: clause.Column{Name: "arrangedat"}, Value: gorm.Expr("NOW()")},
+		},
+	}).Create(map[string]interface{}{
+		"user1": req.User1, "user2": req.User2, "arrangedfor": req.Arrangedfor,
+	})
+	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
 
-	newIDInt, _ := sqlResult.LastInsertId()
-	newID := uint64(newIDInt)
+	var newID uint64
+	if res.Result != nil {
+		if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+			newID = uint64(lastID)
+		}
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }

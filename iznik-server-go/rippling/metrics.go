@@ -150,6 +150,30 @@ type GroupOption struct {
 // srcGroup is the optional origin-group scoping JOIN (aliases rra); it takes one bind arg
 // before the two replied_at window args.
 func ReplySourceSplitSQL(wide bool, srcGroup string) string {
+	return `
+		SELECT day,
+		       COUNT(*) AS replies,
+		       SUM(bucket = 'home') AS home,
+		       SUM(bucket = 'ripple_notified') AS ripple_notified,
+		       SUM(bucket = 'ripple_group') AS ripple_group,
+		       SUM(bucket = 'ripple_reach') AS ripple_reach,
+		       SUM(bucket = 'organic_local') AS organic_local,
+		       SUM(bucket = 'unknown') AS unknown
+		FROM ` + ReplySourceInnerFrom(wide, srcGroup) + `
+		GROUP BY day
+		ORDER BY day DESC`
+}
+
+// ReplySourceInnerFrom builds the day+bucket derived-table subquery shared by
+// ReplySourceSplitSQL's raw-SQL form (legacy/unmigrated-DB callers) and the
+// GORM chain at Metrics' reply_source_split section (ORM migration site
+// 568a5645fba7): the attribution-channel CASE expression lives in exactly
+// this one place either way, so pulling the outer aggregation out into a
+// real .Table()/.Select()/.Group()/.Order() chain does not duplicate it -
+// see ormharness/bareexists_test.go's distinction between a legitimate
+// .Table() subquery (this) and relocating a whole statement into .Select()
+// (not this).
+func ReplySourceInnerFrom(wide bool, srcGroup string) string {
 	derive := `CASE
 	       WHEN rra.was_home_member = 1 THEN 'home'
 	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
@@ -167,23 +191,12 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 	if wide {
 		bucket = "COALESCE(rra.attribution, " + derive + ")"
 	}
-	return `
-		SELECT day,
-		       COUNT(*) AS replies,
-		       SUM(bucket = 'home') AS home,
-		       SUM(bucket = 'ripple_notified') AS ripple_notified,
-		       SUM(bucket = 'ripple_group') AS ripple_group,
-		       SUM(bucket = 'ripple_reach') AS ripple_reach,
-		       SUM(bucket = 'organic_local') AS organic_local,
-		       SUM(bucket = 'unknown') AS unknown
-		FROM (
+	return `(
 		    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,
 		           ` + bucket + ` AS bucket
 		    FROM rippling_reply_attribution rra` + srcGroup + `
 		    WHERE rra.replied_at >= ? AND rra.replied_at < ?
-		) b
-		GROUP BY day
-		ORDER BY day DESC`
+		) b`
 }
 
 // captureFromCached holds the live-capture boundary once we have found it. Guarded by
@@ -462,16 +475,22 @@ func Metrics(c *fiber.Ctx) error {
 	//       are not derivable retrospectively (locations drift, polygons grow) so they read 0
 	//       and those replies sit in unknown - attribution_channels_available tells the
 	//       dashboard to say so.
-	// Tier 3 keep-raw review (site 568a5645fba7): ReplySourceSplitSQL is a
-	// shared, independently unit-tested (rippling/metrics_test.go) string
-	// builder - the source of truth for this text, also called from the
-	// AnalyticsDriveTimes-style callers that need the identical window logic.
-	// Reproducing its 4 rendered forms as a GORM chain here would duplicate
-	// that logic outside the tested function it exists to keep in one place,
-	// and wrapping the string it returns in an extra derived-table SELECT
-	// would render different SQL than the original. Stays raw.
+	// ORM migration site 568a5645fba7 (research review). The attribution-
+	// channel CASE expression is built once, in ReplySourceInnerFrom, and
+	// shared by ReplySourceSplitSQL's raw-SQL form (rippling/metrics_test.go
+	// exercises that function directly) and this GORM chain - so converting
+	// the call site does not duplicate the tested logic, only moves the
+	// OUTER aggregation (which has no logic of its own beyond fixed column
+	// names) into real Select/Group/Order clauses. .Table() holds only the
+	// derived-table subquery, a documented legitimate use of Table() for a
+	// FROM-clause subquery - not the whole statement relocated into
+	// .Select() (see ormharness/bareexists_test.go).
 	section("reply_source_split", func() error {
-		return db.Raw(ReplySourceSplitSQL(attributionWide, srcGroup), gargs()...).Scan(&replySources).Error
+		return db.Table(ReplySourceInnerFrom(attributionWide, srcGroup), gargs()...).
+			Select("day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_reach') AS ripple_reach, SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown").
+			Group("day").
+			Order("day DESC").
+			Scan(&replySources).Error
 	})
 
 	// (1b) Client-reported reply surfaces over the same window (wide schema only - the column

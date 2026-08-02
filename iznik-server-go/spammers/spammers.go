@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GetSpammers handles GET /spammers with search and pagination.
@@ -190,25 +191,31 @@ func PostSpammer(c *fiber.Ctx) error {
 		}
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 20dfce4d2228 (Tier 1 batch review). GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT/REPLACE returned
+	// (under the map key "@id"), which is the same write-connection guarantee
+	// the old sqlDB.Exec()+LastInsertId() call had - REPLACE always inserts a
+	// fresh row (never a no-op like ON DUPLICATE KEY UPDATE can be), so there
+	// is no "0 on a no-op hit" trap here. clause.Insert{Modifier: "REPLACE"}
+	// needs database.RegisterCustomClauseBuilders's ClauseBuilders["INSERT"]
+	// override (wired into database.DBConn at startup; see
+	// database/clausebuilders.go) - without it this would render "INSERT
+	// REPLACE INTO", not "REPLACE INTO".
+	row := map[string]interface{}{
+		"userid":     req.Userid,
+		"collection": req.Collection,
+		"reason":     req.Reason,
+		"byuserid":   myid,
+		"heldby":     gorm.Expr("NULL"),
+		"heldat":     gorm.Expr("NULL"),
 	}
-	sqlResult, err := sqlDB.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid, heldby, heldat) "+
-		"VALUES (?, ?, ?, ?, NULL, NULL)",
-		req.Userid, req.Collection, req.Reason, myid)
-
-	if err != nil {
+	if err := db.Table("spam_users").Clauses(clause.Insert{Modifier: "REPLACE"}).Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to add spammer")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		newID = uint64(idInt64)
 	}
 
 	// V1 parity: reporting a SYSTEMROLE_USER as PendingAdd suppresses their ChitChat/newsfeed

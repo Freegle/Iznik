@@ -82,12 +82,6 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 		return make([]Job, 0)
 	}
 
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = strconv.FormatInt(id, 10)
-	}
-	placeholders := strings.Join(idStrs, ",")
-
 	categoryClause := "category IS NOT NULL"
 	var categoryArgs []any
 	if category != "" {
@@ -140,24 +134,38 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 	// which returns the nearest distinct (company, title), so the ids arriving here
 	// are already distinct and we just enrich them.
 	distExpr := "ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry))))"
-	args := []any{lng, lat}
-	args = append(args, categoryArgs...)
 
-	db.Raw(fmt.Sprintf(
-		"SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, "+
+	// ORM migration site bc3af5374c0c (batch C). Only the id-list changes:
+	// ids is now bound as a native []int64 "IN ?" slice instead of the
+	// hand-built comma-joined placeholders string. categoryClause and
+	// areaClause (the search-box polygon, %f-formatted) are unchanged -
+	// still literal text built exactly as before, still passed as one
+	// combined WHERE string to a single Where() call (see the reachWhere
+	// sites in isochrone/message.go for why: splitting a fragment that
+	// contains "AND"/"OR" into its own Where() call trips GORM's paren-
+	// wrapping once more than one Where expression is combined). No
+	// precision change: the box's float formatting is untouched, so this
+	// is a pure mechanism swap, not the code-change-plus-precision-decision
+	// the keep-raw reason flagged as the harder version of this fix.
+	whereSQL := "jobs.id IN ? AND " + categoryClause + " AND " + areaClause
+	whereArgs := append([]any{ids}, categoryArgs...)
+
+	db.Table("jobs").
+		Select("jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, "+
 			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, "+
-			distExpr+" / 1000 AS dist_km "+
-			"FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
-			"WHERE jobs.id IN (%s) AND %s AND %s "+
-			// Rank by expected value (cpc * clickability) discounted by a mild
-			// freshness factor: older WhatJobs postings are likelier already
-			// filled/closed, so a click redirects to a different job and doesn't
-			// convert. Decay the score with posting age (floored at 0.5 by ~7
-			// days); posted_at NULL -> treated as fresh. Kept identical to the
-			// digest ordering in iznik-batch Job::nearLocation.
-			"ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT %d",
-		placeholders, categoryClause, areaClause, JOBS_LIMIT,
-	), args...).Scan(&rows)
+			distExpr+" / 1000 AS dist_km",
+			lng, lat).
+		Joins("LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title").
+		Where(whereSQL, whereArgs...).
+		// Rank by expected value (cpc * clickability) discounted by a mild
+		// freshness factor: older WhatJobs postings are likelier already
+		// filled/closed, so a click redirects to a different job and doesn't
+		// convert. Decay the score with posting age (floored at 0.5 by ~7
+		// days); posted_at NULL -> treated as fresh. Kept identical to the
+		// digest ordering in iznik-batch Job::nearLocation.
+		Order("jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC").
+		Limit(JOBS_LIMIT).
+		Scan(&rows)
 
 	// Collapse near-identical cards that survive the spatial KNN dedup. KNN keys
 	// primarily on bodyhash (right for WhatJobs' cross-town spam, whose copies

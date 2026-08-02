@@ -337,6 +337,95 @@ else
   note "fix: a rule for a site that carries a conversion marker means a deletion was lost - re-remove it"
 fi
 
+# --- Gate (m): the extractor knows every assertion that proves a site ---------
+#
+# Gate (f) and the extractor's promotion-to-converted rule both key off
+# extract.go's parityAssertions map. If an assertion is added to ormharness and
+# not to that map, every site proven by it silently stops counting: gate (f)
+# reports it as "no longer in the code but with no parity test", which reads as
+# raw SQL deleted without proof - the most alarming thing the ratchet can say.
+#
+# That is not a hypothetical failure mode. parityAssertions was written when the
+# harness had two assertions, three more were added as Layer 1 grew, and 68
+# sites with real passing tests were reported as unaccounted-for. The gates were
+# all green up to that point, so nothing pointed at the map; the finger pointed
+# at 68 innocent conversions instead.
+#
+# So the map is checked against the harness's actual surface: every exported
+# assertion taking a siteID must be listed. AssertHintSurvivesInRawSQL takes no
+# siteID and so is not in scope - it proves a hint survives in a statement that
+# is staying raw, which is the opposite claim.
+missing_assertions=""
+while read -r name; do
+  [ -n "$name" ] || continue
+  if ! grep -q "\"$name\":" "$SCRIPT_DIR/extract.go"; then
+    missing_assertions="$missing_assertions $name"
+  fi
+done <<EOF
+$(grep -rhoE '^func (Assert[A-Za-z]+)\(t TestingT, siteID string' "$SOURCE_ROOT/ormharness/"*.go 2>/dev/null \
+    | sed -E 's/^func (Assert[A-Za-z]+)\(.*/\1/' | sort -u)
+EOF
+
+if [ -z "$missing_assertions" ]; then
+  note "gate (m) OK: extract.go's parityAssertions lists every ormharness assertion that names a site"
+else
+  fail "ormharness assertion(s) missing from extract.go's parityAssertions:$missing_assertions"
+  note "fix: add them to parityAssertions in tools/orm-migration/extract.go and regenerate the manifest - until then every site proven only by those assertions counts as unproven"
+fi
+
+# --- Gate (n): "converted" must mean the raw SQL is GONE ----------------------
+#
+# The counterpart to gate (f). Gate (f) asks whether a site that VANISHED has a
+# test; this asks whether a site marked converted is actually still sitting in
+# the code as raw SQL. Nothing checked that direction, and nine sites had drifted
+# into it.
+#
+# They got there honestly. Where a statement cannot be expressed as a GORM chain
+# - a UNION with a variable number of arms, a SET list built per optional field -
+# the technique used was to extract a pure builder function and prove its output
+# with a parametrized-shape or fieldwise parity test. That is real work and the
+# proof is real. But the raw SQL is still there, so calling it converted counts
+# the same statement twice: once as converted under its old id, and again as raw
+# under the new id the extractor assigns once the text moves into the builder.
+#
+# "Converted" has to keep meaning one thing, or the burn-down stops measuring
+# anything. A statement that is proven but still raw is keep-raw with a reason
+# that says so - which is exactly what those sites now carry.
+jq -n --slurpfile c "$COMMITTED_MANIFEST" '
+  [ $c[0].sites | to_entries[] |
+    select(.value.status == "converted" and .value.presentInCode == true) |
+    {id: .key, file: .value.file, line: .value.line, function: .value.function} ]
+' >"$WORKDIR/stillraw.json"
+
+stillraw_count=$(jq 'length' "$WORKDIR/stillraw.json")
+if [ "$stillraw_count" -gt 0 ]; then
+  fail "$stillraw_count site(s) are marked converted but their raw SQL is still in the code:"
+  jq -r '.[] | "  \(.file):\(.line)  [\(.id)]  \(.function)"' "$WORKDIR/stillraw.json"
+  note "fix: either finish the conversion so the raw call site goes away, or mark it keep-raw with a reason - a proven builder is still raw SQL"
+else
+  note "gate (n) OK: every converted site has actually had its raw SQL removed"
+fi
+
+# --- Gate (o): no smuggling a whole statement through .Select() -------------
+#
+# Setting Statement.BuildClauses = {"SELECT"} suppresses the FROM clause GORM
+# always registers. That has a legitimate use (a scalar expression, so a bare
+# "SELECT EXISTS(...)" renders byte-identically) and an abuse (the whole
+# statement as the Select argument, with Table() as a decoy). The abuse looks
+# like a conversion in a diff and moved the SQL into a method the extractor did
+# not scan, so five sites stopped counting as raw and started counting as
+# converted work without a line of SQL changing.
+#
+# The extractor now inventories those, so they cannot vanish again; this gate is
+# the second line, catching new ones at the point they are written.
+if bash "$SCRIPT_DIR/check-buildclauses.sh" "$SOURCE_ROOT" >"$WORKDIR/buildclauses.txt" 2>&1; then
+  note "gate (o) OK: $(tail -1 "$WORKDIR/buildclauses.txt")"
+else
+  fail "a whole statement is being passed through .Select() with the FROM suppressed:"
+  grep -A2 '^BUILDCLAUSES' "$WORKDIR/buildclauses.txt" | head -20
+  note "fix: this is relocation, not conversion - mark the site keep-raw with a reason"
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"

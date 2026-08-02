@@ -1,10 +1,8 @@
 package isochrone
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -149,42 +147,51 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// Visibility is unaffected: the WHERE below still tests containment on the FULL polygon
 	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
 	reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
-	args := []interface{}{
-		utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
-		myid, utils.MESSAGE_LIKES_VIEW,
-	}
-	args = append(args, pointArgs...)
-	args = append(args, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
+
+	// ORM migration site 5adca7e5928e (batch C). Two independent shape axes -
+	// unseenFilter (a plain bool toggle) and reachWhere (a live-DB-gated
+	// choice between the legacy exact-polygon test and the sandwich-bounds
+	// form, see reachContainmentSQL/rippling.ReachBoundsReady) - are composed
+	// exactly as the original raw SQL was: one concatenated WHERE string,
+	// passed to a SINGLE Where() call. Splitting this into multiple Where()
+	// calls would trip GORM's own clause.Where wrapping (clause/where.go
+	// buildExprs): once more than one Where expression is being combined, any
+	// fragment whose text contains "AND"/"OR" gets wrapped in its own extra
+	// paren pair - which both reachWhere and authorReachCapWhere do - so it
+	// would diverge from the golden. Proven (both reachWhere shapes) in
+	// ormharness/reachcap_test.go and test/orm_batchc_test.go.
+	whereSQL := "ms.successful = 0 " +
+		unseenFilter +
+		// held = the reach was frozen because the origin copy was pulled back
+		// to Pending (member reports / Back to Pending). Every batch-side reach
+		// consumer already skips held rows; without this filter the reported
+		// post kept appearing in the nearby browse feed (Discourse 9862).
+		"AND rr.status != 'held' " +
+		reachWhere +
+		// Outbound cap: only show this post to viewers within the author's chosen distance.
+		authorReachCapWhere
+	whereArgs := append([]interface{}{}, pointArgs...)
+	whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
 
 	var candidates []reachCandidateRow
-	db.Raw(
-		"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
+	db.Table("messages_spatial ms").
+		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
 			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt "+
-			"FROM messages_spatial ms "+
-			// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
-			// the ripple-bumped spatial arrival, so it can't stand in for "posted".
-			"INNER JOIN messages m ON m.id = ms.msgid "+
-			// users au = the post AUTHOR, for the outbound distance cap below.
-			"INNER JOIN users au ON au.id = m.fromuser "+
-			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
-			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
-			"WHERE ms.successful = 0 "+
-			unseenFilter+
-			// held = the reach was frozen because the origin copy was pulled back
-			// to Pending (member reports / Back to Pending). Every batch-side reach
-			// consumer already skips held rows; without this filter the reported
-			// post kept appearing in the nearby browse feed (Discourse 9862).
-			"AND rr.status != 'held' "+
-			reachWhere+
-			// Outbound cap: only show this post to viewers within the author's chosen distance.
-			authorReachCapWhere,
-		args...,
-	).Scan(&candidates)
+			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt",
+			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
+		// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
+		// the ripple-bumped spatial arrival, so it can't stand in for "posted".
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
+		// users au = the post AUTHOR, for the outbound distance cap below.
+		Joins("INNER JOIN users au ON au.id = m.fromuser").
+		Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
+		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where(whereSQL, whereArgs...).
+		Scan(&candidates)
 
 	return candidates
 }
@@ -499,40 +506,32 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	msgIDs := myGroupsMsgIDs(db, myid)
 
 	if len(msgIDs) > 0 {
-		placeholders := make([]string, len(msgIDs))
-		// args: MESSAGE_LIKES_VIEW (views subquery), CHAT_MESSAGE_INTERESTED (replies subquery),
-		// then myid + MESSAGE_LIKES_VIEW (the seen-flag join), then the member-group msgids.
-		args := make([]any, len(msgIDs)+4)
-		args[0] = utils.MESSAGE_LIKES_VIEW
-		args[1] = utils.CHAT_MESSAGE_INTERESTED
-		args[2] = myid
-		args[3] = utils.MESSAGE_LIKES_VIEW
-		for i, id := range msgIDs {
-			placeholders[i] = "?"
-			args[i+4] = id
-		}
-
 		// Select the same scoring/distance ingredients as the nearby arm (fetchReachCandidates):
 		// per-post views and reply counts, plus the post's reach row (LEFT JOINed — a member-group
 		// post need not have one) so toSummary can derive its distance and relevance score.
+		//
+		// ORM migration site cacb3cb38871 (batch C). msgIDs is bound directly
+		// as a slice via "IN ?" - it always travelled as real bind values
+		// (fmt.Sprintf only built the "?,?,?,..." placeholder-count text
+		// itself), so this needed only the native GORM IN-list form, not a
+		// behaviour change.
 		var candidates []reachCandidateRow
-		db.Raw(fmt.Sprintf(
-			"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
+		db.Table("messages_spatial ms").
+			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 				"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
 				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt "+
-				"FROM messages_spatial ms "+
-				// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
-				// rippling — see the reach arm above.
-				"INNER JOIN messages m ON m.id = ms.msgid "+
-				"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
-				"LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
-				"WHERE ms.msgid IN (%s)",
-			strings.Join(placeholders, ",")),
-			args...).Scan(&candidates)
+				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt",
+				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
+			// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
+			// rippling — see the reach arm above.
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid").
+			Where("ms.msgid IN ?", msgIDs).
+			Scan(&candidates)
 
 		latlng := user.GetLatLng(myid)
 		if latlng.Lat != 0 || latlng.Lng != 0 {
@@ -721,20 +720,27 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		// Viewer sets no inbound limit, but the OUTBOUND author cap still applies (and must match
 		// the feed), so join the author and add authorReachCapWhere here too.
 		reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
-		args := []interface{}{myid, utils.MESSAGE_LIKES_VIEW}
-		args = append(args, pointArgs...)
-		args = append(args, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
 
-		db.Raw("SELECT COUNT(DISTINCT ms.msgid) "+
-			"FROM messages_spatial ms "+
-			"INNER JOIN messages m ON m.id = ms.msgid "+
-			"INNER JOIN users au ON au.id = m.fromuser "+
-			"INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid "+
-			"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
-			"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
-			reachWhere+
-			authorReachCapWhere,
-			args...).Scan(&count)
+		// ORM migration site 73c548fa7cce (batch C). reachWhere is the same
+		// live-DB-gated shape as fetchReachCandidates' 5adca7e5928e above (it
+		// calls the same reachContainmentSQL) - one concatenated WHERE
+		// string, one Where() call, for the same reason: splitting reachWhere
+		// or authorReachCapWhere into their own Where() calls would trip
+		// GORM's extra-paren wrapping once multiple Where expressions are
+		// combined (clause/where.go buildExprs). Proven (both shapes) in
+		// ormharness/reachcap_test.go and test/orm_batchc_test.go.
+		whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " + reachWhere + authorReachCapWhere
+		whereArgs := append([]interface{}{}, pointArgs...)
+		whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
+
+		db.Table("messages_spatial ms").
+			Select("COUNT(DISTINCT ms.msgid)").
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("INNER JOIN users au ON au.id = m.fromuser").
+			Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
+			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+			Where(whereSQL, whereArgs...).
+			Scan(&count)
 		return count
 	}
 

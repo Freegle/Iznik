@@ -100,6 +100,54 @@
     {
       "id": "ff270803c454",
       "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:378. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "d5aede52efa4",
+      "reason": "Stale duplicate id. The raw statement at location/location.go:735 is gone from the code (verified by grepping for its text, zero hits) and the same statement is present converted under a different id - site ids hash path plus normalised SQL, so folding a constant or shifting a line renumbers them. Retiring this entry rather than leaving it counted as an unproven conversion, which is what it looks like from the data and is not what happened."
+    },
+    {
+      "id": "d743401d8f46",
+      "reason": "Stale duplicate id. The raw statement at location/location.go:851 is gone from the code (verified by grepping for its text, zero hits) and the same statement is present converted under a different id - site ids hash path plus normalised SQL, so folding a constant or shifting a line renumbers them. Retiring this entry rather than leaving it counted as an unproven conversion, which is what it looks like from the data and is not what happened."
+    },
+    {
+      "id": "e3909b0128e0",
+      "reason": "Stale duplicate id. The raw statement at group/group.go:1032 is gone from the code (verified by grepping for its text, zero hits) and the same statement is present converted under a different id - site ids hash path plus normalised SQL, so folding a constant or shifting a line renumbers them. Retiring this entry rather than leaving it counted as an unproven conversion, which is what it looks like from the data and is not what happened."
+    },
+    {
+      "id": "19b190d43a85",
+      "reason": "Stale duplicate. This id describes the db.Raw() form of a statement that was moved into .Select() under a BuildClauses override. The raw call is gone, so this entry can never be found again, and the SAME statement is now inventoried under the Select-site id (see the Top-level UNION keep-raw rules). Retired rather than left counted as converted, which double-counted it: once as converted here, once as raw there."
+    },
+    {
+      "id": "e9ea468dab80",
+      "reason": "Stale duplicate. This id describes the db.Raw() form of a statement that was moved into .Select() under a BuildClauses override. The raw call is gone, so this entry can never be found again, and the SAME statement is now inventoried under the Select-site id (see the Top-level UNION keep-raw rules). Retired rather than left counted as converted, which double-counted it: once as converted here, once as raw there."
+    },
+    {
+      "id": "33ad97a3417c",
+      "reason": "Stale duplicate. This id describes the db.Raw() form of a statement that was moved into .Select() under a BuildClauses override. The raw call is gone, so this entry can never be found again, and the SAME statement is now inventoried under the Select-site id (see the Top-level UNION keep-raw rules). Retired rather than left counted as converted, which double-counted it: once as converted here, once as raw there."
+    },
+    {
+      "id": "1ff296c8656c",
+      "reason": "Stale duplicate. This id describes the db.Raw() form of a statement that was moved into .Select() under a BuildClauses override. The raw call is gone, so this entry can never be found again, and the SAME statement is now inventoried under the Select-site id (see the Top-level UNION keep-raw rules). Retired rather than left counted as converted, which double-counted it: once as converted here, once as raw there."
+    },
+    {
+      "id": "0252c4286777",
+      "reason": "Not a statement. Briefly inventoried while the BuildClauses detection was too broad - it treated any unfoldable .Select() argument in such a function as a smuggled statement. These two are ordinary projections (Select(selectCols), and an aggregate column list), so the rule was narrowed to require a top-level FROM and they are no longer found. Retired to clear the entry the over-broad run left behind."
+    },
+    {
+      "id": "8da5a2a691fb",
+      "reason": "Not a statement. Briefly inventoried while the BuildClauses detection was too broad - it treated any unfoldable .Select() argument in such a function as a smuggled statement. These two are ordinary projections (Select(selectCols), and an aggregate column list), so the rule was narrowed to require a top-level FROM and they are no longer found. Retired to clear the entry the over-broad run left behind."
+    },
+    {
+      "id": "64dbb28e0d7b",
+      "reason": "Stale duplicate. It described the db.Exec behind PatchSession's users UPDATE, and that call is gone: the SET list is now a clause.Set built one Assignment per supplied field and handed to .Clauses(set).Updates(...), so GORM composes the statement instead of receiving a string. The conversion is proven under f85b0b8ed693 by the fieldwise test. Worth recording why this sat raw so long: the 2^n framing was never a blocker to CONVERSION, only to exhaustive shape TESTING, and fieldwise coverage already existed for exactly that."
+    },
+    {
+      "id": "7ef7f895e8bf",
+      "reason": "Stale snapshot. The statement at message/search.go:239 was already converted under id ff00b3ba45a3, and the code comment there says so explicitly; this row is the pre-fix capture left behind when the conversion renumbered the site. Retired so it stops being counted as outstanding spatial debt."
+    },
+    {
+      "id": "ce0d84b77df2",
+      "reason": "Code deleted. database/insert.go held only ExecInsertGetID, a wrapper that ran a raw INSERT and returned LastInsertId. Every production caller was converted to gorm.WithResult(), leaving it reachable only from its own unit test, so it was removed rather than carried as permanent keep-raw debt for something nothing calls. The guarantee it protected is NOT dead - eleven converted sites depend on the id coming back from the write result rather than a replica-routable SELECT (the Discourse 9832 bug class), and on ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id) reporting the existing row id - so its unit guard was retargeted onto gorm.WithResult() instead of being deleted with it (test/insert_id_test.go, TestInsertIdReadBackFromWriteResult)."
     }
   ]
 }

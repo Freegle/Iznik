@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -23,6 +22,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // section is one unit of collection work. weight feeds the ETA estimate (Loki
@@ -161,16 +161,16 @@ func dumpTimeRange(c *fiber.Ctx) (int64, int64) {
 	return start.UnixNano(), end.UnixNano()
 }
 
-func gatherEmails(sqlDB *sql.DB, userID int64) []string {
-	rows, err := sqlDB.Query("SELECT email FROM users_emails WHERE userid = ?", userID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
+// ORM migration site 823b16eb87c6 (userdump keep-raw review, revisited).
+// Same correction as collect_db.go's existingTables/scanIDs/runDBSpec: this
+// reads users_emails from the Percona cluster via the same *gorm.DB
+// everything else uses, not a separate connection or a SQLite file.
+func gatherEmails(gdb *gorm.DB, userID int64) []string {
+	var raw []string
+	gdb.Table("users_emails").Select("email").Where("userid = ?", userID).Scan(&raw)
 	var emails []string
-	for rows.Next() {
-		var e string
-		if rows.Scan(&e) == nil && strings.TrimSpace(e) != "" {
+	for _, e := range raw {
+		if strings.TrimSpace(e) != "" {
 			emails = append(emails, e)
 		}
 	}
@@ -178,16 +178,16 @@ func gatherEmails(sqlDB *sql.DB, userID int64) []string {
 }
 
 // buildPlan assembles the ordered list of collection sections for this dump.
-func buildPlan(sqlDB *sql.DB, targetID int64, emails []string, include map[string]bool, startNs, endNs int64) []section {
-	tables := existingTables(sqlDB)
+func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string]bool, startNs, endNs int64) []section {
+	tables := existingTables(gdb)
 	var plan []section
 
 	if include["db"] {
-		chatIDs := scanIDs(sqlDB,
+		chatIDs := scanIDs(gdb,
 			"SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ? UNION SELECT chatid FROM chat_roster WHERE userid = ?",
 			targetID, targetID, targetID)
-		msgIDs := scanIDs(sqlDB, "SELECT id FROM messages WHERE fromuser = ?", targetID)
-		trackIDs := scanIDs(sqlDB, "SELECT id FROM email_tracking WHERE userid = ?", targetID)
+		msgIDs := scanIDs(gdb, "SELECT id FROM messages WHERE fromuser = ?", targetID)
+		trackIDs := scanIDs(gdb, "SELECT id FROM email_tracking WHERE userid = ?", targetID)
 
 		for _, spec := range buildDBSpecs(targetID, chatIDs, msgIDs, trackIDs) {
 			if !tables[strings.ToLower(spec.table)] {
@@ -197,7 +197,7 @@ func buildPlan(sqlDB *sql.DB, targetID int64, emails []string, include map[strin
 			plan = append(plan, section{
 				name:   s.table,
 				weight: 1,
-				run:    func(b *Builder) (int, error) { return runDBSpec(b, sqlDB, s) },
+				run:    func(b *Builder) (int, error) { return runDBSpec(b, gdb, s) },
 			})
 		}
 	}
@@ -233,12 +233,9 @@ type onSection func(done, total, totalWeight, doneWeight int, sec section, rows 
 // buildDump runs every section into the builder, recording outcomes in
 // _sections and returning the list of warnings (non-fatal section failures).
 func buildDump(b *Builder, targetID int64, include map[string]bool, startNs, endNs int64, cb onSection) []string {
-	sqlDB, err := database.DBConn.DB()
-	if err != nil {
-		return []string{"db handle: " + err.Error()}
-	}
-	emails := gatherEmails(sqlDB, targetID)
-	plan := buildPlan(sqlDB, targetID, emails, include, startNs, endNs)
+	gdb := database.DBConn
+	emails := gatherEmails(gdb, targetID)
+	plan := buildPlan(gdb, targetID, emails, include, startNs, endNs)
 
 	totalWeight := 0
 	for _, s := range plan {

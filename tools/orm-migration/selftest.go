@@ -268,6 +268,43 @@ func runSelfCheck() []string {
 		}
 	}
 
+	// A test may reach an assertion through a local helper, and that is still a
+	// parity test. message_list_tier9_test.go does exactly this: it builds the
+	// parametrized cases in assertUnionAllSiteShape(t, siteID, ...) and forwards
+	// to ormharness.AssertGoldenParametrizedShape. Scanning only for literals at
+	// the assertion call site sees the parameter, not the ID, so the site read
+	// as unproven and gate (f) reported deleted-without-proof.
+	//
+	// The second half is the part that matters: a helper that COMPUTES the ID it
+	// forwards must not vouch for the literal at the call site, because the two
+	// are then not the same string and the test does not assert what the caller
+	// appears to say it does.
+	if dir, err := os.MkdirTemp("", "ormselftest"); err == nil {
+		defer os.RemoveAll(dir)
+		src := "package test\n" +
+			"func viaHelper(t *testing.T, siteID string) {\n" +
+			"\tormharness.AssertGoldenParametrizedShape(t, siteID, nil, nil, nil)\n" +
+			"}\n" +
+			"func viaComputed(t *testing.T, prefix string) {\n" +
+			"\tormharness.AssertGoldenSQL(t, prefix+\"suffix\", nil)\n" +
+			"}\n" +
+			"func TestX(t *testing.T) {\n" +
+			"\tviaHelper(t, \"aaaaaaaaaaaa\")\n" +
+			"\tviaComputed(t, \"bbbbbbbbbbbb\")\n" +
+			"}\n"
+		if err := os.WriteFile(filepath.Join(dir, "h_test.go"), []byte(src), 0o644); err == nil {
+			tested, err := parityTestedIDs(dir)
+			switch {
+			case err != nil:
+				fail("forwarding helper", "parityTestedIDs: %v", err)
+			case !tested["aaaaaaaaaaaa"]:
+				fail("forwarding helper", "an ID passed through a local helper to an assertion was not counted")
+			case tested["bbbbbbbbbbbb"]:
+				fail("forwarding helper", "an ID the helper only concatenated into the real one was counted as asserted")
+			}
+		}
+	}
+
 	// Two identical statements in one file must not collide onto one ID.
 	dup := "package p\nfunc f() { db.Raw(\"SELECT 1 FROM dual\"); db.Raw(\"SELECT 1 FROM dual\") }"
 	d, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", dup, false, nil)

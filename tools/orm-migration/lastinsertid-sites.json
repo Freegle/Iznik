@@ -50,6 +50,13 @@
       "file": "iznik-server-go/message/helper.go",
       "line": 518,
       "sql": "INSERT INTO helper_item_states (replierid, bulkitemid, state) VALUES (?, ?, 'NEW') ON DUPL"
+    },
+    "938d9dc56c71": {
+      "file": "iznik-server-go/tryst/tryst.go",
+      "line": 210,
+      "sql": "INSERT INTO trysts (user1, user2, arrangedfor) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE id ",
+      "addedAfterMergeBase": true,
+      "note": "NOT produced by --regenerate, and deliberately so: at the merge-base commit this statement did NOT use LAST_INSERT_ID - that absence WAS the bug (a duplicate-key hit reported id 0, which CreateTryst returned to the caller). The id-forcing clause was added as a fix on this branch, so a regeneration against the merge base can never find it. Added by hand to keep gate (k) covering the site; it will be produced normally by the next --regenerate run against a commit that contains the fix, and this entry can be dropped then."
     }
   }
 }

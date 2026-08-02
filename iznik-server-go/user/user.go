@@ -2458,14 +2458,32 @@ func PatchUser(c *fiber.Ctx) error {
 			var setClauses []string
 			var setArgs []interface{}
 			settingsJSON = ProcessSettingsUpdate(settingsJSON, targetID, &setClauses, &setArgs)
+			// ORM migration site 941509171a6e (Tier 1 batch review).
+			// ProcessSettingsUpdate appends at most ONE extra clause
+			// ("lastlocation = ?", on a postcode change) - a genuine 2-shape
+			// site, not the N-independent-fields kind PatchModConfig/
+			// PatchSession are. Both shapes are declared in
+			// ormharness/shapes.json and covered by
+			// TestTier1BatchShapes_941509171a6e. Left setClauses/setArgs
+			// untouched (session.go's PatchSession shares
+			// ProcessSettingsUpdate and stays raw/string-based on purpose -
+			// see f85b0b8ed693 - so its signature isn't changed here).
+			assignments := clause.Set{}
+			if len(setClauses) > 0 {
+				assignments = append(assignments, clause.Assignment{
+					Column: clause.Column{Name: "lastlocation"},
+					Value:  setArgs[0],
+				})
+			}
 			// Merge incoming settings into existing rather than replacing,
 			// so partial updates don't wipe unrelated fields.
-			setClauses = append(setClauses, "settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON))")
-			setArgs = append(setArgs, string(settingsJSON))
-			setArgs = append(setArgs, targetID)
+			assignments = append(assignments, clause.Assignment{
+				Column: clause.Column{Name: "settings"},
+				Value:  gorm.Expr("JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON))", string(settingsJSON)),
+			})
 			// Surface a failed write rather than swallowing it and returning 200
 			// (a silent no-op is how "settings won't stick" bugs hide).
-			if res := db.Exec("UPDATE users SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", setArgs...); res.Error != nil {
+			if res := db.Table("users").Clauses(assignments).Where("id = ?", targetID).Updates(map[string]interface{}{}); res.Error != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to update settings")
 			}
 		}

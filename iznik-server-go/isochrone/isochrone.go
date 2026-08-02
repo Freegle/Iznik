@@ -200,14 +200,33 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 	} else {
 		// Both providers unavailable — fall back to location geometry as placeholder.
 		log.Printf("All isochrone providers failed for location %d, using location geometry as fallback", locationid)
-		id, insErr := database.ExecInsertGetID(db, "INSERT IGNORE INTO isochrones (locationid, transport, minutes, polygon) "+
-			"SELECT ?, ?, ?, COALESCE(geometry, ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
+		// ORM migration site 74620d093074 (keep-raw reason stale: INSERT ... SELECT is now a
+		// supported conversion shape via database.InsertSelect - see database/clausebuilders.go and
+		// newsfeed/newsfeed.go's "carry the photo" site, 08d12a748d01, for the established pattern
+		// this follows). This one adds INSERT IGNORE on top: clause.Insert{Modifier: "IGNORE"} was
+		// never the blocked case - only Modifier: "REPLACE" needs the ClauseBuilders["INSERT"]
+		// override (see the sibling INSERT a few lines above, site d91a1a5d6b27, which already
+		// proved plain "INSERT IGNORE INTO ..." renders correctly through GORM's own Insert.Build).
+		// Deliberately NOT clause.OnConflict{DoNothing:true}: with Statement.Schema nil (.Table(),
+		// not .Model()) that renders a dangling "ON DUPLICATE KEY UPDATE" with no column list, which
+		// is invalid SQL - clause.Insert{Modifier: "IGNORE"} is the only correct spelling here.
+		// gorm.WithResult() reads the id from the same sql.Result the INSERT returned, matching the
+		// original ExecInsertGetID's res.LastInsertId() exactly, including staying 0 when INSERT
+		// IGNORE skips a pre-existing row - the isoID == 0 fallback below still depends on that.
+		res := gorm.WithResult()
+		tx := database.InsertSelect(db.Clauses(res, clause.Insert{Modifier: "IGNORE"}), "isochrones",
+			"(locationid, transport, minutes, polygon) "+
+				"SELECT ?, ?, ?, COALESCE(geometry, ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
 			locationid, transport, minutes, utils.SRID, locationid)
-		if insErr != nil {
-			log.Printf("Failed to create fallback isochrone for location %d: %v", locationid, insErr)
+		if tx.Error != nil {
+			log.Printf("Failed to create fallback isochrone for location %d: %v", locationid, tx.Error)
 			return 0
 		}
-		isoID = id
+		if res.Result != nil {
+			if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+				isoID = uint64(lastID)
+			}
+		}
 	}
 
 	if isoID == 0 {

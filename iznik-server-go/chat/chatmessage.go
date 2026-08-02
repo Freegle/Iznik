@@ -1299,12 +1299,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	ctx, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
-	groupIDStr := make([]string, len(groupIDs))
-	for i, gid := range groupIDs {
-		groupIDStr[i] = strconv.FormatUint(gid, 10)
-	}
-	groupIDList := strings.Join(groupIDStr, ",")
-
 	ctxq := ""
 	if ctx > 0 {
 		ctxq = " AND cm.id < " + strconv.FormatUint(ctx, 10)
@@ -1341,6 +1335,21 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	widerReview := user.HasWiderReview(myid)
 
 	// Base query: messages from mod's own groups.
+	//
+	// The four "IN (?)" group-id lists below are bound to groupIDs (a
+	// []uint64) rather than spliced in as a literal comma-joined string. This
+	// is a DELIBERATE BEHAVIOUR CHANGE alongside the ORM conversion, not just
+	// a mechanical rewrite: it changes the rendered statement text from
+	// "IN (1,2,3)" to native "IN (?,?,?)" placeholders (GORM's slice-bind
+	// expansion), same category as this file's own 62a2f6fa4bdb and
+	// isochrone/message.go's markPinned (site 032b7f1b9500) - each has an
+	// approved-diff entry in tools/orm-migration/approved-diffs.json
+	// recording exactly this kind of change; this site's two entries are
+	// 5da587b4234d (this branch) and 1ff296c8656c (the widerReview branch
+	// below, which shares this baseQuery). groupIDs here is always the
+	// calling moderator's own memberships (never external input), so this
+	// was not an exploitable injection in practice, but binding it is
+	// strictly safer and removes the pattern.
 	baseQuery := "SELECT DISTINCT cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, " +
 		"cm.refmsgid, cm.reportreason, " +
 		"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, " +
@@ -1350,8 +1359,8 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"0 AS widerchatreview, " +
 		"COALESCE(cmh.userid, 0) AS held_by, cmh.timestamp AS held_timestamp, " +
 		"cme.msgid, " +
-		"COALESCE((SELECT m1.groupid FROM memberships m1 WHERE m1.userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND m1.groupid IN (" + groupIDList + ") LIMIT 1), 0) AS groupid, " +
-		"COALESCE((SELECT m2.groupid FROM memberships m2 WHERE m2.userid = cm.userid AND m2.groupid IN (" + groupIDList + ") LIMIT 1), 0) AS groupidfrom " +
+		"COALESCE((SELECT m1.groupid FROM memberships m1 WHERE m1.userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND m1.groupid IN (?) LIMIT 1), 0) AS groupid, " +
+		"COALESCE((SELECT m2.groupid FROM memberships m2 WHERE m2.userid = cm.userid AND m2.groupid IN (?) LIMIT 1), 0) AS groupidfrom " +
 		"FROM chat_messages cm " +
 		"INNER JOIN chat_rooms cr ON cr.id = cm.chatid " +
 		"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
@@ -1361,11 +1370,11 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq +
 		" AND (" +
 		// User2Mod: group is one of mod's groups
-		"  (cr.chattype = ? AND cr.groupid IN (" + groupIDList + "))" +
+		"  (cr.chattype = ? AND cr.groupid IN (?))" +
 		// User2User case 1: recipient (other user) is on one of mod's groups
-		"  OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND groupid IN (" + groupIDList + ")))" +
+		"  OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND groupid IN (?)))" +
 		// User2User case 2: recipient has NO memberships, sender is on one of mod's groups (orphan safety net)
-		"  OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND EXISTS (SELECT 1 FROM memberships WHERE userid = cm.userid AND groupid IN (" + groupIDList + ")))" +
+		"  OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND EXISTS (SELECT 1 FROM memberships WHERE userid = cm.userid AND groupid IN (?)))" +
 		")"
 
 	var msgs []reviewRow
@@ -1401,16 +1410,67 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
 			"AND cmh.id IS NULL " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (" + groupIDList + "))" + ctxq
+			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
 
-		result := db.Raw("SELECT * FROM ("+baseQuery+widerQuery+") combined GROUP BY id ORDER BY widerchatreview ASC, id ASC LIMIT ?",
-			utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2USER, limit).Scan(&msgs)
+		// ORM migration site 1ff296c8656c (Batch C keep-raw review, revisited).
+		// Top-level UNION wrapped as a derived table with a trailing GROUP
+		// BY/ORDER BY/LIMIT that applies to the combined result, not either
+		// arm - same BuildClauses={"SELECT"} mechanism as this file's other
+		// UNION conversions (see 33ad97a3417c above and modconfig.go's
+		// e9ea468dab80): the whole "SELECT * FROM (...) combined GROUP BY
+		// ... ORDER BY ... LIMIT ?" text goes to .Select() as one fragment,
+		// so GORM renders only the SELECT clause and none of .Table()'s
+		// implied FROM. Kept as one text blob (rather than decomposed into
+		// native Joins/Where) so this reuses the exact same baseQuery and
+		// widerQuery variables as the else-branch below - a single source of
+		// truth for the query text, not two hand-maintained copies that
+		// could drift apart.
+		//
+		// The manifest's own extracted goldenSql for this site is
+		// "{{expr}}{{expr}}" (baseQuery/widerQuery are runtime-built Go
+		// variables, not extractor-foldable literals), so there is nothing
+		// for Layer 1 to compare against out of the box. Same fix as
+		// 62a2f6fa4bdb above (see that site's approved-diff entry): an
+		// approved-diff entry for 1ff296c8656c in
+		// tools/orm-migration/approved-diffs.json records the real
+		// post-conversion statement text, so Layer 1 (TestGolden_1ff296c8656c,
+		// test/orm_reviewqueue_test.go) proves this after all. It also has a
+		// Layer 2 result-parity test (TestLayer2_1ff296c8656c, same file) -
+		// the manifest's own keep-raw reason asked for that extra scrutiny
+		// given the query's size, on top of the text match.
+		tx1ff296c8656c := db.Table("chat_messages").Select(
+			"* FROM ("+baseQuery+widerQuery+") combined GROUP BY id ORDER BY widerchatreview ASC, id ASC LIMIT ?",
+			groupIDs, groupIDs,
+			utils.CHAT_TYPE_USER2MOD, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			groupIDs,
+			limit)
+		tx1ff296c8656c.Statement.BuildClauses = []string{"SELECT"}
+		result := tx1ff296c8656c.Scan(&msgs)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query wider chat review queue for user %d: %v", myid, result.Error)
 		}
 	} else {
-		result := db.Raw(baseQuery+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
-			utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2USER, limit).Scan(&msgs)
+		// ORM migration site 5da587b4234d (Batch C keep-raw review,
+		// revisited). Non-wider twin of 1ff296c8656c above, sharing baseQuery
+		// - same BuildClauses={"SELECT"} mechanism, same reasoning: the
+		// manifest goldenSql for this site is "{{expr}} GROUP BY cm.id ORDER
+		// BY cm.id ASC LIMIT ?", so there is no fixed golden text to compare
+		// against out of the box. An approved-diff entry for 5da587b4234d in
+		// tools/orm-migration/approved-diffs.json records the real
+		// post-conversion statement text, proved by Layer 1
+		// (TestGolden_5da587b4234d, test/orm_reviewqueue_test.go), plus a
+		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file).
+		tx5da587b4234d := db.Table("chat_messages").Select(
+			strings.TrimPrefix(baseQuery, "SELECT ")+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
+			groupIDs, groupIDs,
+			utils.CHAT_TYPE_USER2MOD, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			limit)
+		tx5da587b4234d.Statement.BuildClauses = []string{"SELECT"}
+		result := tx5da587b4234d.Scan(&msgs)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query chat review queue for user %d: %v", myid, result.Error)
 		}
@@ -1436,14 +1496,22 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	}
 	heldUsers := make(map[uint64]heldUserInfo)
 	if len(heldByUserIDs) > 0 {
-		ids := make([]string, 0, len(heldByUserIDs))
+		// ORM migration site 62a2f6fa4bdb (Tier 1 batch review). Was a literal
+		// (non-bind) IN-list, same shape markPinned had before it was
+		// switched to a bind (site 032b7f1b9500, isochrone/message.go) -
+		// swept into "INSERT id read back" only because getReviewQueue's
+		// other raw sites (the review-queue UNION itself) live in the same
+		// function; this statement is unrelated to those and reads no id.
+		ids := make([]uint64, 0, len(heldByUserIDs))
 		for id := range heldByUserIDs {
-			ids = append(ids, strconv.FormatUint(id, 10))
+			ids = append(ids, id)
 		}
 		var heldInfos []heldUserInfo
-		db.Raw("SELECT u.id, u.fullname AS name, " +
-			"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email " +
-			"FROM users u WHERE u.id IN (" + strings.Join(ids, ",") + ")").Scan(&heldInfos)
+		db.Table("users u").
+			Select("u.id, u.fullname AS name, "+
+				"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email").
+			Where("u.id IN ?", ids).
+			Scan(&heldInfos)
 		for _, h := range heldInfos {
 			heldUsers[h.ID] = h
 		}

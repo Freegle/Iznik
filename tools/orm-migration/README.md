@@ -38,10 +38,26 @@ go run . -root ../../iznik-server-go -out manifest.json -repo ../..
 (`-root`, `-out` and `-repo` all default to the right thing when run from this
 directory, so `go run .` alone is normally enough.) It re-scans the source,
 regenerates every derived field (file, line, SQL text, complexity, wave,
-mysqlisms, etc.), and **merges forward** the human-owned fields (`status`,
+mysqlisms, etc.), and **merges forward** the reviewed fields (`status`,
 `reason`, `approvedDiff`) from whatever is currently at `-out` by ID, so
 re-running it never resets a reviewed decision. Run it, review the diff, and
 commit `manifest.json` whenever you convert, retire or re-triage a site.
+
+**Do not hand-edit a site's `status` to `converted`.** The extractor sets that
+itself: a site whose raw SQL is gone from the code *and* which a parity test
+names (see Gate 2 below) is promoted automatically on the next run. Writing it
+by hand does nothing durable - the next regeneration derives it again - and it
+is actively misleading, because the one case where the hand-edit changes the
+output is the case where no parity test exists, which is exactly the case the
+status is supposed to flag.
+
+If a site you converted is still not showing as `converted` after a regenerate,
+the missing thing is the parity test, or the extractor cannot see the assertion
+you used - check `parityAssertions` in `extract.go`, and see gate (m). Reach for
+that before reaching for the JSON. The one time this map fell behind the harness,
+68 sites with real passing tests reported as unproven, and the natural reading -
+"the manifest is stale, I should fix up the statuses" - was wrong in a way that
+would have papered over the actual bug.
 
 ## Gate 1: the CI inventory ratchet (`ci-ratchet.sh`)
 
@@ -80,12 +96,34 @@ It needs `go` and `jq` on `PATH` and works from any `cwd`. Output is prefixed
 
 Plan 7.2, Layer 1: a site cannot be marked `converted` unless a parity test
 bearing its ID exists and passes ("the extractor checks test existence
-mechanically"). This is a separate gate from `ci-ratchet.sh` above — it needs
-the parity-test harness (`iznik-server-go/ormharness`, Layers 1–4 of plan 7.2)
-to exist first, and is tracked as its own piece of work. Once wired up, it
-runs alongside Gate 1 in CI. Do not mark a site `converted` in the manifest by
-hand ahead of that; until Gate 2 exists, treat that status as reviewer-enforced
-only.
+mechanically"). **This is now wired up and enforced**, in three places:
+
+- `extract.go`'s `parityTestedIDs` walks every `_test.go` file under the source
+  root and records which site IDs are passed as string literals to a harness
+  assertion. It parses rather than greps, deliberately: matching the ID anywhere
+  in a file let a *comment* saying "site abc123 is deliberately not converted"
+  satisfy the gate asserting that it was.
+- A site whose raw SQL is gone and which such a test names is promoted to
+  `converted` automatically. One that vanished with no test to vouch for it
+  keeps its old status, so **ratchet gate (f)** can refuse it — "it disappeared"
+  is never a route out of the inventory.
+- **Ratchet gate (m)** checks `parityAssertions` against the harness's real
+  surface: every exported `ormharness` assertion taking a `siteID` must be
+  listed. Without that, adding an assertion silently un-proves every site using
+  it (see the note under "Running the extractor").
+
+A test may reach an assertion through a local helper of its own rather than
+calling `ormharness` directly — `message_list_tier9_test.go` builds its
+parametrized cases in `assertUnionAllSiteShape(t, siteID, ...)` and forwards.
+`forwardingHelpers` resolves those to a fixed point, so such a test still counts.
+It is deliberately narrow: the forwarded argument must be an identifier naming a
+parameter of the enclosing function, because an ID the helper *computes* is not
+the ID written at the call site, and crediting the literal would vouch for
+something the test never asserted.
+
+`AssertHintSurvivesInRawSQL` is intentionally *not* a parity assertion: it proves
+an index hint survives in a statement that is **staying raw**, so counting it
+would promote a keep-raw site on the strength of a test asserting the opposite.
 
 ## Burn-down reporting (`burndown.mjs`)
 

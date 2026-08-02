@@ -1395,6 +1395,160 @@
         "name": "communityevents.heldby",
         "sql": "UPDATE communityevents SET heldby = ? WHERE heldby = ?"
       }
+    ],
+    "5adca7e5928e": [
+      {
+        "name": "LegacySeen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND rr.status != 'held' AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "LegacyUnseen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND rr.status != 'held' AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "SandwichSeen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND rr.status != 'held' AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "SandwichUnseen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND rr.status != 'held' AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      }
+    ],
+    "73c548fa7cce": [
+      {
+        "name": "Legacy",
+        "sql": "SELECT COUNT(DISTINCT ms.msgid) FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "Sandwich",
+        "sql": "SELECT COUNT(DISTINCT ms.msgid) FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      }
+    ],
+    "31fea9e6f321": [
+      {
+        "name": "NoGroup",
+        "sql": "SELECT COALESCE(SUM(GrossAmount), 0) AS raised FROM users_donations WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01') AND Payer != ? AND Payer != ?"
+      },
+      {
+        "name": "WithGroup",
+        "sql": "SELECT COALESCE(SUM(GrossAmount), 0) AS raised FROM users_donations INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ? WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01') AND Payer != ? AND Payer != ?"
+      }
+    ],
+    "bc3af5374c0c": [
+      {
+        "name": "NoCategory",
+        "sql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry)))) / 1000 AS dist_km FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id IN (?) AND category IS NOT NULL AND (ST_Dimension(jobs.geometry) < 2 OR ST_Area(jobs.geometry) / ST_Area(ST_SRID(POLYGON(LINESTRING(POINT(-0.600000, 51.000000), POINT(-0.600000, 52.000000), POINT(0.400000, 52.000000), POINT(0.400000, 51.000000), POINT(-0.600000, 51.000000))), 3857)) < 2) ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT 50"
+      },
+      {
+        "name": "WithCategory",
+        "sql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry)))) / 1000 AS dist_km FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id IN (?) AND category REGEXP ? AND (ST_Dimension(jobs.geometry) < 2 OR ST_Area(jobs.geometry) / ST_Area(ST_SRID(POLYGON(LINESTRING(POINT(-0.600000, 51.000000), POINT(-0.600000, 52.000000), POINT(0.400000, 52.000000), POINT(0.400000, 51.000000), POINT(-0.600000, 51.000000))), 3857)) < 2) ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT 50"
+      }
+    ],
+    "a5e382bd3536": [
+      {
+        "name": "NoGroups",
+        "sql": "SELECT messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_spatial WHERE messages_spatial.msgid = ? LIMIT 1"
+      },
+      {
+        "name": "WithGroups",
+        "sql": "SELECT messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_spatial WHERE messages_spatial.msgid = ? AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN (?) AND mg.collection = 'Approved' AND mg.deleted = 0) LIMIT 1"
+      }
+    ],
+    "941509171a6e": [
+      {
+        "name": "NoLastLocation",
+        "sql": "UPDATE users SET settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON)) WHERE id = ?"
+      },
+      {
+        "name": "WithLastLocation",
+        "sql": "UPDATE users SET lastlocation = ?, settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON)) WHERE id = ?"
+      }
+    ],
+    "99713f48c505": [
+      {
+        "name": "SubjectOnly",
+        "sql": "UPDATE messages SET editedby = NULL, subject = ? WHERE id = ?"
+      },
+      {
+        "name": "TextbodyOnly",
+        "sql": "UPDATE messages SET editedby = NULL, textbody = ? WHERE id = ?"
+      },
+      {
+        "name": "Both",
+        "sql": "UPDATE messages SET editedby = NULL, subject = ?, textbody = ? WHERE id = ?"
+      }
+    ],
+    "1571f00a4ce8": [
+      {
+        "name": "Group",
+        "sql": "INSERT INTO `groups_images` (`groupid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "INSERT INTO `newsletters_images` (`articleid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "INSERT INTO `communityevents_images` (`eventid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "INSERT INTO `volunteering_images` (`opportunityid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "INSERT INTO `chat_images` (`chatmsgid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "User",
+        "sql": "INSERT INTO `users_images` (`userid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "INSERT INTO `newsfeed_images` (`newsfeedid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Story",
+        "sql": "INSERT INTO `users_stories_images` (`storyid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "INSERT INTO `noticeboards_images` (`noticeboardid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      }
+    ],
+    "b0445c89f59e": [
+      {
+        "name": "Message",
+        "sql": "INSERT INTO `messages_attachments` (`msgid`, externaluid, externalmods, hash) VALUES (?, ?, ?, ?)"
+      }
+    ],
+    "7653c7a2e4ed": [
+      {
+        "name": "NoInnerBound",
+        "sql": "UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) WHERE mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(mr.polygon, g.polyindex) AND NOT ST_Within(mr.polygon, g.polyindex)"
+      },
+      {
+        "name": "WithInnerBound",
+        "sql": "UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? SET mr.polygon = ST_Difference(mr.polygon, g.polyindex), mr.inner_bound = NULL WHERE mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(mr.polygon, g.polyindex) AND NOT ST_Within(mr.polygon, g.polyindex)"
+      }
+    ],
+    "568a5645fba7": [
+      {
+        "name": "NarrowNoGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END AS bucket\n\t\t    FROM rippling_reply_attribution rra\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      },
+      {
+        "name": "WideNoGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           COALESCE(rra.attribution, CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END) AS bucket\n\t\t    FROM rippling_reply_attribution rra\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      },
+      {
+        "name": "NarrowWithGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END AS bucket\n\t\t    FROM rippling_reply_attribution rra JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      },
+      {
+        "name": "WideWithGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           COALESCE(rra.attribution, CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END) AS bucket\n\t\t    FROM rippling_reply_attribution rra JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      }
     ]
   }
 }

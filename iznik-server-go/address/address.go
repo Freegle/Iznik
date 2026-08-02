@@ -5,6 +5,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm/clause"
 	"strconv"
 )
 
@@ -41,15 +42,28 @@ func Create(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Use REPLACE INTO so that if (userid, pafid) already exists, it replaces the row. Read the
-	// id from the write result's LastInsertId: REPLACE is DELETE+INSERT on conflict so the new
-	// row has a fresh AUTO_INCREMENT id, and a "SELECT id ... WHERE userid AND pafid" here is
-	// routed to a read replica under the read/write split and can return a stale id or none
-	// (Discourse 9832 class).
-	id, err := database.ExecInsertGetID(db,
-		"REPLACE INTO users_addresses (userid, pafid, instructions, lat, lng) VALUES (?, ?, ?, ?, ?)",
-		myid, req.PafID, req.Instructions, req.Lat, req.Lng)
-	if err != nil {
+	// id back from the same sql.Result the write returned (GORM's "@id" map key): REPLACE is
+	// DELETE+INSERT on conflict so the new row has a fresh AUTO_INCREMENT id, and a "SELECT id ...
+	// WHERE userid AND pafid" here is routed to a read replica under the read/write split and can
+	// return a stale id or none (Discourse 9832 class).
+	// ORM migration site 990cc13deb7e (keep-raw reason stale: database.RegisterCustomClauseBuilders
+	// now overrides the INSERT clause builder so clause.Insert{Modifier: "REPLACE"} renders a clean
+	// "REPLACE INTO" - see database/clausebuilders.go, and e.g. spammers/spammers.go's handleSpammer
+	// for an existing conversion of the same shape).
+	row := map[string]interface{}{
+		"userid":       myid,
+		"pafid":        req.PafID,
+		"instructions": req.Instructions,
+		"lat":          req.Lat,
+		"lng":          req.Lng,
+	}
+	if err := db.Table("users_addresses").Clauses(clause.Insert{Modifier: "REPLACE"}).Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create address")
+	}
+
+	var id uint64
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		id = uint64(idInt64)
 	}
 
 	return c.JSON(fiber.Map{"id": id})

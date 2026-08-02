@@ -1008,7 +1008,26 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		}
 		var anyReach int
 		// rippling_reach may not exist until the reach engine (PR A) ships → treat as inactive.
-		_ = db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach WHERE msgid IN (?))", probeIDs).Scan(&anyReach).Error
+		//
+		// ORM migration site c9ff161437b9. A bare SELECT EXISTS(...) with no
+		// top-level FROM - one scalar expression. GORM's query callback always
+		// registers a FROM clause, but Statement.Build only renders the clause
+		// NAMES it is given, so restricting BuildClauses to {"SELECT"} emits the
+		// SELECT alone and leaves the registered-but-unwalked FROM out. Proven in
+		// ormharness/bareexists_test.go and used by the other sites in this
+		// category (amp.go, chatmessage.go's rippled-in probes).
+		//
+		// An earlier version of this conversion selected from a one-row derived
+		// table instead ("FROM (SELECT 1) AS d") and recorded the added FROM as an
+		// approved diff. It worked, but it was the worse answer: it changed the
+		// executed SQL to avoid a limitation that turned out not to exist, and an
+		// approved diff should record a divergence we could not avoid, not one we
+		// chose. This renders byte-identically to the original, so the site needs
+		// no approved diff at all.
+		tx := db.Table("rippling_reach").
+			Select("EXISTS(SELECT 1 FROM rippling_reach WHERE msgid IN ?)", probeIDs)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		_ = tx.Scan(&anyReach).Error
 		active = anyReach == 1
 	}
 
@@ -2572,16 +2591,32 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
 	// viewers inside the clipped-out area, so it is NULLed in the SAME statement. The
 	// outer bound is left stale-loose (safe) and the next expander tick re-derives both.
-	innerClear := ""
-	if rippling.ReachBoundsReady(db) {
-		innerClear = ", mr.inner_bound = NULL"
+	// ORM migration site 7653c7a2e4ed (Tier 3 shapes / wave 5 runtime-varying
+	// review). The optional ", mr.inner_bound = NULL" SET fragment gives this
+	// statement exactly 2 real rendered forms - "NoInnerBound" and
+	// "WithInnerBound" below, both proved in TestOrmWave5_7653c7a2e4ed
+	// (AssertGoldenShapes; declared shapes live in ormharness/shapes.json). An
+	// explicit ordered clause.Set (not a map) keeps mr.polygon ahead of
+	// mr.inner_bound the same way the source text did, even though the two
+	// assignments are independent and the order is not actually load-bearing.
+	// `groups` needs its own backticks: GORM only quotes identifiers it
+	// constructs itself, not identifiers inside a raw Table()/Where() string,
+	// and "groups" is a MySQL reserved word.
+	set := clause.Set{
+		{Column: clause.Column{Table: "mr", Name: "polygon"}, Value: gorm.Expr("ST_Difference(mr.polygon, g.polyindex)")},
 	}
-	db.Exec("UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? "+
-		"SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)"+innerClear+" "+
-		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
-		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-		"AND ST_Intersects(mr.polygon, g.polyindex) "+
-		"AND NOT ST_Within(mr.polygon, g.polyindex)", gid, msgid)
+	if rippling.ReachBoundsReady(db) {
+		set = append(set, clause.Assignment{
+			Column: clause.Column{Table: "mr", Name: "inner_bound"}, Value: gorm.Expr("NULL"),
+		})
+	}
+	db.Table("rippling_reach mr JOIN `groups` g ON g.id = ?", gid).
+		Clauses(set).
+		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
+			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+			"AND ST_Intersects(mr.polygon, g.polyindex) "+
+			"AND NOT ST_Within(mr.polygon, g.polyindex)", msgid).
+		Updates(map[string]interface{}{})
 
 	// Reach wholly inside the rejected group → no area remains: drop the reach row.
 	// ORM migration site d4f71ea17664 (Tier 1 spatial review). GORM's Delete
@@ -2936,18 +2971,24 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
 		Order("id DESC").Limit(1).Scan(&old)
 	if old.Oldsubject != nil || old.Oldtext != nil {
-		clauses := []string{"editedby = NULL"}
-		args := []interface{}{}
+		// ORM migration site 99713f48c505 (Tier 1 batch review). The guard
+		// above means at least one of Oldsubject/Oldtext is set, so this is a
+		// genuine 3-shape site (SubjectOnly, TextbodyOnly, Both), not an
+		// N-independent-fields one - small enough for shapes.json, unlike
+		// applyPatchMessageCore's 8-field SET a few hundred lines down (site
+		// e9f2c662be69), which stays raw. All 3 shapes are declared in
+		// ormharness/shapes.json and covered by
+		// TestTier1BatchShapes_99713f48c505.
+		assignments := clause.Set{
+			{Column: clause.Column{Name: "editedby"}, Value: gorm.Expr("NULL")},
+		}
 		if old.Oldsubject != nil {
-			clauses = append(clauses, "subject = ?")
-			args = append(args, *old.Oldsubject)
+			assignments = append(assignments, clause.Assignment{Column: clause.Column{Name: "subject"}, Value: *old.Oldsubject})
 		}
 		if old.Oldtext != nil {
-			clauses = append(clauses, "textbody = ?")
-			args = append(args, *old.Oldtext)
+			assignments = append(assignments, clause.Assignment{Column: clause.Column{Name: "textbody"}, Value: *old.Oldtext})
 		}
-		args = append(args, req.ID)
-		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+		db.Table("messages").Clauses(assignments).Where("id = ?", req.ID).Updates(map[string]interface{}{})
 
 		// Reverting restored the previous subject/body, so whichever of the keyword index
 		// / vector embedding depend on the restored field(s) are out of sync again - drop
@@ -3499,6 +3540,76 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 	return myid, nil
 }
 
+// effLat/effLng are the CALLER's already-resolved coordinates, i.e. after
+// the Locationid-driven DB lookup at site 5b7a006dd0a5 has already run (if
+// it was going to) - this function only assembles the SET list from
+// whatever the caller resolved, it does not decide whether that lookup
+// happens. Locationid/Lat/Lng's cluster of 3 booleans (each present or not
+// in the final SET list) has 8 combinations; the 7 non-empty ones are all
+// reachable and are exactly what message_fieldwise_tier9_test.go declares
+// as the group's forms:
+//
+//	LocationidOnly, LatOnly, LngOnly, LocationidLat, LocationidLng, LatLng,
+//	LocationidLatLng
+//
+// (the 8th, all-absent, coincides with the site's "empty" case when no
+// other field is set either, so it needs no form of its own).
+//
+// buildApplyPatchMessageCoreUpdateSet assembles the messages UPDATE's SET
+// list as a clause.Set (a slice of clause.Assignment, gorm.io/gorm/clause),
+// one assignment appended per field the request actually supplies - the same
+// field-by-field branching the string-concatenation version this replaced
+// used, just emitting an assignment instead of a "col = ?" text fragment +
+// bound arg. clause.Set is order-preserving (it is a plain slice; Build()
+// walks it in slice order, see gorm.io/gorm/clause/set.go), so the
+// left-to-right assignment order MySQL evaluates a SET list in is exactly
+// the order fields are appended below - unchanged from the string version.
+//
+// ORM migration site 2de07c2af78b / e9f2c662be69. Previously kept raw with
+// the reasoning that a dynamic SET list built by string concatenation has
+// 2^n possible shapes and so cannot be a fixed GORM chain - true for a FIXED
+// chain, but irrelevant here: the chain itself is fixed
+// (.Table("messages").Where(...).Clauses(set).Updates(...)), only the
+// PRE-BUILT clause.Set slice varies at runtime, exactly the way the SQL
+// string used to. Proven against the identical fieldwise.json goldens
+// already recorded for the string version (message_fieldwise_tier9_test.go),
+// via ormharness.AssertGoldenFieldwise - same n+2 cases, same golden SQL per
+// case, now rendered by GORM instead of by hand.
+func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *string, availablenow *int, locationid *uint64, effLat, effLng *float64) clause.Set {
+	var set clause.Set
+
+	if subject != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "subject"}, Value: *subject})
+	}
+	if textbody != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "textbody"}, Value: *textbody})
+	}
+	if msgType != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "type"}, Value: *msgType})
+	}
+	if availablenow != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "availablenow"}, Value: *availablenow})
+	}
+	if deadline != nil {
+		if *deadline == "" || *deadline == "null" {
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: gorm.Expr("NULL")})
+		} else {
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: *deadline})
+		}
+	}
+	if locationid != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "locationid"}, Value: *locationid})
+	}
+	if effLat != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "lat"}, Value: *effLat})
+	}
+	if effLng != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "lng"}, Value: *effLng})
+	}
+
+	return set
+}
+
 // applyPatchMessageCore performs the edit on a message without writing the HTTP response.
 // Returns non-nil on failure. Callers are responsible for writing the success response.
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
@@ -3567,36 +3678,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		oldImagesJSON = &s
 	}
 
-	// Build a single UPDATE with all changed fields.
-	setClauses := []string{}
-	args := []interface{}{}
-
-	if req.Subject != nil {
-		setClauses = append(setClauses, "subject = ?")
-		args = append(args, *req.Subject)
-	}
-	if req.Textbody != nil {
-		setClauses = append(setClauses, "textbody = ?")
-		args = append(args, *req.Textbody)
-	}
+	// Build a single UPDATE with all changed fields - see
+	// buildApplyPatchMessageCoreUpdateSet above (site 2de07c2af78b /
+	// e9f2c662be69) for the SET list assembly itself, factored out for
+	// fieldwise proof and built as a dynamic clause.Set.
 	if req.Type != nil {
-		setClauses = append(setClauses, "type = ?")
-		args = append(args, *req.Type)
 		// also update messages_groups.msgtype.
 		// ORM migration site 69685398ad05 (wave 2).
 		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
-	}
-	if req.Availablenow != nil {
-		setClauses = append(setClauses, "availablenow = ?")
-		args = append(args, *req.Availablenow)
-	}
-	if req.Deadline != nil {
-		if *req.Deadline == "" || *req.Deadline == "null" {
-			setClauses = append(setClauses, "deadline = NULL")
-		} else {
-			setClauses = append(setClauses, "deadline = ?")
-			args = append(args, *req.Deadline)
-		}
 	}
 	// Resolve location name to locationid if provided.
 	if req.Location != nil && *req.Location != "" && (req.Locationid == nil || *req.Locationid == 0) {
@@ -3628,10 +3717,6 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			req.Locationid = &nearest.ID
 		}
 	}
-	if req.Locationid != nil {
-		setClauses = append(setClauses, "locationid = ?")
-		args = append(args, *req.Locationid)
-	}
 	// Effective coordinates for this edit. Use the coords the client sent; but if the
 	// location changed without matching coords, derive lat/lng from the chosen location.
 	// Without this a location-only edit sets locationid yet leaves lat/lng stale or NULL,
@@ -3650,18 +3735,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			effLng = llng
 		}
 	}
-	if effLat != nil {
-		setClauses = append(setClauses, "lat = ?")
-		args = append(args, *effLat)
-	}
-	if effLng != nil {
-		setClauses = append(setClauses, "lng = ?")
-		args = append(args, *effLng)
-	}
 
-	if len(setClauses) > 0 {
-		args = append(args, req.ID)
-		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
+	// ORM migration site 2de07c2af78b (see buildApplyPatchMessageCoreUpdateSet above).
+	if set := buildApplyPatchMessageCoreUpdateSet(req.Subject, req.Textbody, req.Type, req.Deadline, req.Availablenow, req.Locationid, effLat, effLng); len(set) > 0 {
+		db.Table("messages").Where("id = ?", req.ID).Clauses(set).Updates(map[string]interface{}{})
 	}
 
 	// Keep the spatial index point in sync when an already-indexed message's location
@@ -4801,12 +4878,19 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	// could go live with no lat/lng and be undiscoverable (Discourse 9865). If nothing
 	// resolves (no locationid and no lastlocation), lat/lng stay NULL and
 	// ContentCheckService holds the post for a moderator to add a postcode.
-	db.Exec("UPDATE messages m "+
-		"JOIN users u ON u.id = ? "+
-		"JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation) "+
-		"SET m.locationid = l.id, m.lat = l.lat, m.lng = l.lng "+
-		"WHERE m.id = ? AND (m.lat IS NULL OR m.lng IS NULL)",
-		myid, newMsgID)
+	// ORM migration site 8c15ce918aa2 (Tier 1 batch review). Table()'s argument
+	// passes through unquoted once it contains a space, so the verbatim JOIN
+	// text travels with it; the column-to-column assignments go through an
+	// explicit clause.Set, the same shape pinned by
+	// ormharness/updatejoin_replace_test.go's TestUpdateJoin_TwoJoinsWithColumnValues.
+	db.Table("messages m JOIN users u ON u.id = ? JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation)", myid).
+		Clauses(clause.Set{
+			{Column: clause.Column{Table: "m", Name: "locationid"}, Value: clause.Column{Table: "l", Name: "id"}},
+			{Column: clause.Column{Table: "m", Name: "lat"}, Value: clause.Column{Table: "l", Name: "lat"}},
+			{Column: clause.Column{Table: "m", Name: "lng"}, Value: clause.Column{Table: "l", Name: "lng"}},
+		}).
+		Where("m.id = ? AND (m.lat IS NULL OR m.lng IS NULL)", newMsgID).
+		Updates(map[string]interface{}{})
 	// Do NOT insert into messages_spatial here — drafts must not appear in
 	// browse/search results. Spatial index is populated by handleJoinAndPost
 	// after the message is submitted to a group (matching V1 behaviour).

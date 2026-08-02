@@ -19,16 +19,21 @@ package test
 // first time round, giving 4 real shapes each rather than 1; those are
 // declared and covered the same way as every other shape here.
 //
-// One site named in the same sweep, rippling/metrics.go's reply_source_split
-// (568a5645fba7), is NOT converted: it calls the shared, independently
-// unit-tested ReplySourceSplitSQL string builder, and reproducing its logic
-// here would duplicate that tested source of truth rather than prove
-// anything about it. See the keep-raw.json entry for that site.
+// rippling/metrics.go's reply_source_split (568a5645fba7) WAS converted,
+// despite an earlier note here that it could not be: the shared
+// ReplySourceSplitSQL string builder's attribution-channel CASE expression
+// was pulled into its own helper, replySourceInnerFrom, which both
+// ReplySourceSplitSQL (still the raw-SQL form's source of truth, still
+// covered by rippling/metrics_test.go byte-for-byte) and this site's GORM
+// chain now call - so the OUTER aggregation (fixed column names, no logic of
+// its own) is what moved into Select/Group/Order, not a reimplementation of
+// the tested part. See rippling/metrics.go for the production code.
 
 import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/ormharness"
+	"github.com/freegle/iznik-server-go/rippling"
 	"gorm.io/gorm"
 )
 
@@ -650,6 +655,46 @@ func TestTier3Shapes_2ad46344c8b2(t *testing.T) {
 		}}
 	}
 	ormharness.AssertGoldenShapes(t, "2ad46344c8b2", shapes)
+}
+
+// doCreate's two raw INSERTs split on cfg.HasContentType: every typeConfigs
+// entry except Message has a NOT NULL contenttype column, so site
+// 1571f00a4ce8 (WITH contenttype) is reachable from the 9 non-Message
+// entries and site b0445c89f59e (WITHOUT it) only from Message - see
+// image.go's typeConfigs and doCreate.
+func TestTier3Shapes_1571f00a4ce8(t *testing.T) {
+	var shapes []ormharness.Shape
+	for _, e := range doRotateTables {
+		if e.name == "Message" {
+			continue // no contenttype column: covered by TestTier3Shapes_b0445c89f59e below
+		}
+		e := e
+		shapes = append(shapes, ormharness.Shape{Name: e.name, Build: func(tx *gorm.DB) *gorm.DB {
+			row := map[string]interface{}{
+				e.idcol:        uint64(1),
+				"externaluid":  "abc123",
+				"externalmods": "{}",
+				"hash":         "deadbeef",
+				"contenttype":  gorm.Expr("'image/jpeg'"),
+			}
+			return tx.Table("`" + e.table + "`").Create(row)
+		}})
+	}
+	ormharness.AssertGoldenShapes(t, "1571f00a4ce8", shapes)
+}
+
+func TestTier3Shapes_b0445c89f59e(t *testing.T) {
+	ormharness.AssertGoldenShapes(t, "b0445c89f59e", []ormharness.Shape{
+		{Name: "Message", Build: func(tx *gorm.DB) *gorm.DB {
+			row := map[string]interface{}{
+				"msgid":        uint64(1),
+				"externaluid":  "abc123",
+				"externalmods": "{}",
+				"hash":         "deadbeef",
+			}
+			return tx.Table("`messages_attachments`").Create(row)
+		}},
+	})
 }
 
 // --- location/location.go: SearchLocations typeahead + Typeahead -----------
@@ -1410,6 +1455,37 @@ func TestTier3Shapes_10ee37c98574(t *testing.T) {
 	})
 }
 
+// --- rippling/metrics.go: Metrics reply_source_split (568a5645fba7) --------
+//
+// 4 shapes: wide (whether the graded-attribution column is read) crossed
+// with whether ?groupid= scopes the window to one origin group. The
+// attribution-channel CASE expression itself is not reproduced here - both
+// this chain and ReplySourceSplitSQL call the shared
+// rippling.ReplySourceInnerFrom, so what is being proven is that the OUTER
+// aggregation (Select/Group/Order) reproduces the statement
+// ReplySourceSplitSQL builds around whatever ReplySourceInnerFrom returns,
+// not a hand-copied re-derivation of the CASE logic that could silently
+// drift from it.
+func TestTier3Shapes_568a5645fba7(t *testing.T) {
+	srcGroupJoin := " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
+	selectCols := "day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, " +
+		"SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_reach') AS ripple_reach, " +
+		"SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown"
+	build := func(wide bool, srcGroup string, args ...interface{}) func(tx *gorm.DB) *gorm.DB {
+		return func(tx *gorm.DB) *gorm.DB {
+			return find(tx.Table(rippling.ReplySourceInnerFrom(wide, srcGroup), args...).
+				Select(selectCols).
+				Group("day").Order("day DESC"))
+		}
+	}
+	ormharness.AssertGoldenShapes(t, "568a5645fba7", []ormharness.Shape{
+		{Name: "NarrowNoGroup", Build: build(false, "", "2026-01-01", "2026-02-01")},
+		{Name: "WideNoGroup", Build: build(true, "", "2026-01-01", "2026-02-01")},
+		{Name: "NarrowWithGroup", Build: build(false, srcGroupJoin, uint64(1), "2026-01-01", "2026-02-01")},
+		{Name: "WideWithGroup", Build: build(true, srcGroupJoin, uint64(1), "2026-01-01", "2026-02-01")},
+	})
+}
+
 // --- session/session.go: GetSession chatReviewSQL (site f43d5f680ef9) ------
 
 func TestTier3Shapes_f43d5f680ef9(t *testing.T) {
@@ -1683,5 +1759,51 @@ func TestTier3Shapes_395499023142(t *testing.T) {
 	ormharness.AssertGoldenShapes(t, "395499023142", []ormharness.Shape{
 		{Name: "NoType", Build: build("")},
 		{Name: "WithType", Build: build("Offer")},
+	})
+}
+
+// --- donations/donations.go: GetDonations (site 31fea9e6f321) --------------
+
+func TestTier3Shapes_31fea9e6f321(t *testing.T) {
+	build := func(withGroup bool) func(tx *gorm.DB) *gorm.DB {
+		return func(tx *gorm.DB) *gorm.DB {
+			where := "timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01') AND Payer != ? AND Payer != ?"
+			args := []interface{}{"ppgfukpay@paypalgivingfund.org", "paypal.msb@tipalti.com"}
+			t := tx.Table("users_donations").Select("COALESCE(SUM(GrossAmount), 0) AS raised")
+			if withGroup {
+				t = t.Joins("INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ?", "5")
+			}
+			// Find, not Scan: Scan is rejected under dry-run
+			// (ormharness/golden.go); production keeps Scan for its
+			// single-aggregate-value destination.
+			return find(t.Where(where, args...))
+		}
+	}
+	ormharness.AssertGoldenShapes(t, "31fea9e6f321", []ormharness.Shape{
+		{Name: "NoGroup", Build: build(false)},
+		{Name: "WithGroup", Build: build(true)},
+	})
+}
+
+// --- message/search.go: SearchByMsgID (site a5e382bd3536) -------------------
+
+func TestTier3Shapes_a5e382bd3536(t *testing.T) {
+	build := func(withGroups bool) func(tx *gorm.DB) *gorm.DB {
+		return func(tx *gorm.DB) *gorm.DB {
+			where := "messages_spatial.msgid = ?"
+			args := []interface{}{uint64(1)}
+			if withGroups {
+				where += " AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN (?) AND mg.collection = 'Approved' AND mg.deleted = 0)"
+				args = append(args, []uint64{5, 7})
+			}
+			return find(tx.Table("messages_spatial").
+				Select("messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng").
+				Where(where, args...).
+				Limit(1))
+		}
+	}
+	ormharness.AssertGoldenShapes(t, "a5e382bd3536", []ormharness.Shape{
+		{Name: "NoGroups", Build: build(false)},
+		{Name: "WithGroups", Build: build(true)},
 	})
 }

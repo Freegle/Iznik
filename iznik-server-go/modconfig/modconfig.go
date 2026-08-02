@@ -1,7 +1,6 @@
 package modconfig
 
 import (
-	"fmt"
 	stdlog "log"
 	"strconv"
 	"strings"
@@ -9,8 +8,8 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
@@ -534,86 +533,79 @@ func PatchModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Don't have rights to modify config")
 	}
 
-	// Build a single UPDATE with all changed fields.
-	setClauses := []string{}
-	args := []interface{}{}
+	// ORM migration site a7b00c5503b7 (fieldwise coverage, not exhaustive
+	// shapes). 17 independently-optional fields, each contributing its own
+	// fixed "col = ?" fragment(s) with no fragment's value referencing
+	// another assigned column - verified via
+	// ormharness.AssertGoldenFieldwise's precondition check, which reuses
+	// setOrderIsLoadBearing (the same rule check-set-order.sh enforces
+	// elsewhere) and refuses the site outright if that ever stops being
+	// true. That independence is what makes n+2 cases (each field alone,
+	// empty, all together) a real proof rather than exhaustive 2^17 shape
+	// coverage, which AssertGoldenShapes could never practically declare.
+	// See test/orm_fieldwise_modconfig_test.go and ormharness/fieldwise.json
+	// - and Protected below, which is the one field that contributes two
+	// fragments (protected, createdby) rather than one; fieldwise coverage
+	// only requires that ITS OWN two fragments don't reference any OTHER
+	// field's column, which they don't.
+	updates := map[string]interface{}{}
 
 	if req.Name != nil {
-		setClauses = append(setClauses, "name = ?")
-		args = append(args, *req.Name)
+		updates["name"] = *req.Name
 	}
 	if req.Fromname != nil {
-		setClauses = append(setClauses, "fromname = ?")
-		args = append(args, *req.Fromname)
+		updates["fromname"] = *req.Fromname
 	}
 	if req.Ccrejectto != nil {
-		setClauses = append(setClauses, "ccrejectto = ?")
-		args = append(args, *req.Ccrejectto)
+		updates["ccrejectto"] = *req.Ccrejectto
 	}
 	if req.Ccrejectaddr != nil {
-		setClauses = append(setClauses, "ccrejectaddr = ?")
-		args = append(args, *req.Ccrejectaddr)
+		updates["ccrejectaddr"] = *req.Ccrejectaddr
 	}
 	if req.Ccfollowupto != nil {
-		setClauses = append(setClauses, "ccfollowupto = ?")
-		args = append(args, *req.Ccfollowupto)
+		updates["ccfollowupto"] = *req.Ccfollowupto
 	}
 	if req.Ccfollowupaddr != nil {
-		setClauses = append(setClauses, "ccfollowupaddr = ?")
-		args = append(args, *req.Ccfollowupaddr)
+		updates["ccfollowupaddr"] = *req.Ccfollowupaddr
 	}
 	if req.Ccrejmembto != nil {
-		setClauses = append(setClauses, "ccrejmembto = ?")
-		args = append(args, *req.Ccrejmembto)
+		updates["ccrejmembto"] = *req.Ccrejmembto
 	}
 	if req.Ccrejmembaddr != nil {
-		setClauses = append(setClauses, "ccrejmembaddr = ?")
-		args = append(args, *req.Ccrejmembaddr)
+		updates["ccrejmembaddr"] = *req.Ccrejmembaddr
 	}
 	if req.Ccfollmembto != nil {
-		setClauses = append(setClauses, "ccfollmembto = ?")
-		args = append(args, *req.Ccfollmembto)
+		updates["ccfollmembto"] = *req.Ccfollmembto
 	}
 	if req.Ccfollmembaddr != nil {
-		setClauses = append(setClauses, "ccfollmembaddr = ?")
-		args = append(args, *req.Ccfollmembaddr)
+		updates["ccfollmembaddr"] = *req.Ccfollmembaddr
 	}
 	if req.Protected != nil {
-		setClauses = append(setClauses, "protected = ?")
-		args = append(args, *req.Protected)
+		updates["protected"] = *req.Protected
 		// When setting protected, also set createdby to the caller.
-		setClauses = append(setClauses, "createdby = ?")
-		args = append(args, myid)
+		updates["createdby"] = myid
 	}
 	if req.Messageorder != nil {
-		setClauses = append(setClauses, "messageorder = ?")
-		args = append(args, *req.Messageorder)
+		updates["messageorder"] = *req.Messageorder
 	}
 	if req.Network != nil {
-		setClauses = append(setClauses, "network = ?")
-		args = append(args, *req.Network)
+		updates["network"] = *req.Network
 	}
 	if req.Coloursubj != nil {
-		setClauses = append(setClauses, "coloursubj = ?")
-		args = append(args, *req.Coloursubj)
+		updates["coloursubj"] = *req.Coloursubj
 	}
 	if req.Subjreg != nil {
-		setClauses = append(setClauses, "subjreg = ?")
-		args = append(args, *req.Subjreg)
+		updates["subjreg"] = *req.Subjreg
 	}
 	if req.Subjlen != nil {
-		setClauses = append(setClauses, "subjlen = ?")
-		args = append(args, *req.Subjlen)
+		updates["subjlen"] = *req.Subjlen
 	}
 	if req.Chatread != nil {
-		setClauses = append(setClauses, "chatread = ?")
-		args = append(args, *req.Chatread)
+		updates["chatread"] = *req.Chatread
 	}
 
-	if len(setClauses) > 0 {
-		args = append(args, req.ID)
-		query := fmt.Sprintf("UPDATE mod_configs SET %s WHERE id = ?", strings.Join(setClauses, ", "))
-		if result := db.Exec(query, args...); result.Error != nil {
+	if len(updates) > 0 {
+		if result := db.Table("mod_configs").Where("id = ?", req.ID).Updates(updates); result.Error != nil {
 			stdlog.Printf("Failed to update mod config %d: %v", req.ID, result.Error)
 			return fiber.NewError(fiber.StatusInternalServerError, "Update failed")
 		}

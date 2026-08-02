@@ -149,10 +149,17 @@ func TestUpdateJoin_SelfJoinWithLeastExpr(t *testing.T) {
 // --- REPLACE INTO -----------------------------------------------------------
 
 func TestReplaceInto_ModifierProducesWrongKeyword(t *testing.T) {
-	// Pins the keep-raw claim: clause.Insert{Modifier: "REPLACE"} does not
-	// produce "REPLACE INTO", it produces "INSERT REPLACE INTO", because the
-	// leading "INSERT" is written by clause.Clause.Build from c.Name, which
-	// AddClause hardcodes from Insert.Name() regardless of Modifier.
+	// What clause.Insert{Modifier: "REPLACE"} renders THROUGH THIS PACKAGE'S
+	// shared dryRunDB, which is not the same question as what GORM does by
+	// default. dryRunDB installs database.RegisterCustomClauseBuilders, so a
+	// clean "REPLACE INTO" here means the override is working, NOT that plain
+	// GORM handles Modifier as a keyword swap. Unmodified GORM renders the
+	// invalid "INSERT REPLACE INTO": the leading "INSERT" is written by
+	// clause.Clause.Build from c.Name, which AddClause hardcodes from
+	// Insert.Name() regardless of Modifier, and Insert.Build then appends only
+	// Modifier + "INTO". TestReplaceInto_DefaultBehaviourWithoutAnyOverride
+	// establishes that against a bare gorm.Open with no wiring; this test is
+	// about the configured path the 11 converted sites actually render on.
 	sql, err := RenderDryRunSQL(func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("messages_spamham").
 			Clauses(clause.Insert{Modifier: "REPLACE"}).
@@ -169,11 +176,11 @@ func TestReplaceInto_ModifierProducesWrongKeyword(t *testing.T) {
 	upper := strings.ToUpper(strings.TrimSpace(sql))
 	switch {
 	case strings.HasPrefix(upper, "REPLACE INTO"):
-		t.Logf("Modifier now renders a bare REPLACE INTO, so the 11 keep-raw REPLACE INTO sites are "+
-			"convertible with a one-line change and their reason needs correcting. got: %s", sql)
+		t.Logf("the ClauseBuilders override is in effect on the shared dryRunDB, so REPLACE renders "+
+			"correctly here - this is the override working, not GORM's default. got: %s", sql)
 	case strings.HasPrefix(upper, "INSERT REPLACE INTO"):
-		t.Logf("confirmed: Modifier sits between the clause name and INTO, so REPLACE yields the "+
-			"invalid \"INSERT REPLACE INTO\" and needs a ClauseBuilders override. got: %s", sql)
+		t.Fatalf("database.RegisterCustomClauseBuilders is missing or broken on the shared dryRunDB, "+
+			"so the 11 converted REPLACE INTO sites are emitting invalid SQL: %s", sql)
 	default:
 		t.Fatalf("neither the working nor the documented-broken form: %s", sql)
 	}

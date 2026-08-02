@@ -58,6 +58,40 @@ var orderByPattern = regexp.MustCompile(`(?is)\border\s+by\b`)
 // shared canonical order before comparing, because without ORDER BY the
 // engine is free to return rows in any order and the old and new query need
 // not pick the same one.
+// AssertResultParityForSite is AssertResultParity plus the migration site ID
+// the comparison proves. Use it whenever Layer 2 is the ONLY proof a converted
+// site has; plain AssertResultParity remains correct for everything else.
+//
+// The reason this exists is a hole in Gate 2. Gate 2 says a site counts as
+// converted once a parity test bearing its ID exists, and the extractor checks
+// that by looking for the ID as a string literal passed to a known assertion.
+// AssertResultParity takes no site ID - it takes the original SQL - so a site
+// whose only proof was a Layer 2 test was invisible to the gate: raw SQL gone,
+// no ID-bearing test, therefore recorded as unproven.
+//
+// getReviewQueue's two sites are exactly that case (Layer 1 cannot render them),
+// and their keep-raw rules were masking it: gate (f) skips keep-raw sites, so
+// "the rule says it stays raw" hid "the raw SQL is already gone with nothing
+// naming it". Removing the rule without this would have flipped both to raw and
+// tripped the ratchet - the gate would have been right, and the missing piece
+// was a way for Layer 2 to say which site it speaks for.
+//
+// It verifies the ID is real before doing anything else, so a typo fails loudly
+// rather than quietly proving nothing.
+func AssertResultParityForSite(t TestingT, siteID string, db *gorm.DB, originalSQL string, args []any, replacement ReplacementQuery) {
+	t.Helper()
+
+	sites, err := loadManifest()
+	if err != nil {
+		t.Fatalf("ormharness: %v", err)
+	}
+	if _, ok := sites[siteID]; !ok {
+		t.Fatalf("ormharness: no manifest entry for site %q; AssertResultParityForSite must be called with a real site id from the ORM migration manifest", siteID)
+	}
+
+	AssertResultParity(t, db, originalSQL, args, replacement)
+}
+
 func AssertResultParity(t TestingT, db *gorm.DB, originalSQL string, args []any, replacement ReplacementQuery) {
 	t.Helper()
 

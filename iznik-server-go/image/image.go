@@ -1,7 +1,6 @@
 package image
 
 import (
-	"database/sql"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // imageTypeConfig maps imgtype names to their database table and parent ID column.
@@ -253,34 +253,32 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	row := map[string]interface{}{
+		cfg.IDColumn:   parentIDParam,
+		"externaluid":  req.ExternalUID,
+		"externalmods": modsStr,
+		"hash":         utils.NilIfEmpty(req.Hash),
 	}
-
-	var sqlResult sql.Result
 	if cfg.HasContentType {
-		sqlResult, err = sqlDB.Exec(
-			"INSERT INTO `"+cfg.Table+"` (`"+cfg.IDColumn+"`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')",
-			parentIDParam, req.ExternalUID, modsStr, utils.NilIfEmpty(req.Hash),
-		)
-	} else {
-		sqlResult, err = sqlDB.Exec(
-			"INSERT INTO `"+cfg.Table+"` (`"+cfg.IDColumn+"`, externaluid, externalmods, hash) VALUES (?, ?, ?, ?)",
-			parentIDParam, req.ExternalUID, modsStr, utils.NilIfEmpty(req.Hash),
-		)
+		row["contenttype"] = gorm.Expr("'image/jpeg'")
 	}
 
-	if err != nil {
+	// ORM migration sites 1571f00a4ce8 (cfg.HasContentType true - 9 of the
+	// 10 typeConfigs entries) and b0445c89f59e (false - the Message entry
+	// only). cfg.Table/cfg.IDColumn are runtime-varying but bounded to
+	// exactly 10 combinations; see ormharness/shapes.json and
+	// TestTier3Shapes_1571f00a4ce8 / TestTier3Shapes_b0445c89f59e
+	// (iznik-server-go/test). Table()+map-Create reads the generated id
+	// back from the same sql.Result the INSERT returned, under the map key
+	// "@id" - no separate connection-scoped SELECT LAST_INSERT_ID() query.
+	// This is a plain INSERT (no ON DUPLICATE KEY UPDATE), so RowsAffected
+	// is always 1 and GORM never skips the id writeback.
+	if err := db.Table("`" + cfg.Table + "`").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create image attachment")
 	}
 
 	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
+	if lastID, ok := row["@id"].(int64); ok && lastID > 0 {
 		id = uint64(lastID)
 	}
 

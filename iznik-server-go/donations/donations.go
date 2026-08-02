@@ -151,34 +151,29 @@ func GetDonations(c *fiber.Ctx) error {
 	// Exclude certain payers (eBay partnerships, PayPal Giving Fund) from totals
 	excludedPayers := getExcludedPayers()
 
-	query := `
-		SELECT COALESCE(SUM(GrossAmount), 0) AS raised
-		FROM users_donations
-	`
-
-	if groupID != "" {
-		query += ` INNER JOIN memberships ON users_donations.userid = memberships.userid
-		           AND memberships.groupid = ?
-		`
-	}
-
-	query += ` WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01')`
-
-	// Build exclusion condition dynamically
-	for range excludedPayers {
-		query += ` AND Payer != ?`
-	}
-
-	// Build query arguments
-	var args []interface{}
-	if groupID != "" {
-		args = append(args, groupID)
-	}
+	// ORM migration site 31fea9e6f321 (Tier 3 keep-raw review). groupID != ""
+	// is the only toggle that changes the statement's SHAPE (it drives
+	// whether the memberships join is present); the number of excluded
+	// payers is env-configured (DONATIONS_EXCLUDE), not per-request user
+	// input, so it is effectively fixed at the default count in practice -
+	// 2 possible rendered forms, both declared in ormharness/shapes.json
+	// and proven by TestTier3Shapes_31fea9e6f321 (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	whereSQL := "timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01')"
+	var whereArgs []interface{}
 	for _, email := range excludedPayers {
-		args = append(args, email)
+		whereSQL += " AND Payer != ?"
+		whereArgs = append(whereArgs, email)
 	}
 
-	db.Raw(query, args...).Scan(&raised)
+	tx := db.Table("users_donations").Select("COALESCE(SUM(GrossAmount), 0) AS raised")
+	if groupID != "" {
+		tx = tx.Joins("INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ?", groupID)
+	}
+	tx.Where(whereSQL, whereArgs...).Scan(&raised)
 
 	return c.JSON(fiber.Map{
 		"target": target,
