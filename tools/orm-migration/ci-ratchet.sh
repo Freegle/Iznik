@@ -426,6 +426,137 @@ else
   note "fix: this is relocation, not conversion - mark the site keep-raw with a reason"
 fi
 
+# --- Gate (p): per-service manifests (iznik-spatial-go, iznik-routing-go) ----
+#
+# Those two services do not import gorm.io/gorm and, once scoped, turned out
+# to have essentially no wave 1-3 mechanical surface (see the scoping report
+# in the team's session history) - not enough to justify adding a GORM
+# dependency and the full 4-layer parity harness to either. So unlike
+# iznik-server-go they get no Layer-1/2 harness and no raw/in-progress/
+# converted lifecycle: every site in tools/orm-migration/services/*/manifest.json
+# is either keep-raw (a real MySQL statement, deferred, with a Phase-4 porting
+# note) or test-fixture. There is nothing here for gates (d), (f), (h)-(o) to
+# check - no ratchet baseline, no parity tests, no conversions - but the one
+# failure mode that matters for a fully-triaged manifest is unchanged: new raw
+# SQL appearing with nobody noticing. This gate is the equivalent of (b), (c),
+# (e) and (g) above, scaled down to that one concern, run once per service.
+#
+# Self-guarding: if tools/orm-migration/services/ does not exist at all (e.g.
+# an older branch, or a future checkout that never added it), this gate is a
+# no-op rather than a failure - "wire it in" should not make ci-ratchet.sh
+# depend on a directory this repo's history did not always have.
+SERVICES_DIR="$SCRIPT_DIR/services"
+if [ ! -d "$SERVICES_DIR" ]; then
+  note "gate (p) SKIP: no $SERVICES_DIR directory - nothing to check"
+else
+  shopt -s nullglob
+  service_dirs=("$SERVICES_DIR"/*/)
+  shopt -u nullglob
+  if [ "${#service_dirs[@]}" -eq 0 ]; then
+    note "gate (p) SKIP: $SERVICES_DIR exists but has no service subdirectories"
+  fi
+  for svc_dir in "${service_dirs[@]}"; do
+    svc_name="$(basename "$svc_dir")"
+    svc_manifest="$svc_dir/manifest.json"
+    svc_rules="$svc_dir/keep-raw.json"
+    # Convention: services/spatial -> iznik-spatial-go, services/routing ->
+    # iznik-routing-go. This needs no per-service registration - adding a new
+    # services/<name>/ directory that matches an iznik-<name>-go source tree is
+    # enough - but a directory that does not follow it fails loudly rather than
+    # being silently skipped, because that is a real setup bug, not absence.
+    svc_source_root="$REPO_ROOT/iznik-$svc_name-go"
+
+    if [ ! -f "$svc_manifest" ] || [ ! -f "$svc_rules" ]; then
+      fail "services/$svc_name/ is missing manifest.json or keep-raw.json"
+      continue
+    fi
+    if ! jq -e . "$svc_manifest" >/dev/null 2>&1; then
+      fail "services/$svc_name/manifest.json is not valid JSON"
+      continue
+    fi
+    if [ ! -d "$svc_source_root" ]; then
+      fail "services/$svc_name/ expects a source tree at $svc_source_root, which does not exist"
+      continue
+    fi
+
+    svc_temp="$WORKDIR/svc-$svc_name.json"
+    cp "$svc_manifest" "$svc_temp"
+    if ! (cd "$EXTRACTOR_DIR" && go run . -root "$svc_source_root" -out "$svc_temp" -repo "$REPO_ROOT" -rules "$svc_rules" >"$WORKDIR/svc-$svc_name.log" 2>&1); then
+      cat "$WORKDIR/svc-$svc_name.log" >&2
+      fail "services/$svc_name/: extractor failed to regenerate the manifest (see output above)"
+      continue
+    fi
+
+    # (b)-equivalent: a site re-extraction finds that the committed manifest
+    # does not know about at all - the direct signal of new raw SQL.
+    jq -n --slurpfile c "$svc_manifest" --slurpfile t "$svc_temp" '
+      ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+      [ $temp | keys[] | select($committed[.] == null) |
+        {id: ., file: $temp[.].file, line: $temp[.].line, function: $temp[.].function, goldenSql: $temp[.].goldenSql} ]
+    ' >"$WORKDIR/svc-$svc_name-new.json"
+    svc_new_count=$(jq 'length' "$WORKDIR/svc-$svc_name-new.json")
+    if [ "$svc_new_count" -gt 0 ]; then
+      fail "services/$svc_name/: $svc_new_count raw SQL site(s) found in code but missing from the committed manifest:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]  \(.function)()  \(.goldenSql)"' "$WORKDIR/svc-$svc_name-new.json"
+      note "fix: cd tools/orm-migration && go run . -root ../../iznik-$svc_name-go -out services/$svc_name/manifest.json -repo ../.. -rules services/$svc_name/keep-raw.json, then add a keep-raw rule (with reason and Phase-4 porting note) or a test-fixture/retired entry for each new site, and commit"
+    fi
+
+    # (c)-equivalent: goldenSql drifted for a site present in both.
+    jq -n --slurpfile c "$svc_manifest" --slurpfile t "$svc_temp" '
+      ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+      [ $temp | keys[] | select($committed[.] != null) | select($committed[.].goldenSql != $temp[.].goldenSql) |
+        {id: ., file: $temp[.].file, line: $temp[.].line, committedSql: $committed[.].goldenSql, actualSql: $temp[.].goldenSql} ]
+    ' >"$WORKDIR/svc-$svc_name-drift.json"
+    svc_drift_count=$(jq 'length' "$WORKDIR/svc-$svc_name-drift.json")
+    if [ "$svc_drift_count" -gt 0 ]; then
+      fail "services/$svc_name/: $svc_drift_count site(s) whose committed goldenSql no longer matches the real source:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]\n    committed: \(.committedSql)\n    actual:    \(.actualSql)"' "$WORKDIR/svc-$svc_name-drift.json"
+      note "fix: regenerate services/$svc_name/manifest.json from source and commit the result"
+    fi
+
+    # (e)-equivalent: every keep-raw site must carry a written reason. (The
+    # extractor already refuses to apply a rule with no reason/porting note at
+    # generation time - this also catches a site that matched no rule at all
+    # and is sitting at status "raw", which would otherwise slip through.)
+    jq -n --slurpfile c "$svc_manifest" '
+      [ $c[0].sites | to_entries[] |
+        select(.value.status == "keep-raw") |
+        select((.value.reason // "") | gsub("\\s";"") | length == 0) |
+        {id: .key, file: .value.file, line: .value.line} ]
+    ' >"$WORKDIR/svc-$svc_name-noreason.json"
+    svc_noreason_count=$(jq 'length' "$WORKDIR/svc-$svc_name-noreason.json")
+    if [ "$svc_noreason_count" -gt 0 ]; then
+      fail "services/$svc_name/: $svc_noreason_count site(s) marked keep-raw with no written reason:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]"' "$WORKDIR/svc-$svc_name-noreason.json"
+    fi
+    svc_notriaged_count=$(jq '[.sites[] | select(.status != "keep-raw" and .status != "test-fixture")] | length' "$svc_temp")
+    if [ "$svc_notriaged_count" -gt 0 ]; then
+      fail "services/$svc_name/: $svc_notriaged_count site(s) are not fully triaged (status other than keep-raw/test-fixture) - this service's manifest is meant to carry zero raw/in-progress sites:"
+      jq -r '.sites[] | select(.status != "keep-raw" and .status != "test-fixture") | "  \(.file):\(.line)  [\(.id)]  status=\(.status)"' "$svc_temp"
+    fi
+
+    # (g)-equivalent: a site the committed manifest still says is present in
+    # code, which re-extraction can no longer find - the manifest is stale.
+    jq -n --slurpfile c "$svc_manifest" --slurpfile t "$svc_temp" '
+      ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+      [ $committed | keys[] |
+        select($committed[.].presentInCode == true) |
+        select($temp[.] == null or $temp[.].presentInCode == false) |
+        {id: ., file: $committed[.].file, line: $committed[.].line} ]
+    ' >"$WORKDIR/svc-$svc_name-stale.json"
+    svc_stale_count=$(jq 'length' "$WORKDIR/svc-$svc_name-stale.json")
+    if [ "$svc_stale_count" -gt 0 ]; then
+      fail "services/$svc_name/: $svc_stale_count site(s) recorded as present, but re-extraction no longer finds them - the committed manifest is stale:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]"' "$WORKDIR/svc-$svc_name-stale.json"
+      note "fix: regenerate services/$svc_name/manifest.json and commit it together with the code change"
+    fi
+
+    if [ "$svc_new_count" -eq 0 ] && [ "$svc_drift_count" -eq 0 ] && [ "$svc_noreason_count" -eq 0 ] && [ "$svc_notriaged_count" -eq 0 ] && [ "$svc_stale_count" -eq 0 ]; then
+      note "gate (p) OK for services/$svc_name/: manifest matches re-extraction, every site triaged with a reason"
+    fi
+  done
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"
