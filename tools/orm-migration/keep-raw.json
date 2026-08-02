@@ -81,6 +81,258 @@
     {
       "file": "iznik-server-go/database/insert.go",
       "reason": "Infrastructure wrapper around LAST_INSERT_ID handling for the read/write split. The SQL belongs to the calling site, which is inventoried separately."
+    },
+    {
+      "id": "02f8f0aee316",
+      "file": "iznik-server-go/team/team.go",
+      "function": "PostTeam",
+      "reason": "PostTeam() inserts into teams and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "050e3574aa6f",
+      "file": "iznik-server-go/message/bulkItem.go",
+      "function": "findOrCreateUser2UserRoom",
+      "reason": "findOrCreateUser2UserRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "0adadbabde5b",
+      "file": "iznik-server-go/volunteering/volunteering.go",
+      "function": "Create",
+      "reason": "Create() inserts into volunteering and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "10bcbd6a6404",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "createRefer",
+      "reason": "createRefer() inserts into newsfeed and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "123512413259",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperSendAction",
+      "reason": "helperSendAction() inserts into helper_repliers and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "132b1f639e73",
+      "file": "iznik-server-go/stdmsg/stdmsg.go",
+      "function": "PostStdMsg",
+      "reason": "PostStdMsg() inserts into mod_stdmsgs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "1590b130f529",
+      "file": "iznik-server-go/message/message.go",
+      "function": "PutMessageAs",
+      "reason": "PutMessageAs() inserts into messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "181d8342ea4a",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "PostModConfig",
+      "reason": "PostModConfig() inserts into mod_configs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "1f5798e8214d",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "handleNudge",
+      "reason": "handleNudge() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "20dfce4d2228",
+      "file": "iznik-server-go/spammers/spammers.go",
+      "function": "PostSpammer",
+      "reason": "PostSpammer() inserts into spam_users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "24704432f4d4",
+      "file": "iznik-server-go/user/user.go",
+      "function": "PutUser",
+      "reason": "PutUser() inserts into users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "258437a60f5d",
+      "file": "iznik-server-go/donations/giftaid.go",
+      "function": "SetGiftAid",
+      "reason": "SetGiftAid() inserts into giftaid and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "26c94565517d",
+      "file": "iznik-server-go/message/message.go",
+      "function": "createSystemChatMessage",
+      "reason": "createSystemChatMessage() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "322b611c86cc",
+      "file": "iznik-server-go/shortlink/shortlink.go",
+      "function": "PostShortlink",
+      "reason": "PostShortlink() inserts into shortlinks and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "3efeb225c001",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "GetOrCreateUser2UserChat",
+      "reason": "GetOrCreateUser2UserChat() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "42bb2fc5fe91",
+      "file": "iznik-server-go/noticeboard/noticeboard.go",
+      "function": "PostNoticeboard",
+      "reason": "PostNoticeboard() inserts into noticeboards and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "45b8b0bc2060",
+      "file": "iznik-server-go/communityevent/communityEvent.go",
+      "function": "Create",
+      "reason": "Create() inserts into communityevents and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "45c97c1f1f58",
+      "file": "iznik-server-go/auth/auth.go",
+      "function": "CreateSessionAndJWT",
+      "reason": "CreateSessionAndJWT() inserts into sessions and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "47417e0f74d7",
+      "file": "iznik-server-go/location/location.go",
+      "function": "CreateLocation",
+      "reason": "CreateLocation() inserts into locations and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "4aef5392a01f",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperUpsertReplier",
+      "reason": "helperUpsertReplier() inserts into helper_repliers and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "4d2e18cf27e3",
+      "file": "iznik-server-go/merge/merge.go",
+      "function": "CreateMerge",
+      "reason": "CreateMerge() inserts into merges and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "54e869591bc4",
+      "file": "iznik-server-go/alert/alert.go",
+      "function": "CreateAlert",
+      "reason": "CreateAlert() inserts into alerts and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "65574169749a",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "PutChatRoom",
+      "reason": "PutChatRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "659e00792d43",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "PutChatRoom",
+      "reason": "PutChatRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "7394291c903d",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperCreateProposal",
+      "reason": "helperCreateProposal() inserts into helper_proposals and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "7e3e5f4d0b36",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "ensureBatchRow",
+      "reason": "ensureBatchRow() inserts into helper_batches and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "7ec60cde5d39",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperSendAction",
+      "reason": "helperSendAction() inserts into helper_proposals and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "88399aa73e56",
+      "file": "iznik-server-go/admin/admin.go",
+      "function": "PostAdmin",
+      "reason": "PostAdmin() inserts into admins and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "8cbeeeb7e32f",
+      "file": "iznik-server-go/group/group.go",
+      "function": "CreateGroup",
+      "reason": "CreateGroup() inserts into groups and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "90b0f0bb3029",
+      "file": "iznik-server-go/newsfeed/create.go",
+      "function": "CreateNewsfeedEntry",
+      "reason": "CreateNewsfeedEntry() inserts into newsfeed and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "b0445c89f59e",
+      "file": "iznik-server-go/image/image.go",
+      "function": "doCreate",
+      "reason": "doCreate() inserts into its target table and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "bbbc465b075c",
+      "file": "iznik-server-go/session/social_auth.go",
+      "function": "socialMatchOrCreate",
+      "reason": "socialMatchOrCreate() inserts into users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "c9c7922e5379",
+      "file": "iznik-server-go/user/user.go",
+      "function": "PutUser",
+      "reason": "PutUser() inserts into sessions and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "d3790f53ec52",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "insertHelperChat",
+      "reason": "insertHelperChat() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "dfc3d2fdb2ba",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperSetItemState",
+      "reason": "helperSetItemState() inserts into helper_item_states and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "e07a25573e68",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "PostModConfig",
+      "reason": "PostModConfig() inserts into logs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "e137c396bd13",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "PostModConfig",
+      "reason": "PostModConfig() inserts into mod_bulkops and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "e7a34e3dea3b",
+      "file": "iznik-server-go/user/user.go",
+      "function": "PutUser",
+      "reason": "PutUser() inserts into memberships_history and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "f6190b74d8d5",
+      "file": "iznik-server-go/story/story.go",
+      "function": "CreateStory",
+      "reason": "CreateStory() inserts into users_stories and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "f961504c334d",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "createPost",
+      "reason": "createPost() inserts into newsfeed and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "faa9018435a3",
+      "file": "iznik-server-go/message/bulkItem.go",
+      "function": "upsertBulkItems",
+      "reason": "upsertBulkItems() inserts into messages_bulk_items and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
+    },
+    {
+      "id": "fb88302d28cb",
+      "file": "iznik-server-go/message/bulkItem.go",
+      "function": "ingestBulkItemPhotos",
+      "reason": "ingestBulkItemPhotos() inserts into messages_attachments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     }
   ]
 }

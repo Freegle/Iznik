@@ -3,8 +3,8 @@
   "root": "iznik-server-go",
   "counts": {
     "converted": 982,
-    "keep-raw": 55,
-    "raw": 599,
+    "keep-raw": 97,
+    "raw": 557,
     "test-fixture": 4223
   },
   "sites": {
@@ -1387,7 +1387,8 @@
       "goldenSql": "INSERT INTO teams (name, email, description) VALUES (?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostTeam() inserts into teams and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "02f982655397": {
       "id": "02f982655397",
@@ -2345,7 +2346,8 @@
       "goldenSql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = NOW()",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "findOrCreateUser2UserRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "0510fa1a8a85": {
       "id": "0510fa1a8a85",
@@ -5443,7 +5445,8 @@
       "goldenSql": "INSERT INTO volunteering (userid, pending, title, online, location, contactname, contactphone, contactemail, contacturl, description, timecommitment) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Create() inserts into volunteering and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "0adfd739744d": {
       "id": "0adfd739744d",
@@ -8431,7 +8434,8 @@
       "goldenSql": "INSERT INTO newsfeed (type, userid, replyto, msgid, position) VALUES (?, ?, ?, NULLIF(?, 0), %s)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "createRefer() inserts into newsfeed and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "10c14815f7f0": {
       "id": "10c14815f7f0",
@@ -9169,7 +9173,8 @@
       "goldenSql": "INSERT INTO helper_repliers (batchid, userid, chatid, state) VALUES (?, ?, ?, 'NEW') ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), chatid = VALUES(chatid)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "helperSendAction() inserts into helper_repliers and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "1240e34dd28e": {
       "id": "1240e34dd28e",
@@ -9477,7 +9482,8 @@
       "goldenSql": "INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', '')",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostStdMsg() inserts into mod_stdmsgs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "132e1b9b2d4a": {
       "id": "132e1b9b2d4a",
@@ -10526,7 +10532,8 @@
       "goldenSql": "INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, fromcountry, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PutMessageAs() inserts into messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "159822cbaca2": {
       "id": "159822cbaca2",
@@ -11878,7 +11885,8 @@
       "goldenSql": "INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostModConfig() inserts into mod_configs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "181e4e0e5675": {
       "id": "181e4e0e5675",
@@ -15694,7 +15702,8 @@
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, date, message, replyexpected, reportreason, reviewrequired, reviewrejected, processingsuccessful) VALUES (?, ?, ?, ?, '', 1, NULL, 0, 0, 1)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "handleNudge() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "1f5c4247b088": {
       "id": "1f5c4247b088",
@@ -16748,7 +16757,8 @@
       "goldenSql": "REPLACE INTO spam_users (userid, collection, reason, byuserid, heldby, heldat) VALUES (?, ?, ?, ?, NULL, NULL)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostSpammer() inserts into spam_users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "20e728c54d04": {
       "id": "20e728c54d04",
@@ -18787,7 +18797,8 @@
       "goldenSql": "INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PutUser() inserts into users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "2476e14ca832": {
       "id": "2476e14ca832",
@@ -19411,7 +19422,8 @@
       "goldenSql": "INSERT INTO giftaid (userid, period, fullname, firstname, lastname, homeaddress) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), period = ?, fullname = ?, firstname = ?, lastname = ?, homeaddress = ?, deleted = NULL",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "SetGiftAid() inserts into giftaid and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "2591913ca689": {
       "id": "2591913ca689",
@@ -20036,7 +20048,8 @@
       "goldenSql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = NOW()",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "createSystemChatMessage() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "26d9ec85b895": {
       "id": "26d9ec85b895",
@@ -25728,7 +25741,8 @@
       "goldenSql": "INSERT INTO shortlinks (name, type, groupid) VALUES (?, 'Group', ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostShortlink() inserts into shortlinks and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "322c54bce714": {
       "id": "322c54bce714",
@@ -31860,7 +31874,8 @@
       "goldenSql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "GetOrCreateUser2UserChat() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "3efef6d7b4e0": {
       "id": "3efef6d7b4e0",
@@ -33787,7 +33802,8 @@
       "goldenSql": "INSERT INTO noticeboards (`name`, `lat`, `lng`, `position`, `added`, `addedby`, `description`, `active`, `lastcheckedat`) VALUES (?, ?, ?, {{expr}}, NOW(), ?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostNoticeboard() inserts into noticeboards and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "42bb51c07e8a": {
       "id": "42bb51c07e8a",
@@ -35274,7 +35290,8 @@
       "goldenSql": "INSERT INTO communityevents (userid, pending, title, location, contactname, contactphone, contactemail, contacturl, description) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Create() inserts into communityevents and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "45bb8a4c8133": {
       "id": "45bb8a4c8133",
@@ -35341,7 +35358,8 @@
       "goldenSql": "INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateSessionAndJWT() inserts into sessions and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "45d0fd83ed8a": {
       "id": "45d0fd83ed8a",
@@ -35944,7 +35962,8 @@
       "goldenSql": "INSERT INTO locations (name, type, geometry, canon, popularity) VALUES (?, 'Polygon', ST_GeomFromText(?, %d), ?, 0)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateLocation() inserts into locations and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "4748b86d5afb": {
       "id": "4748b86d5afb",
@@ -38243,7 +38262,8 @@
       "goldenSql": "INSERT INTO helper_repliers (batchid, userid, state) VALUES (?, ?, 'NEW') ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "helperUpsertReplier() inserts into helper_repliers and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "4b13c81d7f07": {
       "id": "4b13c81d7f07",
@@ -39316,7 +39336,8 @@
       "goldenSql": "INSERT INTO merges (user1, user2, offeredby, uid) VALUES (?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateMerge() inserts into merges and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "4d2f8aa2ab3e": {
       "id": "4d2f8aa2ab3e",
@@ -42596,7 +42617,8 @@
       "goldenSql": "INSERT INTO alerts (createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateAlert() inserts into alerts and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "54fa1b30a966": {
       "id": "54fa1b30a966",
@@ -51155,7 +51177,8 @@
       "goldenSql": "INSERT INTO chat_rooms (user1, chattype, groupid, latestmessage) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PutChatRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "655ed45477dc": {
       "id": "655ed45477dc",
@@ -51339,7 +51362,8 @@
       "goldenSql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PutChatRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "65bff989abbe": {
       "id": "65bff989abbe",
@@ -58868,7 +58892,8 @@
       "goldenSql": "INSERT INTO helper_proposals (batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "helperCreateProposal() inserts into helper_proposals and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "739b2c73f2f1": {
       "id": "739b2c73f2f1",
@@ -64700,7 +64725,8 @@
       "goldenSql": "INSERT INTO helper_batches (msgid, offereruserid, status) VALUES (?, ?, 'active') ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "ensureBatchRow() inserts into helper_batches and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "7e4550661950": {
       "id": "7e4550661950",
@@ -65224,7 +65250,8 @@
       "goldenSql": "INSERT INTO helper_proposals (batchid, type, replierid, summary, proposed_text, status) VALUES (?, 'message', ?, ?, ?, 'pending')",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "helperSendAction() inserts into helper_proposals and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "7ed0a6cf937c": {
       "id": "7ed0a6cf937c",
@@ -70003,7 +70030,8 @@
       "goldenSql": "INSERT INTO admins (createdby, groupid, subject, text, ctatext, ctalink, essential, template, editprotected, sendafter, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostAdmin() inserts into admins and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "883f61354089": {
       "id": "883f61354089",
@@ -72137,7 +72165,8 @@
       "goldenSql": "INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?, ?, 1, 1, ST_GeomFromText('POINT(0 0)', %d))",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateGroup() inserts into groups and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "8ccd5cd9eb17": {
       "id": "8ccd5cd9eb17",
@@ -74289,7 +74318,8 @@
       "goldenSql": "INSERT INTO newsfeed (`type`, userid, groupid, eventid, volunteeringid, position, location, hidden, deleted, reviewrequired, pinned) VALUES (?, ?, ?, ?, ?, %s, ?, %s, NULL, 0, 0)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateNewsfeedEntry() inserts into newsfeed and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "90c56d7f4ab1": {
       "id": "90c56d7f4ab1",
@@ -89906,7 +89936,8 @@
       "goldenSql": "INSERT INTO `{{expr}}` (`{{expr}}`, externaluid, externalmods, hash) VALUES (?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "doCreate() inserts into its target table and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "b045d2d10950": {
       "id": "b045d2d10950",
@@ -95723,7 +95754,8 @@
       "goldenSql": "INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "socialMatchOrCreate() inserts into users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "bbc55cf96110": {
       "id": "bbc55cf96110",
@@ -102836,7 +102868,8 @@
       "goldenSql": "INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PutUser() inserts into sessions and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "c9d2261c0bbb": {
       "id": "c9d2261c0bbb",
@@ -107977,7 +108010,8 @@
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "insertHelperChat() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "d37ee1aef1f4": {
       "id": "d37ee1aef1f4",
@@ -113859,7 +113893,8 @@
       "goldenSql": "INSERT INTO helper_item_states (replierid, bulkitemid, state) VALUES (?, ?, 'NEW') ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "helperSetItemState() inserts into helper_item_states and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "dfc60b541e97": {
       "id": "dfc60b541e97",
@@ -114348,7 +114383,8 @@
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostModConfig() inserts into logs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "e098c8c70062": {
       "id": "e098c8c70062",
@@ -114727,7 +114763,8 @@
       "goldenSql": "INSERT INTO mod_bulkops (title, configid, `set`, criterion, runevery, action, bouncingfor) SELECT title, ?, `set`, criterion, runevery, action, bouncingfor FROM mod_bulkops WHERE configid = ?",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PostModConfig() inserts into mod_bulkops and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "e1391c881024": {
       "id": "e1391c881024",
@@ -117697,7 +117734,8 @@
       "goldenSql": "INSERT INTO memberships_history (userid, groupid, collection, processingrequired, added) VALUES (?, ?, ?, 1, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "PutUser() inserts into memberships_history and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "e7a7d75b00f8": {
       "id": "e7a7d75b00f8",
@@ -125358,7 +125396,8 @@
       "goldenSql": "INSERT INTO users_stories (public, userid, headline, story) VALUES (?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "CreateStory() inserts into users_stories and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "f6196dd0e38d": {
       "id": "f6196dd0e38d",
@@ -127097,7 +127136,8 @@
       "goldenSql": "INSERT INTO newsfeed (type, userid, imageid, replyto, message, position, hidden, location) VALUES ('Message', ?, ?, ?, ?, %s, %s, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "createPost() inserts into newsfeed and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "f9698c2b7bb0": {
       "id": "f9698c2b7bb0",
@@ -127855,7 +127895,8 @@
       "goldenSql": "INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions, photourl, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "upsertBulkItems() inserts into messages_bulk_items and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "faae3ce8ca2f": {
       "id": "faae3ce8ca2f",
@@ -128369,7 +128410,8 @@
       "goldenSql": "INSERT INTO messages_attachments (msgid, externaluid) VALUES (?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "ingestBulkItemPhotos() inserts into messages_attachments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json."
     },
     "fb9d4f2b2ed2": {
       "id": "fb9d4f2b2ed2",

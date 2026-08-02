@@ -669,6 +669,14 @@ func reportDuplicates(sites []*Site, filter string) {
 // keepRawRules is the declarative form of plan 7.5.
 type keepRawRules struct {
 	Rules []struct {
+		// ID pins a rule to one call site. File/Function rules are the right
+		// shape for "this whole query is too gnarly to port", but the wrong
+		// shape for a decision that applies to a single statement inside a
+		// function whose other statements should still be converted - an
+		// INSERT whose generated id is read back, say. Without this, keeping
+		// that one statement raw would drag its neighbours out of the
+		// migration with it.
+		ID       string `json:"id"`
 		File     string `json:"file"`
 		Function string `json:"function"`
 		Reason   string `json:"reason"`
@@ -704,14 +712,23 @@ func applyKeepRaw(sites []*Site, path string) (int, error) {
 			continue
 		}
 		for ri, r := range rules.Rules {
-			// A trailing slash means the rule covers a whole directory.
-			matchFile := s.File == r.File ||
-				(strings.HasSuffix(r.File, "/") && strings.HasPrefix(s.File, r.File))
-			if !matchFile {
-				continue
-			}
-			if r.Function != "" && s.Function != r.Function {
-				continue
+			if r.ID != "" {
+				// An id-pinned rule matches that site and nothing else, so a
+				// file/function given alongside it is documentation rather
+				// than part of the match.
+				if s.ID != r.ID {
+					continue
+				}
+			} else {
+				// A trailing slash means the rule covers a whole directory.
+				matchFile := s.File == r.File ||
+					(strings.HasSuffix(r.File, "/") && strings.HasPrefix(s.File, r.File))
+				if !matchFile {
+					continue
+				}
+				if r.Function != "" && s.Function != r.Function {
+					continue
+				}
 			}
 			s.Status = StatusKeepRaw
 			s.Reason = r.Reason
@@ -725,7 +742,14 @@ func applyKeepRaw(sites []*Site, path string) (int, error) {
 	// legitimate, so warn rather than fail, but never let it pass unnoticed.
 	for i, r := range rules.Rules {
 		if hits[i] == 0 {
-			fmt.Fprintf(os.Stderr, "warning: keep-raw rule %d matched no sites: %s %s\n", i, r.File, r.Function)
+			// An id-pinned rule that matches nothing is more serious than a
+			// path typo: the site it named has moved or been renumbered, so
+			// the decision it recorded is no longer protecting anything.
+			if r.ID != "" {
+				fmt.Fprintf(os.Stderr, "warning: keep-raw rule %d names site %s (%s %s), which no longer exists - it may have been renumbered\n", i, r.ID, r.File, r.Function)
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: keep-raw rule %d matched no sites: %s %s\n", i, r.File, r.Function)
+			}
 		}
 	}
 	return applied, nil
