@@ -478,6 +478,16 @@ function loginNative(e) {
       })
       .then(() => {
         // We are now logged in. Prompt the browser to remember the credentials.
+        //
+        // This arm is a race: it runs only when a login is submitted before the
+        // async email validation has come back, so whether an end-to-end run
+        // reaches it depends on which of the two wins on the day. Per-line
+        // coverage confirms it - these lines read 0 in one Playwright job and 2
+        // in another, which is the whole 33-vs-38 swing on this file and enough
+        // to fail Coveralls on branches that change nothing here. The 0 also
+        // proves the unit tests never reach it, so excluding it costs nothing
+        // there. Same treatment as SpinButton.vue's timer line (PR #910).
+        /* v8 ignore start */
         if (window.PasswordCredential) {
           try {
             // We used to pass in the DOM element, but in Chrome 92 that causes a crash.
@@ -501,6 +511,7 @@ function loginNative(e) {
         } else {
           pleaseShowModal.value = false
         }
+        /* v8 ignore stop */
       })
       .catch((e) => {
         console.log('Login error', e)
