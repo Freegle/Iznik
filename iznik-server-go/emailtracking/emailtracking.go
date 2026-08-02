@@ -1426,7 +1426,7 @@ func hasValidLinkSignature(rawURL string, sig string) bool {
 // News emails sent before tracked links carried a signature.
 func isCommunityNewsItemURL(db *gorm.DB, url string) bool {
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM community_news_items WHERE url = ?", url).Scan(&count)
+	db.Table("community_news_items").Where("url = ?", url).Count(&count)
 	return count > 0
 }
 

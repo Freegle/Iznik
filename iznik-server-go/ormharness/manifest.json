@@ -2,8 +2,8 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1591,
-    "keep-raw": 52,
+    "converted": 1592,
+    "keep-raw": 51,
     "retired": 41,
     "test-fixture": 4267
   },
@@ -73548,9 +73548,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM community_news_items WHERE url = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "New function from master merge (#1230), unrelated to any of the ten conflicted hunks this merge resolved - master added it directly, with no conflict marker involved. It is a trivial single-table SELECT COUNT(*), the same shape as the ~551 sites converted in Wave 1, and .Table('community_news_items').Where('url = ?', url).Count(\u0026count) is a safe, mechanical rewrite. It was tried during this merge resolution and reverted: this harness only counts a site 'converted' once it is both absent from the code AND has a recorded parity test proving the rewrite (extract.go's own gate n logic), and writing that proof is out of scope for a conflict-resolution pass whose job is to reconcile master's behaviour into this branch, not to convert new sites master happened to add alongside it. Left raw and flagged here as a good fast-follow candidate for the next single-table-SELECT conversion batch.",
       "porting": "PostgreSQL: ordinary parameterised SELECT COUNT(*), no MySQL-only functions. Straightforward Wave-1-style conversion candidate - no porting concerns.",
       "category": "Master merge: genuinely new code, unconverted"
