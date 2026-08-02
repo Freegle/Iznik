@@ -1397,13 +1397,18 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			}
 
 			if locName == "" && (privatePos.Lat != 0 || privatePos.Lng != 0) {
-				db.Raw("SELECT name FROM locations WHERE type = ? "+
-					"AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? "+
-					"ORDER BY ((lat - ?)*(lat - ?) + (lng - ?)*(lng - ?)) ASC LIMIT 1",
-					utils.LOCATION_TYPE_POSTCODE,
-					float64(privatePos.Lat)-0.1, float64(privatePos.Lat)+0.1,
-					float64(privatePos.Lng)-0.1, float64(privatePos.Lng)+0.1,
-					privatePos.Lat, privatePos.Lat, privatePos.Lng, privatePos.Lng).Scan(&locName)
+				// Nearest postcode via the spatial sidecar's KNN index rather than an
+				// unindexed bounding-box + distance-sort scan of `locations` (see user.go:1077
+				// for the same helper used for an analogous need). The KNN has no distance
+				// cap, so keep the replaced query's ~0.1-degree bounding box as a guard: a
+				// position with no postcode that close used to show nothing, not a postcode
+				// from miles away.
+				closest := location.ClosestPostcode(privatePos.Lat, privatePos.Lng)
+				if closest.Name != "" &&
+					math.Abs(float64(closest.Lat-privatePos.Lat)) <= 0.1 &&
+					math.Abs(float64(closest.Lng-privatePos.Lng)) <= 0.1 {
+					locName = closest.Name
+				}
 			}
 
 			u.Privateposition = &PrivatePosition{

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -375,4 +376,94 @@ func TestBullseyeFromObs_MatchesDirectBullseyeCall(t *testing.T) {
 func TestBullseyeFromObs_Empty(t *testing.T) {
 	bands := bullseyeFromObs(nil)
 	assert.Len(t, bands, len(bullseyeEdges)-1)
+}
+
+// dayWindows splits [start,end) into half-open 1-day sub-windows so the rippledOutSection queries
+// run as many short statements instead of one long one; it degrades to the original bounds as a
+// single window whenever it can't confidently chunk them.
+func TestDayWindows_MultiDayRangeProducesContiguousHalfOpenWindows(t *testing.T) {
+	got := dayWindows("2026-07-01 00:00:00", "2026-07-04 00:00:00")
+	want := [][2]string{
+		{"2026-07-01 00:00:00", "2026-07-02 00:00:00"},
+		{"2026-07-02 00:00:00", "2026-07-03 00:00:00"},
+		{"2026-07-03 00:00:00", "2026-07-04 00:00:00"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestDayWindows_PartialFinalDayIsClampedToEnd(t *testing.T) {
+	got := dayWindows("2026-07-01 00:00:00", "2026-07-02 12:30:00")
+	want := [][2]string{
+		{"2026-07-01 00:00:00", "2026-07-02 00:00:00"},
+		{"2026-07-02 00:00:00", "2026-07-02 12:30:00"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestDayWindows_SubDayRangeIsOneWindow(t *testing.T) {
+	got := dayWindows("2026-07-01 09:00:00", "2026-07-01 17:00:00")
+	want := [][2]string{{"2026-07-01 09:00:00", "2026-07-01 17:00:00"}}
+	assert.Equal(t, want, got)
+}
+
+func TestDayWindows_DateOnlyLayoutParses(t *testing.T) {
+	// The frontend's plain date filter sends "YYYY-MM-DD" (no time component) - must chunk the
+	// same as the full datetime layout the handler's own default uses.
+	got := dayWindows("2026-07-01", "2026-07-03")
+	want := [][2]string{
+		{"2026-07-01 00:00:00", "2026-07-02 00:00:00"},
+		{"2026-07-02 00:00:00", "2026-07-03 00:00:00"},
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestDayWindows_UnparseableBoundsFallBackToOriginalSingleWindow(t *testing.T) {
+	cases := []struct {
+		name, start, end string
+	}{
+		{"garbage start", "not-a-date", "2026-07-03 00:00:00"},
+		{"garbage end", "2026-07-01 00:00:00", "not-a-date"},
+		{"both garbage", "nope", "also-nope"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := dayWindows(c.start, c.end)
+			assert.Equal(t, [][2]string{{c.start, c.end}}, got)
+		})
+	}
+}
+
+func TestDayWindows_StartNotBeforeEndFallsBackToOriginalSingleWindow(t *testing.T) {
+	cases := []struct {
+		name, start, end string
+	}{
+		{"equal bounds", "2026-07-01 00:00:00", "2026-07-01 00:00:00"},
+		{"start after end", "2026-07-05 00:00:00", "2026-07-01 00:00:00"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := dayWindows(c.start, c.end)
+			assert.Equal(t, [][2]string{{c.start, c.end}}, got)
+		})
+	}
+}
+
+// The chunked bounds must be gap-free and non-overlapping: each window's end is exactly the next
+// window's start, so summing per-chunk COUNT/SUM results in Go equals what the unchunked query
+// would have returned - the additivity property the day-chunking fix depends on.
+func TestDayWindows_WindowsAreContiguousAndCoverTheFullRange(t *testing.T) {
+	start, end := "2026-01-01 00:00:00", "2026-03-15 06:00:00"
+	windows := dayWindows(start, end)
+	assert.Equal(t, start, windows[0][0])
+	assert.Equal(t, end, windows[len(windows)-1][1])
+	for i := 1; i < len(windows); i++ {
+		assert.Equal(t, windows[i-1][1], windows[i][0], "gap or overlap between chunk %d and %d", i-1, i)
+	}
+	for _, w := range windows {
+		st, err := time.Parse(dayWindowLayout, w[0])
+		assert.NoError(t, err)
+		en, err := time.Parse(dayWindowLayout, w[1])
+		assert.NoError(t, err)
+		assert.True(t, st.Before(en), "chunk must be non-empty: %v", w)
+	}
 }
