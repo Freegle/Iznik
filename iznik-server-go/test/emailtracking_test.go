@@ -218,6 +218,37 @@ func TestEmailTrackingClickExternalURLSigned(t *testing.T) {
 	assert.Equal(t, destinationURL, *updated.ClickedLink)
 }
 
+func TestEmailTrackingClickExternalURLCuratedCommunityNewsItem(t *testing.T) {
+	// Links in Community News emails sent before signing existed carry no
+	// signature - but their destinations are curated community_news_items
+	// rows, which the handler accepts as a third chance.
+	tracking := createTestTrackingRecord(t)
+	defer cleanupTestTracking(t, tracking.TrackingID)
+
+	db := database.DBConn
+	destinationURL := "https://www.parkrun.org.uk/legacy-unsigned-" + tracking.TrackingID + "/"
+
+	// community_news_items.areaid has an FK to community_news_areas, so
+	// create a throwaway area first; deleting it cascades to the item.
+	db.Exec("INSERT INTO community_news_areas (anchorgroupid, name, lat, lng, groupids) VALUES (?, ?, ?, ?, ?)",
+		999999901, "Test area", 51.5, -0.1, "[]")
+	var areaID uint64
+	db.Raw("SELECT id FROM community_news_areas WHERE anchorgroupid = ?", 999999901).Scan(&areaID)
+	defer db.Exec("DELETE FROM community_news_areas WHERE id = ?", areaID)
+
+	db.Exec("INSERT INTO community_news_items (areaid, title, snippet, url) VALUES (?, ?, ?, ?)",
+		areaID, "Test item", "Test snippet", destinationURL)
+
+	encodedURL := base64.StdEncoding.EncodeToString([]byte(destinationURL))
+
+	req := httptest.NewRequest("GET", "/e/d/r/"+tracking.TrackingID+"?url="+encodedURL+"&p=item_1&a=item", nil)
+	resp, err := getApp().Test(req, -1)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, destinationURL, resp.Header.Get("Location"))
+}
+
 func TestEmailTrackingClickExternalURLBadSignature(t *testing.T) {
 	// A wrong signature must not unlock the redirect.
 	t.Setenv("AMP_SECRET", "test-link-signing-secret")

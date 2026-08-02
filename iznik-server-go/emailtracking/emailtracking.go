@@ -215,7 +215,15 @@ func Click(c *fiber.Ctx) error {
 	// bounce to "/" - the signature proves we generated the link, so honouring
 	// it doesn't open the endpoint to open-redirect abuse. The signature is
 	// over the raw destination as the mailer signed it, pre-repair.
-	if destinationURL == "" || (!isValidRedirectURL(destinationURL) && !hasValidLinkSignature(rawURL, c.Query("sig"))) {
+	//
+	// Third chance: an exact match against the curated Community News items.
+	// Emails sent before link signing existed carry no signature, but their
+	// destinations are all URLs we curated into community_news_items, so a
+	// lookup there retro-fixes those links without opening the endpoint up.
+	if destinationURL == "" ||
+		(!isValidRedirectURL(destinationURL) &&
+			!hasValidLinkSignature(rawURL, c.Query("sig")) &&
+			!isCommunityNewsItemURL(db, destinationURL)) {
 		return c.Redirect("/")
 	}
 
@@ -1347,6 +1355,16 @@ func hasValidLinkSignature(rawURL string, sig string) bool {
 	expected := hex.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(expected), []byte(sig))
+}
+
+// isCommunityNewsItemURL reports whether url is the exact destination of a
+// curated Community News item. Items are authored by our own team, so
+// redirecting to one is safe; this exists to keep links working in Community
+// News emails sent before tracked links carried a signature.
+func isCommunityNewsItemURL(db *gorm.DB, url string) bool {
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM community_news_items WHERE url = ?", url).Scan(&count)
+	return count > 0
 }
 
 // isValidRedirectURL validates URL is safe for redirect
