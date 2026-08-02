@@ -210,8 +210,14 @@ func TestReplaceInto_ClauseBuilderOverrideRendersCorrectly(t *testing.T) {
 	}
 	sql := tx.Statement.SQL.String()
 	upper := strings.ToUpper(strings.TrimSpace(sql))
-	if !strings.HasPrefix(upper, "REPLACE INTO MESSAGES_SPAMHAM") {
-		t.Fatalf("expected REPLACE INTO messages_spamham, got: %s", sql)
+	// The table name may or may not come back backtick-quoted depending on
+	// how Table() resolved it, so check prefix and table name separately
+	// rather than assuming an exact "REPLACE INTO MESSAGES_SPAMHAM".
+	if !strings.HasPrefix(upper, "REPLACE INTO") {
+		t.Fatalf("expected REPLACE INTO, got: %s", sql)
+	}
+	if !strings.Contains(upper, "MESSAGES_SPAMHAM") {
+		t.Fatalf("expected the table name to survive, got: %s", sql)
 	}
 	if strings.Contains(upper, "INSERT") {
 		t.Fatalf("the override must fully suppress the INSERT keyword, got: %s", sql)
