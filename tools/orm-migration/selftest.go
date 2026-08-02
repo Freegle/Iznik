@@ -335,6 +335,49 @@ func runSelfCheck() []string {
 		fail("const fold", "an unresolvable fragment must still mark the site dynamic, got %q", u[0].GoldenSQL)
 	}
 
+	// Setting Statement.BuildClauses = {"SELECT"} suppresses the FROM clause
+	// GORM always registers. That makes .Select() able to carry a whole
+	// statement with .Table() as decoration - and .Select() is not a method this
+	// scan otherwise looks at, so five sites silently stopped counting as raw
+	// and started counting as converted with the SQL text unchanged.
+	//
+	// Both halves matter and both are pinned here, because the two uses look
+	// almost identical and only one is smuggling: a top-level FROM in the
+	// argument means the argument IS the statement, whereas a FROM inside a
+	// scalar subquery ("EXISTS(SELECT 1 FROM users ...)") is an ordinary
+	// expression that renders byte-identically to something GORM otherwise
+	// cannot express. Getting the second one wrong would condemn 18 legitimate
+	// conversions; getting the first wrong loses the inventory's exhaustiveness.
+	smuggleSrc := "package p\n" +
+		"func f() {\n" +
+		"\ttx := db.Table(\"chat_rooms\").Select(\"id FROM chat_rooms WHERE id = ? UNION SELECT id FROM x\")\n" +
+		"\ttx.Statement.BuildClauses = []string{\"SELECT\"}\n" +
+		"}\n"
+	sm, _ := sitesInFile(token.NewFileSet(), "s.go", "s.go", smuggleSrc, false, nil)
+	if len(sm) != 1 {
+		fail("buildclauses", "a whole statement passed through Select() under a BuildClauses override was not inventoried (got %d sites)", len(sm))
+	}
+
+	scalarSrc := "package p\n" +
+		"func f() {\n" +
+		"\ttx := db.Table(\"users\").Select(\"EXISTS(SELECT 1 FROM users WHERE id = ?)\", id)\n" +
+		"\ttx.Statement.BuildClauses = []string{\"SELECT\"}\n" +
+		"}\n"
+	sc, _ := sitesInFile(token.NewFileSet(), "sc.go", "sc.go", scalarSrc, false, nil)
+	if len(sc) != 0 {
+		fail("buildclauses", "a scalar-expression Select (no top-level FROM) was wrongly inventoried as a smuggled statement: %q", sc[0].GoldenSQL)
+	}
+
+	// Without the override, .Select() is an ordinary projection and must never
+	// be inventoried, whatever it contains - otherwise every Select in the
+	// codebase becomes a raw SQL site.
+	noOverrideSrc := "package p\n" +
+		"func f() { db.Table(\"users\").Select(\"id FROM users WHERE id = ?\") }\n"
+	no, _ := sitesInFile(token.NewFileSet(), "n.go", "n.go", noOverrideSrc, false, nil)
+	if len(no) != 0 {
+		fail("buildclauses", "a Select() with no BuildClauses override was inventoried as SQL")
+	}
+
 	// Fiber's c.Query("start", "") reads a URL parameter. "start" is the first
 	// word of START TRANSACTION, so without a receiver check it was inventoried
 	// as SQL - fourteen times, and two agents were about to record those
