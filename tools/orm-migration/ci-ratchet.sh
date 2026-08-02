@@ -302,6 +302,24 @@ else
   grep -E '^(MISSING IMPORT|BAD IMPORT PATH)' "$WORKDIR/imports.txt" | head -20
 fi
 
+# --- Gate (k): INSERTs whose generated id is read back -----------------------
+#
+# LAST_INSERT_ID() is connection-scoped session state, so an INSERT whose id is
+# read afterwards must stay raw; converting it moves the id onto GORM's "@id"
+# writeback and hands the connection choice to dbresolver. The failure mode is
+# silent - a row with the wrong parent id, not an error.
+#
+# The list is generated from the merge-base with master, because after a
+# conversion the raw SQL is gone and the question is no longer answerable from
+# the code. See check-lastinsertid.sh.
+if RATCHET_MANIFEST="$COMMITTED_MANIFEST" bash "$SCRIPT_DIR/check-lastinsertid.sh" >"$WORKDIR/lastid.txt" 2>&1; then
+  note "gate (k) OK: $(tail -1 "$WORKDIR/lastid.txt")"
+else
+  fail "an INSERT whose generated id is read back has been converted:"
+  grep '^LASTINSERTID' "$WORKDIR/lastid.txt" | head -20
+  note "fix: revert the site to raw db.Exec and add it to keep-raw.json with a reason"
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"
