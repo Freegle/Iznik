@@ -77,11 +77,13 @@ func resolveBulkEditToken(db *gorm.DB, token string) uint64 {
 		return 0
 	}
 	var msgid uint64
-	db.Raw("SELECT a.msgid FROM messages_bulk_access a "+
-		"INNER JOIN messages m ON m.id = a.msgid AND m.deleted IS NULL "+
-		"WHERE a.edittoken = ? AND a.edittoken <> '' "+
-		"AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = a.msgid) LIMIT 1",
-		token).Scan(&msgid)
+	// ORM migration site 95a87268e014 (wave 5).
+	db.Table("messages_bulk_access a").
+		Select("a.msgid").
+		Joins("INNER JOIN messages m ON m.id = a.msgid AND m.deleted IS NULL").
+		Where("a.edittoken = ? AND a.edittoken <> '' AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = a.msgid)", token).
+		Limit(1).
+		Scan(&msgid)
 	return msgid
 }
 
@@ -177,9 +179,10 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 // owner toggles availability / edits counts: the sum of quantities across items
 // still marked available.
 func recomputeBulkAvailableNow(db *gorm.DB, msgid uint64) {
-	db.Exec("UPDATE messages SET availablenow = "+
-		"(SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items WHERE msgid = ? AND available = 1) "+
-		"WHERE id = ?", msgid, msgid)
+	// ORM migration site 56dfb1008d60 (wave 5).
+	db.Table("messages").
+		Where("id = ?", msgid).
+		Update("availablenow", gorm.Expr("(SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items WHERE msgid = ? AND available = 1)", msgid))
 }
 
 // recordBulkOutcomeIfComplete inserts a Taken outcome row for a bulk offer once

@@ -746,8 +746,11 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	}
 
 	var rows []relatedRow
-	db.Raw("SELECT DISTINCT id, user1, user2 FROM ("+
-		"SELECT users_related.id, user1, user2 FROM users_related "+
+	// ORM migration site 70059ac9a4bb (wave 5). Derived-table trick: GORM's
+	// Table() passes its name argument through verbatim (no quoting) once it
+	// contains a space, so a parenthesized UNION subquery can be given as the
+	// "table name" with its own bind args in Table()'s variadic args.
+	db.Table("(SELECT users_related.id, user1, user2 FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
@@ -757,8 +760,12 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
-		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
-		") t ORDER BY id DESC LIMIT ?", modGroupIDs, modGroupIDs, limit).Scan(&rows)
+		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ?) t",
+		modGroupIDs, modGroupIDs).
+		Select("DISTINCT id, user1, user2").
+		Order("id DESC").
+		Limit(limit).
+		Scan(&rows)
 
 	if len(rows) == 0 {
 		return c.JSON(make([]fiber.Map, 0))

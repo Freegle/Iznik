@@ -357,6 +357,1026 @@
       "file": "iznik-server-go/noticeboard/noticeboard.go",
       "function": "PatchNoticeboard",
       "reason": "Dynamic SQL (manifest records dynamic: true). The position value is assembled with fmt.Sprintf, embedding lng, lat and the SRID as literal text into the statement before it is ever executed, so the recorded goldenSql is the pre-format Go source text rather than SQL. There is nothing a GORM render could be compared against, which makes Layer 1 parity impossible for this site by construction rather than by difficulty. Plan 7.4 requires a passing parity test before a site counts as converted, so it stays raw."
+    },
+    {
+      "id": "95aa0ae55307",
+      "file": "iznik-server-go/authority/authority.go",
+      "function": "Single",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "f68298f3c261",
+      "file": "iznik-server-go/browse/scroll.go",
+      "function": "ScrollDepthCurve",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "a408b196636c",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "function": "GetDashboard",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "7ee9b04b5de1",
+      "file": "iznik-server-go/microvolunteering/microvolunteering.go",
+      "function": "listMicroActions",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "61a476e2053c",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "analyticsWindow",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "c59f697fe0cb",
+      "file": "iznik-server-go/rippling/metrics.go",
+      "function": "Metrics",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "c12345448a79",
+      "file": "iznik-server-go/systemlogs/systemlogs.go",
+      "function": "GetLogs",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "3cb627925298",
+      "file": "iznik-server-go/systemlogs/systemlogs.go",
+      "function": "GetLogCounts",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "92416198b77d",
+      "file": "iznik-server-go/authority/authority.go",
+      "function": "Single",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "3048dd76eab0",
+      "file": "iznik-server-go/authority/authority.go",
+      "function": "Single",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "1cbaddb2ed2a",
+      "file": "iznik-server-go/authority/message.go",
+      "function": "Messages",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "58213463d5dc",
+      "file": "iznik-server-go/authority/stats.go",
+      "function": "GetStatsByAuthority",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "88aea8da62be",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "function": "GetDashboard",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "2811b4d3acf7",
+      "file": "iznik-server-go/group/group.go",
+      "function": "GetGroup",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "547458a591ae",
+      "file": "iznik-server-go/group/group.go",
+      "function": "getMultipleGroups",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "6d0982e798b5",
+      "file": "iznik-server-go/group/group.go",
+      "function": "validateGeometry",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "548090e97d00",
+      "file": "iznik-server-go/group/group.go",
+      "function": "PatchGroup",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "701348841f78",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "function": "ListIsochrones",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "bff19d769e26",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "function": "ListIsochrones",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "34e1f2e54b22",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "function": "EnsureIsochroneExists",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "5eea52bb68f7",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "function": "EnsureIsochroneExists",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "e0e7375e71aa",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "function": "EnsureIsochroneExists",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "583d5d5394ad",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "function": "HealPointIsochrones",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "498e74a4e8c5",
+      "file": "iznik-server-go/message/postmatches.go",
+      "function": "PostMatches",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "7e7e69fa2f85",
+      "file": "iznik-server-go/message/reach.go",
+      "function": "ReachBlockedSet",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "388f473a3332",
+      "file": "iznik-server-go/message/reach.go",
+      "function": "Reach",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "e9346f66bbf4",
+      "file": "iznik-server-go/noticeboard/noticeboard.go",
+      "function": "getList",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "23ee2bc0640f",
+      "file": "iznik-server-go/town/town.go",
+      "function": "Near",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "c42088f47c61",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "getFeed",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "7558e63cd067",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "getFeed",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (ST_AsText/ST_Y/ST_X/ST_CENTROID/ST_Contains/ST_GeometryType/ST_Intersects/ST_SIMPLIFY/ST_GeomFromText/ST_AsGeoJSON/MBRContains/ST_Distance_Sphere or similar), the category plan 7.5 names explicitly. A rewrite bug here changes which posts/areas show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically."
+    },
+    {
+      "id": "3d5506803f0c",
+      "file": "iznik-server-go/admin/admin.go",
+      "function": "ListAdmins",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "f1e9e49a9c89",
+      "file": "iznik-server-go/comment/comment.go",
+      "function": "Get",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "31fea9e6f321",
+      "file": "iznik-server-go/donations/donations.go",
+      "function": "GetDonations",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "15d5998c44f2",
+      "file": "iznik-server-go/embedding/store.go",
+      "function": "fetchEntries",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bc2f944bfbb7",
+      "file": "iznik-server-go/image/image.go",
+      "function": "ownsImageParent",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "6f9c3996f035",
+      "file": "iznik-server-go/image/image.go",
+      "function": "doRotate",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "2ad46344c8b2",
+      "file": "iznik-server-go/image/image.go",
+      "function": "doRotate",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "1be407fe0a15",
+      "file": "iznik-server-go/image/image.go",
+      "function": "Get",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "1606033fd8f7",
+      "file": "iznik-server-go/image/image.go",
+      "function": "Get",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bc3af5374c0c",
+      "file": "iznik-server-go/job/job.go",
+      "function": "JobsForIDs",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "6cf1b5aded22",
+      "file": "iznik-server-go/logs/logs.go",
+      "function": "GetLogs",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "2c3b155f346b",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "GetMemberships",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "836dc8807739",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "GetMemberships",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "5f742c0fcf1f",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "GetMemberships",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bbc55cf96110",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "GetMemberships",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "5f6ca1b9022f",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "GetMemberships",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "fdd14a1656c7",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "getSpamMembers",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "3119115f3abe",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "getHappinessMembers",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "1a000d04649b",
+      "file": "iznik-server-go/membership/membership.go",
+      "function": "getVisibleRatings",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bc6d923b540d",
+      "file": "iznik-server-go/message/groups.go",
+      "function": "Groups",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "7ba4875e8aec",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperUpsertReplier",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "b48b319835d0",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperSetItemState",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bfe25b4914e8",
+      "file": "iznik-server-go/message/message_list.go",
+      "function": "ListMessages",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "a716e6f7dc57",
+      "file": "iznik-server-go/message/message_list.go",
+      "function": "ListMessagesMT",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "e1228c35e4d2",
+      "file": "iznik-server-go/message/message_list.go",
+      "function": "ListMessagesMT",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "d6cc20019a01",
+      "file": "iznik-server-go/message/message_list.go",
+      "function": "ListMessagesMT",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "7b739452734d",
+      "file": "iznik-server-go/message/message_list.go",
+      "function": "ListMessagesMT",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "6358402174f8",
+      "file": "iznik-server-go/message/message_list.go",
+      "function": "ListMessagesMT",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "80c36f2da91e",
+      "file": "iznik-server-go/microvolunteering/microvolunteering.go",
+      "function": "GetChallenge",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "309561e40e15",
+      "file": "iznik-server-go/microvolunteering/microvolunteering.go",
+      "function": "getPendingMessageChallenge",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bde82a974f05",
+      "file": "iznik-server-go/microvolunteering/microvolunteering.go",
+      "function": "getApprovedMessageChallenge",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "ff5193d35cf8",
+      "file": "iznik-server-go/microvolunteering/microvolunteering.go",
+      "function": "getPhotoRotateChallenge",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "3762cb36efcf",
+      "file": "iznik-server-go/microvolunteering/microvolunteering.go",
+      "function": "listMicroActions",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "a7b00c5503b7",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "PatchModConfig",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "d80ab5badcb6",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "RecentNonAlertNewsfeedIDs",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "f382f9bfe80b",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "fetchDriveSample",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "2def63211a50",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "Analytics",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "62cea0b491c9",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "Analytics",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "1dee90c3c378",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "trendSeries",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "791c683326a8",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "rippledOutSection",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "8cdbd33d1052",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "rippledOutSection",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "568a5645fba7",
+      "file": "iznik-server-go/rippling/metrics.go",
+      "function": "Metrics",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "10ee37c98574",
+      "file": "iznik-server-go/rippling/metrics.go",
+      "function": "Metrics",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "f43d5f680ef9",
+      "file": "iznik-server-go/session/session.go",
+      "function": "GetSession",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "3f3696f3bba4",
+      "file": "iznik-server-go/session/session.go",
+      "function": "GetSession",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "76555fe088e5",
+      "file": "iznik-server-go/session/session.go",
+      "function": "GetSession",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "f85b0b8ed693",
+      "file": "iznik-server-go/session/session.go",
+      "function": "PatchSession",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "d64650fb9560",
+      "file": "iznik-server-go/spammers/spammers.go",
+      "function": "GetSpammers",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "0ca4810292dc",
+      "file": "iznik-server-go/story/story.go",
+      "function": "List",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "4853849663f1",
+      "file": "iznik-server-go/user/authMiddleware.go",
+      "function": "NewAuthMiddleware",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "e04bf70e7bee",
+      "file": "iznik-server-go/user/authMiddleware.go",
+      "function": "NewAuthMiddleware",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "3ecb2fba572f",
+      "file": "iznik-server-go/authority/stats.go",
+      "function": "GetStatsByAuthority",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "6d50d3895aa7",
+      "file": "iznik-server-go/authority/stats.go",
+      "function": "GetStatsByAuthority",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "f281cfe83025",
+      "file": "iznik-server-go/authority/stats.go",
+      "function": "GetStatsByAuthority",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "ff9be67577e8",
+      "file": "iznik-server-go/message/reach.go",
+      "function": "ReachBlockedSet",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "19b190d43a85",
+      "file": "iznik-server-go/changes/changes.go",
+      "function": "GetChanges",
+      "reason": "Top-level UNION of multiple SELECTs with no outer FROM to attach a builder to (unlike the derived-table-wrapped UNIONs converted elsewhere in this wave, e.g. group/groupWork.go's GetGroupWork). GORM's chainable API has no UNION clause, and .Table()/.Joins()/.Where() all assume a single FROM target, so there is no way to construct this statement through the established builder pattern."
+    },
+    {
+      "id": "e9ea468dab80",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "function": "listModConfigs",
+      "reason": "Top-level UNION of multiple SELECTs with no outer FROM to attach a builder to (unlike the derived-table-wrapped UNIONs converted elsewhere in this wave, e.g. group/groupWork.go's GetGroupWork). GORM's chainable API has no UNION clause, and .Table()/.Joins()/.Where() all assume a single FROM target, so there is no way to construct this statement through the established builder pattern."
+    },
+    {
+      "id": "bf1cd8bf4627",
+      "file": "iznik-server-go/session/merge.go",
+      "function": "mergeChatRooms",
+      "reason": "Multi-table UPDATE ... JOIN ... SET (MySQL-specific syntax, updating one aliased table's columns from a value computed via a joined second copy of the same table). GORM's Update/Updates builder targets a single table with a plain SET list; it has no clause for a JOIN inside a write statement, so this cannot be expressed through .Table()/.Update() the way single-table writes in earlier waves were."
+    },
+    {
+      "id": "85f3246d11af",
+      "file": "iznik-server-go/message/bulkEdit.go",
+      "function": "recordBulkOutcomeIfComplete",
+      "reason": "INSERT ... SELECT. No GORM builder keeps an INSERT and its source SELECT as one atomic statement - .Create() takes a map/struct of literal values, not a subquery, so there is no way to express this without splitting it into a read then a write, which would open a race the single statement does not have."
+    },
+    {
+      "id": "56c15677ea5b",
+      "file": "iznik-server-go/session/session.go",
+      "function": "PatchSession",
+      "reason": "INSERT ... SELECT. No GORM builder keeps an INSERT and its source SELECT as one atomic statement - .Create() takes a map/struct of literal values, not a subquery, so there is no way to express this without splitting it into a read then a write, which would open a race the single statement does not have."
+    },
+    {
+      "id": "cdbd40c98336",
+      "file": "iznik-server-go/authority/stats.go",
+      "function": "GetStatsByAuthority",
+      "reason": "DROP TEMPORARY TABLE - a DDL statement, not a query or write GORM's clause-based builder models at all (no Table/Select/Where/Create/Update/Delete shape applies to a bare DDL statement). Session-scoped alongside the CREATE TEMPORARY TABLE it pairs with in the same function; see GetStatsByAuthority's dbresolver.Write-pinned transaction comment for why the pairing matters."
+    },
+    {
+      "id": "dd475ec31446",
+      "file": "iznik-server-go/authority/stats.go",
+      "function": "GetStatsByAuthority",
+      "reason": "DROP TEMPORARY TABLE - a DDL statement, not a query or write GORM's clause-based builder models at all (no Table/Select/Where/Create/Update/Delete shape applies to a bare DDL statement). Session-scoped alongside the CREATE TEMPORARY TABLE it pairs with in the same function; see GetStatsByAuthority's dbresolver.Write-pinned transaction comment for why the pairing matters."
+    },
+    {
+      "id": "8d359d691beb",
+      "file": "iznik-server-go/message/helper.go",
+      "function": "helperResolveProposal",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" (confirmed by rendering gorm.io/gorm/clause's own insert_test.go cases: Modifier:\"LOW_PRIORITY\" renders \"INSERT LOW_PRIORITY INTO ...\") - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "09730933af57",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "Post",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" (confirmed by rendering gorm.io/gorm/clause's own insert_test.go cases: Modifier:\"LOW_PRIORITY\" renders \"INSERT LOW_PRIORITY INTO ...\") - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "1ff179ae0e2c",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "function": "Post",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" (confirmed by rendering gorm.io/gorm/clause's own insert_test.go cases: Modifier:\"LOW_PRIORITY\" renders \"INSERT LOW_PRIORITY INTO ...\") - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "f3a8b6237a60",
+      "file": "iznik-server-go/team/team.go",
+      "function": "PatchTeam",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" (confirmed by rendering gorm.io/gorm/clause's own insert_test.go cases: Modifier:\"LOW_PRIORITY\" renders \"INSERT LOW_PRIORITY INTO ...\") - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "8ec21db34aa4",
+      "file": "iznik-server-go/amp/amp.go",
+      "function": "ValidateToken",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have."
+    },
+    {
+      "id": "faf666d9cb13",
+      "file": "iznik-server-go/amp/amp.go",
+      "function": "validateBodyToken",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have."
+    },
+    {
+      "id": "848af7d73bfe",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "recordReplyAttribution",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (wasHome: established-membership check for the reply-attribution ladder.)"
+    },
+    {
+      "id": "582f5b4bb7ce",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "recordReplyAttribution",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (wasNotified: rippling_reach_notified ledger lookup.)"
+    },
+    {
+      "id": "fc0c6fd4f6df",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "recordReplyAttribution",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (wasRippleGroup: rippled-in membership check.)"
+    },
+    {
+      "id": "461f55d25b16",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "recordReplyAttribution",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (postHadRippled: has the post rippled at all.)"
+    },
+    {
+      "id": "a4250aa0ada3",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "recordReplyAttribution",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (hasReach: rippling_reach existence fallback.)"
+    },
+    {
+      "id": "4fc47623d055",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "recordReplyAttribution",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (inOrigin: also spatial - ST_Contains/ST_GeometryType/ST_SRID inside the subquery - but the FROM-less shape is the sole reason it stays raw, not the spatial content, which is otherwise ordinary literal text.)"
+    },
+    {
+      "id": "a74101bfbfa2",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "CreateChatMessage",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (refExists: guards a reply against a purged refmsgid.)"
+    },
+    {
+      "id": "c9ff161437b9",
+      "file": "iznik-server-go/message/message.go",
+      "function": "GetMessagesByIds",
+      "reason": "Bare SELECT EXISTS(...) with no top-level FROM clause at all - the whole statement is one scalar expression. GORM's chainable builder always renders a FROM clause once .Table() (or .Model()) is called, so there is no way to construct \"SELECT EXISTS(...)\" with nothing else through the established Table()/Select()/Where() pattern without adding a FROM this golden does not have. (SELECT EXISTS(SELECT 1 FROM rippling_reach WHERE msgid IN (?)).)"
+    },
+    {
+      "id": "67871ee12b8f",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "holdChatMessage",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "db4ec8586401",
+      "file": "iznik-server-go/message/message.go",
+      "function": "handleApprove",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "049bc3f964cd",
+      "file": "iznik-server-go/message/message.go",
+      "function": "handleSpam",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "7efd04588fb2",
+      "file": "iznik-server-go/message/message.go",
+      "function": "handlePromise",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "33201edc2a80",
+      "file": "iznik-server-go/user/user.go",
+      "function": "handleRate",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword."
+    },
+    {
+      "id": "25b7b92e33fd",
+      "file": "iznik-server-go/location/location.go",
+      "function": "CreateLocation",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword. Also carries a second, independent blocker: the SRID is embedded via fmt.Sprintf(..., utils.SRID) as a literal %d BEFORE the string ever reaches Exec, so the manifest's recorded goldenSql is unresolved template text (\"ST_GeomFromText(?, %d)\") rather than real SQL - there is nothing for a rendered statement to compare against even setting the REPLACE issue aside."
+    },
+    {
+      "id": "6f1d6543e5c0",
+      "file": "iznik-server-go/location/location.go",
+      "function": "UpdateLocation",
+      "reason": "REPLACE INTO cannot be expressed via GORM's clause.Insert. The framework writes the clause's Name() (\"INSERT\") before calling Build(), and Insert.Build() only ever appends a Modifier word plus \"INTO\" after that literal \"INSERT\" - so Modifier:\"REPLACE\" would render \"INSERT REPLACE INTO ...\", not \"REPLACE INTO ...\". There is no clause that swaps the statement keyword itself, unlike INSERT IGNORE (wave 3's clause.Insert{Modifier:\"IGNORE\"}) which only ever needed a modifier, not a different keyword. Also carries a second, independent blocker: the SRID is embedded via fmt.Sprintf(..., utils.SRID) as a literal %d BEFORE the string ever reaches Exec, so the manifest's recorded goldenSql is unresolved template text (\"ST_GeomFromText(?, %d)\") rather than real SQL - there is nothing for a rendered statement to compare against even setting the REPLACE issue aside."
+    },
+    {
+      "id": "d4f71ea17664",
+      "file": "iznik-server-go/message/message.go",
+      "function": "ClipReachForRejectedGroup",
+      "reason": "Multi-table DELETE ... JOIN ... WHERE (MySQL-specific syntax: \"DELETE mr FROM rippling_reach mr JOIN `groups` g ON ...\"). GORM's Delete callback (callbacks/delete.go) adds a bare clause.From{} with no Joins populated from Statement.Joins - unlike the SELECT query callback, which explicitly merges Statement.Joins into the From clause - so a .Joins() call before .Delete() is silently dropped rather than rendered, producing a DELETE that omits the second table entirely. Also spatial (ST_GeometryType/ST_Within), per plan 7.5, though the JOIN gap is the structural blocker."
+    },
+    {
+      "id": "8c15ce918aa2",
+      "file": "iznik-server-go/message/message.go",
+      "function": "PutMessageAs",
+      "reason": "Multi-table UPDATE ... JOIN ... JOIN ... SET (MySQL-specific syntax, updating messages from two joined tables: users and locations). GORM's Update/Updates builder targets a single table with a plain SET list (mysql.go's UpdateClauses = [UPDATE, SET, WHERE, ORDER BY, LIMIT] - no FROM/JOIN entry at all); it has no clause for a JOIN inside a write statement, so this cannot be expressed through .Table()/.Update() the way single-table writes in earlier waves were."
+    },
+    {
+      "id": "a79f147726d0",
+      "file": "iznik-server-go/user/user.go",
+      "function": "handleMerge",
+      "reason": "Multi-table UPDATE ... JOIN ... SET (MySQL-specific syntax: UPDATE memberships m2 JOIN memberships m1 ON ... SET m2.added = LEAST(m2.added, m1.added), updating one aliased copy of memberships from a value computed via a second joined copy of the same table). GORM's Update/Updates builder targets a single table with a plain SET list; it has no clause for a JOIN inside a write statement."
+    },
+    {
+      "id": "5b72a0acad8e",
+      "file": "iznik-server-go/user/user.go",
+      "function": "handleMerge",
+      "reason": "Multi-table UPDATE ... JOIN ... SET (MySQL-specific syntax: UPDATE users u2 JOIN users u1 ON ... SET u2.added = LEAST(u2.added, u1.added), the users-table twin of this same function's memberships merge, a79f147726d0). GORM's Update/Updates builder targets a single table with a plain SET list; it has no clause for a JOIN inside a write statement."
+    },
+    {
+      "id": "4f9d823a53a7",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "handleAllSeen",
+      "reason": "INSERT ... SELECT: seeds a chat_roster row for every chat_rooms row the user participates in that doesn't already have one, in one statement (INSERT INTO chat_roster (...) SELECT cr.id, ?, ... FROM chat_rooms cr WHERE ... AND NOT EXISTS (...)). GORM has no builder that expresses INSERT ... SELECT as one atomic statement - Create takes values, not a query - so converting it would mean reading the candidate rows and inserting them separately, a different statement with a different concurrency story, not a port."
+    },
+    {
+      "id": "1d98111ea90d",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "handleAllSeen",
+      "reason": "INSERT ... SELECT, the ModTools-branch twin of this same function's 4f9d823a53a7 (chat_rooms.id IN (...) instead of the FD branch's user1/user2 pair). Also runtime-varying: the IN-list is a literal-value list built by joining formatted chat ids (joinIDs), not a bind, so even the INSERT ... SELECT issue aside there is no fixed golden - the manifest records it as {{expr}}."
+    },
+    {
+      "id": "33ad97a3417c",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "CreateChatMessage",
+      "reason": "Top-level UNION of three SELECTs (by id/user1, by id/user2, and a memberships-joined moderator check) with no outer FROM to attach a builder to - unlike the derived-table-wrapped UNIONs converted elsewhere in this wave (e.g. user/user.go's SearchUsers, 0c9e859752d0, and GetSearchesForUser, 06d02e94fa4a, both of which have an outer \"SELECT ... FROM (...) t\" shape and so go through .Table(\"(...) t\", args...) instead). GORM's chainable API has no UNION clause, and .Table()/.Joins()/.Where() all assume a single FROM target, so a bare UNION with nothing wrapping it cannot be constructed through the established builder pattern."
+    },
+    {
+      "id": "3736547cd88a",
+      "file": "iznik-server-go/location/location.go",
+      "function": "ClosestGroups",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (haversine/ST_Contains/ST_distance/MBRIntersects/ST_SRID/POLYGON/LINESTRING), the category plan 7.5 names explicitly. This is the core group/location MATCHING and RANKING logic (which real groups or locations a point falls near or inside), the same kind of \"wrong nearby X\" risk that message/bounds.go and message/search.go were kept raw for in wave 1 - a rewrite bug here changes which groups/locations show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically even though the text is otherwise renderable. (Containment pass: ST_Contains(polyindex, ...) plus haversine distance ranking.)"
+    },
+    {
+      "id": "961c4c5a214a",
+      "file": "iznik-server-go/location/location.go",
+      "function": "ClosestGroups",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (haversine/ST_Contains/ST_distance/MBRIntersects/ST_SRID/POLYGON/LINESTRING), the category plan 7.5 names explicitly. This is the core group/location MATCHING and RANKING logic (which real groups or locations a point falls near or inside), the same kind of \"wrong nearby X\" risk that message/bounds.go and message/search.go were kept raw for in wave 1 - a rewrite bug here changes which groups/locations show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically even though the text is otherwise renderable. (Radius-band pass: ST_distance/MBRIntersects over an expanding bounding box, run per band from a goroutine.)"
+    },
+    {
+      "id": "dc731a47a66a",
+      "file": "iznik-server-go/location/location.go",
+      "function": "SearchLocations",
+      "reason": "Spatial: uses MySQL ST_*/MBR* geometry functions (haversine/ST_Contains/ST_distance/MBRIntersects/ST_SRID/POLYGON/LINESTRING), the category plan 7.5 names explicitly. This is the core group/location MATCHING and RANKING logic (which real groups or locations a point falls near or inside), the same kind of \"wrong nearby X\" risk that message/bounds.go and message/search.go were kept raw for in wave 1 - a rewrite bug here changes which groups/locations show up as nearby with no obviously wrong shape to the query, so it is not converted mechanically even though the text is otherwise renderable. (Bounding-box intersection query for the ModTools area-boundary editor - Discourse #9770 is a real production bug from a previous subtle change to this exact query's geometry handling.)"
+    },
+    {
+      "id": "f557717fbfce",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "FetchChatMessages",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a review-vs-non-review WHERE fragment (reviewFilter), a soft-deleted-sender filter only added for non-mod callers (deletedFilter), an optional \"AND id != ?\" exclusion, an ASC/DESC ORDER BY branch, and a LIMIT embedded via fmt.Sprintf as literal text rather than a bind), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "7470288c95b7",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "FetchChatMessages",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the IN-list is a literal-value list built by strings.Join(fmt.Sprintf(\"%d\", id), \",\"), not a bind, so the number and text of the placeholders inside IN(...) varies with how many message ids are held), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "67cd5e1cc4ec",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "CreateChatMessage",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the aggregate expression is rippling.ReachInReachExpr()'s return value, a Go function call the extractor cannot fold to a static golden (unlike a plain string constant, which a later extractor change now resolves for wave-1 sites such as modconfig.go's configColumns)), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "07113a2db28b",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "getChatMessagesForRoom",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a participant-vs-moderator WHERE fragment (reviewFilter), an optional soft-deleted-sender filter, and an optional pagination cutoff embedded via string concatenation of a formatted uint64 rather than a bind (ctxq)), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "1ff296c8656c",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "getReviewQueue",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the statement is baseQuery+widerQuery, both built from recipientExpr (a CASE expression assembled elsewhere in the function) and a literal-value group-id list, neither of which is a fixed constant), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "5da587b4234d",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "getReviewQueue",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the non-wider-review branch of the same baseQuery this function's 1ff296c8656c also uses, which embeds recipientExpr (a CASE expression assembled at runtime) directly into the SQL text), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "62a2f6fa4bdb",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "function": "getReviewQueue",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the IN-list is a literal-value list built by strings.Join over formatted user ids, not a bind, so the number and text of the placeholders inside IN(...) varies with how many held-by users are being resolved), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "537a2764efde",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "listChats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the statement is assembled from a variable-length `unions` slice (one UNION arm appended per matching chat-room shape) joined with \" UNION \", so both the number of arms and the final SQL text vary per call), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "b184ef8e3ad2",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "listChats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the statement embeds a WITH-CTE and a literal-value id list (idlist, built by strings.Join over formatted ids) directly into the SQL text, neither of which the extractor can fold to a fixed golden), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "366c64b4d972",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "listChats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the IN-list (idlist) is a literal-value list built by strings.Join over formatted user ids, not a bind, so the text varies with how many users are being checked for supporter status), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "3519e352775b",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "handleAllSeen",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the chatid IN(...) list (idlist) is a literal-value list built by strings.Join over formatted chat ids, not a bind, so the text varies with how many moderator chats the caller has), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "fdeb2007824a",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "countUnseenMT",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the chat_messages.chatid IN(...) list (idlist, via joinIDs) is a literal-value list, not a bind, so the text varies with how many moderator chat ids are being counted), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "35023816be21",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "getModeratorChatIDs",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the \"active\" membership filter (activeq) is only appended when the search parameter is empty, so the statement has two different shapes depending on the caller), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "e99680f74b2e",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "getModeratorChatIDs",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the User2Mod branch's twin of this same function's 35023816be21: the \"active\" membership filter (activeq) is only appended when the search parameter is empty), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "d44b753b35c8",
+      "file": "iznik-server-go/chat/chatroom.go",
+      "function": "getModeratorChatIDs",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the chat_rooms.id IN(...) list (idlist) is a literal-value list built by strings.Join over formatted chat ids, not a bind, so the text varies with how many candidate chat ids the search is narrowing), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "e1daa6fea45a",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "getBouncesEmailsStats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the \"AND date BETWEEN ? AND ?\" clause is only appended when both startDate and endDate are supplied, so the statement has two different shapes depending on the caller's query params), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "52ecf7eb71ac",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "getAMPStats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the WHERE conditions string is built by conditionally appending an email_type filter and/or a date-range filter before this AMP-emails query runs, so up to four different shapes are possible), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "c8a4c6cbcae8",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "getAMPStats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the non-AMP-emails twin of this same function's 52ecf7eb71ac, sharing the same conditionally-built WHERE conditions string), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "ef321afa5b7a",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "getAMPStats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the click-breakdown query reuses the same conditionally-built WHERE conditions string (via string-replace) as 52ecf7eb71ac, so it inherits the same variable shape), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "b37a229bfb0b",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "getAMPStats",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the non-AMP click-breakdown twin of this same function's ef321afa5b7a, sharing the same conditionally-built WHERE conditions string), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "69f6acdc5a6b",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "TimeSeries",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the daily-stats query conditionally appends \"AND email_type = ?\" before its GROUP BY/ORDER BY, so the statement has two different shapes depending on the caller's query params), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "9d115fb3ebcd",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "TimeSeries",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the extractor cannot fold the local `bounceQuery` variable to a fixed golden (goldenSql records \"{{built at runtime: bounceQuery}}\") - the constant-folding a later extractor change added for wave-1 sites covers package-level `const` declarations (e.g. modconfig.go's configColumns), not a function-local variable, even though this particular one is never reassigned), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "ecbedcafc048",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "StatsByType",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the query string is conditionally assembled (type/date-range filters) before this stats-by-type breakdown runs, the same pattern as getAMPStats's conditions), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "f6e4a52a0fb6",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "TopClickedLinks",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the query string is conditionally assembled (type/date-range filters) before this top-clicked-links breakdown runs, the same pattern as getAMPStats's conditions), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "284dfbc44866",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "DigestClickPositions",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the extractor cannot fold the local `denomQuery` variable to a fixed golden (goldenSql records \"{{built at runtime: denomQuery}}\"), the same function-local-variable gap as TimeSeries's bounceQuery (9d115fb3ebcd)), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "dce69264c9c0",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "DigestClickPositions",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the extractor cannot fold the local `clickQuery` variable to a fixed golden (goldenSql records \"{{built at runtime: clickQuery}}\"), the same function-local-variable gap as this function's own denomQuery (284dfbc44866)), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "b262bf75df3c",
+      "file": "iznik-server-go/location/location.go",
+      "function": "SearchLocations",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (an optional area-scoping WHERE fragment ({{expr}}) is appended only when an area filter is supplied, so the statement has two different shapes depending on the caller), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "71f1772f4a99",
+      "file": "iznik-server-go/location/location.go",
+      "function": "Typeahead",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (shares SearchLocations's pattern: an optional area-scoping WHERE fragment ({{expr}}) is appended only when an area filter is supplied), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "08bb471351a0",
+      "file": "iznik-server-go/message/message.go",
+      "function": "GetMessagesByIds",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SELECT list and WHERE are assembled from several optional fragments depending on which fields/filters the caller requested, so the statement has more than one possible shape), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "2de07c2af78b",
+      "file": "iznik-server-go/message/message.go",
+      "function": "GetMessagesForUser",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the extractor cannot fold the local `sql` variable to a fixed golden (goldenSql records \"{{built at runtime: sql}}\") - it is assembled from several optional filter fragments across the function), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "bca1186d1ea4",
+      "file": "iznik-server-go/message/message.go",
+      "function": "GetMessagesForUser",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the second use of the same runtime-built `sql` variable this function's 2de07c2af78b also cannot resolve), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "7653c7a2e4ed",
+      "file": "iznik-server-go/message/message.go",
+      "function": "ClipReachForRejectedGroup",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (an optional \", mr.inner_bound = NULL\" SET fragment ({{expr}}) is appended only when rippling.ReachBoundsReady(db) is true, so the statement has two different shapes depending on runtime schema-migration state - and it is also a multi-table UPDATE ... JOIN (see d4f71ea17664's DELETE twin in this same function for that mechanism)), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "99713f48c505",
+      "file": "iznik-server-go/message/message.go",
+      "function": "handleRevertEdits",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SET list ({{expr}}) is built by joining a variable number of \"col = ?\" fragments, one per field the revert actually changes, so both the column list and the placeholder count vary per call), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "e9f2c662be69",
+      "file": "iznik-server-go/message/message.go",
+      "function": "applyPatchMessageCore",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SET list ({{expr}}) is built by joining a variable number of \"col = ?\" fragments, one per field present in the PATCH request, so both the column list and the placeholder count vary per call), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "e0558c2c039d",
+      "file": "iznik-server-go/user/user.go",
+      "function": "GetUserById",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SELECT list includes an optional fragment ({{expr}}) added only for certain caller/target combinations, so the statement has more than one possible shape), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "941509171a6e",
+      "file": "iznik-server-go/user/user.go",
+      "function": "PatchUser",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SET list ({{expr}}) is built by joining a variable number of \"col = ?\" fragments, one per field present in the PATCH request, so both the column list and the placeholder count vary per call), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "d5ecca066b1b",
+      "file": "iznik-server-go/user/user.go",
+      "function": "handleMerge",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the extractor cannot fold the local `u.sql` variable to a fixed golden (goldenSql records \"{{built at runtime: u.sql}}\") - it is assembled from several optional merge-step fragments), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "395499023142",
+      "file": "iznik-server-go/user/user.go",
+      "function": "GetUserReplies",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the extractor cannot fold the local `query` variable to a fixed golden (goldenSql records \"{{built at runtime: query}}\") - it is assembled from several optional filter fragments), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "745c0a9ca82e",
+      "file": "iznik-server-go/location/location.go",
+      "function": "UpdateLocation",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SRID is embedded via fmt.Sprintf(\"SELECT ST_IsValid(ST_GeomFromText(?, %d)) AS valid\", utils.SRID) as a literal %d BEFORE the string ever reaches Raw, so the manifest's recorded goldenSql is unresolved template text rather than real SQL - there is nothing for a rendered statement to compare against), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "42f88b0d5032",
+      "file": "iznik-server-go/location/location.go",
+      "function": "UpdateLocation",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SRID is embedded via fmt.Sprintf(..., utils.SRID, utils.SRID) as two literal %d verbs in the old/new-geometry union query BEFORE the string ever reaches Raw, so the manifest's recorded goldenSql is unresolved template text rather than real SQL), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "aa63c688e6b1",
+      "file": "iznik-server-go/location/location.go",
+      "function": "UpdateLocation",
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (the SRID is embedded via fmt.Sprintf(\"UPDATE locations SET `type` = 'Polygon', ourgeometry = ST_GeomFromText(?, %d) WHERE id = ?\", utils.SRID) as a literal %d BEFORE the string ever reaches Exec, so the manifest's recorded goldenSql is unresolved template text rather than real SQL), captured by the extractor as an unresolved \"{{expr}}\"/\"%d\" placeholder in the recorded goldenSql rather than as a bind parameter. No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
+    },
+    {
+      "id": "ff270803c454",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "Stats",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "fe86fef06fca",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "TimeSeries",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "f707d71a7c84",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "StatsByType",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "5756847cafa5",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "TopClickedLinks",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "a1b57a3babc2",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "DigestClickPositions",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
+    },
+    {
+      "id": "707229c569eb",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "ReengageEffectiveness",
+      "reason": "Extractor false positive: the matched call is c.Query(name, default) - Fiber's HTTP URL-query-parameter accessor (receiver \"c\", a *fiber.Ctx) - not a database call. The recorded goldenSql is literally the query-parameter name string, not SQL. There is no raw SQL statement at this site to convert; flagged to the extractor owner as a bug in the \"Query\" method-name heuristic, which matches fiber.Ctx.Query as well as gorm.DB.Raw/Query-style calls."
     }
   ]
 }

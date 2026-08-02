@@ -399,8 +399,11 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		db.Raw("SELECT groupid, COUNT(*) as count FROM ("+
-			"SELECT ur.user1, m.groupid FROM users_related ur "+
+		// ORM migration site 2fb19be4ef0b (wave 5). Derived-table trick: GORM's
+		// Table() passes its name argument through verbatim (no quoting) once it
+		// contains a space, so a parenthesized UNION subquery can be given as the
+		// "table name" with its own bind args in Table()'s variadic args.
+		db.Table("(SELECT ur.user1, m.groupid FROM users_related ur "+
 			"INNER JOIN memberships m ON m.userid = ur.user1 "+
 			"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
 			"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
@@ -414,8 +417,11 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
 			"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
 			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
-			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
-			") t GROUP BY groupid", activeGroupIDs, activeGroupIDs).Scan(&rows)
+			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0) t",
+			activeGroupIDs, activeGroupIDs).
+			Select("groupid, COUNT(*) as count").
+			Group("groupid").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -444,8 +450,11 @@ func GetGroupWork(c *fiber.Ctx) error {
 				return nil
 			}
 			var rows []chatCountRow
-			db.Raw("SELECT groupid, COUNT(*) as count, held FROM ("+
-				"SELECT DISTINCT cm.id, "+
+			// ORM migration site e9cc5186c0a5 (wave 5). Same derived-table trick as
+			// above: the correlated "sub" subquery is passed as Table()'s verbatim
+			// name (it contains a space, so GORM does not quote it), with its own
+			// bind args in Table()'s variadic args.
+			db.Table("(SELECT DISTINCT cm.id, "+
 				"COALESCE("+
 				"  (SELECT m1.groupid FROM memberships m1 INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle' "+
 				"   WHERE m1.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) "+
@@ -465,9 +474,12 @@ func GetGroupWork(c *fiber.Ctx) error {
 				"   WHERE m4.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) "+
 				"   AND EXISTS (SELECT 1 FROM memberships m5 INNER JOIN `groups` g5 ON m5.groupid = g5.id AND g5.type = 'Freegle' "+
 				"   WHERE m5.userid = cm.userid AND m5.groupid IN ?))"+
-				")"+
-				") sub WHERE groupid IS NOT NULL GROUP BY groupid, held",
-				groupIDs, groupIDs, chatCutoff, groupIDs, groupIDs).Scan(&rows)
+				")) sub",
+				groupIDs, groupIDs, chatCutoff, groupIDs, groupIDs).
+				Select("groupid, COUNT(*) as count, held").
+				Where("groupid IS NOT NULL").
+				Group("groupid, held").
+				Scan(&rows)
 			return rows
 		}
 

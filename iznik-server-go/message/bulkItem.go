@@ -785,9 +785,11 @@ func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
 		Photourl string
 	}
 	var rows []prow
-	db.Raw("SELECT bi.id, bi.photourl FROM messages_bulk_items bi "+
-		"WHERE bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' "+
-		"AND NOT EXISTS (SELECT 1 FROM messages_bulk_item_attachments x WHERE x.bulkitemid = bi.id)", msgid).Scan(&rows)
+	// ORM migration site 086a07072de1 (wave 5).
+	db.Table("messages_bulk_items bi").
+		Select("bi.id, bi.photourl").
+		Where("bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' AND NOT EXISTS (SELECT 1 FROM messages_bulk_item_attachments x WHERE x.bulkitemid = bi.id)", msgid).
+		Scan(&rows)
 
 	for _, r := range rows {
 		data, mime, err := BulkPhotoFetcher(r.Photourl)

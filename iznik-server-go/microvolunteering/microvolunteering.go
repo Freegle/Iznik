@@ -298,11 +298,15 @@ func GetChallenge(c *fiber.Ctx) error {
 			}
 			var terms []ItemTerm
 
-			db.Raw(`
-				SELECT DISTINCT id, name AS term
-				FROM (SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t
-				ORDER BY RAND() LIMIT 10
-			`).Scan(&terms)
+			// ORM migration site 39233a746ed4 (wave 5). Derived-table trick: GORM's
+			// Table() passes its name argument through verbatim (no quoting) once it
+			// contains a space, so a parenthesized subquery can be given as the
+			// "table name".
+			db.Table("(SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t").
+				Select("DISTINCT id, name AS term").
+				Order("RAND()").
+				Limit(10).
+				Scan(&terms)
 
 			if len(terms) > 0 {
 				var searchTerms []SearchTerm
@@ -540,18 +544,15 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	var img AIImageResult
 
-	err := db.Raw(`
-		SELECT ai.id, ai.name, ai.externaluid, ai.usage_count
-		FROM ai_images ai
-		LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?
-		WHERE ai.externaluid IS NOT NULL
-			AND ai.externaluid != ''
-			AND ai.status = 'active'
-			AND ma.id IS NULL
-			AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) < ?
-		ORDER BY ai.usage_count DESC
-		LIMIT 1
-	`, userID, ChallengeAIImageReview, ChallengeAIImageReview, AIImageReviewQuorum).Scan(&img).Error
+	// ORM migration site 8c2181ff22ae (wave 5).
+	err := db.Table("ai_images ai").
+		Select("ai.id, ai.name, ai.externaluid, ai.usage_count").
+		Joins("LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?", userID, ChallengeAIImageReview).
+		Where("ai.externaluid IS NOT NULL AND ai.externaluid != '' AND ai.status = 'active' AND ma.id IS NULL AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) < ?",
+			ChallengeAIImageReview, AIImageReviewQuorum).
+		Order("ai.usage_count DESC").
+		Limit(1).
+		Scan(&img).Error
 
 	if err != nil || img.ID == 0 {
 		return nil
@@ -596,24 +597,16 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	var att AttachmentResult
 
-	err := db.Raw(`
-		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
-		FROM eee_classified_attachments ec
-		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
-		INNER JOIN messages m ON m.id = ec.messageid
-		WHERE m.deleted IS NULL
-			AND ma_att.externaluid IS NOT NULL
-			AND ma_att.externaluid != ''
-			AND NOT EXISTS (
-				SELECT 1 FROM microactions ma
-				WHERE ma.eee_attachment_id = ma_att.id
-				  AND ma.userid = ?
-				  AND ma.actiontype = ?
-			)
-			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
-		ORDER BY ec.classified_at DESC
-		LIMIT 1
-	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
+	// ORM migration site 9f06198e9799 (wave 5).
+	err := db.Table("eee_classified_attachments ec").
+		Select("ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject").
+		Joins("INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid").
+		Joins("INNER JOIN messages m ON m.id = ec.messageid").
+		Where("m.deleted IS NULL AND ma_att.externaluid IS NOT NULL AND ma_att.externaluid != '' AND NOT EXISTS ( SELECT 1 FROM microactions ma WHERE ma.eee_attachment_id = ma_att.id AND ma.userid = ? AND ma.actiontype = ? ) AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?",
+			userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).
+		Order("ec.classified_at DESC").
+		Limit(1).
+		Scan(&att).Error
 
 	if err != nil || att.Attid == 0 {
 		return nil

@@ -18,6 +18,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	geo "github.com/kellydunn/golang-geo"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -749,7 +750,12 @@ func CreateLocation(c *fiber.Ctx) error {
 
 		// Cache centroid and max dimension, as UpdateLocation does. Without this a
 		// created area has NULL lat/lng, unlike every edited one.
-		db.Exec("UPDATE locations SET maxdimension = GetMaxDimension(geometry), lat = ST_Y(ST_Centroid(geometry)), lng = ST_X(ST_Centroid(geometry)) WHERE id = ?", id)
+		// ORM migration site 13cbb1ba0653 (wave 5).
+		db.Table("locations").Where("id = ?", id).Updates(map[string]interface{}{
+			"maxdimension": gorm.Expr("GetMaxDimension(geometry)"),
+			"lat":          gorm.Expr("ST_Y(ST_Centroid(geometry))"),
+			"lng":          gorm.Expr("ST_X(ST_Centroid(geometry))"),
+		})
 
 		// Put the new area into the spatial KNN index before the remap below runs,
 		// otherwise the remap can't find it and the area gets no postcodes.
@@ -849,7 +855,12 @@ func UpdateLocation(c *fiber.Ctx) error {
 		)
 
 		// Update cached centroid and max dimensions.
-		db.Exec("UPDATE locations SET maxdimension = GetMaxDimension(ourgeometry), lat = ST_Y(ST_Centroid(ourgeometry)), lng = ST_X(ST_Centroid(ourgeometry)) WHERE id = ?", req.ID)
+		// ORM migration site 7d5f2f96661e (wave 5).
+		db.Table("locations").Where("id = ?", req.ID).Updates(map[string]interface{}{
+			"maxdimension": gorm.Expr("GetMaxDimension(ourgeometry)"),
+			"lat":          gorm.Expr("ST_Y(ST_Centroid(ourgeometry))"),
+			"lng":          gorm.Expr("ST_X(ST_Centroid(ourgeometry))"),
+		})
 
 		// Refresh the spatial KNN index before the remap below runs, so it remaps
 		// against the new shape rather than the one from the last delta sync.
@@ -960,10 +971,11 @@ func ExcludeLocation(c *fiber.Ctx) error {
 
 func queueExcludeRemap(locationID uint64) {
 	var wkt string
-	database.DBConn.Raw(
-		"SELECT ST_AsText(COALESCE(ourgeometry, geometry)) FROM locations WHERE id = ?",
-		locationID,
-	).Scan(&wkt)
+	// ORM migration site 5e7eab0bd83d (wave 5).
+	database.DBConn.Table("locations").
+		Select("ST_AsText(COALESCE(ourgeometry, geometry))").
+		Where("id = ?", locationID).
+		Scan(&wkt)
 	if wkt == "" {
 		return
 	}

@@ -612,10 +612,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						"FROM rippling_reach rr "+
 						"WHERE rr.msgid = ?", args...).Scan(&rc).Error
 				} else {
-					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, "+
-						"COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach "+
-						"FROM rippling_reach WHERE msgid = ?",
-						latlng.Lng, latlng.Lat, utils.SRID, *payload.Refmsgid).Scan(&rc).Error
+					// ORM migration site f31ae2ffe181 (wave 5).
+					gateErr = db.Table("rippling_reach").
+						Select("COUNT(*) AS reach_rows, COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach",
+							latlng.Lng, latlng.Lat, utils.SRID).
+						Where("msgid = ?", *payload.Refmsgid).
+						Scan(&rc).Error
 				}
 				if gateErr == nil {
 					reach.checked = true
@@ -745,10 +747,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	// If anyone has closed this chat, reopen it so it reappears in their list.
 	// Blocked chats are left as-is.  Only applies to User2User and User2Mod chats.
-	result := db.Exec("UPDATE chat_roster SET status = ? WHERE chatid = ? AND status = ? "+
-		"AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
-		utils.CHAT_STATUS_OFFLINE, id, utils.CHAT_STATUS_CLOSED,
-		id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD)
+	// ORM migration site 739b42667028 (wave 5).
+	result := db.Table("chat_roster").
+		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
+			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
+		Update("status", utils.CHAT_STATUS_OFFLINE)
 
 	if result.Error != nil {
 		stdlog.Printf("Failed to reopen closed chat roster for chat %d: %v", id, result.Error)

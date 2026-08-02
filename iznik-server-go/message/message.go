@@ -580,17 +580,20 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
 				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
 				// (no mod exemption), matching the #927 count-surface gates.
-				db.Raw("SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
-					"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname "+
-					"FROM chat_messages "+
-					"INNER JOIN messages ON messages.id = chat_messages.refmsgid "+
-					"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-					"INNER JOIN users ON users.id = chat_messages.userid "+
-					"WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
-					"AND reviewrequired = 0 AND reviewrejected = 0 "+
-					"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
-					"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ? "+
-					"GROUP BY userid;", id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).Scan(&messageReply)
+				// ORM migration site 826841109881 (wave 5).
+				db.Table("chat_messages").
+					Select("DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
+						"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname").
+					Joins("INNER JOIN messages ON messages.id = chat_messages.refmsgid").
+					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+					Joins("INNER JOIN users ON users.id = chat_messages.userid").
+					Where("refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
+						"AND reviewrequired = 0 AND reviewrejected = 0 "+
+						"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
+						"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ?",
+						id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).
+					Group("userid").
+					Scan(&messageReply)
 
 				tnre := tnRegexp
 
@@ -2181,17 +2184,19 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	// routed to the read replica, which may not have applied that write yet (Galera
 	// apply-lag), so the row would be missed and the post left out of the spatial
 	// index until the periodic reconciler runs.
-	db.Clauses(dbresolver.Write).Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
-		"messages_groups.groupid AS groupid, "+
-		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-		"WHERE messages.id = ? AND messages_groups.collection = ? "+
-		"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
-		"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
-		"AND messages_outcomes.id IS NULL",
-		msgid, utils.COLLECTION_APPROVED).Scan(&rows)
+	// ORM migration site f7deed72f131 (wave 5).
+	db.Clauses(dbresolver.Write).Table("messages").
+		Select("messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
+			"messages_groups.groupid AS groupid, "+
+			"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+		Where("messages.id = ? AND messages_groups.collection = ? "+
+			"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
+			"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
+			"AND messages_outcomes.id IS NULL",
+			msgid, utils.COLLECTION_APPROVED).
+		Scan(&rows)
 
 	for _, row := range rows {
 		if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
@@ -3616,8 +3621,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// message's location cannot leak it into messages_spatial (which backs the public
 	// browse). Only Approved messages have a spatial row; the approval path inserts.
 	if effLat != nil && effLng != nil {
-		db.Exec("UPDATE messages_spatial SET point = ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857) WHERE msgid = ?",
-			*effLng, *effLat, req.ID)
+		// ORM migration site c5c08e284c66 (wave 5).
+		db.Table("messages_spatial").
+			Where("msgid = ?", req.ID).
+			Update("point", gorm.Expr("ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)", *effLng, *effLat))
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
@@ -4370,11 +4377,17 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 	// the destination group, so an arbitrary group would quietly sign a member
 	// up to a community they never chose. Default to their nearest membership.
 	var groupid uint64
-	db.Raw("SELECT m.groupid FROM memberships m "+
-		"INNER JOIN `groups` g ON g.id = m.groupid "+
-		"WHERE m.userid = ? AND m.collection = ? "+
-		"ORDER BY ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?)) LIMIT 1",
-		author, utils.COLLECTION_APPROVED, chosen.Lng, chosen.Lat).Scan(&groupid)
+	// ORM migration site ecaf3f90bee2 (wave 5). Order() itself takes no bind
+	// args (clause/order_by.go's OrderByColumn has no Vars field), so the two
+	// binds in ST_Distance_Sphere(...) go through clause.OrderBy{Expression:
+	// gorm.Expr(...)} instead, which Order() passes straight to AddClause.
+	db.Table("memberships m").
+		Select("m.groupid").
+		Joins("INNER JOIN `groups` g ON g.id = m.groupid").
+		Where("m.userid = ? AND m.collection = ?", author, utils.COLLECTION_APPROVED).
+		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?))", chosen.Lng, chosen.Lat)}).
+		Limit(1).
+		Scan(&groupid)
 
 	if groupid == 0 {
 		return nil, errors.New("That member isn't in any community, so we can't post for them")
@@ -5580,8 +5593,17 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			return fmt.Errorf("message not found in any group")
 		}
 
-		result = tx.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype) VALUES (?, ?, ?, NOW(), (SELECT type FROM messages WHERE id = ?))",
-			req.ID, *req.Groupid, utils.COLLECTION_PENDING, req.ID)
+		// ORM migration site f1d697db5654 (wave 5). VALUES(...) with one
+		// scalar-subquery element, not INSERT ... SELECT: the row source is
+		// still an explicit VALUES list, so a normal Create keeps it one
+		// statement.
+		result = tx.Table("messages_groups").Create(map[string]interface{}{
+			"msgid":      req.ID,
+			"groupid":    *req.Groupid,
+			"collection": utils.COLLECTION_PENDING,
+			"arrival":    gorm.Expr("NOW()"),
+			"msgtype":    gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
+		})
 		return result.Error
 	})
 

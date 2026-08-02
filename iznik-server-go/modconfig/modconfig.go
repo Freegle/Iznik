@@ -137,7 +137,8 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", id).Scan(&cfg)
+	// ORM migration site c1e1f7ddeb2d (wave 1).
+	db.Table("mod_configs").Select(configColumns).Where("id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
 		// V1 parity: return 200 with ret:2. The frontend treats
 		// non-200 as a fatal "Settings inaccessible" error (9518.180).
@@ -151,7 +152,8 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	// Get standard messages.
 	var stdmsgs []StdMsg
-	db.Raw("SELECT "+stdMsgColumns+" FROM mod_stdmsgs WHERE configid = ?", id).Scan(&stdmsgs)
+	// ORM migration site 2e87012dbaed (wave 1).
+	db.Table("mod_stdmsgs").Select(stdMsgColumns).Where("configid = ?", id).Scan(&stdmsgs)
 	if stdmsgs == nil {
 		stdmsgs = []StdMsg{}
 	}
@@ -261,7 +263,8 @@ func listModConfigs(c *fiber.Ctx) error {
 		// Admin/support can see all configs.  Non-admin users silently
 		// fall through to the per-moderator query below.
 		if auth.IsAdminOrSupport(myid) {
-			db.Raw("SELECT " + configColumns + " FROM mod_configs ORDER BY name").Scan(&configs)
+			// ORM migration site 2d4f322cfd3f (wave 1).
+			db.Table("mod_configs").Select(configColumns).Order("name").Scan(&configs)
 		}
 	}
 
@@ -337,7 +340,8 @@ func PostModConfig(c *fiber.Ctx) error {
 	if req.ID > 0 {
 		// Verify the user can see the source config before copying.
 		var srcCfg ModConfig
-		db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", req.ID).Scan(&srcCfg)
+		// ORM migration site 87d36c5d843f (wave 1).
+		db.Table("mod_configs").Select(configColumns).Where("id = ?", req.ID).Scan(&srcCfg)
 		if srcCfg.ID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Source config not found")
 		}
@@ -378,7 +382,8 @@ func PostModConfig(c *fiber.Ctx) error {
 
 		// Copy stdmsgs.
 		var srcMsgs []StdMsg
-		db.Raw("SELECT "+stdMsgColumns+" FROM mod_stdmsgs WHERE configid = ?", req.ID).Scan(&srcMsgs)
+		// ORM migration site a74b7b022b84 (wave 1).
+		db.Table("mod_stdmsgs").Select(stdMsgColumns).Where("configid = ?", req.ID).Scan(&srcMsgs)
 		for _, m := range srcMsgs {
 			// ORM migration site ef309513694a (wave 2).
 			db.Table("mod_stdmsgs").Create(map[string]interface{}{
@@ -504,7 +509,8 @@ func PatchModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", req.ID).Scan(&cfg)
+	// ORM migration site 4bbe84a257f3 (wave 1).
+	db.Table("mod_configs").Select(configColumns).Where("id = ?", req.ID).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
 	}
@@ -632,7 +638,8 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", id).Scan(&cfg)
+	// ORM migration site 9fc1bbefed72 (wave 1).
+	db.Table("mod_configs").Select(configColumns).Where("id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
 	}

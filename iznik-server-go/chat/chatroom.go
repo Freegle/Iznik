@@ -1490,8 +1490,10 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	// Bump date on recent unmailed messages to delay email batching.
 	// This batches multiple chat messages into a single email when user is actively typing.
 	// Uses a 30-second delay window.
-	result := db.Exec("UPDATE chat_messages SET date = NOW() WHERE chatid = ? AND TIMESTAMPDIFF(SECOND, chat_messages.date, NOW()) < 30 AND mailedtoall = 0",
-		chatid)
+	// ORM migration site d6518a523f9c (wave 5).
+	result := db.Table("chat_messages").
+		Where("chatid = ? AND TIMESTAMPDIFF(SECOND, chat_messages.date, NOW()) < 30 AND mailedtoall = 0", chatid).
+		Update("date", gorm.Expr("NOW()"))
 	count := result.RowsAffected
 
 	// Record the last typing time in roster.
@@ -1585,13 +1587,14 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		}
 
 		// Check if message has been seen by all roster members
-		db.Exec(`UPDATE chat_messages SET seenbyall = 1
-			WHERE chatid = ? AND id <= ? AND seenbyall = 0
-			AND NOT EXISTS (
-				SELECT 1 FROM chat_roster
-				WHERE chatid = ? AND (lastmsgseen IS NULL OR lastmsgseen < chat_messages.id)
-				AND userid != chat_messages.userid
-			)`, req.ID, req.Lastmsgseen, req.ID)
+		// ORM migration site 36b33902c122 (wave 5).
+		db.Table("chat_messages").
+			Where("chatid = ? AND id <= ? AND seenbyall = 0 AND NOT EXISTS ( "+
+				"SELECT 1 FROM chat_roster "+
+				"WHERE chatid = ? AND (lastmsgseen IS NULL OR lastmsgseen < chat_messages.id) "+
+				"AND userid != chat_messages.userid "+
+				")", req.ID, req.Lastmsgseen, req.ID).
+			Update("seenbyall", gorm.Expr("1"))
 	}
 
 	// Get updated roster
@@ -1602,13 +1605,15 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	// Get unseen count — only count messages from the last CHAT_ACTIVE_LIMIT days (V1 parity: ACTIVELIM).
 	activeSince := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 	var unseen int64
-	db.Raw(`SELECT COUNT(*) FROM chat_messages
-		WHERE chatid = ? AND userid != ?
-		AND id > COALESCE((SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?), 0)
-		AND chat_messages.date >= ?
-		AND reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1
-		AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')`,
-		req.ID, myid, req.ID, myid, activeSince).Scan(&unseen)
+	// ORM migration site 2984f464c081 (wave 5).
+	db.Table("chat_messages").
+		Where("chatid = ? AND userid != ? "+
+			"AND id > COALESCE((SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?), 0) "+
+			"AND chat_messages.date >= ? "+
+			"AND reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 "+
+			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')",
+			req.ID, myid, req.ID, myid, activeSince).
+		Count(&unseen)
 
 	if roster == nil {
 		roster = make([]RosterEntry, 0)
@@ -1725,13 +1730,11 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 		// FD: chats the user participates in - User2User, plus User2Mod chats they
 		// opened. Mod-side roster rows (Mod2Mod, or User2Mod where the user is the
 		// moderator rather than user1) are left alone.
-		db.Exec(`UPDATE chat_roster
-			SET lastmsgseen = (
-				SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid
-			)
-			WHERE userid = ?
-			AND chatid IN (SELECT id FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN (?, ?))`,
-			myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD)
+		// ORM migration site 491a9ebdf3f8 (wave 5).
+		db.Table("chat_roster").
+			Where("userid = ? AND chatid IN (SELECT id FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN (?, ?))",
+				myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
+			Update("lastmsgseen", gorm.Expr("(SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid)"))
 
 		// V1 parity: chats with no roster row yet (e.g. a brand-new conversation the
 		// user has never opened) also count as unread, so give them a seen pointer.

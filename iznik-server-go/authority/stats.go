@@ -128,20 +128,17 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			if err := writer().Raw(`
-			SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-				   COUNT(*) as count
-			FROM pc
-			INNER JOIN messages ON messages.locationid = pc.locationid
-			INNER JOIN locations ON messages.locationid = locations.id
-			INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ?
-			WHERE locations.type = ?
-				AND LOCATE(' ', locations.name) > 0
-				AND messages.type = ?
-				AND messages.arrival BETWEEN ? AND ?
-				AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id)
-			GROUP BY PartialPostcode
-			ORDER BY locations.name`, utils.CHAT_MESSAGE_INTERESTED, utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).Scan(&stats).Error; err != nil {
+			// ORM migration site 296f97f33779 (wave 5).
+			if err := writer().Table("pc").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+				Joins("INNER JOIN locations ON messages.locationid = locations.id").
+				Joins("INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ?", utils.CHAT_MESSAGE_INTERESTED).
+				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id)",
+					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
+				Group("PartialPostcode").
+				Order("locations.name").
+				Scan(&stats).Error; err != nil {
 				return err
 			}
 
@@ -188,24 +185,17 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			if err := writer().Raw(`
-			SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-				   COUNT(*) as count
-			FROM pc
-			INNER JOIN messages ON messages.locationid = pc.locationid
-			INNER JOIN locations ON messages.locationid = locations.id
-			INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ?
-			WHERE locations.type = ?
-				AND LOCATE(' ', locations.name) > 0
-				AND messages.type = ?
-				AND messages.arrival BETWEEN ? AND ?
-				AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id)
-				AND NOT EXISTS (
-					SELECT 1 FROM messages_bulk_items_interest
-					WHERE msgid = messages.id AND userid = cm.userid
-				)
-			GROUP BY PartialPostcode
-			ORDER BY locations.name`, utils.CHAT_MESSAGE_INTERESTED, utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).Scan(&stats).Error; err != nil {
+			// ORM migration site 9381e335515c (wave 5).
+			if err := writer().Table("pc").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+				Joins("INNER JOIN locations ON messages.locationid = locations.id").
+				Joins("INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ?", utils.CHAT_MESSAGE_INTERESTED).
+				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id) AND NOT EXISTS ( SELECT 1 FROM messages_bulk_items_interest WHERE msgid = messages.id AND userid = cm.userid )",
+					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
+				Group("PartialPostcode").
+				Order("locations.name").
+				Scan(&stats).Error; err != nil {
 				return err
 			}
 
@@ -223,20 +213,17 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		if err := writer().Raw(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   COUNT(*) AS count
-		FROM pc
-		INNER JOIN messages ON messages.locationid = pc.locationid
-		INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id
-		INNER JOIN locations ON messages.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND messages.arrival BETWEEN ? AND ?
-			AND outcome IN (?, ?)
-			AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id)
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, utils.LOCATION_TYPE_POSTCODE, startStr, endStr, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).Scan(&outcomeStats).Error; err != nil {
+		// ORM migration site 7c9ca3ba712a (wave 5).
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count").
+			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+			Joins("INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+			Joins("INNER JOIN locations ON messages.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id)",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&outcomeStats).Error; err != nil {
 			return err
 		}
 

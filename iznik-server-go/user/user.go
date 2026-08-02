@@ -387,14 +387,14 @@ func GetExpectedReplies(id uint64) []uint64 {
 	db := database.DBConn
 
 	start := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-	db.Raw("SELECT DISTINCT(chatid) FROM users_expected "+
-		"INNER JOIN users ON users.id = users_expected.expectee "+
-		"INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid "+
-		"WHERE expectee = ? AND "+
-		"chat_messages.date >= ? AND replyexpected = 1 AND replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?",
-		id,
-		start,
-		utils.CHAT_REPLY_GRACE).Pluck("count", &expectedReplies)
+	// ORM migration site ba4ff665bb3c (wave 5).
+	db.Table("users_expected").
+		Select("DISTINCT(chatid)").
+		Joins("INNER JOIN users ON users.id = users_expected.expectee").
+		Joins("INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid").
+		Where("expectee = ? AND chat_messages.date >= ? AND replyexpected = 1 AND replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?",
+			id, start, utils.CHAT_REPLY_GRACE).
+		Pluck("chatid", &expectedReplies)
 
 	return expectedReplies
 }
@@ -403,7 +403,12 @@ func GetMemberships(id uint64) []Membership {
 	db := database.DBConn
 
 	var memberships []Membership
-	db.Raw("SELECT memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM memberships INNER JOIN `groups` ON groups.id = memberships.groupid WHERE userid = ? AND collection = ?", id, "Approved").Scan(&memberships)
+	// ORM migration site b06cd1b62344 (wave 5).
+	db.Table("memberships").
+		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
+		Where("userid = ? AND collection = ?", id, "Approved").
+		Scan(&memberships)
 
 	for ix, r := range memberships {
 		if len(r.Namefull) > 0 {
@@ -492,22 +497,25 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	// rows, causing duplicated entries in the posting-history modal when a message
 	// has been reposted (Discourse #9672).  The subquery filters by groupid so
 	// postings for one group never contaminate the arrival date of another group.
-	db.Raw("SELECT m.id, m.subject, m.type, "+
-		"COALESCE("+
-		"(SELECT MAX(mp.date) FROM messages_postings mp WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), "+
-		"m.arrival) AS arrival, "+
-		"mg.groupid, mg.collection, "+
-		"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome "+
-		"FROM messages m "+
-		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
+	// ORM migration site d7c9963bd974 (wave 5).
+	db.Table("messages m").
+		Select("m.id, m.subject, m.type, "+
+			"COALESCE("+
+			"(SELECT MAX(mp.date) FROM messages_postings mp WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), "+
+			"m.arrival) AS arrival, "+
+			"mg.groupid, mg.collection, "+
+			"(SELECT outcome FROM messages_outcomes WHERE messages_outcomes.msgid = m.id ORDER BY timestamp DESC LIMIT 1) AS outcome").
+		Joins("INNER JOIN messages_groups mg ON m.id = mg.msgid").
 		// rippled_in = 0: a post rippled OUT gets an extra messages_groups row
 		// (rippled_in = 1) per receiving group. Without this filter the join fans
 		// out to one history entry per group, so a post reaching N groups showed
 		// N identical rows (Discourse #9851 / the 23x Posting History). Restricting
 		// to origin rows shows the post once (still per group for genuine
 		// cross-posts, matching pre-rippling behaviour).
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND mg.rippled_in = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
-		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
+		Where("m.fromuser = ? AND mg.deleted = 0 AND mg.rippled_in = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?)",
+			userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).
+		Order("arrival DESC").
+		Scan(&history)
 
 	now := time.Now()
 	for ix, h := range history {
@@ -738,17 +746,20 @@ func GetUserById(id uint64, myid uint64) User {
 		defer wg.Done()
 		start := time.Now().AddDate(0, 0, -utils.SUPPORTER_PERIOD).Format("2006-01-02")
 
-		db.Raw("SELECT (CASE WHEN "+
-			"((users.systemrole != ? OR "+
-			"EXISTS(SELECT id FROM users_donations WHERE userid = ? AND users_donations.timestamp >= ?) OR "+
-			"EXISTS(SELECT id FROM microactions WHERE userid = ? AND microactions.timestamp >= ?)) AND "+
-			"(CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) "+
-			"THEN 1 ELSE 0 END) "+
-			"AS supporter, "+
-			"(SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, "+
-			"(SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype "+
-			"FROM users "+
-			"WHERE users.id = ?", utils.SYSTEMROLE_USER, id, start, id, start, id, id, id).Scan(&supporter)
+		// ORM migration site 286f80414bd5 (wave 5).
+		db.Table("users").
+			Select("(CASE WHEN "+
+				"((users.systemrole != ? OR "+
+				"EXISTS(SELECT id FROM users_donations WHERE userid = ? AND users_donations.timestamp >= ?) OR "+
+				"EXISTS(SELECT id FROM microactions WHERE userid = ? AND microactions.timestamp >= ?)) AND "+
+				"(CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) "+
+				"THEN 1 ELSE 0 END) "+
+				"AS supporter, "+
+				"(SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, "+
+				"(SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype",
+				utils.SYSTEMROLE_USER, id, start, id, start, id, id).
+			Where("users.id = ?", id).
+			Scan(&supporter)
 	}()
 
 	wg.Add(1)
@@ -1018,9 +1029,17 @@ func GetSearchesForUser(c *fiber.Ctx) error {
 			var searches []Search
 
 			// Show the last few.  Slightly hacky search to make sure we show the most recent searches.
-			db.Raw("SELECT * FROM"+
-				"(SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) t "+
-				"GROUP BY t.term ORDER BY t.id DESC LIMIT 10;", id).Find(&searches)
+			// ORM migration site 06d02e94fa4a (wave 5). The derived table goes
+			// through .Table(expr, args...): Table() takes the raw-expression
+			// path whenever the name contains a space or backtick (chainable_api.go),
+			// so a parenthesised subquery with its own bind renders verbatim rather
+			// than being (mis)quoted as an identifier.
+			db.Table("(SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) t", id).
+				Select("*").
+				Group("t.term").
+				Order("t.id DESC").
+				Limit(10).
+				Find(&searches)
 
 			if searches == nil {
 				searches = make([]Search, 0)
@@ -1182,7 +1201,11 @@ func SearchUsers(c *fiber.Ctx) error {
 	backwardsTerm := reversed + "%"
 
 	var userIDs []uint64
-	db.Raw("SELECT DISTINCT userid FROM ("+
+	// ORM migration site 0c9e859752d0 (wave 5). Same .Table(expr, args...)
+	// derived-table mechanism as GetSearchesForUser (06d02e94fa4a): the whole
+	// parenthesised UNION is the "table", so it renders verbatim rather than
+	// being quoted as an identifier.
+	db.Table("("+
 		"(SELECT userid FROM users_emails WHERE email LIKE ? OR canon LIKE ? OR backwards LIKE ?) "+
 		"UNION "+
 		"(SELECT id AS userid FROM users WHERE fullname LIKE ?) "+
@@ -1192,8 +1215,12 @@ func SearchUsers(c *fiber.Ctx) error {
 		"(SELECT id AS userid FROM users WHERE id = ?) "+
 		"UNION "+
 		"(SELECT userid FROM users_logins WHERE uid LIKE ?) "+
-		") t ORDER BY userid ASC LIMIT 100",
-		emailLikeTerm, prefixTerm, backwardsTerm, prefixTerm, prefixTerm, numericID, prefixTerm).Pluck("userid", &userIDs)
+		") t",
+		emailLikeTerm, prefixTerm, backwardsTerm, prefixTerm, prefixTerm, numericID, prefixTerm).
+		Select("DISTINCT userid").
+		Order("userid ASC").
+		Limit(100).
+		Pluck("userid", &userIDs)
 
 	return c.JSON(fiber.Map{"users": userIDs})
 }
@@ -3315,14 +3342,16 @@ func GetUserBans(c *fiber.Ctx) error {
 	}
 
 	var bans []BanRow
-	db.Raw("SELECT ub.groupid, "+
-		"COALESCE(g.namefull, g.nameshort) AS `group`, "+
-		"ub.date, ub.byuser, "+
-		"(SELECT ue.email FROM users_emails ue WHERE ue.userid = ub.byuser AND ue.preferred = 1 LIMIT 1) AS byemail "+
-		"FROM users_banned ub "+
-		"LEFT JOIN `groups` g ON g.id = ub.groupid "+
-		"WHERE ub.userid = ? ORDER BY ub.date DESC",
-		targetid).Scan(&bans)
+	// ORM migration site 6a225df4a259 (wave 5).
+	db.Table("users_banned ub").
+		Select("ub.groupid, "+
+			"COALESCE(g.namefull, g.nameshort) AS `group`, "+
+			"ub.date, ub.byuser, "+
+			"(SELECT ue.email FROM users_emails ue WHERE ue.userid = ub.byuser AND ue.preferred = 1 LIMIT 1) AS byemail").
+		Joins("LEFT JOIN `groups` g ON g.id = ub.groupid").
+		Where("ub.userid = ?", targetid).
+		Order("ub.date DESC").
+		Scan(&bans)
 
 	if bans == nil {
 		bans = []BanRow{}

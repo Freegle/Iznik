@@ -212,10 +212,11 @@ func attributionCaptureFrom(db *gorm.DB) (string, error) {
 	}
 
 	var day string
-	err := db.Raw("SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') " +
-		"FROM rippling_reply_attribution " +
-		"WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL " +
-		"OR client_source IS NOT NULL").Scan(&day).Error
+	// ORM migration site 8240fc74654f (wave 5).
+	err := db.Table("rippling_reply_attribution").
+		Select("COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '')").
+		Where("in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL OR client_source IS NOT NULL").
+		Scan(&day).Error
 	if err != nil {
 		return "", err
 	}
@@ -371,44 +372,56 @@ func Metrics(c *fiber.Ctx) error {
 	})
 
 	section("recent", func() error {
-		return db.Raw("SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count " +
-			"FROM rippling_event_metrics WHERE day >= CURDATE() - INTERVAL 30 DAY " +
-			"ORDER BY day DESC, event").Scan(&recent).Error
+		// ORM migration site bd7c7b0064fb (wave 5).
+		return db.Table("rippling_event_metrics").
+			Select("DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count").
+			Where("day >= CURDATE() - INTERVAL 30 DAY").
+			Order("day DESC, event").
+			Scan(&recent).Error
 	})
 
 	// §16 tuner hotspots – defensive; empty until PR G ships the table.
 	section("hotspots", func() error {
-		return db.Raw("SELECT DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, area_type, area_id, " +
-			"COALESCE(area_name, '') AS area_name, metric, value, baseline, deviation, direction, severity " +
-			"FROM rippling_hotspots WHERE detected_at >= NOW() - INTERVAL 30 DAY " +
-			"ORDER BY (severity = 'alert') DESC, ABS(deviation) DESC LIMIT 100").Scan(&hotspots).Error
+		// ORM migration site 8aaa3043bf0c (wave 5).
+		return db.Table("rippling_hotspots").
+			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, area_type, area_id, COALESCE(area_name, '') AS area_name, metric, value, baseline, deviation, direction, severity").
+			Where("detected_at >= NOW() - INTERVAL 30 DAY").
+			Order("(severity = 'alert') DESC, ABS(deviation) DESC").
+			Limit(100).
+			Scan(&hotspots).Error
 	})
 
 	section("proposed_params", func() error {
-		return db.Raw("SELECT ons_category, max_minutes, COALESCE(rationale, '') AS rationale, " +
-			"DATE_FORMAT(proposed_at, '%Y-%m-%d %H:%i') AS proposed_at " +
-			"FROM rippling_params WHERE status = 'proposed' ORDER BY ons_category").Scan(&proposed).Error
+		// ORM migration site d0a9e5f17cff (wave 5).
+		return db.Table("rippling_params").
+			Select("ons_category, max_minutes, COALESCE(rationale, '') AS rationale, DATE_FORMAT(proposed_at, '%Y-%m-%d %H:%i') AS proposed_at").
+			Where("status = 'proposed'").
+			Order("ons_category").
+			Scan(&proposed).Error
 	})
 
 	// §16.1 / §16.2 volume + reach: overall live-metrics from weekly batch rollup.
 	// Returns the two most recent weekly periods' overall rows so the dashboard can show a
 	// trend. Defensive: returns empty if rippling_live_metrics doesn't exist yet.
 	section("live_metrics", func() error {
-		return db.Raw("SELECT DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size " +
-			"FROM rippling_live_metrics " +
-			"WHERE stratum_type = 'overall' AND period_type = 'weekly' " +
-			"AND period_start >= CURDATE() - INTERVAL 14 DAY " +
-			"ORDER BY period_start DESC, metric").Scan(&liveMetrics).Error
+		// ORM migration site 72175873186c (wave 5).
+		return db.Table("rippling_live_metrics").
+			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size").
+			Where("stratum_type = 'overall' AND period_type = 'weekly' AND period_start >= CURDATE() - INTERVAL 14 DAY").
+			Order("period_start DESC, metric").
+			Scan(&liveMetrics).Error
 	})
 
 	// §15 / §16.5 held-reply friction summary.
 	// Live aggregate of rippling_held_replies by status, with median hold duration for
 	// released rows. Defensive: returns empty if rippling_held_replies doesn't exist yet.
 	section("held_reply_summary", func() error {
-		return db.Raw("SELECT status, COUNT(*) AS count, " +
-			"COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours " +
-			"FROM rippling_held_replies " +
-			"GROUP BY status ORDER BY status").Scan(&heldReplySummary).Error
+		// ORM migration site 7059261a513c (wave 5).
+		return db.Table("rippling_held_replies").
+			Select("status, COUNT(*) AS count, COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours").
+			Group("status").
+			Order("status").
+			Scan(&heldReplySummary).Error
 	})
 
 	// Held replies broken down by origin channel (email / tn / web). Defensive: the `source`
@@ -428,13 +441,13 @@ func Metrics(c *fiber.Ctx) error {
 	// ripple_algorithm_metrics by migration 2026_06_18_000002). Returns zero struct if the
 	// table is empty or doesn't exist yet.
 	section("capture_summary", func() error {
-		return db.Raw("SELECT DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, " +
-			"pairs_total, pairs_in_time, pairs_late, " +
-			"COALESCE(reply_p50_hours, 0) AS reply_p50_hours, " +
-			"COALESCE(reply_p75_hours, 0) AS reply_p75_hours " +
-			"FROM rippling_algorithm_metrics " +
-			"WHERE `group` = 'all' " +
-			"ORDER BY week_start DESC LIMIT 1").Scan(&capture).Error
+		// ORM migration site 939fde07a522 (wave 5).
+		return db.Table("rippling_algorithm_metrics").
+			Select("DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, pairs_total, pairs_in_time, pairs_late, COALESCE(reply_p50_hours, 0) AS reply_p50_hours, COALESCE(reply_p75_hours, 0) AS reply_p75_hours").
+			Where("`group` = 'all'").
+			Order("week_start DESC").
+			Limit(1).
+			Scan(&capture).Error
 	})
 
 	// (1) Reply attribution channels, per day, from rippling_reply_attribution (captured at

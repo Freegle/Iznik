@@ -196,11 +196,13 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 		// No need to check on the chat room type as we can only get messages of type Interested in a User2User chat.
 		start := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 
-		res := db.Raw("SELECT COUNT(*) AS expectedreply FROM users_expected "+
-			"INNER JOIN users ON users.id = users_expected.expectee "+
-			"INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid "+
-			"WHERE expectee = ? AND chat_messages.date >= ? AND replyexpected = 1 AND "+
-			"replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?", id, start, utils.CHAT_REPLY_GRACE)
+		// ORM migration site cd31abc88595 (wave 5).
+		res := db.Table("users_expected").
+			Select("COUNT(*) AS expectedreply").
+			Joins("INNER JOIN users ON users.id = users_expected.expectee").
+			Joins("INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid").
+			Where("expectee = ? AND chat_messages.date >= ? AND replyexpected = 1 AND replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?",
+				id, start, utils.CHAT_REPLY_GRACE)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()

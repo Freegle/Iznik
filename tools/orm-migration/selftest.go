@@ -298,6 +298,26 @@ func runSelfCheck() []string {
 		fail("const fold", "an unresolvable fragment must still mark the site dynamic, got %q", u[0].GoldenSQL)
 	}
 
+	// Fiber's c.Query("start", "") reads a URL parameter. "start" is the first
+	// word of START TRANSACTION, so without a receiver check it was inventoried
+	// as SQL - fourteen times, and two agents were about to record those
+	// phantoms as deliberate keep-raw decisions.
+	fiberSrc := "package p\nfunc f() { c.Query(\"start\", \"\") }"
+	fq, _ := sitesInFile(token.NewFileSet(), "f.go", "f.go", fiberSrc, false, nil)
+	if len(fq) != 0 {
+		fail("fiber query", "c.Query(\"start\") was inventoried as SQL: %q", fq[0].GoldenSQL)
+	}
+
+	// The opposite error is worse. Requiring a recognised receiver for EVERY
+	// verb dropped three real DDL sites in authority/stats.go, where the
+	// receiver is writer() - a closure returning the pinned transaction. An
+	// unambiguous verb must be inventoried whatever the receiver looks like.
+	writerSrc := "package p\nfunc f() { writer().Exec(\"DROP TEMPORARY TABLE IF EXISTS pc\") }"
+	wq, _ := sitesInFile(token.NewFileSet(), "w.go", "w.go", writerSrc, false, nil)
+	if len(wq) != 1 {
+		fail("writer ddl", "expected the writer() DDL site to be inventoried, got %d sites", len(wq))
+	}
+
 	return failures
 }
 

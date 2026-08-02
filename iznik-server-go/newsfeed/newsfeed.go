@@ -1173,7 +1173,10 @@ func Post(c *fiber.Ctx) error {
 	case "Unfollow":
 		if req.ID > 0 {
 			db.Exec("REPLACE INTO newsfeed_unfollow (userid, newsfeedid) VALUES (?, ?)", myid, req.ID)
-			db.Exec("DELETE FROM users_notifications WHERE touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.ID, req.ID)
+			// ORM migration site 3c4828e01db8 (wave 5).
+			db.Table("users_notifications").
+				Where("touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.ID, req.ID).
+				Delete(nil)
 		}
 	case "Report":
 		if req.ID > 0 {
@@ -1480,8 +1483,10 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		notifyThreadContributors(db, myid, id, req.Replyto)
 
 		// Mark own notifications for this thread as seen
-		db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))",
-			myid, req.Replyto, req.Replyto)
+		// ORM migration site aa142f16e0e0 (wave 5).
+		db.Table("users_notifications").
+			Where("touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.Replyto, req.Replyto).
+			Update("seen", gorm.Expr("1"))
 	}
 
 	return c.JSON(fiber.Map{"id": id})

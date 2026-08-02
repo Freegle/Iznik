@@ -102,6 +102,24 @@ var leadingKeyword = regexp.MustCompile(`(?is)^[\s(]*(?:/\*.*?\*/\s*)?(select|in
 
 var whitespace = regexp.MustCompile(`\s+`)
 
+// ambiguousLeadingKeyword matches the SQL verbs that are also ordinary English
+// words, or ordinary API vocabulary. For these the leading keyword alone is not
+// evidence that the call is SQL, so the receiver has to be a database handle
+// too.
+//
+// The case that forced this: Fiber's c.Query("start", "") reads a URL
+// parameter, but "start" is the first word of START TRANSACTION, so fourteen of
+// them were inventoried as SQL call sites with a goldenSql of "start" - and two
+// separate agents were about to record them as deliberate keep-raw decisions.
+//
+// It deliberately does NOT cover select/insert/update/delete/create/drop and
+// friends. Requiring a recognised handle for those dropped three real sites in
+// authority/stats.go, where the receiver is writer() - a closure returning the
+// pinned transaction, which no receiver-name heuristic is going to recognise.
+// Losing a real site to a tightened filter is far worse than carrying a
+// phantom, so the check is narrowed to where the ambiguity actually is.
+var ambiguousLeadingKeyword = regexp.MustCompile(`(?is)^[\s(]*(?:/\*.*?\*/\s*)?(?:start|set|show|call|with|begin|commit|rollback|lock|unlock|analyze|optimize|explain)\b`)
+
 // normaliseGolden collapses whitespace and drops any trailing statement
 // separator. A semicolon is not part of the statement: GORM never emits one, so
 // recording it made 30 sites impossible to convert without an approved diff
@@ -398,7 +416,13 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 
 				var sql, source string
 				switch {
-				case ok && leadingKeyword.MatchString(whitespace.ReplaceAllString(strings.TrimSpace(text), " ")):
+				// A foldable literal beginning with a SQL verb. Where that verb
+				// is also an ordinary word the receiver must be a database
+				// handle as well; see ambiguousLeadingKeyword for why the check
+				// is scoped that narrowly rather than applied to every verb.
+				case ok && leadingKeyword.MatchString(whitespace.ReplaceAllString(strings.TrimSpace(text), " ")) &&
+					(!ambiguousLeadingKeyword.MatchString(whitespace.ReplaceAllString(strings.TrimSpace(text), " ")) ||
+						isSQLHandle(sel.Sel.Name, recv)):
 					sql = normaliseGolden(text)
 					source = "literal"
 

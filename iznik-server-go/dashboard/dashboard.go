@@ -257,13 +257,13 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 			}
 		}
 
-		db.Raw("SELECT "+
-			"(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, "+
-			"m.id, m.subject "+
-			"FROM messages m "+
-			"WHERE m.arrival >= ? AND m.arrival <= ? AND m.deleted IS NULL "+
-			"ORDER BY views DESC LIMIT 5",
-			utils.MESSAGE_LIKES_VIEW, capStart, endQ).Scan(&posts)
+		// ORM migration site d9ea74465694 (wave 5).
+		db.Table("messages m").
+			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
+			Where("m.arrival >= ? AND m.arrival <= ? AND m.deleted IS NULL", capStart, endQ).
+			Order("views DESC").
+			Limit(5).
+			Scan(&posts)
 	} else {
 		// For specific groups, use correlated subquery with messages_groups filter.
 		// Uses existing groupid index on messages_groups.
@@ -276,16 +276,16 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 		// additionally collapses genuine multi-group (crossposted) origin rows so each
 		// post is listed once. Same native-only pattern as the stats/IP-abuse/edit-queue
 		// fixes (fa60c39b0, 4b6d7b3c3).
-		db.Raw("SELECT "+
-			"(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, "+
-			"mg.msgid AS id, MIN(m.subject) AS subject "+
-			"FROM messages_groups mg "+
-			"INNER JOIN messages m ON m.id = mg.msgid "+
-			"WHERE mg.arrival >= ? AND mg.arrival <= ? "+
-			"AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0 "+
-			"GROUP BY mg.msgid "+
-			"ORDER BY views DESC LIMIT 5",
-			utils.MESSAGE_LIKES_VIEW, startQ, endQ, groupIDs, utils.COLLECTION_APPROVED).Scan(&posts)
+		// ORM migration site 041e44afbfe5 (wave 5).
+		db.Table("messages_groups mg").
+			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
+			Joins("INNER JOIN messages m ON m.id = mg.msgid").
+			Where("mg.arrival >= ? AND mg.arrival <= ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0",
+				startQ, endQ, groupIDs, utils.COLLECTION_APPROVED).
+			Group("mg.msgid").
+			Order("views DESC").
+			Limit(5).
+			Scan(&posts)
 	}
 
 	userSite := os.Getenv("USER_SITE")
@@ -323,12 +323,15 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	}
 
 	var users []UserCount
-	db.Raw("SELECT COUNT(*) AS count, messages.fromuser "+
-		"FROM messages WHERE id IN (SELECT msgid FROM messages_groups "+
-		"WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)) "+
-		"AND messages.arrival >= ? AND messages.arrival <= ? "+
-		"GROUP BY messages.fromuser ORDER BY count DESC LIMIT 5",
-		startQ, endQ, groupIDs, startQ, endQ).Scan(&users)
+	// ORM migration site 57978ae039a2 (wave 5).
+	db.Table("messages").
+		Select("COUNT(*) AS count, messages.fromuser").
+		Where("id IN (SELECT msgid FROM messages_groups WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)) AND messages.arrival >= ? AND messages.arrival <= ?",
+			startQ, endQ, groupIDs, startQ, endQ).
+		Group("messages.fromuser").
+		Order("count DESC").
+		Limit(5).
+		Scan(&users)
 
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
@@ -393,12 +396,12 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 	}
 
 	var mods []ModRow
-	db.Raw("SELECT userid, "+
-		"(SELECT messages_groups.approvedat FROM messages_groups "+
-		"WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid "+
-		"ORDER BY messages_groups.approvedat DESC LIMIT 1) AS lastactive "+
-		"FROM memberships WHERE groupid IN (?) AND role IN (?, ?) HAVING lastactive IS NOT NULL",
-		groupIDs, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&mods)
+	// ORM migration site 285861d7b37c (wave 5).
+	db.Table("memberships").
+		Select("userid, (SELECT messages_groups.approvedat FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid ORDER BY messages_groups.approvedat DESC LIMIT 1) AS lastactive").
+		Where("groupid IN (?) AND role IN (?, ?)", groupIDs, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Having("lastactive IS NOT NULL").
+		Scan(&mods)
 
 	result := make([]map[string]interface{}, 0, len(mods))
 	for _, m := range mods {
@@ -521,10 +524,14 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 			Order("date ASC").
 			Scan(&rows)
 	} else if len(groupIDs) > 0 {
-		db.Raw("SELECT SUM(GrossAmount) AS count, DATE(timestamp) AS date "+
-			"FROM users_donations WHERE userid IN (SELECT DISTINCT userid FROM memberships WHERE groupid IN (?)) "+
-			"AND timestamp >= ? AND timestamp <= ? "+
-			"GROUP BY date ORDER BY date ASC", groupIDs, startQ, endQ).Scan(&rows)
+		// ORM migration site 93937ea4340f (wave 5).
+		db.Table("users_donations").
+			Select("SUM(GrossAmount) AS count, DATE(timestamp) AS date").
+			Where("userid IN (SELECT DISTINCT userid FROM memberships WHERE groupid IN (?)) AND timestamp >= ? AND timestamp <= ?",
+				groupIDs, startQ, endQ).
+			Group("date").
+			Order("date ASC").
+			Scan(&rows)
 	}
 
 	result := make([]map[string]interface{}, len(rows))
