@@ -222,18 +222,18 @@ func RecentNonAlertNewsfeedIDs(ids []int64, excludeUserid uint64) map[int64]stru
 		return allowed
 	}
 
-	// ids come from the spatial server (not user input) — safe to inline.
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = strconv.FormatInt(id, 10)
-	}
 	since := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
 
+	// ORM migration site d80ab5badcb6 (Tier 3 keep-raw review). ids was a
+	// hand-built comma-joined literal-int list; GORM's native "IN (?)"
+	// slice-bind is the direct replacement, giving exactly one rendered
+	// form, declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_d80ab5badcb6 (iznik-server-go/test).
 	var found []int64
-	database.DBConn.Raw(fmt.Sprintf(
-		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ? AND userid != ?",
-		strings.Join(idStrs, ","),
-	), utils.NEWSFEED_TYPE_ALERT, since, excludeUserid).Scan(&found)
+	database.DBConn.Table("newsfeed").
+		Select("id").
+		Where("id IN (?) AND type != ? AND `timestamp` >= ? AND userid != ?", ids, utils.NEWSFEED_TYPE_ALERT, since, excludeUserid).
+		Scan(&found)
 
 	for _, id := range found {
 		allowed[id] = struct{}{}
@@ -1159,7 +1159,9 @@ func Post(c *fiber.Ctx) error {
 			db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Scan(&currentSeenID)
 
 			if currentSeenID == 0 || req.ID > currentSeenID {
-				db.Exec("REPLACE INTO newsfeed_users (userid, newsfeedid) VALUES (?, ?)", myid, req.ID)
+				// ORM migration site 09730933af57 (tier4).
+				db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
+					Create(map[string]interface{}{"userid": myid, "newsfeedid": req.ID})
 			}
 			// ORM migration site 8a70c0aa1832 (wave 2).
 			db.Table("users_notifications").Where("touser = ? AND newsfeedid = ?", myid, req.ID).
@@ -1172,7 +1174,9 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Unfollow":
 		if req.ID > 0 {
-			db.Exec("REPLACE INTO newsfeed_unfollow (userid, newsfeedid) VALUES (?, ?)", myid, req.ID)
+			// ORM migration site 1ff179ae0e2c (tier4).
+			db.Table("newsfeed_unfollow").Clauses(clause.Insert{Modifier: "REPLACE"}).
+				Create(map[string]interface{}{"userid": myid, "newsfeedid": req.ID})
 			// ORM migration site 3c4828e01db8 (wave 5).
 			db.Table("users_notifications").
 				Where("touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.ID, req.ID).
@@ -1273,15 +1277,15 @@ func Post(c *fiber.Ctx) error {
 		// OFFER/WANTED - a photo is often the most useful part. Modern images
 		// live in the external store (externaluid); rows without one are
 		// legacy blobs which a fresh ChitChat post can't have.
-		// Left raw (site 08d12a748d01, wave 3): INSERT ... SELECT. No GORM
-		// builder keeps an INSERT and its source SELECT as one atomic
-		// statement - splitting it into a read then a write would open a
-		// race between the existence check and the copy. See keep-raw.json.
-		db.Exec("INSERT INTO messages_attachments (msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
-			"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
-			"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+
-			"WHERE n.id = ? AND ni.externaluid IS NOT NULL "+
-			"AND NOT EXISTS (SELECT 1 FROM messages_attachments ma WHERE ma.msgid = ?)",
+		// ORM migration site 08d12a748d01 (tier4). database.InsertSelect keeps
+		// this a single atomic statement - splitting it into a read then a
+		// write would open a race between the existence check and the copy.
+		database.InsertSelect(db, "messages_attachments",
+			"(msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
+				"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
+				"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+
+				"WHERE n.id = ? AND ni.externaluid IS NOT NULL "+
+				"AND NOT EXISTS (SELECT 1 FROM messages_attachments ma WHERE ma.msgid = ?)",
 			req.Msgid, req.ID, req.Msgid)
 
 		// The real post now exists, so the ChitChat copy is redundant: hide it
@@ -1358,13 +1362,24 @@ func Post(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusNotFound, "Newsfeed entry not found")
 			}
 
-			// Create a story from this newsfeed entry. Read the new id from the write result,
-			// not a read-split-routable SELECT (9832 class).
-			storyID, err := database.ExecInsertGetID(db,
-				"INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)", nf.Userid, nf.Message)
-			if err != nil {
+			// Create a story from this newsfeed entry. Table()+map Create reads
+			// the new id back from the same sql.Result the INSERT returned,
+			// under the map key "@id" - see test/orm_insertid_test.go. Still
+			// the write connection, so still immune to the read/write split's
+			// Discourse-9832-class staleness.
+			// ORM migration site 64439d15a9ad (insertid-conv).
+			row := map[string]interface{}{
+				"userid":       nf.Userid,
+				"headline":     gorm.Expr("''"),
+				"story":        nf.Message,
+				"date":         gorm.Expr("NOW()"),
+				"fromnewsfeed": gorm.Expr("1"),
+			}
+			if err := db.Table("users_stories").Create(row).Error; err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create story")
 			}
+			storyIDInt, _ := row["@id"].(int64)
+			storyID := uint64(storyIDInt)
 
 			return c.JSON(fiber.Map{"id": storyID})
 		}
@@ -1438,9 +1453,6 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		Where("users.id = ?", myid).
 		Scan(&location)
 
-	// Build position point
-	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", lng, lat, utils.SRID)
-
 	// Insert the newsfeed entry
 	hiddenSQL := "NULL"
 	if hidden {
@@ -1456,26 +1468,28 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		replyto = req.Replyto
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site f961504c334d (tier6). Same zero-precision-change
+	// conversion as createRefer (10bcbd6a6404) above: the WKT text is built
+	// exactly as before via fmt.Sprintf("POINT(%f %f)", ...), then bound as a
+	// genuine ST_GeomFromText argument rather than spliced into the SQL text.
+	// hiddenSQL is a fixed two-way literal ("NULL" or "NOW()"), never a bound
+	// value, so gorm.Expr(hiddenSQL) with no args is exact.
+	row := map[string]interface{}{
+		"type":     gorm.Expr("'Message'"),
+		"userid":   myid,
+		"imageid":  imageid,
+		"replyto":  replyto,
+		"message":  req.Message,
+		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
+		"hidden":   gorm.Expr(hiddenSQL),
+		"location": location,
 	}
-	sqlResult, err := sqlDB.Exec(
-		fmt.Sprintf("INSERT INTO newsfeed (type, userid, imageid, replyto, message, position, hidden, location) VALUES ('Message', ?, ?, ?, ?, %s, %s, ?)", pos, hiddenSQL),
-		myid, imageid, replyto, req.Message, location)
-
-	if err != nil {
+	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create newsfeed post")
 	}
 
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	// If this is a reply and not hidden, bump the thread
 	if id > 0 && req.Replyto > 0 && !hidden {
@@ -1586,26 +1600,26 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid 
 	lat := float64(latlng.Lat)
 	lng := float64(latlng.Lng)
 
-	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", lng, lat, utils.SRID)
-
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
+	// ORM migration site 10bcbd6a6404 (tier6). The WKT text is built exactly as
+	// before (fmt.Sprintf("POINT(%f %f)", ...), unchanged) - only WHERE it goes
+	// changes: it is now a genuine bind argument to ST_GeomFromText via
+	// gorm.Expr, not spliced into the SQL text. This is a zero-precision-change
+	// conversion, deliberately: the review flagged a "%f-truncation vs full
+	// float64 precision" decision to make here, and binding the already-
+	// formatted WKT string sidesteps it entirely rather than answering it.
+	row := map[string]interface{}{
+		"type":     referType,
+		"userid":   myid,
+		"replyto":  nfID,
+		"msgid":    gorm.Expr("NULLIF(?, 0)", msgid),
+		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
+	}
+	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO newsfeed (type, userid, replyto, msgid, position) VALUES (?, ?, ?, NULLIF(?, 0), %s)", pos),
-		referType, myid, nfID, msgid)
-	if err != nil {
-		return
-	}
 
-	var newID uint64
-	lastIDInt, err := sqlResult.LastInsertId()
-	if err == nil && lastIDInt > 0 {
-		newID = uint64(lastIDInt)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	// Notify the original poster
 	if newID > 0 {

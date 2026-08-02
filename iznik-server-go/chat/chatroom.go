@@ -26,47 +26,47 @@ type Tabler interface {
 }
 
 type ChatRoomListEntry struct {
-	ID            uint64     `json:"id" gorm:"primary_key"`
-	Chattype      string     `json:"chattype"`
-	Groupid       uint64     `json:"groupid"`
-	User1         uint64     `json:"user1"`
-	User2         uint64     `json:"user2"`
-	Otheruid      uint64     `json:"otheruid"`
-	Otherdeleted  *time.Time `json:"-"`
-	Supporter     bool       `json:"supporter"`
-	Icon          string     `json:"icon"`
-	Lastdate      *time.Time `json:"lastdate"`
-	Lastmsg       uint64     `json:"lastmsg"`
-	Lastmsgseen   uint64     `json:"lastmsgseen"`
-	Lasttype      *time.Time `json:"lasttype"`
-	Name          string     `json:"name"`
-	Nameshort     string     `json:"-"`
-	Namefull      string     `json:"-"`
-	Firstname     string     `json:"-"`
-	Lastname      string     `json:"-"`
-	Fullname      string     `json:"-"`
-	Replyexpected uint64     `json:"replyexpected"`
-	Snippet       string     `json:"snippet"`
-	Unseen        uint64     `json:"unseen"`
-	Chatmsg       string     `json:"-"`
-	Chatmsgtype   string     `json:"-"`
-	Refmsgtype    string     `json:"-"`
-	Hasmessages   bool       `json:"-" gorm:"column:hasmessages"`
-	Hasvisiblemsg bool       `json:"-" gorm:"column:hasvisiblemsg"`
-	Gimageid      uint64     `json:"-"`
-	U1imageid     uint64     `json:"-"`
-	U2imageid     uint64     `json:"-"`
-	U1imageurl      string          `json:"-"`
-	U2imageurl      string          `json:"-"`
-	U1externaluid   string          `json:"-"`
-	U2externaluid   string          `json:"-"`
-	U1externalmods  json.RawMessage `json:"-"`
-	U2externalmods  json.RawMessage `json:"-"`
-	U1archived      int             `json:"-"`
-	U2archived      int             `json:"-"`
-	U1useprofile    bool            `json:"-"`
-	U2useprofile    bool            `json:"-"`
-	Status        string     `json:"status"`
+	ID             uint64          `json:"id" gorm:"primary_key"`
+	Chattype       string          `json:"chattype"`
+	Groupid        uint64          `json:"groupid"`
+	User1          uint64          `json:"user1"`
+	User2          uint64          `json:"user2"`
+	Otheruid       uint64          `json:"otheruid"`
+	Otherdeleted   *time.Time      `json:"-"`
+	Supporter      bool            `json:"supporter"`
+	Icon           string          `json:"icon"`
+	Lastdate       *time.Time      `json:"lastdate"`
+	Lastmsg        uint64          `json:"lastmsg"`
+	Lastmsgseen    uint64          `json:"lastmsgseen"`
+	Lasttype       *time.Time      `json:"lasttype"`
+	Name           string          `json:"name"`
+	Nameshort      string          `json:"-"`
+	Namefull       string          `json:"-"`
+	Firstname      string          `json:"-"`
+	Lastname       string          `json:"-"`
+	Fullname       string          `json:"-"`
+	Replyexpected  uint64          `json:"replyexpected"`
+	Snippet        string          `json:"snippet"`
+	Unseen         uint64          `json:"unseen"`
+	Chatmsg        string          `json:"-"`
+	Chatmsgtype    string          `json:"-"`
+	Refmsgtype     string          `json:"-"`
+	Hasmessages    bool            `json:"-" gorm:"column:hasmessages"`
+	Hasvisiblemsg  bool            `json:"-" gorm:"column:hasvisiblemsg"`
+	Gimageid       uint64          `json:"-"`
+	U1imageid      uint64          `json:"-"`
+	U2imageid      uint64          `json:"-"`
+	U1imageurl     string          `json:"-"`
+	U2imageurl     string          `json:"-"`
+	U1externaluid  string          `json:"-"`
+	U2externaluid  string          `json:"-"`
+	U1externalmods json.RawMessage `json:"-"`
+	U2externalmods json.RawMessage `json:"-"`
+	U1archived     int             `json:"-"`
+	U2archived     int             `json:"-"`
+	U1useprofile   bool            `json:"-"`
+	U2useprofile   bool            `json:"-"`
+	Status         string          `json:"status"`
 
 	Search bool `json:"search,omitempty" gorm:"column:search"`
 }
@@ -75,9 +75,10 @@ type ChatRoomListEntry struct {
 // ensuring chat listing icons match user profile fetch results.
 //
 // Chat icon rules:
-//   User2Mod, mod viewing:  icon = member's profile (the user who contacted the group)
-//   User2Mod, user viewing: icon = group logo
-//   User2User:              icon = other user's profile
+//
+//	User2Mod, mod viewing:  icon = member's profile (the user who contacted the group)
+//	User2Mod, user viewing: icon = group logo
+//	User2User:              icon = other user's profile
 //
 // The image data MUST come from the latest users_images row (ORDER BY id DESC
 // LIMIT 1) to match GetProfileRecord(). Using an arbitrary row causes avatar
@@ -403,18 +404,23 @@ func PutChatRoom(c *fiber.Ctx) error {
 		}
 
 		// Create new User2Mod chat.
-		sqlDB, err := db.DB()
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-		}
-		sqlResult, err := sqlDB.Exec(
-			"INSERT INTO chat_rooms (user1, chattype, groupid, latestmessage) VALUES (?, ?, ?, ?) "+
-				"ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)",
-			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid, now)
-		if err != nil {
+		// ORM migration site 65574169749a (tier4).
+		res := gorm.WithResult()
+		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				{Column: clause.Column{Name: "latestmessage"}, Value: clause.Column{Table: "excluded", Name: "latestmessage"}},
+			},
+		}).Create(map[string]interface{}{
+			"user1": chatUserID, "chattype": utils.CHAT_TYPE_USER2MOD, "groupid": req.Groupid, "latestmessage": now,
+		})
+		if tx.Error != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create chat room")
 		}
-		lastID, _ := sqlResult.LastInsertId()
+		var lastID int64
+		if res.Result != nil {
+			lastID, _ = res.Result.LastInsertId()
+		}
 		if lastID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create chat room")
 		}
@@ -476,20 +482,24 @@ func PutChatRoom(c *fiber.Ctx) error {
 	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
 	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
 	// parallel load (GORM's connection pool may assign a different connection).
+	// ORM migration site 659e00792d43 (tier4).
 	var chatID uint64
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)",
-		myid, req.Userid, utils.CHAT_TYPE_USER2USER, now)
-	if err != nil {
+	res := gorm.WithResult()
+	tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			{Column: clause.Column{Name: "latestmessage"}, Value: clause.Column{Table: "excluded", Name: "latestmessage"}},
+		},
+	}).Create(map[string]interface{}{
+		"user1": myid, "user2": req.Userid, "chattype": utils.CHAT_TYPE_USER2USER, "latestmessage": now,
+	})
+	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create chat room")
 	}
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		chatID = uint64(lastID)
+	if res.Result != nil {
+		if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+			chatID = uint64(lastID)
+		}
 	}
 
 	if chatID == 0 {
@@ -608,19 +618,24 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 		Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
-		sqlDB, err := db.DB()
-		if err != nil {
-			return 0, fmt.Errorf("failed to get sql.DB: %w", err)
-		}
+		// ORM migration site 3efeb225c001 (tier4).
 		now := time.Now()
-		sqlResult, err := sqlDB.Exec(
-			`INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?)
-			 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)`,
-			userA, userB, utils.CHAT_TYPE_USER2USER, now)
-		if err != nil {
-			return 0, fmt.Errorf("failed to insert chat room: %w", err)
+		res := gorm.WithResult()
+		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				{Column: clause.Column{Name: "latestmessage"}, Value: clause.Column{Table: "excluded", Name: "latestmessage"}},
+			},
+		}).Create(map[string]interface{}{
+			"user1": userA, "user2": userB, "chattype": utils.CHAT_TYPE_USER2USER, "latestmessage": now,
+		})
+		if tx.Error != nil {
+			return 0, fmt.Errorf("failed to insert chat room: %w", tx.Error)
 		}
-		lastID, err := sqlResult.LastInsertId()
+		if res.Result == nil {
+			return 0, fmt.Errorf("failed to get last insert id: no result")
+		}
+		lastID, err := res.Result.LastInsertId()
 		if err != nil || lastID == 0 {
 			return 0, fmt.Errorf("failed to get last insert id: %w", err)
 		}
@@ -1203,19 +1218,15 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			defer wg.Done()
 
 			// Get the supporter status for the other users.
-			ids := []string{}
-
-			ids = append(ids, strconv.FormatUint(myid, 10))
+			ids := []uint64{myid}
 
 			for _, chat := range chats {
 				if chat.Otherdeleted == nil && chat.Otheruid > 0 {
-					ids = append(ids, strconv.FormatUint(chat.Otheruid, 10))
+					ids = append(ids, chat.Otheruid)
 				}
 			}
 
 			if (len(ids)) > 0 {
-				idlist := "(" + strings.Join(ids, ",") + ") "
-
 				start := time.Now().AddDate(0, 0, -utils.SUPPORTER_PERIOD).Format("2006-01-02")
 
 				// Use a temporary type struct to hold the supporter status as the user field is not in the DB
@@ -1226,15 +1237,20 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				}
 				var supporters []supporterStatus
 
-				db.Raw("SELECT DISTINCT users.id, (CASE WHEN "+
-					"((users.systemrole != ? OR "+
-					"EXISTS(SELECT id FROM users_donations WHERE userid = users.id AND users_donations.timestamp >= ?) OR "+
-					"EXISTS(SELECT id FROM microactions WHERE userid = users.id AND microactions.timestamp >= ?)) AND "+
-					"(CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) "+
-					"THEN 1 ELSE 0 END) "+
-					"AS supporter "+
-					"FROM users "+
-					"WHERE users.id IN "+idlist, utils.SYSTEMROLE_USER, start, start).Scan(&supporters)
+				// ORM migration site 366c64b4d972 (tier9). ids is bound
+				// directly as a []uint64 slice rather than formatted as
+				// decimal text and joined into the SQL string.
+				db.Table("users").
+					Select("DISTINCT users.id, (CASE WHEN "+
+						"((users.systemrole != ? OR "+
+						"EXISTS(SELECT id FROM users_donations WHERE userid = users.id AND users_donations.timestamp >= ?) OR "+
+						"EXISTS(SELECT id FROM microactions WHERE userid = users.id AND microactions.timestamp >= ?)) AND "+
+						"(CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) "+
+						"THEN 1 ELSE 0 END) "+
+						"AS supporter",
+						utils.SYSTEMROLE_USER, start, start).
+					Where("users.id IN ?", ids).
+					Scan(&supporters)
 
 				// Convert supporters into a map for easy of access below.
 				for _, supporter := range supporters {
@@ -1714,19 +1730,29 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 		// none, so the MT badge is guaranteed to clear.
 		modChatIDs := getModeratorChatIDs(db, myid, []string{utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "", 0)
 		if len(modChatIDs) > 0 {
-			idlist := joinIDs(modChatIDs)
-			db.Exec(`UPDATE chat_roster
-				SET lastmsgseen = (
-					SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid
-				)
-				WHERE userid = ? AND chatid IN (`+idlist+`)`, myid)
+			// ORM migration site 3519e352775b (tier9). modChatIDs is bound
+			// directly as a []uint64 slice - GORM expands "IN ?" the same way
+			// as any other IN-list conversion in this codebase - rather than
+			// spliced as literal decimal text via joinIDs, which had no fixed
+			// golden for the extractor to record.
+			db.Table("chat_roster").
+				Where("userid = ? AND chatid IN ?", myid, modChatIDs).
+				Update("lastmsgseen", gorm.Expr("(SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid)"))
 
-			db.Exec(`INSERT INTO chat_roster (chatid, userid, lastmsgseen, date)
-				SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW()
-				FROM chat_rooms cr
-				WHERE cr.id IN (`+idlist+`)
-				AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)`,
-				myid, myid)
+			// ORM migration site 1d98111ea90d (tier4). The sibling UPDATE above
+			// keeps its literal idlist text unchanged, but this INSERT ... SELECT
+			// binds modChatIDs directly as a slice - GORM expands "IN (?)" from a
+			// slice bind the same way it does for any other IN-list conversion in
+			// this codebase, so there is no longer a runtime-varying text shape to
+			// record (the manifest's old golden had an unresolved "{{expr}}" for
+			// exactly this reason).
+			database.InsertSelect(db, "chat_roster",
+				"(chatid, userid, lastmsgseen, date) "+
+					"SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW() "+
+					"FROM chat_rooms cr "+
+					"WHERE cr.id IN (?) "+
+					"AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)",
+				myid, modChatIDs, myid)
 		}
 	} else {
 		// FD: chats the user participates in - User2User, plus User2Mod chats they
@@ -1740,11 +1766,13 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 
 		// V1 parity: chats with no roster row yet (e.g. a brand-new conversation the
 		// user has never opened) also count as unread, so give them a seen pointer.
-		db.Exec(`INSERT INTO chat_roster (chatid, userid, lastmsgseen, date)
-			SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW()
-			FROM chat_rooms cr
-			WHERE (cr.user1 = ? OR cr.user2 = ?) AND cr.chattype IN (?, ?)
-			AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)`,
+		// ORM migration site 4f9d823a53a7 (tier4).
+		database.InsertSelect(db, "chat_roster",
+			"(chatid, userid, lastmsgseen, date) "+
+				"SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW() "+
+				"FROM chat_rooms cr "+
+				"WHERE (cr.user1 = ? OR cr.user2 = ?) AND cr.chattype IN (?, ?) "+
+				"AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)",
 			myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD, myid)
 	}
 
@@ -1767,22 +1795,25 @@ func countUnseenMT(c *fiber.Ctx, myid uint64, chattypes []string) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "count": 0})
 	}
 
-	idlist := joinIDs(chatIDs)
 	activeSince := time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
 
+	// ORM migration site fdeb2007824a (tier9). chatIDs is bound directly as
+	// a []uint64 slice rather than spliced as literal decimal text via
+	// joinIDs.
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM chat_messages "+
-		"INNER JOIN users ON users.id = chat_messages.userid "+
-		"LEFT JOIN chat_roster ON chat_roster.chatid = chat_messages.chatid AND chat_roster.userid = ? "+
-		"WHERE chat_messages.chatid IN ("+idlist+") "+
-		"AND chat_messages.userid != ? "+
-		"AND chat_messages.reviewrequired = 0 "+
-		"AND chat_messages.reviewrejected = 0 "+
-		"AND chat_messages.processingsuccessful = 1 "+
-		"AND chat_messages.id > COALESCE(chat_roster.lastmsgseen, 0) "+
-		"AND chat_messages.date >= ? "+
-		"AND users.deleted IS NULL",
-		myid, myid, activeSince).Scan(&count)
+	db.Table("chat_messages").
+		Joins("INNER JOIN users ON users.id = chat_messages.userid").
+		Joins("LEFT JOIN chat_roster ON chat_roster.chatid = chat_messages.chatid AND chat_roster.userid = ?", myid).
+		Where("chat_messages.chatid IN ? "+
+			"AND chat_messages.userid != ? "+
+			"AND chat_messages.reviewrequired = 0 "+
+			"AND chat_messages.reviewrejected = 0 "+
+			"AND chat_messages.processingsuccessful = 1 "+
+			"AND chat_messages.id > COALESCE(chat_roster.lastmsgseen, 0) "+
+			"AND chat_messages.date >= ? "+
+			"AND users.deleted IS NULL",
+			chatIDs, myid, activeSince).
+		Count(&count)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "count": count})
 }
@@ -1798,44 +1829,72 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 	var allIDs []uint64
 
 	// Filter to exclude chats where all messages are held for review (likely spam).
-	countq := " AND (chat_rooms.msgvalid + chat_rooms.msginvalid = 0 OR chat_rooms.msgvalid > 0) "
-
-	// Filter to exclude backup mods (those with active:0 in their membership settings),
-	// unless we're searching for a specific chat.
-	activeq := ""
-	if search == "" {
-		activeq = " AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0) "
-	}
-
+	// The countq and activeq fragment strings that used to live here are gone:
+	// each branch below now builds its own conditions through the GORM chain,
+	// so the shared strings had no remaining reader and left the package
+	// failing to compile.
+	//
+	// The backup-mod filter they carried is unchanged - a member with
+	// active:0 in their membership settings is still excluded unless a specific
+	// chat is being searched for, which is now expressed as a conditional
+	// .Where on each chain and declared as two shapes per site in
+	// ormharness/shapes.json.
 	for _, ct := range chattypes {
 		var ids []uint64
 
 		switch ct {
 		case utils.CHAT_TYPE_MOD2MOD:
-			db.Raw("SELECT DISTINCT chat_rooms.id FROM chat_rooms "+
-				"INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid "+
-				"LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid "+
-				"WHERE memberships.userid = ? AND memberships.role IN (?, ?) "+
-				activeq+
-				"AND chat_rooms.chattype = ? "+
-				"AND (chat_roster.status IS NULL OR chat_roster.status != ?) "+
-				"AND chat_rooms.latestmessage >= ?"+
-				countq,
-				myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.CHAT_TYPE_MOD2MOD, utils.CHAT_STATUS_CLOSED, activeSince).Scan(&ids)
+			// ORM migration site 35023816be21 (Tier 3 keep-raw review). activeq
+			// is only appended when search=="", so this statement has exactly 2
+			// possible rendered forms, both declared in ormharness/shapes.json
+			// and proven by TestTier3Shapes_35023816be21 (iznik-server-go/test).
+			// The WHERE is built as a single string and passed to ONE Where()
+			// call: GORM's clause.Where wraps any fragment containing
+			// "AND"/"OR" in an extra paren pair once there is more than one
+			// Where expression to combine (clause/where.go buildExprs), which
+			// would diverge from the golden.
+			mod2modWhere := "memberships.userid = ? AND memberships.role IN (?, ?)"
+			mod2modArgs := []interface{}{myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER}
+			if search == "" {
+				mod2modWhere += " AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0)"
+			}
+			mod2modWhere += " AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) " +
+				"AND chat_rooms.latestmessage >= ? AND (chat_rooms.msgvalid + chat_rooms.msginvalid = 0 OR chat_rooms.msgvalid > 0)"
+			mod2modArgs = append(mod2modArgs, utils.CHAT_TYPE_MOD2MOD, utils.CHAT_STATUS_CLOSED, activeSince)
+
+			db.Table("chat_rooms").
+				Select("DISTINCT chat_rooms.id").
+				Joins("INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid").
+				Joins("LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid", myid).
+				Where(mod2modWhere, mod2modArgs...).
+				Scan(&ids)
 
 		case utils.CHAT_TYPE_USER2MOD:
 			// User2Mod chats on modtools are not subject to the count query filter.
-			db.Raw("SELECT DISTINCT id FROM ("+
-				"SELECT chat_rooms.id FROM chat_rooms "+
-				"INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid "+
-				"LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid "+
-				"WHERE memberships.userid = ? AND (memberships.role IN (?, ?) OR chat_rooms.user1 = ?) "+
-				activeq+
-				"AND chat_rooms.chattype = ? "+
-				"AND (chat_roster.status IS NULL OR chat_roster.status != ?) "+
-				"AND chat_rooms.latestmessage >= ?"+
-				") AS combined",
-				myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.CHAT_TYPE_USER2MOD, utils.CHAT_STATUS_CLOSED, activeSince).Scan(&ids)
+			//
+			// ORM migration site e99680f74b2e (Tier 3 keep-raw review). Same
+			// activeq toggle as the MOD2MOD branch above - 2 possible rendered
+			// forms, both declared in ormharness/shapes.json and proven by
+			// TestTier3Shapes_e99680f74b2e (iznik-server-go/test). The WHERE is
+			// built as a single string and passed to ONE Where() call: GORM's
+			// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+			// paren pair once there is more than one Where expression to
+			// combine (clause/where.go buildExprs), which would diverge from
+			// the golden.
+			user2modWhere := "memberships.userid = ? AND (memberships.role IN (?, ?) OR chat_rooms.user1 = ?)"
+			user2modArgs := []interface{}{myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid}
+			if search == "" {
+				user2modWhere += " AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0)"
+			}
+			user2modWhere += " AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ?"
+			user2modArgs = append(user2modArgs, utils.CHAT_TYPE_USER2MOD, utils.CHAT_STATUS_CLOSED, activeSince)
+
+			inner := db.Table("chat_rooms").
+				Select("chat_rooms.id").
+				Joins("INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid").
+				Joins("LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid", myid).
+				Where(user2modWhere, user2modArgs...)
+			db.Table("(?) AS combined", inner).Select("DISTINCT id").Scan(&ids)
 		}
 
 		allIDs = append(allIDs, ids...)
@@ -1843,20 +1902,24 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 
 	// Apply search filter if provided.
 	if search != "" && len(allIDs) > 0 {
-		idlist := joinIDs(allIDs)
+		// ORM migration site d44b753b35c8 (tier9). allIDs is bound directly
+		// as a []uint64 slice rather than spliced as literal decimal text
+		// via joinIDs.
+		searchLike := "%" + search + "%"
 		var filteredIDs []uint64
-		db.Raw("SELECT DISTINCT chat_rooms.id FROM chat_rooms "+
-			"LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
-			"LEFT JOIN users u1 ON u1.id = chat_rooms.user1 "+
-			"LEFT JOIN users u2 ON u2.id = chat_rooms.user2 "+
-			"LEFT JOIN users_emails ue1 ON ue1.userid = chat_rooms.user1 "+
-			"LEFT JOIN users_emails ue2 ON ue2.userid = chat_rooms.user2 "+
-			"WHERE chat_rooms.id IN ("+idlist+") "+
-			"AND (chat_messages.message LIKE ? OR u1.fullname LIKE ? OR u2.fullname LIKE ? "+
-			"OR u1.firstname LIKE ? OR u2.firstname LIKE ? "+
-			"OR ue1.email LIKE ? OR ue2.email LIKE ?)",
-			"%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%",
-			"%"+search+"%", "%"+search+"%").Scan(&filteredIDs)
+		db.Table("chat_rooms").
+			Select("DISTINCT chat_rooms.id").
+			Joins("LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id").
+			Joins("LEFT JOIN users u1 ON u1.id = chat_rooms.user1").
+			Joins("LEFT JOIN users u2 ON u2.id = chat_rooms.user2").
+			Joins("LEFT JOIN users_emails ue1 ON ue1.userid = chat_rooms.user1").
+			Joins("LEFT JOIN users_emails ue2 ON ue2.userid = chat_rooms.user2").
+			Where("chat_rooms.id IN ? "+
+				"AND (chat_messages.message LIKE ? OR u1.fullname LIKE ? OR u2.fullname LIKE ? "+
+				"OR u1.firstname LIKE ? OR u2.firstname LIKE ? "+
+				"OR ue1.email LIKE ? OR ue2.email LIKE ?)",
+				allIDs, searchLike, searchLike, searchLike, searchLike, searchLike, searchLike, searchLike).
+			Scan(&filteredIDs)
 		return filteredIDs
 	}
 
@@ -1922,11 +1985,8 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 	return ""
 }
 
-// joinIDs converts a slice of uint64 to a comma-separated string for SQL IN clauses.
-func joinIDs(ids []uint64) string {
-	strs := make([]string, len(ids))
-	for i, id := range ids {
-		strs[i] = strconv.FormatUint(id, 10)
-	}
-	return strings.Join(strs, ",")
-}
+// joinIDs is no longer used - both call sites (handleAllSeen and
+// getModeratorChatIDs' search branch) were converted to bind their id slice
+// directly instead: ORM migration sites 3519e352775b and d44b753b35c8
+// (tier9). listChats' idlist (a different, inline
+// "("+strings.Join(ids,",")+")" construction) is unrelated to this helper.

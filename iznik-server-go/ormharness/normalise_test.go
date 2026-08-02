@@ -41,6 +41,27 @@ func TestNormaliseColumnOrder_InsertWithNestedFunctionArgs(t *testing.T) {
 	}
 }
 
+func TestNormaliseColumnOrder_ReplaceInto(t *testing.T) {
+	// Tier 4 (plans/active/orm-keepraw-adversarial-review.md, §4): REPLACE
+	// INTO conversions (clause.Insert{Modifier: "REPLACE"}, via
+	// database.RegisterCustomClauseBuilders) hit the exact same GORM
+	// alphabetical-column-ordering behaviour as an ordinary map-valued
+	// Create - the leading keyword differs, the shape after it does not.
+	// insertPrefixPattern used to match only "insert"/"insert ignore", so
+	// this case fell through to the "return unchanged" path at the end of
+	// normaliseColumnOrder and every non-alphabetically-written REPLACE INTO
+	// golden (most of the 11 real sites, e.g. "newsfeed_users (userid,
+	// newsfeedid)") would have compared unequal to GORM's own alphabetical
+	// render on column order alone, not on any real divergence.
+	golden := "replace into newsfeed_users (userid, newsfeedid) values (?, ?)"
+	render := "replace into newsfeed_users (newsfeedid, userid) values (?, ?)"
+
+	if normaliseColumnOrder(golden) != normaliseColumnOrder(render) {
+		t.Fatalf("REPLACE INTO column reordering not normalised:\n golden -> %s\n render -> %s",
+			normaliseColumnOrder(golden), normaliseColumnOrder(render))
+	}
+}
+
 func TestNormaliseColumnOrder_Update(t *testing.T) {
 	golden := "update memberships set reviewedat = now(), reviewrequestedat = null, heldby = null where userid = ? and groupid = ?"
 	render := "update memberships set heldby = null, reviewedat = now(), reviewrequestedat = null where userid = ? and groupid = ?"

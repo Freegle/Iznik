@@ -392,16 +392,21 @@ func authMsg(c *fiber.Ctx, db *gorm.DB, myid, msgid uint64) (uint64, error) {
 
 // ensureBatchRow creates the batch row for a message if absent and returns its id.
 func ensureBatchRow(db *gorm.DB, msgid, offerer uint64) uint64 {
-	sqlDB, err := db.DB()
-	if err != nil {
+	// ORM migration site 7e3e5f4d0b36 (tier4). Clauses(gorm.WithResult())
+	// reads the id from the same sql.Result the write returned, which - unlike
+	// GORM's own "@id" map writeback - is not skipped when RowsAffected is 0
+	// (guaranteed on every duplicate-key hit): see
+	// test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap.
+	res := gorm.WithResult()
+	tx := db.Table("helper_batches").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+		},
+	}).Create(map[string]interface{}{"msgid": msgid, "offereruserid": offerer, "status": gorm.Expr("'active'")})
+	if tx.Error != nil || res.Result == nil {
 		return 0
 	}
-	res, err := sqlDB.Exec("INSERT INTO helper_batches (msgid, offereruserid, status) VALUES (?, ?, 'active') "+
-		"ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", msgid, offerer)
-	if err != nil {
-		return 0
-	}
-	id, err := res.LastInsertId()
+	id, err := res.Result.LastInsertId()
 	if err != nil {
 		return 0
 	}
@@ -476,22 +481,36 @@ func helperUpsertReplier(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReque
 	}
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
 
-	sqlDB, dberr := db.DB()
-	if dberr != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "DB error")
-	}
-	res, exerr := sqlDB.Exec("INSERT INTO helper_repliers (batchid, userid, state) VALUES (?, ?, 'NEW') "+
-		"ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", batchid, *req.Userid)
-	if exerr != nil {
+	// ORM migration site 4aef5392a01f (tier4).
+	res := gorm.WithResult()
+	tx := db.Table("helper_repliers").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+		},
+	}).Create(map[string]interface{}{"batchid": batchid, "userid": *req.Userid, "state": gorm.Expr("'NEW'")})
+	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not upsert replier")
 	}
-	rid, _ := res.LastInsertId()
-	replierid := uint64(rid)
+	var replierid uint64
+	if res.Result != nil {
+		if rid, idErr := res.Result.LastInsertId(); idErr == nil {
+			replierid = uint64(rid)
+		}
+	}
 
 	// Only update the fields the caller actually supplied, so partial updates from
 	// the driver don't clobber other knowledge.
+	//
+	// ORM migration site 7ba4875e8aec (Tier 2 keep-raw review). col is a
+	// per-call constant from a fixed set of literal call sites below, never
+	// caller-controlled, so this is GORM's ordinary per-field Update(col, val)
+	// pattern - already proven a few lines up in this same file
+	// (helper_batches "automode", line 461) - not a SQL-injection-shaped
+	// dynamic column. Every column this closure can be called with is
+	// declared as its own shape in ormharness/shapes.json and proven by
+	// TestTier2_7ba4875e8aec (iznik-server-go/test).
 	set := func(col string, val interface{}) {
-		db.Exec("UPDATE helper_repliers SET "+col+" = ? WHERE id = ?", val, replierid)
+		db.Table("helper_repliers").Where("id = ?", replierid).Update(col, val)
 	}
 	if req.Chatid != nil {
 		set("chatid", *req.Chatid)
@@ -556,20 +575,30 @@ func helperSetItemState(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReques
 		return err
 	}
 
-	sqlDB, dberr := db.DB()
-	if dberr != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "DB error")
-	}
-	res, exerr := sqlDB.Exec("INSERT INTO helper_item_states (replierid, bulkitemid, state) VALUES (?, ?, 'NEW') "+
-		"ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", *req.Replierid, *req.Bulkitemid)
-	if exerr != nil {
+	// ORM migration site dfc3d2fdb2ba (tier4).
+	res := gorm.WithResult()
+	tx := db.Table("helper_item_states").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+		},
+	}).Create(map[string]interface{}{"replierid": *req.Replierid, "bulkitemid": *req.Bulkitemid, "state": gorm.Expr("'NEW'")})
+	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not upsert item state")
 	}
-	sid, _ := res.LastInsertId()
-	stateid := uint64(sid)
+	var stateid uint64
+	if res.Result != nil {
+		if sid, idErr := res.Result.LastInsertId(); idErr == nil {
+			stateid = uint64(sid)
+		}
+	}
 
+	// ORM migration site b48b319835d0 (Tier 2 keep-raw review). Same reasoning
+	// as helperUpsertReplier's "set" above: col is a per-call constant from a
+	// fixed set of literal call sites below. Every column this closure can be
+	// called with is declared as its own shape in ormharness/shapes.json and
+	// proven by TestTier2_b48b319835d0 (iznik-server-go/test).
 	set := func(col string, val interface{}) {
-		db.Exec("UPDATE helper_item_states SET "+col+" = ? WHERE id = ?", val, stateid)
+		db.Table("helper_item_states").Where("id = ?", stateid).Update(col, val)
 	}
 	if req.State != nil {
 		set("state", *req.State)
@@ -704,12 +733,17 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 	// ORM migration site 992730fc5688 (wave 1).
 	db.Table("helper_repliers").Select("id").Where("batchid = ? AND userid = ?", batchid, *req.Userid).Scan(&replierid)
 	if replierid == 0 {
-		if sqlDB, e := db.DB(); e == nil {
-			if res, e2 := sqlDB.Exec("INSERT INTO helper_repliers (batchid, userid, chatid, state) VALUES (?, ?, ?, 'NEW') "+
-				"ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), chatid = VALUES(chatid)", batchid, *req.Userid, chatid); e2 == nil {
-				if id, e3 := res.LastInsertId(); e3 == nil {
-					replierid = uint64(id)
-				}
+		// ORM migration site 123512413259 (tier4).
+		res := gorm.WithResult()
+		tx := db.Table("helper_repliers").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				{Column: clause.Column{Name: "chatid"}, Value: clause.Column{Table: "excluded", Name: "chatid"}},
+			},
+		}).Create(map[string]interface{}{"batchid": batchid, "userid": *req.Userid, "chatid": chatid, "state": gorm.Expr("'NEW'")})
+		if tx.Error == nil && res.Result != nil {
+			if id, idErr := res.Result.LastInsertId(); idErr == nil {
+				replierid = uint64(id)
 			}
 		}
 	} else {
@@ -841,7 +875,12 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 			// ORM migration site a03b9302bbb8 (wave 2).
 			db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).
 				Update("state", gorm.Expr("'Reserved'"))
-			db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgid, replierUserid)
+			// ORM migration site 8d359d691beb (tier4). REPLACE INTO via
+			// clause.Insert{Modifier: "REPLACE"} - see
+			// database.RegisterCustomClauseBuilders for why the plain
+			// Modifier field alone is not enough.
+			db.Table("messages_promises").Clauses(clause.Insert{Modifier: "REPLACE"}).
+				Create(map[string]interface{}{"msgid": msgid, "userid": replierUserid})
 			if prior != "Reserved" {
 				sendAccessInstructions(db, msgid, offerer, replierUserid)
 			}

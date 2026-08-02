@@ -197,8 +197,9 @@ func recordBulkOutcomeIfComplete(db *gorm.DB, msgid uint64) {
 	if availablenow > 0 {
 		return
 	}
-	db.Exec(
-		"INSERT INTO messages_outcomes (msgid, outcome) "+
+	// ORM migration site 85f3246d11af (tier4).
+	database.InsertSelect(db, "messages_outcomes",
+		"(msgid, outcome) "+
 			"SELECT ?, ? WHERE NOT EXISTS "+
 			"(SELECT 1 FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?))",
 		msgid, utils.OUTCOME_TAKEN,

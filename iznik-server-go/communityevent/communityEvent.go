@@ -312,25 +312,25 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 45b8b0bc2060 (tier1). Plain, isolated, literal single-row
+	// INSERT (the "1" for pending is a fixed literal); id read back via GORM's
+	// map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"userid":       myid,
+		"pending":      gorm.Expr("1"),
+		"title":        req.Title,
+		"location":     req.Location,
+		"contactname":  req.Contactname,
+		"contactphone": req.Contactphone,
+		"contactemail": req.Contactemail,
+		"contacturl":   req.Contacturl,
+		"description":  req.Description,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO communityevents (userid, pending, title, location, contactname, contactphone, contactemail, contacturl, description) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)",
-		myid, req.Title, req.Location, req.Contactname, req.Contactphone, req.Contactemail, req.Contacturl, req.Description)
-
-	if err != nil {
+	if err := db.Table("communityevents").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create community event")
 	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	if id > 0 && req.GroupID > 0 {
 		// ORM migration site 74c3a59d2291 (wave 3).

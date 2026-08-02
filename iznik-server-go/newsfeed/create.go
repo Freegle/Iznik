@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
+	"gorm.io/gorm"
 	"log"
 )
 
 // Newsfeed type constants.
 const (
-	TypeCommunityEvent      = "CommunityEvent"
+	TypeCommunityEvent       = "CommunityEvent"
 	TypeVolunteerOpportunity = "VolunteerOpportunity"
 )
 
@@ -108,31 +109,34 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 		}
 	}
 
-	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", *lng, *lat, utils.SRID)
-
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return 0, err
+	// ORM migration site 90b0f0bb3029 (tier6). Same zero-precision-change
+	// conversion as newsfeed.go's createRefer/createPost (10bcbd6a6404,
+	// f961504c334d): the WKT text is built exactly as before via
+	// fmt.Sprintf("POINT(%f %f)", ...), then bound as a genuine ST_GeomFromText
+	// argument rather than spliced into the SQL text. hidden is a fixed
+	// two-way literal ("NULL" or "NOW()"), never a bound value, so
+	// gorm.Expr(hidden) with no args is exact. deleted/reviewrequired/pinned
+	// were always fixed literals (NULL, 0, 0), not runtime values.
+	row := map[string]interface{}{
+		"type":           nfType,
+		"userid":         userid,
+		"groupid":        groupid,
+		"eventid":        eventid,
+		"volunteeringid": volunteeringid,
+		"position":       gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", *lng, *lat), utils.SRID),
+		"location":       location,
+		"hidden":         gorm.Expr(hidden),
+		"deleted":        gorm.Expr("NULL"),
+		"reviewrequired": gorm.Expr("0"),
+		"pinned":         gorm.Expr("0"),
 	}
-	sqlResult, err := sqlDB.Exec(
-		fmt.Sprintf("INSERT INTO newsfeed (`type`, userid, groupid, eventid, volunteeringid, position, location, hidden, deleted, reviewrequired, pinned) "+
-			"VALUES (?, ?, ?, ?, ?, %s, ?, %s, NULL, 0, 0)", pos, hidden),
-		nfType, userid, groupid, eventid, volunteeringid, location,
-	)
-
-	if err != nil {
+	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		log.Printf("Failed to create newsfeed entry: %v", err)
 		return 0, err
 	}
 
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	return id, nil
 }

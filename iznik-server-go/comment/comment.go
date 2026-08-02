@@ -80,30 +80,40 @@ func Get(c *fiber.Ctx) error {
 	}
 
 	// Build query using keyset pagination on id (never null, unique).
-	query := "SELECT * FROM users_comments WHERE "
-	var args []interface{}
+	//
+	// ORM migration site f1e9e49a9c89 (Tier 3 keep-raw review). Three
+	// independent toggles - groupid>0, contextID>0, isAdmin - give 2x2x2 = 8
+	// possible rendered forms, all declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_f1e9e49a9c89 (iznik-server-go/test). The
+	// WHERE is built as a single string and passed to ONE Where() call:
+	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an
+	// extra paren pair once there is more than one Where expression to
+	// combine (clause/where.go buildExprs), which would diverge from the
+	// golden.
+	whereSQL := ""
+	var whereArgs []interface{}
 
 	if groupid > 0 {
-		query += "groupid = ? AND "
-		args = append(args, groupid)
+		whereSQL += "groupid = ? AND "
+		whereArgs = append(whereArgs, groupid)
 	}
 
 	if contextID > 0 {
-		query += "users_comments.id < ? AND "
-		args = append(args, contextID)
+		whereSQL += "users_comments.id < ? AND "
+		whereArgs = append(whereArgs, contextID)
 	}
 
-	if isAdmin {
+	if !isAdmin {
 		// Admin/support can see all comments.
-	} else {
-		query += "(groupid IN (?) OR users_comments.byuserid = ?) AND "
-		args = append(args, modGroupIDs, myid)
+		whereSQL += "(groupid IN (?) OR users_comments.byuserid = ?) AND "
+		whereArgs = append(whereArgs, modGroupIDs, myid)
 	}
 
-	query += "1=1 ORDER BY users_comments.id DESC LIMIT 10"
+	whereSQL += "1=1"
 
 	var rows []CommentItem
-	db.Raw(query, args...).Scan(&rows)
+	db.Table("users_comments").Where(whereSQL, whereArgs...).
+		Order("users_comments.id DESC").Limit(10).Scan(&rows)
 
 	if len(rows) == 0 {
 		return c.JSON(fiber.Map{
@@ -273,30 +283,30 @@ func Create(c *fiber.Ctx) error {
 		flag = 1
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 40de8b0d3f98 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"userid":   req.Userid,
+		"groupid":  req.Groupid,
+		"byuserid": myid,
+		"user1":    req.User1,
+		"user2":    req.User2,
+		"user3":    req.User3,
+		"user4":    req.User4,
+		"user5":    req.User5,
+		"user6":    req.User6,
+		"user7":    req.User7,
+		"user8":    req.User8,
+		"user9":    req.User9,
+		"user10":   req.User10,
+		"user11":   req.User11,
+		"flag":     flag,
 	}
-	sqlResult, err := sqlDB.Exec(
-		"INSERT INTO users_comments (userid, groupid, byuserid, user1, user2, user3, user4, user5, user6, user7, user8, user9, user10, user11, flag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		req.Userid, req.Groupid, myid,
-		req.User1, req.User2, req.User3, req.User4, req.User5,
-		req.User6, req.User7, req.User8, req.User9, req.User10,
-		req.User11, flag,
-	)
-
-	if err != nil {
+	if err := db.Table("users_comments").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create comment")
 	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	// Flag user in other groups if flag is set
 	if id > 0 && req.Flag && req.Groupid != nil && *req.Groupid > 0 {

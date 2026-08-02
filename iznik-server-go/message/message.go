@@ -479,21 +479,43 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				userDeletedFilter := "AND users.deleted IS NULL"
-				rawMessageField := ""
+				// ORM migration site 08bb471351a0 (Tier 3 keep-raw review). isMod
+				// is the only toggle (it drives the deleted-sender filter and
+				// the raw message field together) - 2 possible rendered forms,
+				// both declared in ormharness/shapes.json and proven by
+				// TestTier3Shapes_08bb471351a0 (iznik-server-go/test).
+				selectCols := "messages.id, messages.arrival, messages.date, messages.fromuser, " +
+					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, " +
+					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "
 				if isMod {
-					userDeletedFilter = ""
-					rawMessageField = "messages.message, "
+					selectCols += "messages.message, "
 				}
-				err := db.Raw("SELECT messages.id, messages.arrival, messages.date, messages.fromuser, "+
-					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid,"+
-					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "+
-					rawMessageField+
-					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages "+
-					"LEFT JOIN users ON users.id = messages.fromuser "+
-					"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE messages.id = ? AND messages.deleted IS NULL "+userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
-				found = !errors.Is(err, gorm.ErrRecordNotFound)
+				selectCols += "CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen"
+
+				whereSQL := "messages.id = ? AND messages.deleted IS NULL"
+				whereArgs := []interface{}{id}
+				if !isMod {
+					whereSQL += " AND users.deleted IS NULL"
+				}
+
+				// Find, not First: First unconditionally adds an implicit
+				// "ORDER BY <primary key>" + LIMIT 1 and raises
+				// ErrRecordNotFound, but this is a Table()-only query with
+				// no registered Model, so Schema stays nil and resolving
+				// that ORDER BY's primary key column fails outright with
+				// "model value required" (gorm's statement.go, the
+				// clause.Column PrimaryKey case). See group/group.go's
+				// GetGroup (site 2811b4d3acf7) for the established fix:
+				// Find() never adds those clauses, so the caller checks
+				// RowsAffected instead of comparing the error to
+				// ErrRecordNotFound.
+				tx := db.Table("messages").
+					Select(selectCols).
+					Joins("LEFT JOIN users ON users.id = messages.fromuser").
+					Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+					Where(whereSQL, whereArgs...).
+					Find(&message)
+				found = tx.RowsAffected > 0
 			}()
 
 			var messageGroups []MessageGroup
@@ -1227,59 +1249,65 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 		if err1 == nil && err2 == nil {
 			msgs := []MessageSummary{}
 
-			sql := "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, " +
+			selectCols := "messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, " +
 				"messages_spatial.id AS spatialid, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, " +
 				"EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, "
 
-			if myid > 0 && id == myid {
-				// Own messages are always treated as seen.
-				sql += "0 AS unseen "
-			} else {
-				sql += "NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen "
-			}
-
-			sql += "FROM messages " +
-				"INNER JOIN messages_groups ON messages_groups.msgid = messages.id " +
-				"INNER JOIN users ON users.id = messages.fromuser "
-
-			if active {
-				if myid > 0 && id == myid {
-					// For our own user, we might have messages which are not public yet because they're pending,
-					// and we still want to show those.
-					sql += "LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id "
-				} else {
-					// Another user - we are only interested in active and public messages.
-					sql += "INNER JOIN messages_spatial ON messages_spatial.msgid = messages.id "
-				}
-			} else {
-				sql += "LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id "
-			}
-
-			sql += "WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
+			whereTail := "fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
 				// Rippling-out adds a messages_groups row (rippled_in=1) per group a post ripples
 				// into, so without this a rippled post appears once PER GROUP in My Posts. Restrict
 				// to the origin membership (rippled_in=0) so each of the user's own posts shows
 				// exactly once; the rippled-in copies are system propagation, not separate posts.
-				"messages_groups.rippled_in = 0 AND " +
-				"messages.type IN (?, ?)"
-
-			if active {
-				if myid > 0 && id == myid {
-					sql += " HAVING ((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages_groups.collection IN ('" + utils.COLLECTION_PENDING + "', '" + utils.COLLECTION_REJECTED + "'))"
-				} else {
-					sql += " HAVING hasoutcome = 0"
-				}
-			}
-
-			sql += " ORDER BY unseen DESC, messages_groups.arrival DESC"
+				"messages_groups.rippled_in = 0 AND messages.type IN (?, ?)"
 
 			if myid > 0 && id == myid {
-				// Own messages - no unseen userid parameter needed.
-				db.Raw(sql, utils.TAKEN, utils.RECEIVED, id, utils.OFFER, utils.WANTED).Scan(&msgs)
+				// Own messages are always treated as seen.
+				//
+				// ORM migration site 2de07c2af78b (Tier 3 keep-raw review).
+				// `active` is the only toggle - 2 possible rendered forms, both
+				// declared in ormharness/shapes.json and proven by
+				// TestTier3Shapes_2de07c2af78b (iznik-server-go/test).
+				tx := db.Table("messages").
+					Select(selectCols+"0 AS unseen", utils.TAKEN, utils.RECEIVED).
+					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+					Joins("INNER JOIN users ON users.id = messages.fromuser").
+					Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id").
+					Where(whereTail, id, utils.OFFER, utils.WANTED)
+				if active {
+					// The original spliced these as literal quoted text, not
+					// binds ("... IN ('"+COLLECTION_PENDING+"', '"+COLLECTION_REJECTED+"'))"),
+					// so the conversion matches that exactly here.
+					tx = tx.Having("((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages_groups.collection IN ('" +
+						utils.COLLECTION_PENDING + "', '" + utils.COLLECTION_REJECTED + "'))")
+				}
+				tx.Order("unseen DESC, messages_groups.arrival DESC").Scan(&msgs)
 			} else {
-				db.Raw(sql, utils.TAKEN, utils.RECEIVED, myid, utils.MESSAGE_LIKES_VIEW, id, utils.OFFER, utils.WANTED).Scan(&msgs)
+				// Another user - we are only interested in active and public messages.
+				//
+				// ORM migration site bca1186d1ea4 (Tier 3 keep-raw review). Same
+				// `active` toggle as 2de07c2af78b above (the other-user twin) -
+				// 2 possible rendered forms, both declared in
+				// ormharness/shapes.json and proven by
+				// TestTier3Shapes_bca1186d1ea4 (iznik-server-go/test).
+				tx := db.Table("messages").
+					Select(selectCols+"NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen",
+						utils.TAKEN, utils.RECEIVED, myid, utils.MESSAGE_LIKES_VIEW).
+					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+					Joins("INNER JOIN users ON users.id = messages.fromuser")
+				if active {
+					// For our own user, we might have messages which are not public yet because they're pending,
+					// and we still want to show those.
+					tx = tx.Joins("INNER JOIN messages_spatial ON messages_spatial.msgid = messages.id")
+				} else {
+					tx = tx.Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id")
+				}
+				tx = tx.Where(whereTail, id, utils.OFFER, utils.WANTED)
+				if active {
+					tx = tx.Having("hasoutcome = 0")
+				}
+				tx.Order("unseen DESC, messages_groups.arrival DESC").Scan(&msgs)
 			}
 
 			if active {
@@ -2311,7 +2339,9 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("messages").Select("spamtype").Where("id = ?", req.ID).Scan(&spamtype)
 	}
 	if spamtype != nil && *spamtype != "" {
-		db.Exec("REPLACE INTO messages_spamham (msgid, spamham) VALUES (?, 'Ham')", req.ID)
+		// ORM migration site db4ec8586401 (tier4).
+		db.Table("messages_spamham").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{"msgid": req.ID, "spamham": gorm.Expr("'Ham'")})
 	}
 
 	subject := ""
@@ -2554,10 +2584,26 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 		"AND NOT ST_Within(mr.polygon, g.polyindex)", gid, msgid)
 
 	// Reach wholly inside the rejected group → no area remains: drop the reach row.
-	db.Exec("DELETE mr FROM rippling_reach mr JOIN `groups` g ON g.id = ? "+
-		"WHERE mr.msgid = ? AND g.polyindex IS NOT NULL "+
-		"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-		"AND ST_Within(mr.polygon, g.polyindex)", gid, msgid)
+	// ORM migration site d4f71ea17664 (Tier 1 spatial review). GORM's Delete
+	// callback (callbacks/delete.go) only calls AddClauseIfNotExists(clause.From{})
+	// - it never reads Statement.Joins the way the SELECT query callback does -
+	// so a plain .Joins() call before .Delete() is silently dropped. Supplying our
+	// own non-empty clause.From{} (via .Clauses, before .Delete runs) makes
+	// AddClauseIfNotExists a no-op, so the join we set on it survives. The join's
+	// Expression is a raw gorm.Expr so its bind lands inside the FROM clause,
+	// ahead of the WHERE's own bind - matching the original (gid, msgid) order.
+	// clause.Delete{Modifier: "mr"} supplies the "DELETE mr" alias prefix;
+	// .Table("rippling_reach mr") keeps the base table's own alias unquoted,
+	// the same TableExpr mechanism join_test.go pins for "users u".
+	db.Table("rippling_reach mr").
+		Clauses(
+			clause.Delete{Modifier: "mr"},
+			clause.From{Joins: []clause.Join{{Expression: gorm.Expr("JOIN `groups` g ON g.id = ?", gid)}}},
+		).
+		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
+			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+			"AND ST_Within(mr.polygon, g.polyindex)", msgid).
+		Delete(nil)
 }
 
 // RecordRippleEvent bumps the per-day counter for a rippling-out event (design §15/§16 —
@@ -2671,7 +2717,9 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Record for spam training.
-	db.Exec("REPLACE INTO messages_spamham (msgid, spamham) VALUES (?, ?)", req.ID, utils.COLLECTION_SPAM)
+	// ORM migration site 049bc3f964cd (tier4).
+	db.Table("messages_spamham").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{"msgid": req.ID, "spamham": utils.COLLECTION_SPAM})
 
 	// Per-group spam: soft-delete only the authorized groups' rows.
 	// ORM migration site c6e83a7877cb (wave 2).
@@ -3668,8 +3716,20 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		if itemID == 0 {
 			// Genuinely new item — insert it. ON DUPLICATE KEY handles a concurrent/lagged
 			// insert; read the id from the write result, not a read-split-routable SELECT (9832).
-			itemID, _ = database.ExecInsertGetID(db,
-				"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", *req.Item)
+			// ORM migration site 7c79dc685e02 (insertid-conv). See 3cbad581b884
+			// (PutMessageAs) for why gorm.WithResult() rather than "@id" is
+			// needed for the LAST_INSERT_ID(id) idiom.
+			itemRes := gorm.WithResult()
+			db.Table("items").Clauses(itemRes, clause.OnConflict{
+				DoUpdates: clause.Set{
+					{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				},
+			}).Create(map[string]interface{}{"name": *req.Item})
+			if itemRes.Result != nil {
+				if id, idErr := itemRes.Result.LastInsertId(); idErr == nil {
+					itemID = uint64(id)
+				}
+			}
 		}
 		// Do NOT update items.name when found by case-insensitive match.
 		// items is a shared canonical dictionary; normalising the casing from a single
@@ -4241,45 +4301,57 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	}
 
 	// New user — create user, email, session, JWT.
-	// Use raw database/sql to get LastInsertId() from the same result —
-	// avoids the GORM connection-pool race where a separate
-	// SELECT LAST_INSERT_ID() query could land on a different connection.
-	sqlDB, err := db.DB()
-	if err != nil {
-		return 0, "", nil, fmt.Errorf("failed to get DB connection: %w", err)
-	}
-
-	sqlResult, err := sqlDB.Exec("INSERT INTO users (added) VALUES (NOW())")
-	if err != nil {
+	// ORM migration site 698ab1090087 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback, which reads the
+	// id back from the very connection that ran the INSERT (proven in
+	// test/orm_insertid_test.go).
+	userRow := map[string]interface{}{"added": gorm.Expr("NOW()")}
+	if err := db.Table("users").Create(userRow).Error; err != nil {
 		return 0, "", nil, fmt.Errorf("failed to create user: %w", err)
 	}
-
-	newUserIDInt, err := sqlResult.LastInsertId()
-	if err != nil || newUserIDInt == 0 {
+	newUserIDInt, _ := userRow["@id"].(int64)
+	if newUserIDInt == 0 {
 		return 0, "", nil, fmt.Errorf("failed to get new user ID")
 	}
 	newUserID := uint64(newUserIDInt)
 
 	// Add email.
+	// ORM migration site 033affad7d5a (tier1). Plain, isolated, literal single-row
+	// INSERT; no id readback needed here.
 	canon := user.CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
-		newUserID, email, canon, user.ReverseString(canon))
+	db.Table("users_emails").Create(map[string]interface{}{
+		"userid":    newUserID,
+		"email":     email,
+		"preferred": gorm.Expr("1"),
+		"validated": gorm.Expr("NOW()"),
+		"canon":     canon,
+		"backwards": user.ReverseString(canon),
+	})
 
 	// Create session. series must be a random numeric value (bigint
 	// unsigned); using userID collided across every session for the same
 	// user and defeated UNIQUE KEY (id, series, token).
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	// Read the new session id from the INSERT's LastInsertId on the write connection. A
-	// "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the read/write
-	// split and can return a stale/0 id (Discourse 9832 class), embedding a wrong sessionid in
-	// the JWT below.
-	sessionID, err := database.ExecInsertGetID(db,
-		"INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, series, token)
-	if err != nil {
+	// ORM migration site 9a37292fb851 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback, which reads the
+	// id back from the write connection that ran the INSERT (proven in
+	// test/orm_insertid_test.go), same guarantee ExecInsertGetID gave. A
+	// "SELECT id ... ORDER BY id DESC" here would be routed to a read replica
+	// under the read/write split and could return a stale/0 id (Discourse 9832
+	// class), embedding a wrong sessionid in the JWT below - which is why this
+	// stays on the id-writeback mechanism rather than a separate lookup.
+	sessionRow := map[string]interface{}{
+		"userid":     newUserID,
+		"series":     series,
+		"token":      token,
+		"lastactive": gorm.Expr("NOW()"),
+	}
+	if err := db.Table("sessions").Create(sessionRow).Error; err != nil {
 		return 0, "", nil, fmt.Errorf("failed to create session: %w", err)
 	}
+	sessionIDInt, _ := sessionRow["@id"].(int64)
+	sessionID := uint64(sessionIDInt)
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -4655,8 +4727,24 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	if req.Item != "" {
 		// ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id) already lets the write report the id for
 		// both new and existing rows; take it from the result, not a read-split-routable SELECT.
-		itemID, _ := database.ExecInsertGetID(db,
-			"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
+		// ORM migration site 3cbad581b884 (insertid-conv). GORM's own "@id"
+		// map writeback is skipped when RowsAffected is 0, which MySQL
+		// reports on a no-op duplicate hit - exactly the common case here.
+		// Clauses(gorm.WithResult()) hands back the raw sql.Result instead,
+		// which has no such condition (proven in
+		// test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap).
+		itemRes := gorm.WithResult()
+		db.Table("items").Clauses(itemRes, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			},
+		}).Create(map[string]interface{}{"name": req.Item})
+		var itemID uint64
+		if itemRes.Result != nil {
+			if id, idErr := itemRes.Result.LastInsertId(); idErr == nil {
+				itemID = uint64(id)
+			}
+		}
 		if itemID > 0 {
 			// ORM migration site e7f18e30931f (wave 3).
 			db.Table("messages_items").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
@@ -5062,7 +5150,9 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// REPLACE INTO - idempotent.
-	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", req.ID, promisedTo)
+	// ORM migration site 7efd04588fb2 (tier4).
+	db.Table("messages_promises").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{"msgid": req.ID, "userid": promisedTo})
 
 	// Create a chat message of type Promised if promising to another user.
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
@@ -5544,19 +5634,23 @@ func createSystemChatMessage(db *gorm.DB, fromUser uint64, toUser uint64, refmsg
 
 	if chatID == 0 {
 		// Create a User2User chat room. ON DUPLICATE KEY handles race conditions
-		// (unique key on user1, user2, chattype).
-		// Use raw database/sql to get LastInsertId() from the same result —
-		// avoids the GORM connection-pool race.
-		sqlDB, err := db.DB()
-		if err != nil {
+		// (unique key on user1, user2, chattype). Clauses(gorm.WithResult()) reads
+		// the id from the same sql.Result the write returned — avoids the GORM
+		// connection-pool race a separate SELECT LAST_INSERT_ID() would have.
+		// ORM migration site 26c94565517d (tier4).
+		res := gorm.WithResult()
+		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				{Column: clause.Column{Name: "latestmessage"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"user1": fromUser, "user2": toUser, "chattype": utils.CHAT_TYPE_USER2USER, "latestmessage": gorm.Expr("NOW()"),
+		})
+		if tx.Error != nil || res.Result == nil {
 			return
 		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = NOW()",
-			fromUser, toUser, utils.CHAT_TYPE_USER2USER)
-		if err != nil {
-			return
-		}
-		chatIDInt, err := sqlResult.LastInsertId()
+		chatIDInt, err := res.Result.LastInsertId()
 		if err != nil || chatIDInt == 0 {
 			return
 		}

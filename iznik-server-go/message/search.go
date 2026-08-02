@@ -236,30 +236,35 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	key := reachUniverseKey(myid, lat, lng)
 	reachIDs, hit := cachedReachUniverse(key, now)
 	if !hit {
-		db.Raw(
-			"SELECT ms.msgid FROM rippling_reach rr "+
-				"INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid "+
-				"INNER JOIN messages m ON m.id = ms.msgid "+
-				"INNER JOIN users au ON au.id = m.fromuser "+
-				"WHERE ms.successful = 0 AND rr.status != 'held' "+
+		// ORM migration site ff00b3ba45a3 (Tier 1 spatial review, round 3).
+		// The extractor now resolves utils.AuthorReachCapWhere to a single
+		// fixed golden with no unresolved gap (the manifest's stale,
+		// presentInCode=false 7ef7f895e8bf is the pre-fix snapshot), so this
+		// is an ordinary fixed-shape multi-join query, not a many-shapes site.
+		db.Table("rippling_reach rr").
+			Select("ms.msgid").
+			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("INNER JOIN users au ON au.id = m.fromuser").
+			Where("ms.successful = 0 AND rr.status != 'held' "+
 				"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
 				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
 				utils.AuthorReachCapWhere,
-			lng, lat, utils.SRID,
-			lng, lat, utils.SRID,
-			float64(9007199254740991), lat, lng, lat,
-		).Scan(&reachIDs)
+				lng, lat, utils.SRID,
+				lng, lat, utils.SRID,
+				float64(9007199254740991), lat, lng, lat).
+			Scan(&reachIDs)
 		storeReachUniverse(key, reachIDs, now)
 	}
 
 	// Own arm: always fresh (cheap indexed query), never cached.
 	var ownIDs []uint64
-	db.Raw(
-		"SELECT ms.msgid FROM messages_spatial ms "+
-			"INNER JOIN messages m ON m.id = ms.msgid "+
-			"WHERE ms.successful = 0 AND m.fromuser = ?",
-		myid,
-	).Scan(&ownIDs)
+	// ORM migration site 17a182469755 (Tier 1 spatial review, round 3).
+	db.Table("messages_spatial ms").
+		Select("ms.msgid").
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
+		Where("ms.successful = 0 AND m.fromuser = ?", myid).
+		Scan(&ownIDs)
 
 	if len(ownIDs) == 0 {
 		return reachIDs

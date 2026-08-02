@@ -201,25 +201,19 @@ func CreateMerge(c *fiber.Ctx) error {
 	uid := generateUID()
 
 	db := database.DBConn
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 4d2e18cf27e3 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"user1":     req.User1,
+		"user2":     req.User2,
+		"offeredby": myid,
+		"uid":       uid,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO merges (user1, user2, offeredby, uid) VALUES (?, ?, ?, ?)",
-		req.User1, req.User2, myid, uid)
-
-	if err != nil {
+	if err := db.Table("merges").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	// Queue email to both users (default true).
 	sendEmail := true

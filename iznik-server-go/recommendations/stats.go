@@ -107,12 +107,20 @@ func Stats(c *fiber.Ctx) error {
 		Impressions int64  `gorm:"column:impressions"`
 		Clicks      int64  `gorm:"column:clicks"`
 	}
-	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source,
-	               COUNT(*) impressions,
-	               SUM(pageview = 1) clicks
-	        FROM messages_likes
-	        WHERE type = 'View' AND source IN ? AND timestamp >= ?
-	        GROUP BY d, source`, trackedSources, since).Scan(&funnelRows).Error; err != nil {
+	// ORM migration site 22036e3caf64 (tier4). The hint has to live inside the
+	// Select() string, not a separate call: GORM's Select() stores the whole
+	// string as one Raw:true column (Statement.Schema is nil under our
+	// .Table() convention - callbacks/query.go), so it renders verbatim after
+	// "SELECT " exactly like the raw SQL did. See
+	// ormharness/maxexecutiontime_test.go for why the ordinary AssertGoldenSQL
+	// comparison alone cannot prove this: Canonical() strips every /* */
+	// comment from BOTH sides before comparing, so a conversion that silently
+	// dropped the hint would still pass it.
+	if err := db.Table("messages_likes").
+		Select("/*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source, COUNT(*) impressions, SUM(pageview = 1) clicks").
+		Where("type = 'View' AND source IN ? AND timestamp >= ?", trackedSources, since).
+		Group("d, source").
+		Scan(&funnelRows).Error; err != nil {
 		degraded = true
 	}
 
@@ -123,13 +131,20 @@ func Stats(c *fiber.Ctx) error {
 		Source  string `gorm:"column:source"`
 		Replies int64  `gorm:"column:replies"`
 	}
-	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies
-	        FROM messages_likes ml
+	// ORM migration site eba122e9abad (tier4). The JOIN is written verbatim
+	// inside .Table(...), the same "table text contains a space" escape hatch
+	// already proven for multi-table UPDATE...JOIN conversions
+	// (ormharness/updatejoin_replace_test.go) - chainable_api.go's Table()
+	// sets Statement.TableExpr to a raw clause.Expr whenever name contains a
+	// space, so the JOIN never has to travel through Statement.Joins at all.
+	if err := db.Table(`messages_likes ml
 	        JOIN chat_messages cm ON cm.refmsgid = ml.msgid AND cm.userid = ml.userid
 	             AND cm.type = 'Interested'
-	             AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY
-	        WHERE ml.source IN ? AND ml.pageview = 1 AND ml.timestamp >= ?
-	        GROUP BY d, ml.source`, trackedSources, since).Scan(&replyRows).Error; err != nil {
+	             AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY`).
+		Select("/*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies").
+		Where("ml.source IN ? AND ml.pageview = 1 AND ml.timestamp >= ?", trackedSources, since).
+		Group("d, ml.source").
+		Scan(&replyRows).Error; err != nil {
 		degraded = true
 	}
 
@@ -204,16 +219,20 @@ func Stats(c *fiber.Ctx) error {
 		Users   int64 `gorm:"column:users"`
 		Replies int64 `gorm:"column:replies"`
 	}
-	if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ u.holdout,
-	               COUNT(*) users,
-	               COALESCE(SUM(r.replies), 0) replies
-	        FROM (SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes
+	// ORM migration site c9e06d962d78 (tier4). The two derived tables and
+	// their LEFT JOIN are verbatim .Table(...) text, with their own binds
+	// passed as that call's args - the same clause.Expr{SQL, Vars} mechanism
+	// Table() uses for a plain JOIN, extended to a subquery FROM.
+	if err := db.Table(`(SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes
 	              WHERE source IN (?, ?) AND timestamp >= ?
 	              GROUP BY userid) u
 	        LEFT JOIN (SELECT userid, COUNT(*) replies FROM chat_messages
 	                   WHERE type = 'Interested' AND date >= ?
-	                   GROUP BY userid) r ON r.userid = u.userid
-	        GROUP BY u.holdout`, holdoutShownSource, holdoutShownSource, holdoutControlSource, since, since).Scan(&cohortRows).Error; err != nil {
+	                   GROUP BY userid) r ON r.userid = u.userid`,
+		holdoutShownSource, holdoutShownSource, holdoutControlSource, since, since).
+		Select("/*+ MAX_EXECUTION_TIME(10000) */ u.holdout, COUNT(*) users, COALESCE(SUM(r.replies), 0) replies").
+		Group("u.holdout").
+		Scan(&cohortRows).Error; err != nil {
 		degraded = true
 	}
 

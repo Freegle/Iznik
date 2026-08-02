@@ -462,23 +462,42 @@ func Metrics(c *fiber.Ctx) error {
 	//       are not derivable retrospectively (locations drift, polygons grow) so they read 0
 	//       and those replies sit in unknown - attribution_channels_available tells the
 	//       dashboard to say so.
+	// Tier 3 keep-raw review (site 568a5645fba7): ReplySourceSplitSQL is a
+	// shared, independently unit-tested (rippling/metrics_test.go) string
+	// builder - the source of truth for this text, also called from the
+	// AnalyticsDriveTimes-style callers that need the identical window logic.
+	// Reproducing its 4 rendered forms as a GORM chain here would duplicate
+	// that logic outside the tested function it exists to keep in one place,
+	// and wrapping the string it returns in an extra derived-table SELECT
+	// would render different SQL than the original. Stays raw.
 	section("reply_source_split", func() error {
 		return db.Raw(ReplySourceSplitSQL(attributionWide, srcGroup), gargs()...).Scan(&replySources).Error
 	})
 
 	// (1b) Client-reported reply surfaces over the same window (wide schema only - the column
 	//      arrives with the graded-attribution migration). Advisory cross-check of (1).
+	//
+	// ORM migration site 10ee37c98574 (Tier 3 keep-raw review). srcGroup is
+	// the only toggle reachable here (this section only runs when
+	// attributionWide is true) - 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_10ee37c98574
+	// (iznik-server-go/test).
 	section("client_source_summary", func() error {
 		if !attributionWide {
 			return nil
 		}
-		return db.Raw(`
-			SELECT COALESCE(rra.client_source, '(not reported)') AS source,
-			       COUNT(*) AS count
-			FROM rippling_reply_attribution rra`+srcGroup+`
-			WHERE rra.replied_at >= ? AND rra.replied_at < ?
-			GROUP BY source
-			ORDER BY count DESC`, gargs()...).Scan(&clientSources).Error
+		// srcGroup's own "mg.groupid = ?" placeholder (present only when
+		// gid>0) binds to the Table() expression it lives in, not to the
+		// WHERE clause below - unlike gargs()'s flat ordering for db.Raw,
+		// each GORM clause fragment binds only its own args.
+		var tableArgs []interface{}
+		if gid > 0 {
+			tableArgs = []interface{}{gid}
+		}
+		return db.Table("rippling_reply_attribution rra"+srcGroup, tableArgs...).
+			Select("COALESCE(rra.client_source, '(not reported)') AS source, COUNT(*) AS count").
+			Where("rra.replied_at >= ? AND rra.replied_at < ?", start, end).
+			Group("source").Order("count DESC").Scan(&clientSources).Error
 	})
 
 	// (1c) When did LIVE capture start? See attributionCaptureFrom - answered from cache after

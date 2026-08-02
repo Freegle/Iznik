@@ -160,10 +160,13 @@ func TestInsertID_WithResultSurvivesOnDuplicateNoOpUpdate(t *testing.T) {
 		t.Fatalf("first insert: %v", err)
 	}
 	if firstID <= 0 {
-		// gorm.WithResult()/Set("gorm:result") is not wired up in GORM v1.31.0,
-		// so this alternative route to the id does not exist yet. Skipping
-		// records that, and turns green the day it does.
-		t.Skip("gorm:result is not populated in this GORM version, so the sql.Result route to LastInsertId is unavailable; the \"@id\" path is the one to use")
+		// No skip here. Clauses(gorm.WithResult()) IS the correct wiring - the
+		// value implements ModifyStatement and is applied through Clauses, not
+		// through Set("gorm:result", ...), which silently does nothing
+		// (generics.go:22). An earlier version of this test used Set, got
+		// nothing back, and skipped - which hid my own API mistake behind a
+		// statement about GORM. Reaching here now would be a real finding.
+		t.Fatal("Clauses(gorm.WithResult()) returned no id on a plain insert")
 	}
 
 	// Same domain, same count again: RowsAffected will be 0 on the duplicate

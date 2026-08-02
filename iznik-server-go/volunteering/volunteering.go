@@ -401,25 +401,27 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 0adadbabde5b (tier1). Plain, isolated, literal single-row
+	// INSERT (the "1" for pending is a fixed literal, not a bind); id read back via
+	// GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"userid":         myid,
+		"pending":        gorm.Expr("1"),
+		"title":          req.Title,
+		"online":         req.Online,
+		"location":       req.Location,
+		"contactname":    req.Contactname,
+		"contactphone":   req.Contactphone,
+		"contactemail":   req.Contactemail,
+		"contacturl":     req.Contacturl,
+		"description":    req.Description,
+		"timecommitment": req.Timecommitment,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO volunteering (userid, pending, title, online, location, contactname, contactphone, contactemail, contacturl, description, timecommitment) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		myid, req.Title, req.Online, req.Location, req.Contactname, req.Contactphone, req.Contactemail, req.Contacturl, req.Description, req.Timecommitment)
-
-	if err != nil {
+	if err := db.Table("volunteering").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create volunteering")
 	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	if id > 0 && req.GroupID > 0 {
 		// ORM migration site c77cdc1a1f5f (wave 3). Converted together with its

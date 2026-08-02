@@ -248,25 +248,27 @@ func CreateAlert(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 54e869591bc4 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback. "from"/"to" are
+	// MySQL reserved words, but the MySQL dialect's QuoteTo backtick-quotes every
+	// identifier unconditionally, so no special-casing is needed here.
+	row := map[string]interface{}{
+		"createdby": myid,
+		"groupid":   groupid,
+		"from":      req.From,
+		"to":        req.To,
+		"subject":   req.Subject,
+		"text":      req.Text,
+		"html":      req.Html,
+		"askclick":  askclick,
+		"tryhard":   tryhard,
+		"created":   gorm.Expr("NOW()"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO alerts (createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-		myid, groupid, req.From, req.To, req.Subject, req.Text, req.Html, askclick, tryhard)
-
-	if err != nil {
+	if err := db.Table("alerts").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create alert")
 	}
-
-	var alertID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		alertID = uint64(lastID)
-	}
+	alertIDInt, _ := row["@id"].(int64)
+	alertID := uint64(alertIDInt)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,

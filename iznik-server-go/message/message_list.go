@@ -182,30 +182,34 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 	} else {
 		// Standard listing with optional pagination and fromuser filter.
-		sql := "SELECT DISTINCT mg.msgid FROM messages_groups mg " +
-			"INNER JOIN messages m ON m.id = mg.msgid " +
-			"WHERE mg.groupid IN (?) " +
-			"AND mg.collection = ? " +
-			"AND mg.deleted = 0 " +
-			"AND m.fromuser IS NOT NULL "
-
-		args := []interface{}{groupIDs, collection}
+		//
+		// ORM migration site bfe25b4914e8 (Tier 3 keep-raw review). fromuser>0
+		// and ctx pagination give 2x2 = 4 possible rendered forms, all declared
+		// in ormharness/shapes.json and proven by TestTier3Shapes_bfe25b4914e8
+		// (iznik-server-go/test).
+		// WHERE built as a single string for ONE Where() call: GORM's
+		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+		// paren pair once there is more than one Where expression to combine
+		// (clause/where.go buildExprs), which would diverge from the golden.
+		whereSQL := "mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL"
+		whereArgs := []interface{}{groupIDs, collection}
 
 		if fromuser > 0 {
-			sql += "AND m.fromuser = ? "
-			args = append(args, fromuser)
+			whereSQL += " AND m.fromuser = ?"
+			whereArgs = append(whereArgs, fromuser)
 		}
 
 		if ctx != nil && ctx.Date > 0 {
 			ctxTime := time.Unix(ctx.Date, 0).UTC().Format("2006-01-02 15:04:05")
-			sql += "AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?)) "
-			args = append(args, ctxTime, ctxTime, ctx.ID)
+			whereSQL += " AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?))"
+			whereArgs = append(whereArgs, ctxTime, ctxTime, ctx.ID)
 		}
 
-		sql += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
-		args = append(args, limit)
-
-		db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+		db.Table("messages_groups mg").
+			Select("DISTINCT mg.msgid").
+			Joins("INNER JOIN messages m ON m.id = mg.msgid").
+			Where(whereSQL, whereArgs...).
+			Order("mg.arrival DESC, mg.msgid DESC").Limit(limit).Pluck("msgid", &msgIDs)
 	}
 
 	if len(msgIDs) == 0 {

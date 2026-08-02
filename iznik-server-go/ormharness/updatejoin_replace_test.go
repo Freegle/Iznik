@@ -161,13 +161,83 @@ func TestReplaceInto_ModifierProducesWrongKeyword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
+	// Pins whichever is true rather than asserting the one we expect. Written
+	// as a Fatal on the "wrong" branch, this test failed the suite while
+	// reporting a GOOD outcome, which is the wrong way round: a finding is not
+	// a regression. If Modifier ever does become a keyword swap, that changes
+	// the verdict for 11 sites and should be read, not tripped over.
 	upper := strings.ToUpper(strings.TrimSpace(sql))
+	switch {
+	case strings.HasPrefix(upper, "REPLACE INTO"):
+		t.Logf("Modifier now renders a bare REPLACE INTO, so the 11 keep-raw REPLACE INTO sites are "+
+			"convertible with a one-line change and their reason needs correcting. got: %s", sql)
+	case strings.HasPrefix(upper, "INSERT REPLACE INTO"):
+		t.Logf("confirmed: Modifier sits between the clause name and INTO, so REPLACE yields the "+
+			"invalid \"INSERT REPLACE INTO\" and needs a ClauseBuilders override. got: %s", sql)
+	default:
+		t.Fatalf("neither the working nor the documented-broken form: %s", sql)
+	}
+}
+
+// TestReplaceInto_DefaultBehaviourWithoutAnyOverride settles the underlying
+// question in a way immune to shared-package-state, which
+// TestReplaceInto_ModifierProducesWrongKeyword above is not: that test calls
+// the package-level RenderDryRunSQL, which goes through ormharness's shared
+// dryRunDB() singleton - and golden.go now wires
+// database.RegisterCustomClauseBuilders into that singleton, so ANY test
+// using it observes the FIXED behaviour regardless of what the default would
+// have been. That is exactly why the test above was rewritten to log
+// whichever outcome it sees rather than assert one: its result depends on
+// which ClauseBuilders state the package happens to be in when it runs, not
+// on GORM's own default behaviour, and it would be easy to misread "the
+// shared test db renders REPLACE INTO correctly" as "no override is needed"
+// when what it actually shows is "the override that IS installed works".
+//
+// This test has no such confound: it builds a *gorm.DB from nothing but
+// gorm.Open(), registering NOTHING extra - not RegisterCustomClauseBuilders,
+// not even ormharness's shared singleton. db.ClauseBuilders here holds only
+// whatever the MySQL dialector's own Initialize() put there (ON CONFLICT,
+// VALUES, and conditionally FOR - confirmed by reading
+// gorm.io/driver/mysql/mysql.go's ClauseBuilders(): it never registers
+// "INSERT"). Whatever this renders IS GORM's unmodified default.
+func TestReplaceInto_DefaultBehaviourWithoutAnyOverride(t *testing.T) {
+	db, err := gorm.Open(mysql.New(mysql.Config{
+		DriverName:                "mysql",
+		DSN:                       dryRunDSN,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	session := db.Session(&gorm.Session{DryRun: true, SkipDefaultTransaction: true})
+	tx := session.Table("messages_spamham").
+		Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{"msgid": 1, "spamham": "Ham"})
+	if tx.Error != nil {
+		t.Fatalf("render: %v", tx.Error)
+	}
+	sql := tx.Statement.SQL.String()
+	upper := strings.ToUpper(strings.TrimSpace(sql))
+
 	if strings.HasPrefix(upper, "REPLACE INTO") {
-		t.Fatalf("driver now honours Modifier as a keyword swap; the keep-raw REPLACE INTO reason can be revisited. got: %s", sql)
+		t.Fatalf("clause.Insert{Modifier: \"REPLACE\"} rendered a bare REPLACE INTO with NO ClauseBuilders "+
+			"override registered anywhere in this *gorm.DB's lineage. If this is really GORM's unmodified "+
+			"default, database/clausebuilders.go's replaceIntoClauseBuilder is unnecessary and the 11 REPLACE "+
+			"INTO sites need only Clauses(clause.Insert{Modifier: \"REPLACE\"}) with no wiring at all - but "+
+			"then TestUpsert_InsertModifierKeywordSwap (upsert_test.go) is NOT independent confirmation of "+
+			"that, since it runs through the same shared, override-carrying dryRunDB() this test deliberately "+
+			"avoids. got: %s", sql)
 	}
 	if !strings.HasPrefix(upper, "INSERT REPLACE INTO") {
-		t.Fatalf("expected the documented bug (\"INSERT REPLACE INTO\"), got: %s", sql)
+		t.Fatalf("neither the documented-broken form nor a bare REPLACE INTO - something else changed: %s", sql)
 	}
+	// Confirmed: GORM's unmodified default IS "INSERT REPLACE INTO", so the
+	// override in database/clausebuilders.go is load-bearing, not decoration -
+	// it is what makes the 11 already-converted REPLACE INTO call sites'
+	// plain Clauses(clause.Insert{Modifier: "REPLACE"}) actually correct in
+	// production. Removing RegisterCustomClauseBuilders from InitDatabase
+	// would make every one of them emit invalid SQL again.
 }
 
 func TestReplaceInto_ClauseBuilderOverrideRendersCorrectly(t *testing.T) {

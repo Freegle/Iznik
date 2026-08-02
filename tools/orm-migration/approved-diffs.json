@@ -21,6 +21,26 @@
       "id": "958d1d242008",
       "sql": "INSERT INTO newsfeed_reports (newsfeedid, reason, userid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?",
       "reason": "GORM emits the columns of a map-valued Create in alphabetical key order, so newsfeedid/reason/userid replaces the handwritten userid/newsfeedid/reason. The bind values are emitted in the same order as the columns, so the row written is identical. Equivalent, not merely similar."
+    },
+    {
+      "id": "032b7f1b9500",
+      "sql": "SELECT msgid FROM messages_pinned WHERE msgid IN (?)",
+      "reason": "NOT an ORM artefact - a deliberate code change, recorded here so it is reviewed as one. The original built its IN list by formatting each id with strconv.FormatUint and joining them straight into the SQL text; the conversion binds a []uint64 instead. The rows returned are identical, so this is equivalent in result, but the statement text genuinely differs and plan 7.3 asks for pure no-behaviour-change releases - hence an explicit entry rather than a silent pass. Justified because splicing integers into SQL text is worth removing on its own merits: it defeats the prepared-statement cache (a distinct statement per list length) and it is the shape of an injection bug even where, as here, the ids come from our own rows rather than user input. The adversarial review lists switching these helpers to binds as the sanctioned fix for the literal-int category."
+    },
+    {
+      "id": "548090e97d00",
+      "sql": "UPDATE `groups` SET polyindex = ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), 3857) WHERE id = ?",
+      "reason": "NOT a behaviour change - the recorded golden ('...POINT(0 0)'), %d) WHERE id = ?') is unresolved template text, not real SQL: the original spliced utils.SRID into the raw string via fmt.Sprintf BEFORE it ever reached Exec, so the extractor never saw a literal number to record. The conversion moves the same fmt.Sprintf call inside gorm.Expr(...) so GORM sees identical text (utils.SRID is 3857, a fixed Go constant, so this is the only value it can ever produce) - same mechanism already recognised for location.go's locations_spatial REPLACE sites (25b7b92e33fd/6f1d6543e5c0), whose goldens the extractor resolves to the literal 3857 because gorm.Expr(fmt.Sprintf(...)) is the pattern it folds. This site's gorm.Expr call is one level further from the Create(map{...}) call the extractor's fold logic looks for (it is the second argument to .Update(col, value), not a map value), so the same fold did not fire automatically; recorded here rather than left to silently never pass Layer 1."
+    },
+    {
+      "id": "745c0a9ca82e",
+      "sql": "SELECT ST_IsValid(ST_GeomFromText(?, 3857)) AS valid",
+      "reason": "NOT a behaviour change - same unresolved-template-golden situation as 548090e97d00 (see that entry): the original spliced utils.SRID via fmt.Sprintf before Raw, so the recorded golden's '%d' was never real SQL. The conversion applies the SAME fmt.Sprintf call to the Select(...) string instead (plus group.go's validateGeometry BuildClauses={\"SELECT\"} technique, site 6d0982e798b5, for the bare-scalar-SELECT shape), producing identical text since utils.SRID is a fixed constant. Recorded because the extractor's fold logic is scoped to gorm.Expr(fmt.Sprintf(...)) specifically and did not fire for a Select(fmt.Sprintf(...), ...) call."
+    },
+    {
+      "id": "aa63c688e6b1",
+      "sql": "UPDATE locations SET `type` = 'Polygon', ourgeometry = ST_GeomFromText(?, 3857) WHERE id = ?",
+      "reason": "NOT a behaviour change - same unresolved-template-golden situation as 548090e97d00 (see that entry). The conversion's ourgeometry assignment uses the identical gorm.Expr(fmt.Sprintf(\"ST_GeomFromText(?, %d)\", utils.SRID), *req.Polygon) idiom as location.go's locations_spatial REPLACE sites (25b7b92e33fd/6f1d6543e5c0), but as one clause.Set entry's Value rather than a Create(map{...}) value, so the extractor's fold (scoped to the map-Create shape) did not fire. `type` = 'Polygon' is unchanged - a literal in both the original and the conversion (clause.Set's Value is gorm.Expr(\"'Polygon'\"), not a bound Go string), so it never had a placeholder to fold in the first place."
     }
   ]
 }

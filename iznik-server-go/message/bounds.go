@@ -30,30 +30,19 @@ func Bounds(c *fiber.Ctx) error {
 
 	// The posts in the bounds that everyone can see: the spatial index, which the daily batch
 	// prunes of expired posts.
-	db.Raw(""+
-		"SELECT ST_Y(point) AS lat, "+
-		"ST_X(point) AS lng, "+
-		"messages_spatial.msgid AS id, "+
-		"messages_spatial.successful, "+
-		"messages_spatial.promised, "+
-		"messages_spatial.groupid, "+
-		"messages_spatial.msgtype AS type, "+
-		"messages_spatial.arrival, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
-		"FROM messages_spatial "+
+	// ORM migration site f4e3b1a23446 (Tier 1 spatial review, round 2).
+	db.Table("messages_spatial").
+		Select("ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, "+
+			"messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, "+
+			"messages_spatial.msgtype AS type, messages_spatial.arrival, "+
+			"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen").
 		// The groups join no longer filters on visibility, but is kept so that a post whose
 		// group has been deleted doesn't show up.
-		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
-		myid, utils.MESSAGE_LIKES_VIEW,
-		swlng, swlat,
-		swlng, nelat,
-		nelng, nelat,
-		nelng, swlat,
-		swlng, swlat,
-		utils.SRID,
-	).Scan(&msgs)
+		Joins("INNER JOIN `groups` ON groups.id = messages_spatial.groupid").
+		Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where("ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
+			swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID).
+		Scan(&msgs)
 
 	// We also want to include our own messages, so that it is less obvious if a message is delayed for approval and
 	// hasn't made it into messages_spatial yet. This arm queries the messages table directly, so it bypasses the
@@ -63,37 +52,29 @@ func Bounds(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
 	ownMsgs := []MessageSummary{}
-	db.Raw(""+
-		"SELECT messages.lat, messages.lng, messages.id, "+
-		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-		"MIN(messages_groups.groupid) AS groupid, "+
-		"messages.type,"+
-		"MAX(messages_groups.arrival) AS arrival, "+
-		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"INNER JOIN `groups` ON groups.id = messages_groups.groupid "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-		"LEFT JOIN messages_promises ON messages_promises.msgid = messages.id "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE fromuser = ? AND messages_groups.arrival >= ? AND "+
-		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
-		"AND messages_outcomes.id IS NULL "+
-		"GROUP BY messages.id",
-		utils.OUTCOME_TAKEN,
-		utils.OUTCOME_RECEIVED,
-		myid, utils.MESSAGE_LIKES_VIEW,
-		myid,
-		start,
-		swlng, swlat,
-		swlng, nelat,
-		nelng, nelat,
-		nelng, swlat,
-		swlng, swlat,
-		utils.SRID,
-		utils.SRID,
-	).Scan(&ownMsgs)
+	// ORM migration site 72fd7dc3ca1e (Tier 1 spatial review, round 2). Bind
+	// order mirrors clause build order: Select's own two binds (the IN list),
+	// then the bound messages_likes Joins ON clause, then Where.
+	db.Table("messages").
+		Select("messages.lat, messages.lng, messages.id, "+
+			"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
+			"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+			"MIN(messages_groups.groupid) AS groupid, "+
+			"messages.type,"+
+			"MAX(messages_groups.arrival) AS arrival, "+
+			"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen",
+			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+		Joins("LEFT JOIN messages_promises ON messages_promises.msgid = messages.id").
+		Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where("fromuser = ? AND messages_groups.arrival >= ? AND "+
+			"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
+			"AND messages_outcomes.id IS NULL",
+			myid, start, swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID, utils.SRID).
+		Group("messages.id").
+		Scan(&ownMsgs)
 
 	// Drop own posts that have aged out, and note their ids so they don't linger via the spatial arm
 	// either (before the daily batch has pruned their spatial row).

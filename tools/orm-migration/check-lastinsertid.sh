@@ -101,16 +101,51 @@ const [listPath, manifestPath] = process.argv.slice(1);
 const list = JSON.parse(fs.readFileSync(listPath, "utf8")).sites;
 const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
-let flagged = 0, missing = 0;
+// A converted LAST_INSERT_ID site is only a problem if the conversion reads the
+// id the naive way. GORM skips its own "@id" writeback when RowsAffected is 0,
+// which MySQL reports for a duplicate hit that changed nothing - so a plain
+// row["@id"] conversion silently loses the id exactly where this idiom exists to
+// provide one.
+//
+// Clauses(gorm.WithResult()) does not have that problem: it hands back the
+// sql.Result the driver returns, whose LastInsertId has no RowsAffected test.
+// Measured in test/orm_insertid_test.go, where a no-op upsert reports
+// rowsAffected=0 and still returns the right id.
+//
+// So the gate asks which technique was used rather than forbidding conversion
+// outright. Forbidding it was the original mistake: this list started at 48
+// sites on a misunderstanding, and every narrowing since has come from testing
+// the mechanism instead of reasoning about it.
+// Scoped to the STATEMENT, not the file. A file-level search would let one
+// correctly converted site vouch for a broken one beside it, and
+// chat/chatroom.go has four of these sites in one file - exactly the shape
+// where that goes wrong silently.
+//
+// The window starts at the site marker and runs to the end of the statement
+// chain, which is generous enough for a multi-line builder and tight enough
+// that the next site cannot supply the evidence for this one.
+const usesWithResult = (file, id) => {
+  let src;
+  try { src = fs.readFileSync(file, "utf8"); } catch { return false; }
+  const at = src.indexOf("ORM migration site " + id);
+  if (at < 0) return false;
+  const next = src.indexOf("ORM migration site ", at + 1);
+  const end = next < 0 ? Math.min(src.length, at + 1200) : Math.min(next, at + 1200);
+  return /WithResult\(\)/.test(src.slice(at, end));
+};
+
+let flagged = 0, missing = 0, viaWithResult = 0;
 for (const [id, info] of Object.entries(list)) {
   const site = m.sites[id];
   if (!site) { missing++; continue; }
-  if (site.status === "converted" || site.status === "in-progress") {
-    console.log(`LASTINSERTID  ${id}  ${info.file}:${info.line}  status=${site.status}`);
-    console.log(`              ${info.sql}`);
-    flagged++;
-  }
+  if (site.status !== "converted" && site.status !== "in-progress") continue;
+  if (usesWithResult(info.file, id)) { viaWithResult++; continue; }
+  console.log(`LASTINSERTID  ${id}  ${info.file}:${info.line}  status=${site.status}`);
+  console.log(`              ${info.sql}`);
+  console.log(`              converted without gorm.WithResult(): a no-op duplicate hit reports`);
+  console.log(`              RowsAffected 0 and GORM then skips the id writeback entirely.`);
+  flagged++;
 }
-console.log(`check-lastinsertid: ${Object.keys(list).length} LAST_INSERT_ID sites, ${flagged} wrongly converted, ${missing} no longer in the manifest`);
+console.log(`check-lastinsertid: ${Object.keys(list).length} LAST_INSERT_ID sites, ${flagged} wrongly converted, ${viaWithResult} converted safely via gorm.WithResult(), ${missing} no longer in the manifest`);
 process.exit(flagged ? 1 : 0);
 ' "$LIST" "$MANIFEST"

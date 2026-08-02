@@ -424,26 +424,24 @@ func GetMemberships(c *fiber.Ctx) error {
 	// V1's getBanned() queries users_banned directly and synthesises 'Banned' as the collection.
 	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
 	if filter == 5 {
+		// ORM migration site 2c3b155f346b (Tier 3 keep-raw review). contextID>0
+		// is the only toggle - 2 possible rendered forms, both declared in
+		// ormharness/shapes.json and proven by TestTier3Shapes_2c3b155f346b
+		// (iznik-server-go/test).
 		var members []GetMembershipsMember
-		contextWhere := ""
-		bannedArgs := []interface{}{groupid}
+		bannedTx := db.Table("users_banned b").
+			Select("b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
+				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
+				"u.fullname, u.firstname, u.lastname, u.engagement, "+
+				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
+				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
+				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason").
+			Joins("JOIN users u ON u.id = b.userid").
+			Where("b.groupid = ?", groupid)
 		if contextID > 0 {
-			contextWhere = " AND b.userid < ?"
-			bannedArgs = append(bannedArgs, contextID)
+			bannedTx = bannedTx.Where("b.userid < ?", contextID)
 		}
-		bannedArgs = append(bannedArgs, limit)
-
-		db.Raw("SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
-			"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
-			"u.fullname, u.firstname, u.lastname, u.engagement, "+
-			"b.userid AS id, NULL AS heldby, NULL AS settings, "+
-			"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
-			"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason "+
-			"FROM users_banned b "+
-			"JOIN users u ON u.id = b.userid "+
-			"WHERE b.groupid = ?"+contextWhere+
-			" ORDER BY b.userid DESC LIMIT ?",
-			bannedArgs...).Scan(&members)
+		bannedTx.Order("b.userid DESC").Limit(limit).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
@@ -497,84 +495,97 @@ func GetMemberships(c *fiber.Ctx) error {
 		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
 		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
-	fromClause := "FROM memberships m " +
-		"JOIN users u ON u.id = m.userid " +
-		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
 
-	// Build filter-specific clauses.
-	filterJoin := ""
-	filterWhere := ""
-	switch filter {
-	case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
-		filterWhere = " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
-	case 2: // Moderation team
-		filterWhere = " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
-	case 3: // Bouncing
-		filterWhere = " AND u.bouncing = 1"
+	// filterWhereSQL returns the filter-specific WHERE fragment (with
+	// comments/notes, moderation team, bouncing, or none) - one of 4 fixed
+	// shapes - as a string with no args of its own (the moderation-team
+	// role names are baked into the literal text, same as the original raw
+	// SQL did).
+	filterWhereSQL := func() string {
+		switch filter {
+		case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
+			return " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
+		case 2: // Moderation team
+			return " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
+		case 3: // Bouncing
+			return " AND u.bouncing = 1"
+		}
+		return ""
 	}
 
-	if search != "" {
-		// Build group filter: specific group or all of mod's groups.
-		groupFilter := "m.groupid = ?"
-		var groupArg interface{} = groupid
+	// groupFilterSQL returns the group-scope WHERE fragment - a specific
+	// group, or every group the caller moderates when groupid==0 - the
+	// other fixed toggle, plus its own arg (if any).
+	groupFilterSQL := func() (string, []interface{}) {
 		if groupid == 0 {
-			// Search across all of the mod's active groups.
-			groupFilter = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
-			groupArg = myid
+			return "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" +
+				utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')", []interface{}{myid}
 		}
+		return "m.groupid = ?", []interface{}{groupid}
+	}
+
+	baseTx := func() *gorm.DB {
+		return db.Table("memberships m").
+			Select(selectCols).
+			Joins("JOIN users u ON u.id = m.userid").
+			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid")
+	}
+
+	// The WHERE for each branch below is built as a single string and
+	// passed to ONE Where() call: GORM's clause.Where wraps any fragment
+	// containing "AND"/"OR" in an extra paren pair once there is more than
+	// one Where expression to combine (clause/where.go buildExprs), which
+	// would diverge from the golden.
+	if search != "" {
+		groupWhere, groupArgs := groupFilterSQL()
 
 		// If search is a pure number, match on userid directly (fast indexed lookup).
 		// Otherwise do LIKE search on name/email.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT "+selectCols+" "+
-				fromClause+filterJoin+" "+
-				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
-				" AND m.userid = ? "+
-				"ORDER BY m.added DESC LIMIT ?",
-				groupArg, collection, searchID, limit).Scan(&members)
+			// ORM migration site 836dc8807739 (Tier 3 keep-raw review). groupid==0
+			// and the filter (0-3) give 2x4 = 8 possible rendered forms, all
+			// declared in ormharness/shapes.json and proven by
+			// TestTier3Shapes_836dc8807739 (iznik-server-go/test).
+			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
+			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
+			baseTx().Where(whereSQL, whereArgs...).
+				Order("m.added DESC").Limit(limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
 			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
 			// users, created with fullname=NULL) have their name only in firstname/lastname,
 			// so a fullname-only LIKE silently excludes them from name search even though
 			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
-			db.Raw("SELECT "+selectCols+" "+
-				fromClause+filterJoin+
-				" LEFT JOIN users_emails ue ON ue.userid = m.userid "+
-				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
-				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) "+
-				"GROUP BY m.id "+
-				"ORDER BY m.added DESC LIMIT ?",
-				groupArg, collection, searchPattern, searchPattern, searchPattern, searchPattern, limit).Scan(&members)
+			//
+			// ORM migration site 5f742c0fcf1f (Tier 3 keep-raw review). Same
+			// groupid==0 x filter toggles as 836dc8807739 above - 8 possible
+			// rendered forms, all declared in ormharness/shapes.json and proven
+			// by TestTier3Shapes_5f742c0fcf1f (iznik-server-go/test).
+			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
+			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
+				searchPattern, searchPattern, searchPattern, searchPattern)
+			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
+				Where(whereSQL, whereArgs...).
+				Group("m.id").Order("m.added DESC").Limit(limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
 		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
-		contextWhere := ""
-		var groupCondition string
-		var queryArgs []interface{}
-
-		if groupid == 0 {
-			// All my communities: fan out to every group this mod moderates.
-			groupCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
-			queryArgs = []interface{}{myid, collection}
-		} else {
-			groupCondition = "m.groupid = ?"
-			queryArgs = []interface{}{groupid, collection}
-		}
-
+		//
+		// ORM migration site bbc55cf96110 (Tier 3 keep-raw review). groupid==0,
+		// the filter (0-3), and contextID>0 give 2x4x2 = 16 possible rendered
+		// forms, all declared in ormharness/shapes.json and proven by
+		// TestTier3Shapes_bbc55cf96110 (iznik-server-go/test).
+		groupWhere, groupArgs := groupFilterSQL()
+		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
+		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
 		if contextID > 0 {
-			contextWhere = " AND m.id < ?"
-			queryArgs = append(queryArgs, contextID)
+			whereSQL += " AND m.id < ?"
+			whereArgs = append(whereArgs, contextID)
 		}
-		queryArgs = append(queryArgs, limit)
-
-		result := db.Raw("SELECT "+selectCols+" "+
-			fromClause+filterJoin+" "+
-			"WHERE "+groupCondition+" AND m.collection = ?"+filterWhere+contextWhere+
-			" ORDER BY m.id DESC LIMIT ?",
-			queryArgs...).Scan(&members)
+		result := baseTx().Where(whereSQL, whereArgs...).Order("m.id DESC").Limit(limit).Scan(&members)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query memberships group %d collection %s: %v", groupid, collection, result.Error)
 		}
@@ -593,22 +604,21 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	// When a filter is active, include the total matching count so the UI can display it.
+	//
+	// ORM migration site 5f6ca1b9022f (Tier 3 keep-raw review). groupid==0 and
+	// the filter (0-3, though this block only ever runs for filter>0) give
+	// 2x4 = 8 possible rendered forms, all declared in ormharness/shapes.json
+	// and proven by TestTier3Shapes_5f6ca1b9022f (iznik-server-go/test).
 	if filter > 0 {
 		var filterCount int64
 
-		countFrom := "FROM memberships m JOIN users u ON u.id = m.userid"
-		var countCondition string
-		var countArgs []interface{}
-		if groupid == 0 {
-			countCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
-			countArgs = []interface{}{myid, collection}
-		} else {
-			countCondition = "m.groupid = ?"
-			countArgs = []interface{}{groupid, collection}
-		}
-		db.Raw("SELECT COUNT(DISTINCT m.userid) "+countFrom+filterJoin+
-			" WHERE "+countCondition+" AND m.collection = ?"+filterWhere,
-			countArgs...).Scan(&filterCount)
+		groupWhere, groupArgs := groupFilterSQL()
+		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
+		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
+		db.Table("memberships m").
+			Select("COUNT(DISTINCT m.userid)").
+			Joins("JOIN users u ON u.id = m.userid").
+			Where(whereSQL, whereArgs...).Scan(&filterCount)
 
 		return c.JSON(fiber.Map{
 			"members":     members,
@@ -683,27 +693,28 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	}
 
 	// Return flagged memberships on groups the mod moderates.
-	var members []GetMembershipsMember
-
-	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
-		"u.fullname, u.firstname, u.lastname, m.settings, " +
-		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
-		"b.date AS bandate, b.byuser AS bannedby, " +
-		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
-	fromClause := "FROM memberships m " +
-		"JOIN users u ON u.id = m.userid " +
-		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
-
+	//
 	// Show members where reviewrequestedat is set AND either never reviewed or the flag
 	// is more recent than the last review. This matches the frontend needsReview logic
 	// exactly, preventing "no buttons" where the backend returns a member but the
 	// frontend considers them already reviewed.
-	result := db.Raw("SELECT "+selectCols+" "+
-		fromClause+" "+
-		"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
-		"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
-		"ORDER BY m.userid DESC LIMIT ?",
-		modGroupIDs, limit).Scan(&members)
+	//
+	// ORM migration site fdd14a1656c7 (Tier 3 keep-raw review). GORM's native
+	// "IN ?" slice-bind already normalizes the group-id list regardless of
+	// length, so this has exactly one rendered form, declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_fdd14a1656c7
+	// (iznik-server-go/test).
+	var members []GetMembershipsMember
+	result := db.Table("memberships m").
+		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
+			"u.fullname, u.firstname, u.lastname, m.settings, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+			"b.date AS bandate, b.byuser AS bannedby, "+
+			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing").
+		Joins("JOIN users u ON u.id = m.userid").
+		Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
+		Where("m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat)", modGroupIDs).
+		Order("m.userid DESC").Limit(limit).Scan(&members)
 	if result.Error != nil {
 		stdlog.Printf("Failed to query spam members for user %d: %v", myid, result.Error)
 	}
@@ -931,68 +942,46 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 
 	filter := c.Query("filter", "")
 
-	// Build filter clause for happiness level.
-	filterClause := ""
-	switch filter {
-	case "Happy":
-		filterClause = " AND mo.happiness = 'Happy'"
-	case "Unhappy":
-		filterClause = " AND mo.happiness = 'Unhappy'"
-	case "Fine":
-		filterClause = " AND (mo.happiness IS NULL OR mo.happiness = 'Fine')"
-	}
-
 	// Only show recent outcomes (last 31 days).
 	start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
 
-	// Build the comments filter to exclude auto-generated messages.
-	commentsFilter := " AND mo.comments IS NOT NULL"
-	for i := range happinessFilterComments {
-		if i == 0 {
-			commentsFilter += " AND mo.comments NOT IN (?"
-		} else {
-			commentsFilter += ", ?"
-		}
-	}
-	commentsFilter += ")"
+	// ORM migration site 3119115f3abe (Tier 3 keep-raw review). filter
+	// (none/Happy/Unhappy/Fine) gives 4 possible rendered forms, all declared
+	// in ormharness/shapes.json and proven by TestTier3Shapes_3119115f3abe
+	// (iznik-server-go/test).
+	//
+	// rippled_in = 0: only Feedback for posts that ORIGINATED on the
+	// group, not copies that rippled in from elsewhere (the badge count
+	// queries in groupWork.go / session.go apply the same filter, and it
+	// mirrors the Edit badge). Discourse 9808/633.
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	happinessWhereSQL := "mo.timestamp > ? AND mo.comments IS NOT NULL AND mo.comments NOT IN (?)"
+	happinessWhereArgs := []interface{}{start, happinessFilterComments}
 
-	// Build group ID placeholders.
-	groupPlaceholders := make([]string, len(groupIDs))
-	groupArgs := make([]interface{}, len(groupIDs))
-	for i, gid := range groupIDs {
-		groupPlaceholders[i] = "?"
-		groupArgs[i] = gid
+	switch filter {
+	case "Happy":
+		happinessWhereSQL += " AND mo.happiness = 'Happy'"
+	case "Unhappy":
+		happinessWhereSQL += " AND mo.happiness = 'Unhappy'"
+	case "Fine":
+		happinessWhereSQL += " AND (mo.happiness IS NULL OR mo.happiness = 'Fine')"
 	}
-	groupIn := strings.Join(groupPlaceholders, ",")
 
-	// Build query args in order.
-	args := make([]interface{}, 0, len(groupIDs)+len(happinessFilterComments)+2)
-	args = append(args, groupArgs...)
-	args = append(args, start)
-	for _, comment := range happinessFilterComments {
-		args = append(args, comment)
-	}
-	args = append(args, start)
-	args = append(args, limit)
-
-	sql := fmt.Sprintf(
-		"SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
-			"m.fromuser, mg.groupid, m.subject "+
-			"FROM messages_outcomes mo "+
-			// rippled_in = 0: only Feedback for posts that ORIGINATED on the
-			// group, not copies that rippled in from elsewhere (the badge count
-			// queries in groupWork.go / session.go apply the same filter, and it
-			// mirrors the Edit badge). Discourse 9808/633.
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) AND mg.rippled_in = 0 "+
-			"INNER JOIN messages m ON m.id = mo.msgid "+
-			"WHERE mo.timestamp > ?"+
-			"%s%s"+
-			" AND mg.arrival > ?"+
-			" ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?",
-		groupIn, commentsFilter+filterClause, "")
+	happinessWhereSQL += " AND mg.arrival > ?"
+	happinessWhereArgs = append(happinessWhereArgs, start)
 
 	var rows []happinessRow
-	db.Raw(sql, args...).Scan(&rows)
+	db.Table("messages_outcomes mo").
+		Select("mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
+			"m.fromuser, mg.groupid, m.subject").
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (?) AND mg.rippled_in = 0", groupIDs).
+		Joins("INNER JOIN messages m ON m.id = mo.msgid").
+		Where(happinessWhereSQL, happinessWhereArgs...).
+		Order("mo.reviewed ASC, mo.timestamp DESC, mo.id DESC").
+		Limit(limit).Scan(&rows)
 
 	if rows == nil {
 		ratings := getVisibleRatings(db, groupIDs)
@@ -1097,41 +1086,30 @@ func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
 
 	since := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 
-	groupPlaceholders := make([]string, len(groupIDs))
-	groupArgs := make([]interface{}, len(groupIDs))
-	for i, gid := range groupIDs {
-		groupPlaceholders[i] = "?"
-		groupArgs[i] = gid
-	}
-	groupIn := strings.Join(groupPlaceholders, ",")
-
-	args := make([]interface{}, 0, len(groupArgs)*2+1)
-	args = append(args, since)
-	args = append(args, groupArgs...)
-	args = append(args, groupArgs...)
-
-	sql := fmt.Sprintf(
-		"SELECT ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
+	// ORM migration site 1a000d04649b (Tier 3 keep-raw review). Both group-id
+	// lists are GORM's native "IN (?)" slice-bind, which the harness's
+	// collapseInLists normalizes regardless of length, so this has exactly one
+	// rendered form, declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_1a000d04649b (iznik-server-go/test).
+	var rows []ratingRow
+	db.Table("ratings").
+		Select("ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
 			"ratings.text, ratings.visible, ratings.timestamp, ratings.reviewrequired, "+
 			"m1.groupid, "+
 			"CASE WHEN u1.fullname IS NOT NULL THEN u1.fullname ELSE CONCAT(u1.firstname, ' ', u1.lastname) END AS raterdisplayname, "+
-			"CASE WHEN u2.fullname IS NOT NULL THEN u2.fullname ELSE CONCAT(u2.firstname, ' ', u2.lastname) END AS rateedisplayname "+
-			"FROM ratings "+
-			"INNER JOIN memberships m1 ON m1.userid = ratings.rater "+
-			"INNER JOIN memberships m2 ON m2.userid = ratings.ratee "+
-			"INNER JOIN users u1 ON ratings.rater = u1.id "+
-			"INNER JOIN users u2 ON ratings.ratee = u2.id "+
-			"WHERE ratings.timestamp >= ? "+
-			"AND m1.groupid IN (%s) "+
-			"AND m2.groupid IN (%s) "+
-			"AND m1.groupid = m2.groupid "+
-			"AND ratings.rating IS NOT NULL "+
-			"GROUP BY ratings.id "+
-			"ORDER BY ratings.timestamp DESC",
-		groupIn, groupIn)
-
-	var rows []ratingRow
-	db.Raw(sql, args...).Scan(&rows)
+			"CASE WHEN u2.fullname IS NOT NULL THEN u2.fullname ELSE CONCAT(u2.firstname, ' ', u2.lastname) END AS rateedisplayname").
+		Joins("INNER JOIN memberships m1 ON m1.userid = ratings.rater").
+		Joins("INNER JOIN memberships m2 ON m2.userid = ratings.ratee").
+		Joins("INNER JOIN users u1 ON ratings.rater = u1.id").
+		Joins("INNER JOIN users u2 ON ratings.ratee = u2.id").
+		Where("ratings.timestamp >= ?", since).
+		Where("m1.groupid IN (?)", groupIDs).
+		Where("m2.groupid IN (?)", groupIDs).
+		Where("m1.groupid = m2.groupid").
+		Where("ratings.rating IS NOT NULL").
+		Group("ratings.id").
+		Order("ratings.timestamp DESC").
+		Scan(&rows)
 
 	if rows == nil {
 		return []Rating{}

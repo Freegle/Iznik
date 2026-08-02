@@ -47,9 +47,12 @@ func GetDashboard(c *fiber.Ctx) error {
 		// weighting NaN and the map blank. Rounding also blurs exact locations (the page
 		// states locations are approximate for privacy) and shrinks the payload.
 		var points []HeatmapPoint
-		db.Raw("SELECT ROUND(ST_Y(point), 2) AS lat, ROUND(ST_X(point), 2) AS lng, COUNT(*) AS count " +
-			"FROM messages_spatial WHERE arrival > DATE_SUB(NOW(), INTERVAL 31 DAY) AND successful = 1 " +
-			"GROUP BY ROUND(ST_Y(point), 2), ROUND(ST_X(point), 2)").Scan(&points)
+		// ORM migration site 88aea8da62be (Tier 1 spatial review).
+		db.Table("messages_spatial").
+			Select("ROUND(ST_Y(point), 2) AS lat, ROUND(ST_X(point), 2) AS lng, COUNT(*) AS count").
+			Where("arrival > DATE_SUB(NOW(), INTERVAL 31 DAY) AND successful = 1").
+			Group("ROUND(ST_Y(point), 2), ROUND(ST_X(point), 2)").
+			Scan(&points)
 
 		if points == nil {
 			points = make([]HeatmapPoint, 0)

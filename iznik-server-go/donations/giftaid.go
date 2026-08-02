@@ -272,27 +272,36 @@ func SetGiftAid(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-	sqlResult, err := sqlDB.Exec(`INSERT INTO giftaid (userid, period, fullname, firstname, lastname, homeaddress)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), period = ?, fullname = ?, firstname = ?, lastname = ?, homeaddress = ?, deleted = NULL`,
-		myid, req.Period, req.Fullname, req.Firstname, req.Lastname, req.Homeaddress,
-		req.Period, req.Fullname, req.Firstname, req.Lastname, req.Homeaddress)
+	// Clauses(gorm.WithResult()) reads the id from the same sql.Result the
+	// write returned — never issue a separate SELECT LAST_INSERT_ID() as it's
+	// unsafe under parallel load (GORM's connection pool may assign a
+	// different connection).
+	// ORM migration site 258437a60f5d (tier4).
+	res := gorm.WithResult()
+	tx := db.Table("giftaid").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			{Column: clause.Column{Name: "period"}, Value: gorm.Expr("?", req.Period)},
+			{Column: clause.Column{Name: "fullname"}, Value: gorm.Expr("?", req.Fullname)},
+			{Column: clause.Column{Name: "firstname"}, Value: gorm.Expr("?", req.Firstname)},
+			{Column: clause.Column{Name: "lastname"}, Value: gorm.Expr("?", req.Lastname)},
+			{Column: clause.Column{Name: "homeaddress"}, Value: gorm.Expr("?", req.Homeaddress)},
+			{Column: clause.Column{Name: "deleted"}, Value: gorm.Expr("NULL")},
+		},
+	}).Create(map[string]interface{}{
+		"userid": myid, "period": req.Period, "fullname": req.Fullname,
+		"firstname": req.Firstname, "lastname": req.Lastname, "homeaddress": req.Homeaddress,
+	})
 
-	if err != nil {
+	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to set gift aid")
 	}
 
 	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
+	if res.Result != nil {
+		if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+			id = uint64(lastID)
+		}
 	}
 
 	return c.JSON(fiber.Map{"id": id})

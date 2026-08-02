@@ -17,16 +17,16 @@ import (
 
 // NoticeboardItem is a flat V2 response. Client fetches user details separately via /user/:id.
 type NoticeboardItem struct {
-	ID            uint64     `json:"id"`
-	Name          *string    `json:"name"`
-	Lat           float64    `json:"lat"`
-	Lng           float64    `json:"lng"`
-	Added         *time.Time `json:"added"`
-	Addedby       *uint64    `json:"addedby"`
-	Description   *string    `json:"description"`
-	Active        bool       `json:"active"`
-	Lastcheckedat *time.Time `json:"lastcheckedat"`
-	Photo         *PhotoInfo `json:"photo,omitempty"`
+	ID            uint64      `json:"id"`
+	Name          *string     `json:"name"`
+	Lat           float64     `json:"lat"`
+	Lng           float64     `json:"lng"`
+	Added         *time.Time  `json:"added"`
+	Addedby       *uint64     `json:"addedby"`
+	Description   *string     `json:"description"`
+	Active        bool        `json:"active"`
+	Lastcheckedat *time.Time  `json:"lastcheckedat"`
+	Photo         *PhotoInfo  `json:"photo,omitempty"`
 	Checks        []CheckItem `json:"checks"`
 }
 
@@ -132,10 +132,12 @@ func getList(c *fiber.Ctx) error {
 	var noticeboards []NoticeboardListItem
 
 	if authorityID > 0 {
-		db.Raw("SELECT noticeboards.id, noticeboards.name, noticeboards.lat, noticeboards.lng FROM noticeboards "+
-			"INNER JOIN authorities ON authorities.id = ? "+
-			"WHERE authorities.name IS NOT NULL AND active = 1 AND ST_CONTAINS(authorities.polygon, ST_SRID(POINT(noticeboards.lng, noticeboards.lat), ?))",
-			authorityID, utils.SRID).Scan(&noticeboards)
+		// ORM migration site e9346f66bbf4 (Tier 1 spatial review).
+		db.Table("noticeboards").
+			Select("noticeboards.id, noticeboards.name, noticeboards.lat, noticeboards.lng").
+			Joins("INNER JOIN authorities ON authorities.id = ?", authorityID).
+			Where("authorities.name IS NOT NULL AND active = 1 AND ST_CONTAINS(authorities.polygon, ST_SRID(POINT(noticeboards.lng, noticeboards.lat), ?))", utils.SRID).
+			Scan(&noticeboards)
 	} else {
 		// ORM migration site b62e9af236c5 (wave 1).
 		db.Table("noticeboards").Select("id, name, lat, lng").Where("name IS NOT NULL AND active = 1").Scan(&noticeboards)
@@ -265,36 +267,34 @@ func PostNoticeboard(c *fiber.Ctx) error {
 		description = *req.Description
 	}
 
-	srid := utils.SRID
-	pointSQL := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", *req.Lng, *req.Lat, srid)
-
 	// Use NULL for addedby when user is not logged in (myid=0) to satisfy FK constraint.
 	var addedby interface{}
 	if myid > 0 {
 		addedby = myid
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 42bb2fc5fe91 (tier6). Same zero-precision-change
+	// conversion as newsfeed.go's createRefer/createPost and newsfeed/create.go
+	// (10bcbd6a6404, f961504c334d, 90b0f0bb3029): the WKT text is built exactly
+	// as before via fmt.Sprintf("POINT(%f %f)", ...), then bound as a genuine
+	// ST_GeomFromText argument rather than spliced into the SQL text.
+	row := map[string]interface{}{
+		"name":          name,
+		"lat":           *req.Lat,
+		"lng":           *req.Lng,
+		"position":      gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", *req.Lng, *req.Lat), utils.SRID),
+		"added":         gorm.Expr("NOW()"),
+		"addedby":       addedby,
+		"description":   description,
+		"active":        active,
+		"lastcheckedat": gorm.Expr("NOW()"),
 	}
-	sqlResult, err := sqlDB.Exec(
-		"INSERT INTO noticeboards (`name`, `lat`, `lng`, `position`, `added`, `addedby`, `description`, `active`, `lastcheckedat`) "+
-			"VALUES (?, ?, ?, "+pointSQL+", NOW(), ?, ?, ?, NOW())",
-		name, *req.Lat, *req.Lng, addedby, description, active)
-
-	if err != nil {
+	if err := db.Table("noticeboards").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
 
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": id})
 }
@@ -379,18 +379,19 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 
 			if addedby > 0 {
 				// Create newsfeed entry with type 'Noticeboard'.
-				// Left raw (site c4e30fd6a513, wave 3): the position value is
-				// built by fmt.Sprintf embedding lng/lat/SRID as literals
-				// straight into the SQL text (%f %f %d), not as bind
-				// parameters - the manifest extractor marks this "dynamic":
-				// true because the recorded goldenSql is that literal
-				// pre-format Go source text, not real SQL. There is nothing a
-				// golden-SQL parity test could compare a GORM render against.
-				// See keep-raw.json.
-				db.Exec(
-					fmt.Sprintf("INSERT INTO newsfeed (type, userid, message, added, position) VALUES ('Noticeboard', ?, ?, NOW(), ST_GeomFromText('POINT(%f %f)', %d))",
-						lng, lat, utils.SRID),
-					addedby, fmt.Sprintf(`{"id":%d,"name":"%s"}`, req.ID, *req.Name))
+				// ORM migration site c4e30fd6a513 (tier6). Same
+				// zero-precision-change conversion as PostNoticeboard
+				// (42bb2fc5fe91) above: the WKT text is built exactly as
+				// before via fmt.Sprintf("POINT(%f %f)", ...), then bound as a
+				// genuine ST_GeomFromText argument rather than spliced into
+				// the SQL text.
+				db.Table("newsfeed").Create(map[string]interface{}{
+					"type":     gorm.Expr("'Noticeboard'"),
+					"userid":   addedby,
+					"message":  fmt.Sprintf(`{"id":%d,"name":"%s"}`, req.ID, *req.Name),
+					"added":    gorm.Expr("NOW()"),
+					"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
+				})
 			}
 		}
 	}

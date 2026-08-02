@@ -504,9 +504,9 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 
 	// Queue the unsubscribe confirmation email.
 	if err := queue.QueueTask(queue.TaskEmailUnsubscribe, map[string]interface{}{
-		"user_id":    userID,
-		"email":      preferredEmail,
-		"unsub_url":  unsubURL,
+		"user_id":   userID,
+		"email":     preferredEmail,
+		"unsub_url": unsubURL,
 	}); err != nil {
 		stdlog.Printf("Failed to queue unsubscribe email for user %d: %v", userID, err)
 	}
@@ -915,19 +915,19 @@ func GetSession(c *fiber.Ctx) error {
 
 	// Parallel fetches for user data.
 	type UserRow struct {
-		ID            uint64          `json:"id"`
-		Fullname      *string         `json:"fullname"`
-		Firstname     *string         `json:"firstname"`
-		Lastname      *string         `json:"lastname"`
-		Systemrole    string          `json:"systemrole"`
-		Settings      json.RawMessage `json:"settings"`
-		Lastaccess    *time.Time      `json:"lastaccess"`
-		Added         *time.Time      `json:"added"`
-		Lastlocation  *uint64         `json:"lastlocation"`
-		Onholidaytill *string         `json:"onholidaytill"`
-		Source        *string         `json:"source"`
-		Deleted       *time.Time      `json:"deleted"`
-		Forgotten     *time.Time      `json:"forgotten"`
+		ID                 uint64          `json:"id"`
+		Fullname           *string         `json:"fullname"`
+		Firstname          *string         `json:"firstname"`
+		Lastname           *string         `json:"lastname"`
+		Systemrole         string          `json:"systemrole"`
+		Settings           json.RawMessage `json:"settings"`
+		Lastaccess         *time.Time      `json:"lastaccess"`
+		Added              *time.Time      `json:"added"`
+		Lastlocation       *uint64         `json:"lastlocation"`
+		Onholidaytill      *string         `json:"onholidaytill"`
+		Source             *string         `json:"source"`
+		Deleted            *time.Time      `json:"deleted"`
+		Forgotten          *time.Time      `json:"forgotten"`
 		Trustlevel         *string         `json:"trustlevel"`
 		Permissions        *string         `json:"permissions"`
 		Marketingconsent   bool            `json:"marketingconsent"`
@@ -954,9 +954,9 @@ func GetSession(c *fiber.Ctx) error {
 		Volunteeringallowed      int     `json:"volunteeringallowed"`
 		Microvolunteeringallowed int     `json:"microvolunteeringallowed"`
 		Configid                 *uint64 `json:"configid"`
-		Active                   int     `json:"active"`  // 1=active mod, 0=backup mod
-		Type                     string  `json:"-"`        // Used server-side for moderator detection, not returned to client
-		Settings                 *string `json:"-"`        // Per-group membership settings JSON, used to determine active/inactive
+		Active                   int     `json:"active"` // 1=active mod, 0=backup mod
+		Type                     string  `json:"-"`      // Used server-side for moderator detection, not returned to client
+		Settings                 *string `json:"-"`      // Per-group membership settings JSON, used to determine active/inactive
 	}
 
 	type LocationRow struct {
@@ -964,7 +964,6 @@ func GetSession(c *fiber.Ctx) error {
 		Lat  float64 `json:"lat"`
 		Lng  float64 `json:"lng"`
 	}
-
 
 	type SessionRow struct {
 		ID     uint64 `json:"id"`
@@ -1363,39 +1362,52 @@ func GetSession(c *fiber.Ctx) error {
 			// Count chat messages pending review. Must match the logic in
 			// chatmessage_review.go getReviewQueue() so the sidebar count
 			// equals the number of displayed messages.
+			//
+			// ORM migration site f43d5f680ef9 (Tier 3 keep-raw review).
+			// heldFilter is the only toggle - 2 possible rendered forms, both
+			// declared in ormharness/shapes.json and proven by
+			// TestTier3Shapes_f43d5f680ef9 (iznik-server-go/test).
 			chatReviewSQL := func(groupIDs []uint64, heldFilter string) int64 {
 				if len(groupIDs) == 0 {
 					return 0
 				}
-				var count int64
-				db.Raw("SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm "+
-					"INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
-					"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL "+
-					"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id "+
-					"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 "+
-					"AND cm.date >= ? "+heldFilter+" "+
-					"AND ("+
+				// WHERE built as a single string for ONE Where() call: GORM's
+				// clause.Where wraps any fragment containing "AND"/"OR" in an
+				// extra paren pair once there is more than one Where
+				// expression to combine (clause/where.go buildExprs), which
+				// would diverge from the golden.
+				whereSQL := "cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? " +
+					heldFilter + " AND (" +
 					// User2Mod: chat belongs to one of the mod's groups.
-					"  (cr.chattype = ? AND cr.groupid IN ?) "+
-					"  OR "+
+					"  (cr.chattype = ? AND cr.groupid IN ?) " +
+					"  OR " +
 					// User2User case 1: recipient (other user) is in mod's groups.
-					"  (cr.chattype = ? AND "+
-					"    EXISTS (SELECT 1 FROM memberships m "+
-					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? "+
-					"      WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m.groupid IN ?)) "+
-					"  OR "+
+					"  (cr.chattype = ? AND " +
+					"    EXISTS (SELECT 1 FROM memberships m " +
+					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? " +
+					"      WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m.groupid IN ?)) " +
+					"  OR " +
 					// User2User case 2: recipient has no Freegle memberships, sender in mod's groups.
-					"  (cr.chattype = ? AND "+
-					"    NOT EXISTS (SELECT 1 FROM memberships m "+
-					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? "+
-					"      WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) "+
-					"    AND EXISTS (SELECT 1 FROM memberships m "+
-					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? "+
-					"      WHERE m.userid = cm.userid AND m.groupid IN ?))"+
-					")",
-					chatCutoff, utils.CHAT_TYPE_USER2MOD, groupIDs,
-					utils.CHAT_TYPE_USER2USER, utils.GROUP_TYPE_FREEGLE, groupIDs,
-					utils.CHAT_TYPE_USER2USER, utils.GROUP_TYPE_FREEGLE, utils.GROUP_TYPE_FREEGLE, groupIDs).Scan(&count)
+					"  (cr.chattype = ? AND " +
+					"    NOT EXISTS (SELECT 1 FROM memberships m " +
+					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? " +
+					"      WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) " +
+					"    AND EXISTS (SELECT 1 FROM memberships m " +
+					"      INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? " +
+					"      WHERE m.userid = cm.userid AND m.groupid IN ?))" +
+					")"
+
+				var count int64
+				db.Table("chat_messages cm").
+					Select("COUNT(DISTINCT cm.id)").
+					Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
+					Joins("INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL").
+					Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
+					Where(whereSQL, chatCutoff,
+						utils.CHAT_TYPE_USER2MOD, groupIDs,
+						utils.CHAT_TYPE_USER2USER, utils.GROUP_TYPE_FREEGLE, groupIDs,
+						utils.CHAT_TYPE_USER2USER, utils.GROUP_TYPE_FREEGLE, utils.GROUP_TYPE_FREEGLE, groupIDs).
+					Scan(&count)
 				return count
 			}
 
@@ -1412,16 +1424,15 @@ func GetSession(c *fiber.Ctx) error {
 			if user.HasWiderReview(myid) {
 				allModGroupIDs := append(activeGroupIDs, inactiveGroupIDs...)
 				var widerCount int64
-				widerQuery := "SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm " +
-					"INNER JOIN chat_rooms cr ON cr.id = cm.chatid " +
-					"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
-					"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
-					"INNER JOIN memberships m ON m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) " +
-					"INNER JOIN `groups` g ON m.groupid = g.id AND g.type = '" + utils.GROUP_TYPE_FREEGLE + "' " +
-					"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 " +
-					"AND cm.date >= ? AND cmh.id IS NULL " +
-					"AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
-					"AND (cm.reportreason IS NULL OR cm.reportreason != 'User')"
+
+				// WHERE built as a single string for ONE Where() call: GORM's
+				// clause.Where wraps any fragment containing "AND"/"OR" in an
+				// extra paren pair once there is more than one Where
+				// expression to combine (clause/where.go buildExprs), which
+				// would diverge from the golden.
+				widerWhereSQL := "cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND cmh.id IS NULL " +
+					"AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND (cm.reportreason IS NULL OR cm.reportreason != 'User')"
+				widerWhereArgs := []interface{}{chatCutoff}
 
 				if len(allModGroupIDs) > 0 {
 					// Exclude messages where the recipient has ANY membership in
@@ -1431,12 +1442,29 @@ func GetSession(c *fiber.Ctx) error {
 					// mod's group AND a separate wider-review group; the simple
 					// NOT IN only filters the mod-group JOIN row while still
 					// counting the wider-group JOIN row, causing double-counting.
+					//
+					// ORM migration site 3f3696f3bba4 (Tier 3 keep-raw review).
+					// This branch (allModGroupIDs>0) has exactly one rendered
+					// form, declared in ormharness/shapes.json and proven by
+					// TestTier3Shapes_3f3696f3bba4 (iznik-server-go/test).
 					recipientExpr := "(CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)"
-					widerQuery += " AND NOT EXISTS (SELECT 1 FROM memberships m2 WHERE m2.userid = " + recipientExpr + " AND m2.groupid IN (?))"
-					db.Raw(widerQuery, chatCutoff, allModGroupIDs).Scan(&widerCount)
-				} else {
-					db.Raw(widerQuery, chatCutoff).Scan(&widerCount)
+					widerWhereSQL += " AND NOT EXISTS (SELECT 1 FROM memberships m2 WHERE m2.userid = " + recipientExpr + " AND m2.groupid IN (?))"
+					widerWhereArgs = append(widerWhereArgs, allModGroupIDs)
 				}
+				// else: ORM migration site 76555fe088e5 (Tier 3 keep-raw
+				// review). This branch (no mod groups) has exactly one
+				// rendered form, declared in ormharness/shapes.json and
+				// proven by TestTier3Shapes_76555fe088e5 (iznik-server-go/test).
+
+				db.Table("chat_messages cm").
+					Select("COUNT(DISTINCT cm.id)").
+					Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
+					Joins("INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL").
+					Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
+					Joins("INNER JOIN memberships m ON m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)").
+					Joins("INNER JOIN `groups` g ON m.groupid = g.id AND g.type = '"+utils.GROUP_TYPE_FREEGLE+"'").
+					Where(widerWhereSQL, widerWhereArgs...).
+					Scan(&widerCount)
 
 				chatreviewother += widerCount
 			}
@@ -1600,21 +1628,21 @@ func GetSession(c *fiber.Ctx) error {
 			"pendingadmins":        pendingadmins,
 			"editreview":           editreview,
 			"pendingvolunteering":  pendingvolunteering,
-			"stories":             stories,
+			"stories":              stories,
 			"spammerpendingadd":    spammerpendingadd,
 			"spammerpendingremove": spammerpendingremove,
-			"chatreview":          chatreview,
-			"chatreviewother":     chatreviewother,
-			"newsletterstories":   newsletterstories,
-			"helperEscalated":     helperEscalated,
-			"giftaid":             giftaid,
-			"happiness":           happiness,
-			"relatedmembers":      relatedmembers,
-			"housekeeping":        housekeeping,
-			"cronjobs":            cronjobs,
-			"emailin":             emailin,
-			"emailout":            emailout,
-			"total":               total,
+			"chatreview":           chatreview,
+			"chatreviewother":      chatreviewother,
+			"newsletterstories":    newsletterstories,
+			"helperEscalated":      helperEscalated,
+			"giftaid":              giftaid,
+			"happiness":            happiness,
+			"relatedmembers":       relatedmembers,
+			"housekeeping":         housekeeping,
+			"cronjobs":             cronjobs,
+			"emailin":              emailin,
+			"emailout":             emailout,
+			"total":                total,
 		}
 	}
 
@@ -1841,7 +1869,6 @@ func PatchSession(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-
 	db := database.DBConn
 
 	// Handle email confirmation via validatekey. This is a standalone operation
@@ -1990,8 +2017,10 @@ func PatchSession(c *fiber.Ctx) error {
 		// fires if the account is actually flagged deleted right now (the UPDATE
 		// clearing the flag runs after this), so a routine settings save that
 		// happens to include deleted:null doesn't spam the log.
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) "+
-			"SELECT NOW(), ?, ?, id, id FROM users WHERE id = ? AND deleted IS NOT NULL",
+		// ORM migration site 56c15677ea5b (tier4).
+		database.InsertSelect(db, "logs",
+			"(timestamp, type, subtype, user, byuser) "+
+				"SELECT NOW(), ?, ?, id, id FROM users WHERE id = ? AND deleted IS NOT NULL",
 			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_RESTORED, myid)
 	}
 

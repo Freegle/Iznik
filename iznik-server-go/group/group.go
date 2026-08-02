@@ -2,7 +2,6 @@ package group
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -209,8 +208,26 @@ func GetGroup(c *fiber.Ctx) error {
 			q = q.Preload("GroupSponsors")
 		}
 
-		err := q.Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", id).First(&group).Error
-		found = !errors.Is(err, gorm.ErrRecordNotFound)
+		// ORM migration site 2811b4d3acf7 (tier6). Converted from
+		// Raw(...).First(&group) to Table()/Select()/Where().Find(&group).
+		// First() unconditionally adds an ORDER BY + LIMIT 1 clause and sets
+		// RaiseErrorOnNotFound - but on a Raw()-based statement those clauses
+		// were silently dropped (BuildQuerySQL skips clause-building entirely
+		// once Statement.SQL is already populated by Raw()), so the golden's
+		// lack of ORDER BY/LIMIT was always the real executed SQL. A straight
+		// swap to Table()+First() would have started emitting a real
+		// "ORDER BY id LIMIT 1", since that short-circuit no longer applies -
+		// a genuine behaviour change, not a harmless rewrite. Find() never
+		// adds those clauses and never raises ErrRecordNotFound, so the
+		// caller now checks RowsAffected directly instead of comparing the
+		// returned error against ErrRecordNotFound - which is also a small
+		// correctness improvement: the old check treated ANY error other
+		// than "not found" (e.g. a genuine connection failure) as found=true.
+		tx := q.Table("groups").
+			Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+			Where("id = ?", id).
+			Find(&group)
+		found = tx.RowsAffected > 0
 
 		if found {
 			if group.Profile > 0 {
@@ -394,12 +411,17 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		go func(idx int, gid uint64) {
 			defer wg.Done()
 
+			// ORM migration site 547458a591ae (tier6). Same First()->Find()
+			// conversion as GetGroup (2811b4d3acf7) above, for the same
+			// reason: see that site's comment.
 			var g Group
-			err := db.Preload("GroupSponsors").
-				Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", gid).
-				First(&g).Error
+			tx := db.Preload("GroupSponsors").
+				Table("groups").
+				Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+				Where("id = ?", gid).
+				Find(&g)
 
-			if err != nil {
+			if tx.Error != nil || tx.RowsAffected == 0 {
 				return
 			}
 
@@ -700,7 +722,17 @@ func validateGeometry(wkt string) bool {
 	db := database.DBConn
 
 	var valid *int
-	result := db.Raw("SELECT ST_IsValid(ST_GeomFromText(?))", wkt).Scan(&valid)
+	// ORM migration site 6d0982e798b5 (Tier 2 keep-raw review). Bare scalar
+	// SELECT with no FROM at all - same BuildClauses={"SELECT"} mechanism as
+	// amp.go's bare-EXISTS conversions (see the comment there and
+	// ormharness/bareexists_test.go). .Table(...) is still required even
+	// though it never renders: without it GORM's schema-parse-failure branch
+	// rejects the statement for having no table set. "groups" is used purely
+	// to satisfy that check - it never appears in the rendered SQL, since
+	// FROM is excluded from BuildClauses.
+	tx := db.Table("groups").Select("ST_IsValid(ST_GeomFromText(?))", wkt)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	result := tx.Scan(&valid)
 
 	if result.Error != nil || valid == nil {
 		return false
@@ -926,7 +958,13 @@ func PatchGroup(c *fiber.Ctx) error {
 		if polyChanged {
 			// Recompute the spatial index so the poly/polyofficial change takes effect. When the DPA
 			// (poly) is cleared the group falls back to the CGA (polyofficial), then to POINT(0 0).
-			db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d) WHERE id = ?", utils.SRID), req.ID)
+			// ORM migration site 548090e97d00 (Tier 1 spatial review, round 3).
+			// SRID is folded into the gorm.Expr string via fmt.Sprintf, the
+			// same shipped idiom location.go's locations_spatial REPLACE
+			// sites use (25b7b92e33fd/6f1d6543e5c0).
+			db.Table("groups").
+				Where("id = ?", req.ID).
+				Update("polyindex", gorm.Expr(fmt.Sprintf("ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d)", utils.SRID)))
 		}
 		if req.Showonyahoo != nil {
 			// ORM migration site 34c2c6e9128b (wave 2).

@@ -109,13 +109,23 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 			Where("chatid = ?", p.LoserID).Update("chatid", p.SurvivorID).Error; err != nil {
 			return err
 		}
-		// Surface the merged history's recency in chat list ordering. Multi-table
-		// UPDATE...JOIN — out of wave 2's single-table scope, left raw.
-		if err := tx.Exec(`UPDATE chat_rooms surv JOIN chat_rooms lose ON lose.id = ?
-			SET surv.latestmessage = lose.latestmessage
-			WHERE surv.id = ? AND lose.latestmessage IS NOT NULL
-			  AND (surv.latestmessage IS NULL OR surv.latestmessage < lose.latestmessage)`,
-			p.LoserID, p.SurvivorID).Error; err != nil {
+		// Surface the merged history's recency in chat list ordering.
+		// ORM migration site bf1cd8bf4627 (Tier 2 keep-raw review). Genuine
+		// multi-table UPDATE...JOIN: the whole "table JOIN table ON ..." text
+		// goes to Table() verbatim (it contains a space, so GORM never
+		// quotes it, and its own bind arg travels through Table()'s
+		// variadic args), and the column-to-column SET assignment is an
+		// explicit clause.Set - Updates(map) can't express "SET a = b" for
+		// two real columns, only "SET a = ?" for a bound value. Proven in
+		// ormharness/updatejoin_replace_test.go
+		// (TestUpdateJoin_SelfJoinSimpleAssignment).
+		if err := tx.Table("chat_rooms surv JOIN chat_rooms lose ON lose.id = ?", p.LoserID).
+			Clauses(clause.Set{
+				{Column: clause.Column{Table: "surv", Name: "latestmessage"},
+					Value: clause.Column{Table: "lose", Name: "latestmessage"}},
+			}).
+			Where("surv.id = ? AND lose.latestmessage IS NOT NULL AND (surv.latestmessage IS NULL OR surv.latestmessage < lose.latestmessage)", p.SurvivorID).
+			Updates(map[string]interface{}{}).Error; err != nil {
 			return err
 		}
 		// ORM migration site e91e1b857064 (wave 2).

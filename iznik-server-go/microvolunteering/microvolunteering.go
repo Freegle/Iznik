@@ -260,35 +260,32 @@ func GetChallenge(c *fiber.Ctx) error {
 
 	// Try search term challenge
 	if contains(challengeTypes, ChallengeSearchTerm) {
-		// Check if user is in a group with word matching enabled
-		var enabled int
-		var query string
-		var params []interface{}
-
+		// Check if user is in a group with word matching enabled.
+		//
+		// ORM migration site 80c36f2da91e (Tier 3 keep-raw review). groupID>0
+		// is the only toggle - 2 possible rendered forms, both declared in
+		// ormharness/shapes.json and proven by TestTier3Shapes_80c36f2da91e
+		// (iznik-server-go/test).
+		// WHERE built as a single string for ONE Where() call: GORM's
+		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+		// paren pair once there is more than one Where expression to
+		// combine (clause/where.go buildExprs), which would diverge from
+		// the golden.
+		enabledWhereSQL := "memberships.userid = ?"
+		enabledWhereArgs := []interface{}{userID}
 		if groupID > 0 {
 			// Filter to specific group if provided
-			query = `
-				SELECT COUNT(*)
-				FROM memberships
-				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-				WHERE memberships.userid = ?
-				AND memberships.groupid = ?
-				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
-			`
-			params = []interface{}{userID, groupID}
-		} else {
-			// Check all user's groups
-			query = `
-				SELECT COUNT(*)
-				FROM memberships
-				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-				WHERE memberships.userid = ?
-				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
-			`
-			params = []interface{}{userID}
+			enabledWhereSQL += " AND memberships.groupid = ?"
+			enabledWhereArgs = append(enabledWhereArgs, groupID)
 		}
+		enabledWhereSQL += " AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)"
 
-		db.Raw(query, params...).Scan(&enabled)
+		var enabled int
+		db.Table("memberships").
+			Select("COUNT(*)").
+			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
+			Where(enabledWhereSQL, enabledWhereArgs...).
+			Scan(&enabled)
 
 		if enabled > 0 {
 			// Get 10 random popular items
@@ -373,35 +370,32 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 		return nil
 	}
 
-	// Convert group IDs to comma-separated string for SQL
-	groupIDStrs := make([]string, len(groupIDs))
-	for i, id := range groupIDs {
-		groupIDStrs[i] = fmt.Sprintf("%d", id)
-	}
-	groupIDsStr := strings.Join(groupIDStrs, ",")
-
 	type MessageResult struct {
 		Msgid uint64 `json:"msgid"`
 	}
 	var msg MessageResult
 
-	err := db.Raw(`
-		SELECT messages_groups.msgid
-		FROM messages_groups
-		INNER JOIN messages ON messages.id = messages_groups.msgid
-		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid
-		LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?
-		WHERE messages_groups.groupid IN (`+groupIDsStr+`)
-			AND DATE(messages.arrival) = CURDATE()
-			AND fromuser != ?
-			AND microvolunteering = 1
-			AND messages.deleted IS NULL
-			AND microactions.id IS NULL
-			AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1)
-			AND collection = ?
-			AND autoreposts = 0
-		ORDER BY messages_groups.arrival ASC LIMIT 1
-	`, userID, userID, utils.COLLECTION_PENDING).Scan(&msg).Error
+	// ORM migration site 309561e40e15 (Tier 3 keep-raw review). groupIDsStr
+	// was a hand-built comma-joined literal-int list; GORM's native "IN (?)"
+	// slice-bind is the direct replacement (proven pattern, see plan 7.5) and
+	// gives this exactly one rendered form, declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_309561e40e15
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	pendingWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+		"AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL " +
+		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
+		"AND collection = ? AND autoreposts = 0"
+	err := db.Table("messages_groups").
+		Select("messages_groups.msgid").
+		Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
+		Joins("LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?", userID).
+		Where(pendingWhereSQL, groupIDs, userID, utils.COLLECTION_PENDING).
+		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -419,13 +413,6 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 		return nil
 	}
 
-	// Convert group IDs to comma-separated string for SQL
-	groupIDStrs := make([]string, len(groupIDs))
-	for i, id := range groupIDs {
-		groupIDStrs[i] = fmt.Sprintf("%d", id)
-	}
-	groupIDsStr := strings.Join(groupIDStrs, ",")
-
 	type MessageResult struct {
 		Msgid uint64 `json:"msgid"`
 	}
@@ -433,29 +420,31 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 
 	resultApprove := "Approve"
 
-	err := db.Raw(`
-		SELECT messages_spatial.msgid,
-			(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount,
-			(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount
-		FROM messages_spatial
-		INNER JOIN messages_groups ON messages_spatial.msgid = messages_groups.msgid
-		INNER JOIN messages ON messages.id = messages_spatial.msgid
-		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid
-		LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ?
-		LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid
-		WHERE messages_groups.groupid IN (`+groupIDsStr+`)
-			AND DATE(messages.arrival) = CURDATE()
-			AND fromuser != ?
-			AND microvolunteering = 1
-			AND messages_outcomes.id IS NULL
-			AND messages.deleted IS NULL
-			AND microactions.id IS NULL
-			AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1)
-			AND collection = ?
-			AND autoreposts = 0
-		HAVING approvalcount < ? AND reviewcount < ?
-		ORDER BY messages_groups.arrival ASC LIMIT 1
-	`, resultApprove, userID, userID, utils.COLLECTION_APPROVED, ApprovalQuorum, DissentingQuorum).Scan(&msg).Error
+	// ORM migration site bde82a974f05 (Tier 3 keep-raw review). Same
+	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
+	// exactly one rendered form, declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_bde82a974f05 (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	approvedWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+		"AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
+		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
+		"AND collection = ? AND autoreposts = 0"
+	err := db.Table("messages_spatial").
+		Select("messages_spatial.msgid, "+
+			"(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount, "+
+			"(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount",
+			resultApprove).
+		Joins("INNER JOIN messages_groups ON messages_spatial.msgid = messages_groups.msgid").
+		Joins("INNER JOIN messages ON messages.id = messages_spatial.msgid").
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
+		Joins("LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ?", userID).
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid").
+		Where(approvedWhereSQL, groupIDs, userID, utils.COLLECTION_APPROVED).
+		Having("approvalcount < ? AND reviewcount < ?", ApprovalQuorum, DissentingQuorum).
+		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -473,13 +462,6 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Cha
 		return nil
 	}
 
-	// Convert group IDs to comma-separated string for SQL
-	groupIDStrs := make([]string, len(groupIDs))
-	for i, id := range groupIDs {
-		groupIDStrs[i] = fmt.Sprintf("%d", id)
-	}
-	groupIDsStr := strings.Join(groupIDStrs, ",")
-
 	type PhotoResult struct {
 		ID uint64 `json:"id"`
 	}
@@ -487,17 +469,19 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Cha
 
 	today := time.Now().Format("2006-01-02")
 
-	err := db.Raw(`
-		SELECT messages_attachments.id,
-			(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount
-		FROM messages_groups
-		INNER JOIN messages_attachments ON messages_attachments.msgid = messages_groups.msgid
-		LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ?
-		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid AND microvolunteering = 1 AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.photorotate') = 1)
-		WHERE arrival >= ? AND groupid IN (`+groupIDsStr+`) AND microactions.id IS NULL
-		HAVING reviewcount < ?
-		ORDER BY RAND() LIMIT 9
-	`, userID, today, DissentingQuorum).Scan(&photos).Error
+	// ORM migration site ff5193d35cf8 (Tier 3 keep-raw review). Same
+	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
+	// exactly one rendered form, declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_ff5193d35cf8 (iznik-server-go/test).
+	err := db.Table("messages_groups").
+		Select("messages_attachments.id, "+
+			"(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount").
+		Joins("INNER JOIN messages_attachments ON messages_attachments.msgid = messages_groups.msgid").
+		Joins("LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ?", userID).
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid AND microvolunteering = 1 AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.photorotate') = 1)").
+		Where("arrival >= ? AND groupid IN (?) AND microactions.id IS NULL", today, groupIDs).
+		Having("reviewcount < ?", DissentingQuorum).
+		Order("RAND()").Limit(9).Scan(&photos).Error
 
 	if err == nil && len(photos) > 0 {
 		var photoList []Photo
@@ -1129,18 +1113,6 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	}
 
 	// Build query matching V1: microactions joined with memberships filtered by group.
-	ctxq := ""
-	args := []interface{}{}
-
-	args = append(args, groupIDs, start)
-
-	if context > 0 {
-		ctxq = " AND microactions.id < ?"
-		args = append(args, context)
-	}
-
-	args = append(args, limitParam)
-
 	type MicroAction struct {
 		ID            uint64    `json:"id"`
 		Actiontype    string    `json:"actiontype"`
@@ -1158,11 +1130,27 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		Modfeedback   *string   `json:"modfeedback"`
 	}
 
+	// ORM migration site 3762cb36efcf (Tier 3 keep-raw review). context>0 is
+	// the only toggle - 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_3762cb36efcf
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	microactionsWhereSQL := "memberships.groupid IN (?) AND microactions.timestamp >= ?"
+	microactionsWhereArgs := []interface{}{groupIDs, start}
+	if context > 0 {
+		microactionsWhereSQL += " AND microactions.id < ?"
+		microactionsWhereArgs = append(microactionsWhereArgs, context)
+	}
+
 	var items []MicroAction
-	db.Raw("SELECT DISTINCT microactions.* FROM microactions "+
-		"INNER JOIN memberships ON memberships.userid = microactions.userid "+
-		"WHERE memberships.groupid IN (?) AND microactions.timestamp >= ?"+ctxq+
-		" ORDER BY microactions.id DESC LIMIT ?", args...).Scan(&items)
+	db.Table("microactions").
+		Select("DISTINCT microactions.*").
+		Joins("INNER JOIN memberships ON memberships.userid = microactions.userid").
+		Where(microactionsWhereSQL, microactionsWhereArgs...).
+		Order("microactions.id DESC").Limit(limitParam).Scan(&items)
 
 	if items == nil {
 		items = []MicroAction{}

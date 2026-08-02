@@ -38,14 +38,28 @@ func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 	}
 	var err error
 	if rippling.ReachBoundsReady(db) {
+		// ORM migration site ff9be67577e8 (Tier 3 keep-raw review).
+		// ReachInReachExpr always returns the same expression text (only the
+		// bind args vary per call), so this has exactly one rendered form,
+		// declared in ormharness/shapes.json and proven by
+		// TestTier3Shapes_ff9be67577e8 (iznik-server-go/test).
+		// WHERE built as a single string for ONE Where() call: GORM's
+		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+		// paren pair once there is more than one Where expression to
+		// combine (clause/where.go buildExprs), which would diverge from
+		// the golden.
 		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
-		args := append([]interface{}{msgids}, exprArgs...)
-		err = db.Raw("SELECT rr.msgid FROM rippling_reach rr "+
-			"WHERE rr.msgid IN (?) AND NOT "+expr, args...).Scan(&rows).Error
+		whereArgs := append([]interface{}{msgids}, exprArgs...)
+		err = db.Table("rippling_reach rr").
+			Select("rr.msgid").
+			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
+			Scan(&rows).Error
 	} else {
-		err = db.Raw("SELECT msgid FROM rippling_reach WHERE msgid IN (?) "+
-			"AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-			msgids, lng, lat, utils.SRID).Scan(&rows).Error
+		// ORM migration site 7e7e69fa2f85 (Tier 1 spatial review).
+		err = db.Table("rippling_reach").
+			Select("msgid").
+			Where("msgid IN ? AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0", msgids, lng, lat, utils.SRID).
+			Scan(&rows).Error
 	}
 	if err == nil {
 		for _, r := range rows {
@@ -141,9 +155,11 @@ func Reach(c *fiber.Ctx) error {
 	// coordinates are lng/lat degrees (the SRID label notwithstanding), which is exactly
 	// GeoJSON's [lng, lat] order, so no transform is needed.
 	var row reachRow
-	found := db.Raw("SELECT tick, total_ticks, status, arrival, next_expansion_at, "+
-		"ST_AsGeoJSON(polygon, 5) AS polygon "+
-		"FROM rippling_reach WHERE msgid = ?", id).Scan(&row)
+	// ORM migration site 388f473a3332 (Tier 1 spatial review).
+	found := db.Table("rippling_reach").
+		Select("tick, total_ticks, status, arrival, next_expansion_at, ST_AsGeoJSON(polygon, 5) AS polygon").
+		Where("msgid = ?", id).
+		Scan(&row)
 
 	if found.RowsAffected == 0 {
 		// No actual reach row. Work out WHY so the UI doesn't imply the engine is behind when

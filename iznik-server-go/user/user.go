@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -639,19 +638,34 @@ func GetUserById(id uint64, myid uint64) User {
 
 		// Settings are needed for modtools toggles (notificationmails etc.).
 		// Return for self, or for mods viewing other users.
-		var settingsq = ""
-
+		//
+		// ORM migration site e0558c2c039d (Tier 3 keep-raw review). Whether
+		// "settings, " is included is the only toggle - 2 possible rendered
+		// forms, both declared in ormharness/shapes.json and proven by
+		// TestTier3Shapes_e0558c2c039d (iznik-server-go/test).
+		selectCols := "users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, " +
+			"chatmodstatus, newsfeedmodstatus, tnuserid, ljuserid, "
 		if id == myid || isMod {
-			settingsq = "settings, "
+			selectCols += "settings, "
 		}
+		selectCols += "CASE WHEN systemrole IN (?, ?, ?) AND JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod"
 
-		err := db.Raw("SELECT users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, "+
-			"chatmodstatus, newsfeedmodstatus, tnuserid, ljuserid, "+settingsq+
-			"CASE WHEN systemrole IN (?, ?, ?) AND JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod "+
-			"FROM users "+
-			"WHERE users.id = ? ", utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, id).First(&user).Error
+		// Find, not First: First unconditionally adds an implicit "ORDER
+		// BY <primary key>" + LIMIT 1 and raises ErrRecordNotFound, but
+		// this is a Table()-only query with no registered Model, so
+		// Schema stays nil and resolving that ORDER BY's primary key
+		// column fails outright with "model value required" (gorm's
+		// statement.go, the clause.Column PrimaryKey case). See
+		// group/group.go's GetGroup (site 2811b4d3acf7) for the
+		// established fix: Find() never adds those clauses, so the
+		// caller checks RowsAffected instead of comparing the error to
+		// ErrRecordNotFound.
+		tx := db.Table("users").
+			Select(selectCols, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
+			Where("users.id = ?", id).
+			Find(&user)
 
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if tx.RowsAffected > 0 {
 			if user.Deleted == nil || isMod {
 				// Show real name for active users, and also for deleted
 				// users when viewed by a moderator.
@@ -1748,8 +1762,12 @@ func handleRate(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest) err
 		reviewRequired = true
 	}
 
-	db.Exec("REPLACE INTO ratings (rater, ratee, rating, reason, text, timestamp, reviewrequired) VALUES (?, ?, ?, ?, ?, NOW(), ?)",
-		myid, req.Ratee, req.Rating, req.Reason, req.Text, reviewRequired)
+	// ORM migration site 33201edc2a80 (tier4).
+	db.Table("ratings").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{
+			"rater": myid, "ratee": req.Ratee, "rating": req.Rating, "reason": req.Reason,
+			"text": req.Text, "timestamp": gorm.Expr("NOW()"), "reviewrequired": reviewRequired,
+		})
 
 	// Update lastupdated for both users.
 	// ORM migration site b4968f94d154 (wave 2).
@@ -1861,16 +1879,29 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
 	}
 
-	// Email doesn't exist at all — insert new row. Use the INSERT's LastInsertId on the write
-	// connection; a "SELECT id ... ORDER BY id DESC" here is routed to a read replica under the
-	// read/write split and can return a stale/0 id (Discourse 9832 class), so the caller would
-	// get the wrong emailid.
-	emailID, err := database.ExecInsertGetID(db,
-		"INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, ?, NOW(), ?, ?)",
-		targetID, email, primaryVal, canon, reverseString(canon))
-	if err != nil {
+	// Email doesn't exist at all — insert new row. Table()+map Create reads the
+	// generated id back from the same sql.Result the INSERT returned, under
+	// the map key "@id" (see test/orm_insertid_test.go) - the write
+	// connection, same as ExecInsertGetID, so still immune to the read/write
+	// split's Discourse-9832-class staleness.
+	// ORM migration site 1c763aa6ec12 (insertid-conv). Named newRow, not row:
+	// "row" is already declared above (line ~1809) as the *sql.Row from the
+	// existing-email lookup, and this map has an incompatible type - reusing
+	// the name here made := illegal (no new variable on the left) and, worse,
+	// silently type-mismatched had Go allowed it.
+	newRow := map[string]interface{}{
+		"userid":    targetID,
+		"email":     email,
+		"preferred": primaryVal,
+		"validated": gorm.Expr("NOW()"),
+		"canon":     canon,
+		"backwards": reverseString(canon),
+	}
+	if err := db.Table("users_emails").Create(newRow).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 4, "status": "Email add failed"})
 	}
+	emailIDInt, _ := newRow["@id"].(int64)
+	emailID := uint64(emailIDInt)
 
 	if isPrimary {
 		// ORM migration site 265058d37c74 (wave 2).
@@ -2913,7 +2944,18 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			// ORM migration site 1ca61377ab9d (wave 2).
 			tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Update("role", newRole)
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
-			tx.Exec("UPDATE memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid SET m2.added = LEAST(m2.added, m1.added) WHERE m2.userid = ? AND m2.groupid = ?", req.ID1, req.ID2, m1.Groupid)
+			// ORM migration site a79f147726d0 (Tier 2 keep-raw review).
+			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
+			// explicit clause.Set, same mechanism as session/merge.go's
+			// mergeChatRooms conversion. Proven in
+			// ormharness/updatejoin_replace_test.go
+			// (TestUpdateJoin_SelfJoinWithLeastExpr).
+			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", req.ID1).
+				Clauses(clause.Set{
+					{Column: clause.Column{Table: "m2", Name: "added"}, Value: gorm.Expr("LEAST(m2.added, m1.added)")},
+				}).
+				Where("m2.userid = ? AND m2.groupid = ?", req.ID2, m1.Groupid).
+				Updates(map[string]interface{}{})
 			// Take non-null attrs from id1 if id2 doesn't have them.
 			if m1.Configid != nil {
 				// ORM migration site 69e208d229bf (wave 2).
@@ -3078,7 +3120,16 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 
 	// added: take the older date — read id1's added timestamp and pass it directly.
 	// Use SQL DATE comparison within MySQL to avoid driver string-format issues.
-	tx.Exec("UPDATE users u2 JOIN users u1 ON u1.id = ? SET u2.added = LEAST(u2.added, u1.added) WHERE u2.id = ?", req.ID1, req.ID2)
+	// ORM migration site 5b72a0acad8e (Tier 2 keep-raw review). Same
+	// mechanism as the memberships LEAST() conversion above; proven in
+	// ormharness/updatejoin_replace_test.go
+	// (TestUpdateJoin_SelfJoinWithLeastExpr).
+	tx.Table("users u2 JOIN users u1 ON u1.id = ?", req.ID1).
+		Clauses(clause.Set{
+			{Column: clause.Column{Table: "u2", Name: "added"}, Value: gorm.Expr("LEAST(u2.added, u1.added)")},
+		}).
+		Where("u2.id = ?", req.ID2).
+		Updates(map[string]interface{}{})
 
 	// lastupdated.
 	// ORM migration site c04d965dfd0e (wave 2).
@@ -3093,59 +3144,62 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	// Simple UPDATE IGNORE tables (V1 parity — ~25 reference tables).
-	type tableUpdate struct {
-		sql  string
-		args []interface{}
-	}
-	simpleUpdates := []tableUpdate{
-		{"UPDATE locations_excluded SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE spam_users SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE spam_users SET byuserid = ? WHERE byuserid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_addresses SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE users_comments SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE users_comments SET byuserid = ? WHERE byuserid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_donations SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_images SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_invitations SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_nearby SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_notifications SET fromuser = ? WHERE fromuser = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_notifications SET touser = ? WHERE touser = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_nudges SET fromuser = ? WHERE fromuser = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_nudges SET touser = ? WHERE touser = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_push_notifications SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_requests SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_requests SET completedby = ? WHERE completedby = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_searches SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE newsfeed SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE messages_reneged SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_stories SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_stories_likes SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_stories_requested SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_thanks SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE modnotifs SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE teams_members SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_aboutme SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE ratings SET rater = ? WHERE rater = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE ratings SET ratee = ? WHERE ratee = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE users_replytime SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE messages_promises SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE messages_by SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE trysts SET user1 = ? WHERE user1 = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE trysts SET user2 = ? WHERE user2 = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE isochrones_users SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE IGNORE microactions SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		// volunteering has no FK on userid (communityevents does — ON DELETE SET NULL).
-		// Without this rewrite, merging id1 leaves their volunteering opportunities pointing
-		// at a userid that vanishes when id1 is deleted at the end of the merge.
-		{"UPDATE volunteering SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE volunteering SET deletedby = ? WHERE deletedby = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE volunteering SET heldby = ? WHERE heldby = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE communityevents SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
-		{"UPDATE communityevents SET heldby = ? WHERE heldby = ?", []interface{}{req.ID2, req.ID1}},
-	}
-	for _, u := range simpleUpdates {
-		tx.Exec(u.sql, u.args...)
-	}
+	//
+	// volunteering has no FK on userid (communityevents does — ON DELETE SET NULL).
+	// Without this rewrite, merging id1 leaves their volunteering opportunities pointing
+	// at a userid that vanishes when id1 is deleted at the end of the merge.
+	//
+	// ORM migration site d5ecca066b1b (Tier 2 keep-raw review). This was
+	// never actually runtime-varying: every one of these 41 statements runs
+	// unconditionally on every call (nothing here is caller-selected), so
+	// there was no dynamic SQL to begin with - only a Go slice+loop shape the
+	// extractor's static analysis couldn't trace u.sql through. Unrolled into
+	// 41 individual GORM calls, each a plain single-table UPDATE[ IGNORE],
+	// exactly the established wave 2 idiom already used a few lines below
+	// (users_banned, line ~3189). Every one of the 41 is declared as its own
+	// shape for this one site id in ormharness/shapes.json and proven by
+	// TestTier2_d5ecca066b1b (iznik-server-go/test).
+	tx.Table("locations_excluded").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("byuserid = ?", req.ID1).Update("byuserid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_addresses").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("users_comments").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("users_comments").Where("byuserid = ?", req.ID1).Update("byuserid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_donations").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_images").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_invitations").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nearby").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_notifications").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_notifications").Where("touser = ?", req.ID1).Update("touser", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nudges").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nudges").Where("touser = ?", req.ID1).Update("touser", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_push_notifications").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_requests").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_requests").Where("completedby = ?", req.ID1).Update("completedby", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_searches").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("newsfeed").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_reneged").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories_likes").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories_requested").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_thanks").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("modnotifs").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("teams_members").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_aboutme").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ratings").Where("rater = ?", req.ID1).Update("rater", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ratings").Where("ratee = ?", req.ID1).Update("ratee", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_replytime").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_promises").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_by").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user1 = ?", req.ID1).Update("user1", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user2 = ?", req.ID1).Update("user2", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("isochrones_users").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("microactions").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("volunteering").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("volunteering").Where("deletedby = ?", req.ID1).Update("deletedby", req.ID2)
+	tx.Table("volunteering").Where("heldby = ?", req.ID1).Update("heldby", req.ID2)
+	tx.Table("communityevents").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("communityevents").Where("heldby = ?", req.ID1).Update("heldby", req.ID2)
 
 	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
 	// ORM migration site af0ff5e0f4de (wave 2).
@@ -3462,24 +3516,26 @@ func GetUserReplies(c *fiber.Ctx) error {
 		Outcome *string `json:"outcome"`
 	}
 
-	query := "SELECT DISTINCT m.id, m.subject, m.type, mg.arrival, mo.outcome " +
-		"FROM chat_messages cm " +
-		"INNER JOIN messages m ON m.id = cm.refmsgid " +
-		"INNER JOIN messages_groups mg ON mg.msgid = m.id " +
-		"LEFT JOIN messages_outcomes mo ON mo.msgid = m.id " +
-		"WHERE cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ?"
-
-	args := []interface{}{targetid, start, utils.CHAT_MESSAGE_INTERESTED}
-
+	// ORM migration site 395499023142 (Tier 3 keep-raw review). msgtype!="" is
+	// the only toggle - 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_395499023142
+	// (iznik-server-go/test).
+	whereSQL := "cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ?"
+	whereArgs := []interface{}{targetid, start, utils.CHAT_MESSAGE_INTERESTED}
 	if msgtype != "" {
-		query += " AND m.type = ?"
-		args = append(args, msgtype)
+		whereSQL += " AND m.type = ?"
+		whereArgs = append(whereArgs, msgtype)
 	}
 
-	query += " ORDER BY mg.arrival DESC LIMIT 100"
+	tx := db.Table("chat_messages cm").
+		Select("DISTINCT m.id, m.subject, m.type, mg.arrival, mo.outcome").
+		Joins("INNER JOIN messages m ON m.id = cm.refmsgid").
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
+		Joins("LEFT JOIN messages_outcomes mo ON mo.msgid = m.id").
+		Where(whereSQL, whereArgs...)
 
 	var replies []ReplyRow
-	db.Raw(query, args...).Scan(&replies)
+	tx.Order("mg.arrival DESC").Limit(100).Scan(&replies)
 
 	if replies == nil {
 		replies = []ReplyRow{}

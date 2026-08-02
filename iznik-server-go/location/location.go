@@ -125,15 +125,16 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	// group centre distance (HAVING hav < currradius), so a containing group whose centre is
 	// far away would otherwise be dropped entirely.
 	containing := []ClosestGroup{}
-	db.Raw("SELECT id, nameshort, namefull, ontn, settings, 0 AS dist, "+
-		"haversine(lat, lng, ?, ?) AS hav, "+
-		"CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 "+
-		"FROM `groups` WHERE ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) "+
-		"AND publish = 1 AND listable = 1 ORDER BY hav ASC, external ASC LIMIT ?;",
-		lat, lng,
-		lat, lng,
-		lng, lat, utils.SRID,
-		limit).Scan(&containing)
+	// ORM migration site 3736547cd88a (Tier 1 spatial review, round 2).
+	db.Table("groups").
+		Select("id, nameshort, namefull, ontn, settings, 0 AS dist, "+
+			"haversine(lat, lng, ?, ?) AS hav, "+
+			"CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2",
+			lat, lng, lat, lng).
+		Where("ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) AND publish = 1 AND listable = 1", lng, lat, utils.SRID).
+		Order("hav ASC, external ASC").
+		Limit(limit).
+		Scan(&containing)
 
 	if len(containing) > 0 {
 		for i, r := range containing {
@@ -177,27 +178,25 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 			swlat = sw.Lat()
 			swlng = sw.Lng()
 
-			db.Raw("SELECT id, nameshort, namefull, ontn, settings, "+
-				"ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, "+
-				"haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 FROM `groups` WHERE "+
-				"MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) "+
-				"AND publish = 1 AND listable = 1 HAVING (hav IS NOT NULL AND hav < ? OR hav2 IS NOT NULL AND hav2 < ?) ORDER BY dist ASC, hav ASC, external ASC LIMIT ?;",
-				lng,
-				lat,
-				utils.SRID,
-				lat,
-				lng,
-				lat,
-				lng,
-				swlng, swlat,
-				swlng, nelat,
-				nelng, nelat,
-				nelng, swlat,
-				swlng, swlat,
-				utils.SRID,
-				currradius,
-				currradius,
-				limit).Scan(&batch)
+			// ORM migration site 961c4c5a214a (Tier 1 spatial review, round 2).
+			// No .Group() call: clause/group_by.go's GroupBy.Build() writes
+			// nothing for an empty Columns list and Clause.Build() skips the
+			// "GROUP BY " name prefix when MergeClause left it "" (which it
+			// does for zero columns), so .Having() alone renders a bare
+			// "HAVING (...)" with no "GROUP BY" before it - matching this
+			// golden, which has none.
+			db.Table("groups").
+				Select("id, nameshort, namefull, ontn, settings, "+
+					"ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, "+
+					"haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2",
+					lng, lat, utils.SRID, lat, lng, lat, lng).
+				Where("MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) "+
+					"AND publish = 1 AND listable = 1",
+					swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID).
+				Having("(hav IS NOT NULL AND hav < ? OR hav2 IS NOT NULL AND hav2 < ?)", currradius, currradius).
+				Order("dist ASC, hav ASC, external ASC").
+				Limit(limit).
+				Scan(&batch)
 
 			if len(batch) > 0 {
 				for i, r := range batch {
@@ -406,11 +405,6 @@ func SearchLocations(c *fiber.Ctx) error {
 			limit = 100
 		}
 
-		pcq := ""
-		if pconly {
-			pcq = "AND l1.type = '" + TYPE_POSTCODE + "'"
-		}
-
 		locations := []Location{}
 		db := database.DBConn
 
@@ -420,13 +414,19 @@ func SearchLocations(c *fiber.Ctx) error {
 			AreaLng float32 `json:"-" gorm:"column:arealng"`
 		}
 
+		// ORM migration site b262bf75df3c (Tier 3 keep-raw review). pcq is only
+		// appended when pconly is set, so this statement has exactly 2
+		// possible rendered forms, both declared in ormharness/shapes.json and
+		// proven by TestTier3Shapes_b262bf75df3c (iznik-server-go/test).
 		var locs []locationWithArea
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng "+
-			"FROM locations l1 "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE l1.name LIKE ? "+pcq+" AND l1.name LIKE '% %' LIMIT ?;",
-			typeaheadStr+"%",
-			limit).Scan(&locs)
+		txb262bf75df3c := db.Table("locations l1").
+			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
+			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+			Where("l1.name LIKE ?", typeaheadStr+"%")
+		if pconly {
+			txb262bf75df3c = txb262bf75df3c.Where("l1.type = '" + TYPE_POSTCODE + "'")
+		}
+		txb262bf75df3c.Where("l1.name LIKE '% %'").Limit(int(limit)).Scan(&locs)
 
 		for i, l := range locs {
 			locations = append(locations, l.Location)
@@ -477,22 +477,27 @@ func SearchLocations(c *fiber.Ctx) error {
 			// vanish (Discourse #9770). The write side already stores full detail; the editor needs to
 			// read it back at full detail too. Edited areas are small neighbourhood polygons, so the
 			// payload cost of dropping simplification here is negligible.
-			db.Raw("SELECT DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, "+
-				"ST_AsText(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END) AS polygon "+
-				"FROM (SELECT DISTINCT locationid FROM locations_spatial "+
+			// ORM migration site dc731a47a66a (Tier 1 spatial review, round 2).
+			// .Table() accepts args when the name has embedded "?"s (same
+			// mechanism as a plain literal table name), so the derived-table
+			// subquery and its own bind travel together in the FROM clause -
+			// before the LIMIT and the (bindless) Joins/Where that follow it.
+			db.Table("(SELECT DISTINCT locationid FROM locations_spatial "+
 				"INNER JOIN locations l2 ON l2.areaid = locations_spatial.locationid "+
 				"WHERE ST_Intersects(locations_spatial.geometry, "+
 				"ST_GeomFromText(?, ?)) "+
-				"AND l2.type = ?) ls "+
-				"INNER JOIN locations l ON l.id = ls.locationid "+
-				"LEFT JOIN locations_excluded ON ls.locationid = locations_excluded.locationid "+
-				"WHERE locations_excluded.locationid IS NULL "+
-				"LIMIT 500;",
+				"AND l2.type = ?) ls",
 				fmt.Sprintf("POLYGON((%f %f, %f %f, %f %f, %f %f, %f %f))",
 					swlng, swlat, nelng, swlat, nelng, nelat, swlng, nelat, swlng, swlat),
 				utils.SRID,
-				utils.LOCATION_TYPE_POSTCODE,
-			).Scan(&boxLocs)
+				utils.LOCATION_TYPE_POSTCODE).
+				Select("DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, " +
+					"ST_AsText(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END) AS polygon").
+				Joins("INNER JOIN locations l ON l.id = ls.locationid").
+				Joins("LEFT JOIN locations_excluded ON ls.locationid = locations_excluded.locationid").
+				Where("locations_excluded.locationid IS NULL").
+				Limit(500).
+				Scan(&boxLocs)
 
 			// Handle POINT geometries - convert to small polygons.
 			for i, loc := range boxLocs {
@@ -548,12 +553,6 @@ func Typeahead(c *fiber.Ctx) error {
 	typeahead := c.Query("q")
 	pconly := c.QueryBool("pconly", true)
 
-	pcq := ""
-
-	if pconly {
-		pcq = "AND l1.type = '" + TYPE_POSTCODE + "'"
-	}
-
 	// We want to select full postcodes (with a space in them).
 	typeahead = strings.ReplaceAll(typeahead, `\s`, "")
 
@@ -568,13 +567,20 @@ func Typeahead(c *fiber.Ctx) error {
 			AreaLng float32 `json:"-" gorm:"column:arealng"`
 		}
 
+		// ORM migration site 71f1772f4a99 (Tier 3 keep-raw review). Shares
+		// SearchLocations's pattern: pcq is only appended when pconly is set,
+		// so this statement has exactly 2 possible rendered forms, both
+		// declared in ormharness/shapes.json and proven by
+		// TestTier3Shapes_71f1772f4a99 (iznik-server-go/test).
 		var locs []locationWithArea
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng "+
-			"FROM locations l1 "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE l1.name LIKE ? "+pcq+" AND l1.name LIKE '% %' LIMIT ?;",
-			typeahead+"%",
-			limit64).Scan(&locs)
+		tx71f1772f4a99 := db.Table("locations l1").
+			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
+			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+			Where("l1.name LIKE ?", typeahead+"%")
+		if pconly {
+			tx71f1772f4a99 = tx71f1772f4a99.Where("l1.type = '" + TYPE_POSTCODE + "'")
+		}
+		tx71f1772f4a99.Where("l1.name LIKE '% %'").Limit(int(limit64)).Scan(&locs)
 
 		for i, l := range locs {
 			locations = append(locations, l.Location)
@@ -743,10 +749,16 @@ func CreateLocation(c *fiber.Ctx) error {
 
 	if id > 0 {
 		// Sync to the spatial index table (required by PostcodeRemapService).
-		db.Exec(
-			fmt.Sprintf("REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, %d))", utils.SRID),
-			id, req.Polygon,
-		)
+		// ORM migration site 25b7b92e33fd (tier4). utils.SRID is spliced as a
+		// literal into the gorm.Expr SQL text, matching exactly what the
+		// original fmt.Sprintf produced, rather than bound as "?" - the
+		// recorded golden is the literal-spliced form (manifest.json's
+		// dynamic:true "%d" placeholder resolved to utils.SRID's value).
+		db.Table("locations_spatial").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{
+				"locationid": id,
+				"geometry":   gorm.Expr(fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), req.Polygon),
+			})
 
 		// Cache centroid and max dimension, as UpdateLocation does. Without this a
 		// created area has NULL lat/lng, unlike every edited one.
@@ -804,7 +816,18 @@ func UpdateLocation(c *fiber.Ctx) error {
 	if req.Polygon != nil && *req.Polygon != "" {
 		// Validate geometry first.
 		var valid bool
-		db.Raw(fmt.Sprintf("SELECT ST_IsValid(ST_GeomFromText(?, %d)) AS valid", utils.SRID), *req.Polygon).Scan(&valid)
+		// ORM migration site 745c0a9ca82e (Tier 1 spatial review, round 3).
+		// Same bare-scalar-SELECT technique as group.go's validateGeometry
+		// (site 6d0982e798b5): Statement.BuildClauses={"SELECT"} suppresses
+		// GORM's automatic FROM. SRID is folded into the Select() string via
+		// fmt.Sprintf, matching the shipped gorm.Expr(fmt.Sprintf(...)) idiom
+		// this same function's locations_spatial REPLACE already uses below
+		// (site 6f1d6543e5c0). .Table(...) is required even though it never
+		// renders - without it GORM's schema-parse-failure branch rejects the
+		// statement for having no table set.
+		tx := db.Table("locations").Select(fmt.Sprintf("ST_IsValid(ST_GeomFromText(?, %d)) AS valid", utils.SRID), *req.Polygon)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		tx.Scan(&valid)
 
 		if !valid {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid geometry")
@@ -839,20 +862,34 @@ func UpdateLocation(c *fiber.Ctx) error {
 			*req.Polygon, *req.Polygon, req.ID).Scan(&oldGeom)
 
 		// Update ourgeometry (the human-edited override), not geometry (which is from OSM).
-		result := db.Exec(
-			fmt.Sprintf("UPDATE locations SET `type` = 'Polygon', ourgeometry = ST_GeomFromText(?, %d) WHERE id = ?", utils.SRID),
-			*req.Polygon, req.ID,
-		)
+		// ORM migration site aa63c688e6b1 (Tier 1 spatial review, round 3). An
+		// explicit clause.Set (not Updates(map)) keeps type before ourgeometry
+		// as the original SET list had it. `type` = 'Polygon' is a literal in
+		// the original (not a bind), so its Value is gorm.Expr("'Polygon'"),
+		// not a plain Go string - a plain string would bind it, adding a
+		// placeholder the original SQL never had.
+		result := db.Table("locations").
+			Clauses(clause.Set{
+				{Column: clause.Column{Name: "type"}, Value: gorm.Expr("'Polygon'")},
+				{Column: clause.Column{Name: "ourgeometry"}, Value: gorm.Expr(
+					fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), *req.Polygon)},
+			}).
+			Where("id = ?", req.ID).
+			Updates(map[string]interface{}{})
 
 		if result.Error != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to update geometry")
 		}
 
 		// Update the spatial index table.
-		db.Exec(
-			fmt.Sprintf("REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, %d))", utils.SRID),
-			req.ID, *req.Polygon,
-		)
+		// ORM migration site 6f1d6543e5c0 (tier4). See CreateLocation's
+		// 25b7b92e33fd for why SRID is spliced into the gorm.Expr text
+		// rather than bound.
+		db.Table("locations_spatial").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{
+				"locationid": req.ID,
+				"geometry":   gorm.Expr(fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), *req.Polygon),
+			})
 
 		// Update cached centroid and max dimensions.
 		// ORM migration site 7d5f2f96661e (wave 5).

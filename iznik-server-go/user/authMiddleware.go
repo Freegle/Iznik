@@ -43,8 +43,22 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 
 				// We have a uid.  Check if the user is still present in the DB.
 				// Also fetch systemrole for HAProxy rate limit exemption.
-				const q = "SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1;"
-				result := db.Raw(q, sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
+				//
+				// ORM migration sites 4853849663f1 and e04bf70e7bee (Tier 3
+				// keep-raw review). Both call sites render the same fixed
+				// text - the extractor just could not fold it across the two
+				// call sites - so each has exactly one rendered form, declared
+				// in ormharness/shapes.json and proven by
+				// TestTier3Shapes_4853849663f1 / TestTier3Shapes_e04bf70e7bee
+				// (iznik-server-go/test).
+				sessionQuery := func(tx *gorm.DB) *gorm.DB {
+					return tx.Table("sessions").
+						Select("users.id, users.lastaccess, users.systemrole").
+						Joins("INNER JOIN users ON users.id = sessions.userid").
+						Where("sessions.id = ? AND users.id = ?", sessionIdInJWT, userIdInJWT).
+						Limit(1)
+				}
+				result := sessionQuery(db).Scan(&userIdInDB)
 				dbQueryErr = result.Error
 
 				// Read/write split: the session row is INSERTed on the write host at login, so a
@@ -53,7 +67,7 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 				// confirm against the write host before treating the session as invalid.
 				// .Clauses(dbresolver.Write) is a no-op when no replica is configured.
 				if dbQueryErr == nil && userIdInDB.Id == 0 {
-					result = db.Clauses(dbresolver.Write).Raw(q, sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
+					result = sessionQuery(db.Clauses(dbresolver.Write)).Scan(&userIdInDB)
 					dbQueryErr = result.Error
 				}
 			}()

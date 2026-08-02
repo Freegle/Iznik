@@ -84,15 +84,15 @@ type EmailStats struct {
 	TotalSent       int64   `json:"total_sent"`
 	Opened          int64   `json:"opened"`
 	Clicked         int64   `json:"clicked"`
-	LinkedBounces   int64   `json:"linked_bounces"`   // Bounces matched to specific tracked emails via bounced_at
+	LinkedBounces   int64   `json:"linked_bounces"` // Bounces matched to specific tracked emails via bounced_at
 	OpenRate        float64 `json:"open_rate"`
 	ClickRate       float64 `json:"click_rate"`
 	ClickToOpenRate float64 `json:"click_to_open_rate"`
 	BounceRate      float64 `json:"bounce_rate"`
 	// Actual bounces from bounces_emails table (includes all bounces, not just tracked ones)
-	TotalBounces     int64   `json:"total_bounces"`
-	PermanentBounces int64   `json:"permanent_bounces"`
-	TemporaryBounces int64   `json:"temporary_bounces"`
+	TotalBounces     int64 `json:"total_bounces"`
+	PermanentBounces int64 `json:"permanent_bounces"`
+	TemporaryBounces int64 `json:"temporary_bounces"`
 }
 
 // AMPStats represents AMP-specific statistics
@@ -104,18 +104,18 @@ type AMPStats struct {
 	AMPRendered   int64   `json:"amp_rendered"`
 	AMPRenderRate float64 `json:"amp_render_rate"`
 	// AMP engagement metrics
-	AMPOpened     int64   `json:"amp_opened"`
-	AMPClicked    int64   `json:"amp_clicked"`
-	AMPLinkedBounces int64 `json:"amp_linked_bounces"` // AMP emails with bounces matched to tracked emails
-	AMPReplied    int64   `json:"amp_replied"`
-	AMPOpenRate   float64 `json:"amp_open_rate"`
-	AMPClickRate  float64 `json:"amp_click_rate"`
-	AMPBounceRate float64 `json:"amp_bounce_rate"`
-	AMPReplyRate  float64 `json:"amp_reply_rate"`
+	AMPOpened        int64   `json:"amp_opened"`
+	AMPClicked       int64   `json:"amp_clicked"`
+	AMPLinkedBounces int64   `json:"amp_linked_bounces"` // AMP emails with bounces matched to tracked emails
+	AMPReplied       int64   `json:"amp_replied"`
+	AMPOpenRate      float64 `json:"amp_open_rate"`
+	AMPClickRate     float64 `json:"amp_click_rate"`
+	AMPBounceRate    float64 `json:"amp_bounce_rate"`
+	AMPReplyRate     float64 `json:"amp_reply_rate"`
 	// Reply breakdown by method for AMP-enabled emails
-	AMPRepliedViaAMP   int64   `json:"amp_replied_via_amp"`   // Replies via AMP form
-	AMPRepliedViaEmail int64   `json:"amp_replied_via_email"` // Replies via email
-	AMPReplyViaAMPRate float64 `json:"amp_reply_via_amp_rate"`
+	AMPRepliedViaAMP     int64   `json:"amp_replied_via_amp"`   // Replies via AMP form
+	AMPRepliedViaEmail   int64   `json:"amp_replied_via_email"` // Replies via email
+	AMPReplyViaAMPRate   float64 `json:"amp_reply_via_amp_rate"`
 	AMPReplyViaEmailRate float64 `json:"amp_reply_via_email_rate"`
 	// Click breakdown: reply clicks (to message/chat pages) vs other clicks
 	AMPReplyClicks    int64   `json:"amp_reply_clicks"`     // Clicks to reply on web
@@ -127,14 +127,14 @@ type AMPStats struct {
 	// Legacy action rate (for backwards compatibility)
 	AMPActionRate float64 `json:"amp_action_rate"`
 	// Non-AMP engagement metrics (for comparison)
-	NonAMPOpened      int64   `json:"non_amp_opened"`
-	NonAMPClicked     int64   `json:"non_amp_clicked"`
-	NonAMPLinkedBounces int64 `json:"non_amp_linked_bounces"` // Non-AMP emails with bounces matched to tracked emails
-	NonAMPReplied     int64   `json:"non_amp_replied"`
-	NonAMPOpenRate    float64 `json:"non_amp_open_rate"`
-	NonAMPClickRate   float64 `json:"non_amp_click_rate"`
-	NonAMPBounceRate  float64 `json:"non_amp_bounce_rate"`
-	NonAMPReplyRate   float64 `json:"non_amp_reply_rate"`
+	NonAMPOpened        int64   `json:"non_amp_opened"`
+	NonAMPClicked       int64   `json:"non_amp_clicked"`
+	NonAMPLinkedBounces int64   `json:"non_amp_linked_bounces"` // Non-AMP emails with bounces matched to tracked emails
+	NonAMPReplied       int64   `json:"non_amp_replied"`
+	NonAMPOpenRate      float64 `json:"non_amp_open_rate"`
+	NonAMPClickRate     float64 `json:"non_amp_click_rate"`
+	NonAMPBounceRate    float64 `json:"non_amp_bounce_rate"`
+	NonAMPReplyRate     float64 `json:"non_amp_reply_rate"`
 	// Click breakdown for non-AMP
 	NonAMPReplyClicks    int64   `json:"non_amp_reply_clicks"`
 	NonAMPOtherClicks    int64   `json:"non_amp_other_clicks"`
@@ -451,19 +451,21 @@ type BouncesEmailsStats struct {
 }
 
 // getBouncesEmailsStats queries the bounces_emails table for actual bounce counts
+// ORM migration site e1daa6fea45a (Tier 3 keep-raw review). The date-range
+// clause is only appended when both startDate and endDate are supplied, so
+// this statement has exactly 2 possible rendered forms, both declared in
+// ormharness/shapes.json and proven by TestTier3Shapes_e1daa6fea45a
+// (iznik-server-go/test).
 func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmailsStats {
 	var stats BouncesEmailsStats
 
-	query := `
-		SELECT
-			COUNT(*) as total,
-			SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent,
-			SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary
-		FROM bounces_emails
-		WHERE reset = 0
-	`
-
-	var args []interface{}
+	// The WHERE is built as a single string and passed to ONE Where() call:
+	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an
+	// extra paren pair once there is more than one Where expression to
+	// combine (clause/where.go buildExprs) - and BETWEEN ... AND ... counts,
+	// so this would diverge from the golden if split into two Where() calls.
+	whereSQL := "reset = 0"
+	var whereArgs []interface{}
 
 	if startDate != "" && endDate != "" {
 		// If endDate doesn't include time, add end of day
@@ -471,11 +473,16 @@ func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmails
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		query += " AND date BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
+		whereSQL += " AND date BETWEEN ? AND ?"
+		whereArgs = append(whereArgs, startDate, endDateTime)
 	}
 
-	db.Raw(query, args...).Scan(&stats)
+	db.Table("bounces_emails").
+		Select("COUNT(*) as total, "+
+			"SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent, "+
+			"SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary").
+		Where(whereSQL, whereArgs...).
+		Scan(&stats)
 
 	return stats
 }
@@ -484,29 +491,58 @@ func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmails
 func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	var stats AMPStats
 
-	// Build base query conditions - exclude Trash Nothing users from stats
-	conditions := "1=1 AND users.tnuserid IS NULL"
-	var args []interface{}
-
-	if emailType != "" {
-		conditions += " AND email_type = ?"
-		args = append(args, emailType)
-	}
-	if startDate != "" && endDate != "" {
+	// Build the shared date-range window (used by all four queries below).
+	var endDateTime string
+	hasDateRange := startDate != "" && endDate != ""
+	if hasDateRange {
 		// If endDate doesn't include time, add end of day
-		endDateTime := endDate
+		endDateTime = endDate
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		conditions += " AND sent_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
 	}
 
-	// All queries JOIN users to exclude Trash Nothing users
-	tnJoin := "LEFT JOIN users ON email_tracking.userid = users.id"
+	// conditions builds the shared emailType/date-range toggles - up to four
+	// possible shapes - and their flat arg list, for one of the four queries
+	// below, using that query's own alias for the users join and the
+	// sent_at column.
+	conditions := func(userCol, dateCol string) (string, []interface{}) {
+		sql := "1=1 AND " + userCol + " IS NULL"
+		var args []interface{}
+		if emailType != "" {
+			sql += " AND email_type = ?"
+			args = append(args, emailType)
+		}
+		if hasDateRange {
+			sql += " AND " + dateCol + " BETWEEN ? AND ?"
+			args = append(args, startDate, endDateTime)
+		}
+		return sql, args
+	}
 
-	// Query for AMP emails
-	ampConditions := conditions + " AND has_amp = 1"
+	// countsWhere/clickWhere assemble the final WHERE - has_amp sits AFTER
+	// conditions for the counts queries but BEFORE it for the click-breakdown
+	// queries, mirroring the original ampConditions/nonAMPConditions vs
+	// "e.has_amp = 1 AND "+clickConditions string-building. Each returns ONE
+	// combined string for ONE Where() call: GORM's clause.Where wraps any
+	// fragment containing "AND"/"OR" in an extra paren pair once there is
+	// more than one Where expression to combine (clause/where.go
+	// buildExprs), which would diverge from the golden.
+	countsWhere := func(userCol, dateCol, hasAmp string) (string, []interface{}) {
+		cond, args := conditions(userCol, dateCol)
+		return cond + " AND has_amp = " + hasAmp, args
+	}
+	clickWhere := func(userCol, dateCol, hasAmp string) (string, []interface{}) {
+		cond, args := conditions(userCol, dateCol)
+		return hasAmp + " AND " + cond, args
+	}
+
+	// Query for AMP emails.
+	//
+	// ORM migration site 52ecf7eb71ac (Tier 3 keep-raw review). The
+	// emailType/date-range toggles give 4 possible rendered forms, all
+	// declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_52ecf7eb71ac (iznik-server-go/test).
 	var ampCounts struct {
 		Total           int64
 		Opened          int64
@@ -517,22 +553,25 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 		RepliedViaEmail int64
 		Rendered        int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(*) as total,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces,
-			SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied,
-			SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp,
-			SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email,
-			SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered
-		FROM email_tracking
-		`+tnJoin+`
-		WHERE `+ampConditions, args...).Scan(&ampCounts)
+	ampWhereSQL, ampWhereArgs := countsWhere("users.tnuserid", "sent_at", "1")
+	db.Table("email_tracking").
+		Select("COUNT(*) as total, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
+			"SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied, "+
+			"SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, "+
+			"SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, "+
+			"SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(ampWhereSQL, ampWhereArgs...).Scan(&ampCounts)
 
-	// Query for non-AMP emails
-	nonAMPConditions := conditions + " AND has_amp = 0"
+	// Query for non-AMP emails.
+	//
+	// ORM migration site c8a4c6cbcae8 (Tier 3 keep-raw review). Same toggles
+	// as the AMP query above - 4 possible rendered forms, all declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_c8a4c6cbcae8
+	// (iznik-server-go/test).
 	var nonAMPCounts struct {
 		Total         int64
 		Opened        int64
@@ -540,16 +579,15 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 		LinkedBounces int64
 		Replied       int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(*) as total,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces,
-			SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied
-		FROM email_tracking
-		`+tnJoin+`
-		WHERE `+nonAMPConditions, args...).Scan(&nonAMPCounts)
+	nonAMPWhereSQL, nonAMPWhereArgs := countsWhere("users.tnuserid", "sent_at", "0")
+	db.Table("email_tracking").
+		Select("COUNT(*) as total, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
+			"SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(nonAMPWhereSQL, nonAMPWhereArgs...).Scan(&nonAMPCounts)
 
 	// Populate stats
 	stats.TotalWithAMP = ampCounts.Total
@@ -569,35 +607,38 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	// Query for click breakdown (reply clicks vs other clicks)
 	// Reply clicks are clicks to message/chat pages where users can reply
 	// Exclude Trash Nothing users via JOIN on users table
-	clickConditions := strings.Replace(conditions, "sent_at", "e.sent_at", -1)
-	clickConditions = strings.Replace(clickConditions, "users.tnuserid", "u.tnuserid", -1)
-	clickTNJoin := "LEFT JOIN users u ON e.userid = u.id"
-
+	//
+	// ORM migration site ef321afa5b7a (Tier 3 keep-raw review). Same toggles,
+	// applied via the e./u. aliases this query uses - 4 possible rendered
+	// forms, all declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_ef321afa5b7a (iznik-server-go/test).
 	var ampClickBreakdown struct {
 		ReplyClicks int64
 		OtherClicks int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks,
-			COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		`+clickTNJoin+`
-		WHERE e.has_amp = 1 AND `+clickConditions, args...).Scan(&ampClickBreakdown)
+	ampClickWhereSQL, ampClickWhereArgs := clickWhere("u.tnuserid", "e.sent_at", "e.has_amp = 1")
+	db.Table("email_tracking_clicks c").
+		Select("COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, "+
+			"COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Joins("LEFT JOIN users u ON e.userid = u.id").
+		Where(ampClickWhereSQL, ampClickWhereArgs...).Scan(&ampClickBreakdown)
 
+	// ORM migration site b37a229bfb0b (Tier 3 keep-raw review). Non-AMP twin
+	// of ef321afa5b7a above - 4 possible rendered forms, all declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_b37a229bfb0b
+	// (iznik-server-go/test).
 	var nonAMPClickBreakdown struct {
 		ReplyClicks int64
 		OtherClicks int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks,
-			COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		`+clickTNJoin+`
-		WHERE e.has_amp = 0 AND `+clickConditions, args...).Scan(&nonAMPClickBreakdown)
+	nonAMPClickWhereSQL, nonAMPClickWhereArgs := clickWhere("u.tnuserid", "e.sent_at", "e.has_amp = 0")
+	db.Table("email_tracking_clicks c").
+		Select("COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, "+
+			"COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Joins("LEFT JOIN users u ON e.userid = u.id").
+		Where(nonAMPClickWhereSQL, nonAMPClickWhereArgs...).Scan(&nonAMPClickBreakdown)
 
 	stats.AMPReplyClicks = ampClickBreakdown.ReplyClicks
 	stats.AMPOtherClicks = ampClickBreakdown.OtherClicks
@@ -653,18 +694,18 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 
 // UserEmailTrackingResponse represents email tracking data for a user
 type UserEmailTrackingResponse struct {
-	ID            uint64     `json:"id"`
-	EmailType     string     `json:"email_type"`
-	Subject       *string    `json:"subject"`
-	SentAt        *time.Time `json:"sent_at"`
-	OpenedAt      *time.Time `json:"opened_at"`
-	OpenedVia     *string    `json:"opened_via"`
-	ClickedAt     *time.Time `json:"clicked_at"`
-	ClickedLink   *string    `json:"clicked_link"`
-	LinksClicked  uint16     `json:"links_clicked"`
-	BouncedAt     *time.Time `json:"bounced_at"`
+	ID             uint64     `json:"id"`
+	EmailType      string     `json:"email_type"`
+	Subject        *string    `json:"subject"`
+	SentAt         *time.Time `json:"sent_at"`
+	OpenedAt       *time.Time `json:"opened_at"`
+	OpenedVia      *string    `json:"opened_via"`
+	ClickedAt      *time.Time `json:"clicked_at"`
+	ClickedLink    *string    `json:"clicked_link"`
+	LinksClicked   uint16     `json:"links_clicked"`
+	BouncedAt      *time.Time `json:"bounced_at"`
 	UnsubscribedAt *time.Time `json:"unsubscribed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // UserEmails returns email tracking for a specific user (requires authentication)
@@ -841,11 +882,11 @@ type DailyStats struct {
 	PermanentBounces int64 `json:"permanent_bounces"`
 	TemporaryBounces int64 `json:"temporary_bounces"`
 	// AMP-specific metrics
-	AMPSent          int64 `json:"amp_sent"`
-	AMPOpened        int64 `json:"amp_opened"`
-	AMPClicked       int64 `json:"amp_clicked"`
-	AMPLinkedBounces int64 `json:"amp_linked_bounces"`
-	AMPReplied       int64 `json:"amp_replied"`
+	AMPSent             int64 `json:"amp_sent"`
+	AMPOpened           int64 `json:"amp_opened"`
+	AMPClicked          int64 `json:"amp_clicked"`
+	AMPLinkedBounces    int64 `json:"amp_linked_bounces"`
+	AMPReplied          int64 `json:"amp_replied"`
 	NonAMPSent          int64 `json:"non_amp_sent"`
 	NonAMPOpened        int64 `json:"non_amp_opened"`
 	NonAMPClicked       int64 `json:"non_amp_clicked"`
@@ -903,62 +944,69 @@ func TimeSeries(c *fiber.Ctx) error {
 
 	// Build query for daily stats including AMP breakdown
 	// Exclude Trash Nothing users from stats
-	query := `
-		SELECT
-			DATE(sent_at) as date,
-			COUNT(*) as sent,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces,
-			SUM(CASE WHEN has_amp = 1 THEN 1 ELSE 0 END) as amp_sent,
-			SUM(CASE WHEN has_amp = 1 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as amp_opened,
-			SUM(CASE WHEN has_amp = 1 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as amp_clicked,
-			SUM(CASE WHEN has_amp = 1 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as amp_linked_bounces,
-			SUM(CASE WHEN has_amp = 1 AND replied_at IS NOT NULL THEN 1 ELSE 0 END) as amp_replied,
-			SUM(CASE WHEN has_amp = 0 THEN 1 ELSE 0 END) as non_amp_sent,
-			SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened,
-			SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked,
-			SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces
-		FROM email_tracking FORCE INDEX (sent_at)
-		LEFT JOIN users ON email_tracking.userid = users.id
-		WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?
-	`
-
+	//
+	// ORM migration site 69f6acdc5a6b (Tier 3 keep-raw review). The email_type
+	// filter is only appended when one was supplied, so this statement has
+	// exactly 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_69f6acdc5a6b
+	// (iznik-server-go/test).
+	//
 	// If endDate doesn't include time, add end of day
 	endDateTime := endDate
 	if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 		endDateTime = endDate + " 23:59:59"
 	}
-	args := []interface{}{startDate, endDateTime}
 
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	tsWhereSQL := "users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?"
+	tsWhereArgs := []interface{}{startDate, endDateTime}
 	if emailType != "" {
-		query += " AND email_type = ?"
-		args = append(args, emailType)
+		tsWhereSQL += " AND email_type = ?"
+		tsWhereArgs = append(tsWhereArgs, emailType)
 	}
 
-	query += " GROUP BY DATE(sent_at) ORDER BY date ASC"
-
 	var dailyStats []DailyStats
-	db.Raw(query, args...).Scan(&dailyStats)
+	db.Table("email_tracking FORCE INDEX (sent_at)").
+		Select("DATE(sent_at) as date, COUNT(*) as sent, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
+			"SUM(CASE WHEN has_amp = 1 THEN 1 ELSE 0 END) as amp_sent, "+
+			"SUM(CASE WHEN has_amp = 1 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as amp_opened, "+
+			"SUM(CASE WHEN has_amp = 1 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as amp_clicked, "+
+			"SUM(CASE WHEN has_amp = 1 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as amp_linked_bounces, "+
+			"SUM(CASE WHEN has_amp = 1 AND replied_at IS NOT NULL THEN 1 ELSE 0 END) as amp_replied, "+
+			"SUM(CASE WHEN has_amp = 0 THEN 1 ELSE 0 END) as non_amp_sent, "+
+			"SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened, "+
+			"SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked, "+
+			"SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(tsWhereSQL, tsWhereArgs...).
+		Group("DATE(sent_at)").Order("date ASC").Scan(&dailyStats)
 
-	// Get daily bounce counts from bounces_emails table
-	bounceQuery := `
-		SELECT
-			DATE(date) as date,
-			COUNT(*) as total_bounces,
-			SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent_bounces,
-			SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary_bounces
-		FROM bounces_emails
-		WHERE reset = 0 AND date BETWEEN ? AND ?
-		GROUP BY DATE(date)
-	`
+	// Get daily bounce counts from bounces_emails table.
+	//
+	// ORM migration site 9d115fb3ebcd (Tier 3 keep-raw review). This text is
+	// entirely fixed - the extractor just could not fold the local
+	// `bounceQuery` variable to a static golden. Declared (as a single shape)
+	// in ormharness/shapes.json and proven by TestTier3Shapes_9d115fb3ebcd
+	// (iznik-server-go/test).
 	var dailyBounces []struct {
 		Date             string `gorm:"column:date"`
 		TotalBounces     int64  `gorm:"column:total_bounces"`
 		PermanentBounces int64  `gorm:"column:permanent_bounces"`
 		TemporaryBounces int64  `gorm:"column:temporary_bounces"`
 	}
-	db.Raw(bounceQuery, startDate, endDateTime).Scan(&dailyBounces)
+	db.Table("bounces_emails").
+		Select("DATE(date) as date, COUNT(*) as total_bounces, "+
+			"SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent_bounces, "+
+			"SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary_bounces").
+		Where("reset = 0 AND date BETWEEN ? AND ?", startDate, endDateTime).
+		Group("DATE(date)").
+		Scan(&dailyBounces)
 
 	// Create a map for quick lookup
 	bounceMap := make(map[string]struct {
@@ -1040,19 +1088,18 @@ func StatsByType(c *fiber.Ctx) error {
 	endDate := c.Query("end", "")
 
 	// Build query for stats by type - exclude Trash Nothing users
-	query := `
-		SELECT
-			email_type,
-			COUNT(*) as total_sent,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces
-		FROM email_tracking FORCE INDEX (sent_at)
-		LEFT JOIN users ON email_tracking.userid = users.id
-		WHERE users.tnuserid IS NULL
-	`
-
-	var args []interface{}
+	//
+	// ORM migration site ecbedcafc048 (Tier 3 keep-raw review). The date-range
+	// clause is only appended when both startDate and endDate are supplied, so
+	// this statement has exactly 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_ecbedcafc048
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	sbtWhereSQL := "users.tnuserid IS NULL"
+	var sbtWhereArgs []interface{}
 
 	if startDate != "" && endDate != "" {
 		// If endDate doesn't include time, add end of day
@@ -1060,11 +1107,17 @@ func StatsByType(c *fiber.Ctx) error {
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		query += " AND sent_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
+		sbtWhereSQL += " AND sent_at BETWEEN ? AND ?"
+		sbtWhereArgs = append(sbtWhereArgs, startDate, endDateTime)
 	}
 
-	query += " GROUP BY email_type ORDER BY total_sent DESC"
+	tx := db.Table("email_tracking FORCE INDEX (sent_at)").
+		Select("email_type, COUNT(*) as total_sent, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(sbtWhereSQL, sbtWhereArgs...)
 
 	var rawStats []struct {
 		EmailType     string `gorm:"column:email_type"`
@@ -1073,7 +1126,7 @@ func StatsByType(c *fiber.Ctx) error {
 		Clicked       int64  `gorm:"column:clicked"`
 		LinkedBounces int64  `gorm:"column:linked_bounces"`
 	}
-	db.Raw(query, args...).Scan(&rawStats)
+	tx.Group("email_type").Order("total_sent DESC").Scan(&rawStats)
 
 	// Calculate rates
 	stats := make([]EmailTypeStats, len(rawStats))
@@ -1185,15 +1238,19 @@ func TopClickedLinks(c *fiber.Ctx) error {
 	// Default to aggregated (true) unless explicitly set to false
 	aggregate := c.Query("aggregate", "true") != "false"
 
-	// Get all clicked links within the date range
-	query := `
-		SELECT c.link_url, COUNT(*) as click_count
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		WHERE 1=1
-	`
-
-	var args []interface{}
+	// Get all clicked links within the date range.
+	//
+	// ORM migration site f6e4a52a0fb6 (Tier 3 keep-raw review). The date-range
+	// clause is only appended when both startDate and endDate are supplied, so
+	// this statement has exactly 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_f6e4a52a0fb6
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	tclWhereSQL := "1=1"
+	var tclWhereArgs []interface{}
 
 	if startDate != "" && endDate != "" {
 		// If endDate doesn't include time, add end of day
@@ -1201,17 +1258,20 @@ func TopClickedLinks(c *fiber.Ctx) error {
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		query += " AND c.clicked_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
+		tclWhereSQL += " AND c.clicked_at BETWEEN ? AND ?"
+		tclWhereArgs = append(tclWhereArgs, startDate, endDateTime)
 	}
 
-	query += " GROUP BY c.link_url ORDER BY click_count DESC"
+	tx := db.Table("email_tracking_clicks c").
+		Select("c.link_url, COUNT(*) as click_count").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Where(tclWhereSQL, tclWhereArgs...)
 
 	var rawClicks []struct {
 		LinkURL    string `gorm:"column:link_url"`
 		ClickCount int64  `gorm:"column:click_count"`
 	}
-	db.Raw(query, args...).Scan(&rawClicks)
+	tx.Group("c.link_url").Order("click_count DESC").Scan(&rawClicks)
 
 	var results []ClickedLinkStats
 
@@ -1468,38 +1528,53 @@ func DigestClickPositions(c *fiber.Ctx) error {
 
 	// By default consider all unified digest types; allow an exact-type override.
 	emailType := c.Query("type", "")
-	typeClause := "e.email_type LIKE 'UnifiedDigest%'"
-	var typeArgs []interface{}
-	if emailType != "" {
-		typeClause = "e.email_type = ?"
-		typeArgs = append(typeArgs, emailType)
-	}
 
-	// Conditions shared by both queries to keep the cohort consistent.
-	cohort := typeClause + `
-		AND u.tnuserid IS NULL
-		AND e.metadata IS NOT NULL
-		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
-		AND e.sent_at BETWEEN ? AND ?`
+	// cohortWhere builds the shared type/tnuserid/metadata/date-range
+	// conditions - keeping the two queries below on the same cohort - for
+	// either query's own e./u. aliases, plus any extra condition that query
+	// needs appended (the click query's link_position REGEXP). The only
+	// real toggle is the type filter (default 'UnifiedDigest%' vs an
+	// explicit type), giving 2 possible rendered forms per query. Returns
+	// ONE combined string for ONE Where() call: GORM's clause.Where wraps
+	// any fragment containing "AND"/"OR" in an extra paren pair once there
+	// is more than one Where expression to combine (clause/where.go
+	// buildExprs), which would diverge from the golden.
+	cohortWhere := func(extra string) (string, []interface{}) {
+		sql := "e.email_type LIKE 'UnifiedDigest%'"
+		var args []interface{}
+		if emailType != "" {
+			sql = "e.email_type = ?"
+			args = append(args, emailType)
+		}
+		sql += " AND u.tnuserid IS NULL AND e.metadata IS NOT NULL " +
+			"AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0 AND e.sent_at BETWEEN ? AND ?"
+		args = append(args, startDate, endDateTime)
+		if extra != "" {
+			sql += " AND " + extra
+		}
+		return sql, args
+	}
 
 	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
 	//    posts displayed positions 0..num_posts-1.
-	denomQuery := `
-		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
-		-- Force the sent_at index: otherwise the optimiser full-scans the whole
-		-- table (millions of rows + per-row JSON) instead of range-scanning the
-		-- date window, which made the chart hang.
-		FROM email_tracking e FORCE INDEX (sent_at)
-		LEFT JOIN users u ON e.userid = u.id
-		WHERE ` + cohort + `
-		GROUP BY num_posts`
-	denomArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
-
+	//
+	// ORM migration site 284dfbc44866 (Tier 3 keep-raw review). The type
+	// toggle above gives 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_284dfbc44866
+	// (iznik-server-go/test).
 	var sizeRows []struct {
 		NumPosts int   `gorm:"column:num_posts"`
 		Cnt      int64 `gorm:"column:cnt"`
 	}
-	db.Raw(denomQuery, denomArgs...).Scan(&sizeRows)
+	// Force the sent_at index: otherwise the optimiser full-scans the whole
+	// table (millions of rows + per-row JSON) instead of range-scanning the
+	// date window, which made the chart hang.
+	denomWhereSQL, denomWhereArgs := cohortWhere("")
+	db.Table("email_tracking e FORCE INDEX (sent_at)").
+		Select("JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt").
+		Joins("LEFT JOIN users u ON e.userid = u.id").
+		Where(denomWhereSQL, denomWhereArgs...).
+		Group("num_posts").Scan(&sizeRows)
 
 	maxPosts := 0
 	for _, r := range sizeRows {
@@ -1529,24 +1604,24 @@ func DigestClickPositions(c *fiber.Ctx) error {
 	// exclude the summary-index links ("yN") and image links ("iN"): the summary
 	// sits at the top of the email, so a "yN" click is not a signal about the
 	// post's vertical position.
-	clickQuery := `
-		SELECT c.link_position AS link_position,
-		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
-		       COUNT(*) AS clicks
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		LEFT JOIN users u ON e.userid = u.id
-		WHERE ` + cohort + `
-		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
-		GROUP BY c.link_position`
-	clickArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
-
+	// ORM migration site dce69264c9c0 (Tier 3 keep-raw review). Same type
+	// toggle as 284dfbc44866 above - 2 possible rendered forms, both declared
+	// in ormharness/shapes.json and proven by TestTier3Shapes_dce69264c9c0
+	// (iznik-server-go/test).
 	var clickRows []struct {
 		LinkPosition  string `gorm:"column:link_position"`
 		EmailsClicked int64  `gorm:"column:emails_clicked"`
 		Clicks        int64  `gorm:"column:clicks"`
 	}
-	db.Raw(clickQuery, clickArgs...).Scan(&clickRows)
+	clickWhereSQL, clickWhereArgs := cohortWhere("c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'")
+	db.Table("email_tracking_clicks c").
+		Select("c.link_position AS link_position, "+
+			"COUNT(DISTINCT c.email_tracking_id) AS emails_clicked, "+
+			"COUNT(*) AS clicks").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Joins("LEFT JOIN users u ON e.userid = u.id").
+		Where(clickWhereSQL, clickWhereArgs...).
+		Group("c.link_position").Scan(&clickRows)
 
 	emailsClickedByPos := make(map[int]int64)
 	clicksByPos := make(map[int]int64)

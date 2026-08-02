@@ -24,9 +24,9 @@ import (
 
 const (
 	// DBRetries matches v1's LoggedPDO::$tries default.
-	DBRetries     = 10
-	dbMinBackoff  = 100 // ms
-	dbMaxBackoff  = 1000 // ms
+	DBRetries    = 10
+	dbMinBackoff = 100  // ms
+	dbMaxBackoff = 1000 // ms
 )
 
 // isConnectionError returns true for connection-level errors that should be
@@ -158,4 +158,45 @@ func truncateSQL(sql string) string {
 		return sql[:80] + "..."
 	}
 	return sql
+}
+
+// RetryGorm runs a GORM builder chain with the same connection-error retry
+// policy as RetryExec, so a site can be converted to the ORM without quietly
+// losing its retries.
+//
+// This exists because of a real trade-off spotted during the ORM migration.
+// RetryExec takes a SQL STRING, so converting a call site to a GORM chain means
+// leaving the wrapper behind - and with it the retry-on-transient-connection-
+// error behaviour, which lives in unexported helpers here and cannot be reached
+// from another package. The choice was between converting the site and silently
+// dropping retries, or keeping the site raw to keep them. Plan 7.3 asks for a
+// pure no-behaviour-change release, so neither was acceptable.
+//
+// build receives the *gorm.DB and returns the chain to run, terminal included.
+// It is called afresh on each attempt: a *gorm.DB carries statement state, so
+// reusing one across retries would append the same clauses again and send a
+// different statement the second time.
+//
+// Deadlocks are deliberately NOT retried, matching RetryExec - they bubble to
+// the handler-level retry, which re-runs the whole handler with a fresh
+// transaction. Retrying a single statement inside a transaction that has
+// already deadlocked would not help, because the transaction is already dead.
+func RetryGorm(db *gorm.DB, label string, build func(tx *gorm.DB) *gorm.DB) error {
+	for attempt := 0; attempt < DBRetries; attempt++ {
+		result := build(db)
+		if result.Error == nil {
+			if attempt > 0 {
+				fmt.Printf("DB RETRY gorm succeeded on attempt %d: %s\n", attempt+1, label)
+			}
+			return nil
+		}
+
+		if !isConnectionError(result.Error) || attempt == DBRetries-1 {
+			return result.Error
+		}
+
+		fmt.Printf("DB RETRY attempt %d/%d for %s: %v\n", attempt+1, DBRetries, label, result.Error)
+		dbBackoff()
+	}
+	return fmt.Errorf("database: no retries configured")
 }

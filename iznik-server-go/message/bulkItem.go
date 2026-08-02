@@ -497,16 +497,20 @@ func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 		Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
-		sqlDB, err := db.DB()
-		if err != nil {
+		// ORM migration site 050e3574aa6f (tier4).
+		res := gorm.WithResult()
+		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				{Column: clause.Column{Name: "latestmessage"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"user1": a, "user2": b, "chattype": utils.CHAT_TYPE_USER2USER, "latestmessage": gorm.Expr("NOW()"),
+		})
+		if tx.Error != nil || res.Result == nil {
 			return 0
 		}
-		res, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = NOW()",
-			a, b, utils.CHAT_TYPE_USER2USER)
-		if err != nil {
-			return 0
-		}
-		id, err := res.LastInsertId()
+		id, err := res.Result.LastInsertId()
 		if err != nil {
 			return 0
 		}

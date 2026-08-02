@@ -88,16 +88,20 @@ func ListAdmins(c *fiber.Ctx) error {
 	// stale, approved-but-never-sent admins on show (Discourse 9816). Matches V1
 	// Admin::listForGroup, which returned all admins for a group ordered by created DESC.
 	// The frontend partitions pending vs previous client-side by the `pending` flag.
-	selectCols := "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected " +
-		"FROM admins a WHERE "
-	var query string
-	var args []interface{}
+	// ORM migration site 3d5506803f0c (Tier 3 keep-raw review). The WHERE is
+	// assembled from two fixed toggles: which groupid scope applies (admin/
+	// support with an explicit groupid vs the caller's own active mod groups,
+	// optionally further narrowed to one groupid), and the pending filter
+	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_3d5506803f0c
+	// (iznik-server-go/test).
+	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, " +
+		"a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected")
 
 	if groupidParam > 0 && auth.IsAdminOrSupport(myid) {
 		// System Admin/Support may view the admin history for any specific group they ask for
 		// (e.g. to look up a sent admin), without needing a membership on it.
-		query = selectCols + "a.groupid = ?"
-		args = append(args, groupidParam)
+		tx = tx.Where("a.groupid = ?", groupidParam)
 	} else {
 		// Restrict to the caller's active mod groups (checks settings.active, not just role,
 		// so admins for groups the mod has stepped back from are hidden). This applies to
@@ -109,25 +113,21 @@ func ListAdmins(c *fiber.Ctx) error {
 		if len(activeGroupIDs) == 0 {
 			return c.JSON(make([]Admin, 0))
 		}
-		query = selectCols + "a.groupid IN (?)"
-		args = append(args, activeGroupIDs)
+		tx = tx.Where("a.groupid IN (?)", activeGroupIDs)
 
 		if groupidParam > 0 {
-			query += " AND a.groupid = ?"
-			args = append(args, groupidParam)
+			tx = tx.Where("a.groupid = ?", groupidParam)
 		}
 	}
 
 	if pendingParam == "true" {
-		query += " AND a.pending = 1"
+		tx = tx.Where("a.pending = 1")
 	} else if pendingParam == "false" {
-		query += " AND a.pending = 0"
+		tx = tx.Where("a.pending = 0")
 	}
 
-	query += " ORDER BY a.created DESC, a.id DESC"
-
 	var admins []Admin
-	db.Raw(query, args...).Scan(&admins)
+	tx.Order("a.created DESC, a.id DESC").Scan(&admins)
 
 	if admins == nil {
 		admins = make([]Admin, 0)

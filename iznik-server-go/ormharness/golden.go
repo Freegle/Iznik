@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/database"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -91,6 +92,24 @@ func assertRenderedSQL(t TestingT, siteID, label, wantSQL, approvedDiff string, 
 		t.Fatalf("ormharness: site %q%s: rendering GORM statement: %v", siteID, label, err)
 	}
 
+	// Count the binds before comparing any text. A chain can render exactly the
+	// right SQL and still carry the wrong number of arguments, and the text
+	// comparison below is blind to that by construction - the placeholders are
+	// identical either way.
+	//
+	// This is not hypothetical. chat/chatmessage.go passed one argument to
+	// Select() that the expression had no placeholder for, while Where() bound
+	// the same value again. The golden matched, the parity test passed, and
+	// three chat tests failed at runtime with "sql: expected 13 arguments, got
+	// 14" - which only executing it could reveal. Counting here turns that from
+	// a runtime failure into a parity failure naming the site.
+	if want, got := strings.Count(rendered, "?"), len(vars); want != got {
+		t.Fatalf("ormharness: site %q%s: the statement has %d placeholder(s) but %d bind argument(s) were supplied.\n"+
+			"The SQL text can still match the golden exactly while this is wrong, so it is checked separately.\n"+
+			"Look for a value passed to Select/Joins/Where that the expression has no \"?\" for, or one bound twice.\n"+
+			"rendered: %s", siteID, label, want, got, rendered)
+	}
+
 	wantCanon := Canonical(wantSQL)
 
 	// Two renderings are acceptable, and which one applies depends on the
@@ -155,8 +174,24 @@ func assertRenderedSQL(t TestingT, siteID, label, wantSQL, approvedDiff string, 
 		gotCanon = resolved
 	}
 
-	if approvedDiff != "" && Canonical(approvedDiff) == gotCanon {
-		return // A reviewer already recorded and justified exactly this divergence.
+	// The approved diff gets the SAME normalisations as the golden, not a
+	// stricter exact match. It used to be compared verbatim, which quietly made
+	// an approved diff impossible to write for any IN-list: the reviewer would
+	// have to guess how many values the test happens to bind and write
+	// "IN (?,?,?)", pinning an arbitrary list length into a document that is
+	// supposed to record a semantic decision.
+	//
+	// Found writing one for markPinned, whose conversion binds a slice: the
+	// recorded "IN (?)" could never match a rendered "IN (?,?,?)" even though
+	// they are the same statement, which is exactly what collapseInLists exists
+	// to reconcile on the golden path.
+	if approvedDiff != "" {
+		diffCanon := Canonical(approvedDiff)
+		if diffCanon == gotCanon ||
+			collapseInLists(diffCanon) == collapseInLists(gotCanon) ||
+			normaliseColumnOrder(collapseInLists(diffCanon)) == normaliseColumnOrder(collapseInLists(gotCanon)) {
+			return // A reviewer already recorded and justified exactly this divergence.
+		}
 	}
 
 	verdict := "no approvedDiff is recorded for this site"
@@ -237,7 +272,16 @@ func collapseInLists(sql string) string {
 // The table name is matched with [^\s(]+ rather than \S+ for the same reason:
 // the codebase writes "insert into logs(timestamp, ...)" with no space, and a
 // greedy \S+ swallows the opening paren.
-var insertPrefixPattern = regexp.MustCompile(`(?is)^insert(?:\s+ignore)?\s+into\s+[^\s(]+\s*\(`)
+//
+// REPLACE is included alongside INSERT (and INSERT IGNORE): Tier 4's
+// clause.Insert{Modifier: "REPLACE"} conversions (database.RegisterCustomClauseBuilders)
+// render "REPLACE INTO t (cols) VALUES (...)", the identical shape with a
+// different leading keyword, and GORM sorts a map-valued Create's columns
+// alphabetically regardless of which keyword renders - most of the 11
+// REPLACE INTO sites' recorded goldens are not alphabetical (they were
+// written by hand), so without this the column-pairing-preserving reorder
+// below would never even be attempted for them.
+var insertPrefixPattern = regexp.MustCompile(`(?is)^(?:insert(?:\s+ignore)?|replace)\s+into\s+[^\s(]+\s*\(`)
 
 // updateSetPattern captures the SET list of an UPDATE, up to WHERE or the end.
 var updateSetPattern = regexp.MustCompile(`(?is)^(update\s+.*?\sset\s+)(.*?)(\s+where\s.*|\s*)$`)
@@ -619,6 +663,14 @@ func dryRunDB() (*gorm.DB, error) {
 			// take every Layer 1 test down with it.
 			DisableAutomaticPing: true,
 		})
+		if dryRunDBErr == nil {
+			// REPLACE INTO and INSERT ... SELECT conversions render correctly
+			// only with this registered (database/clausebuilders.go) -
+			// production's InitDatabase registers the identical override on
+			// the real connection, so Layer 1 renders exactly what
+			// production would send for those two shapes too.
+			database.RegisterCustomClauseBuilders(dryRunDBInst)
+		}
 	})
 	return dryRunDBInst, dryRunDBErr
 }

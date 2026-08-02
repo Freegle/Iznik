@@ -312,22 +312,36 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Weight          float64 `gorm:"column:weight"`
 		}
 
-		if err := writer().Raw(fmt.Sprintf(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   SUM(COALESCE(weight, %f)) AS weight
-		FROM pc
-		INNER JOIN messages ON messages.locationid = pc.locationid
-		INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id
-		INNER JOIN messages_items mi ON messages.id = mi.msgid
-		INNER JOIN items i ON mi.itemid = i.id
-		INNER JOIN locations ON messages.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND messages.arrival BETWEEN ? AND ?
-			AND outcome IN (?, ?)
-			AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id)
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, avg), utils.LOCATION_TYPE_POSTCODE, startStr, endStr, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).Scan(&weightStats).Error; err != nil {
+		// ORM migration site 6d50d3895aa7 (tier6). The WHERE/JOIN structure was
+		// always an ordinary fixed toggle - the real blocker was avg, a
+		// live-recomputed aggregate, spliced in via fmt.Sprintf("%f", avg) as
+		// literal text rather than a bind. Moved onto a genuine bind
+		// (Select's own placeholder support, same convention as
+		// microvolunteering.go:170's "COALESCE(trustlevel, ?)"). This is a
+		// deliberate precision IMPROVEMENT, not just a refactor: %f truncates
+		// to 6 decimal places, discarding up to 5e-7 of the true float64 value
+		// on every substitution, whereas a bind carries the full value MySQL's
+		// wire protocol supports.
+		//
+		// DECISION: that per-value bound was weighed against its consequence,
+		// not converted on the bound alone - authority/stats_precision_test.go
+		// proves the worst-case aggregate drift on PostcodeStats.Weight, across
+		// a deliberately generous 100,000 substituted rows, is 0.05kg. Fifty
+		// grams on a kg-scale weight statistic is what justified converting
+		// this site instead of leaving it raw; a kilogram-scale answer would
+		// have meant staying raw instead.
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, SUM(COALESCE(weight, ?)) AS weight", avg).
+			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+			Joins("INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+			Joins("INNER JOIN messages_items mi ON messages.id = mi.msgid").
+			Joins("INNER JOIN items i ON mi.itemid = i.id").
+			Joins("INNER JOIN locations ON messages.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id)",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&weightStats).Error; err != nil {
 			return err
 		}
 
@@ -345,19 +359,20 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Weight          float64 `gorm:"column:weight"`
 		}
 
-		if err := writer().Raw(fmt.Sprintf(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   SUM(COALESCE(NULLIF(i.weight, 0), %f) * bi.quantity) AS weight
-		FROM pc
-		INNER JOIN messages ON messages.locationid = pc.locationid
-		INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0
-		LEFT JOIN items i ON i.name = bi.name
-		INNER JOIN locations ON messages.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND messages.arrival BETWEEN ? AND ?
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, avg), utils.LOCATION_TYPE_POSTCODE, startStr, endStr).Scan(&bulkWeightStats).Error; err != nil {
+		// ORM migration site f281cfe83025 (tier6). Same avg-precision fix as
+		// 6d50d3895aa7 above; see that site's comment and
+		// authority/stats_precision_test.go.
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity) AS weight", avg).
+			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+			Joins("INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0").
+			Joins("LEFT JOIN items i ON i.name = bi.name").
+			Joins("INNER JOIN locations ON messages.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&bulkWeightStats).Error; err != nil {
 			return err
 		}
 
@@ -374,20 +389,21 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Weight          float64 `gorm:"column:weight"`
 		}
 
-		if err := writer().Raw(fmt.Sprintf(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   SUM(COALESCE(NULLIF(i.weight, 0), %f) * mbii.quantity) AS weight
-		FROM pc
-		INNER JOIN messages ON messages.locationid = pc.locationid
-		INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected'
-		INNER JOIN messages_bulk_items bi ON bi.id = mbii.bulkitemid
-		LEFT JOIN items i ON i.name = bi.name
-		INNER JOIN locations ON messages.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND messages.arrival BETWEEN ? AND ?
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, avg), utils.LOCATION_TYPE_POSTCODE, startStr, endStr).Scan(&bulkInterestWeightStats).Error; err != nil {
+		// ORM migration site 3ecb2fba572f (tier6). Same avg-precision fix as
+		// 6d50d3895aa7 above; see that site's comment and
+		// authority/stats_precision_test.go.
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbii.quantity) AS weight", avg).
+			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+			Joins("INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected'").
+			Joins("INNER JOIN messages_bulk_items bi ON bi.id = mbii.bulkitemid").
+			Joins("LEFT JOIN items i ON i.name = bi.name").
+			Joins("INNER JOIN locations ON messages.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&bulkInterestWeightStats).Error; err != nil {
 			return err
 		}
 

@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type Shortlink struct {
@@ -164,23 +165,19 @@ func PostShortlink(c *fiber.Ctx) error {
 	}
 
 	// Create the shortlink.
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// ORM migration site 322b611c86cc (tier1). Plain, isolated, literal single-row
+	// INSERT ('Group' is a fixed literal, not a bind); id read back via GORM's
+	// map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"name":    req.Name,
+		"type":    gorm.Expr("'Group'"),
+		"groupid": req.Groupid,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO shortlinks (name, type, groupid) VALUES (?, 'Group', ?)", req.Name, req.Groupid)
-	if err != nil {
+	if err := db.Table("shortlinks").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Failed to create shortlink"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,

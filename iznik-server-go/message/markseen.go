@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // markSeenChunk bounds how many message ids go into a single INSERT statement. "Mark seen" on a
@@ -101,10 +102,29 @@ func MarkSeen(c *fiber.Ctx) error {
 		// so different users never conflict; only concurrent same-user mark-seens can.
 		if err := insertViewBatch(db, chunk, myid, source); err != nil && database.IsDeadlockOrLockTimeout(err) {
 			for _, msgID := range chunk {
-				_ = database.RetryExec(db,
-					"INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES (?, ?, ?, 0, ?) "+
-						"ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
-					msgID, myid, utils.MESSAGE_LIKES_VIEW, source)
+				// ORM migration site 61e26594c74d (insertid-conv). No id is
+				// read back here, so this is a plain ODKU upsert - no
+				// LAST_INSERT_ID/WithResult needed. Uses database.RetryGorm
+				// rather than a bare GORM chain so this per-row degrade-
+				// gracefully fallback (only reached after a deadlock in the
+				// batch insert) keeps the same retry-on-transient-connection-
+				// error behaviour RetryExec gave it; the builder closure is
+				// re-run fresh on every attempt since a *gorm.DB accumulates
+				// statement state.
+				database.RetryGorm(db, "markseen fallback", func(tx *gorm.DB) *gorm.DB {
+					return tx.Table("messages_likes").Clauses(clause.OnConflict{
+						DoUpdates: clause.Assignments(map[string]interface{}{
+							"timestamp": gorm.Expr("NOW()"),
+							"count":     gorm.Expr("count + 1"),
+						}),
+					}).Create(map[string]interface{}{
+						"msgid":    msgID,
+						"userid":   myid,
+						"type":     utils.MESSAGE_LIKES_VIEW,
+						"pageview": gorm.Expr("0"),
+						"source":   source,
+					})
+				})
 			}
 		}
 	}
@@ -114,22 +134,35 @@ func MarkSeen(c *fiber.Ctx) error {
 	})
 }
 
-// insertViewBatch inserts (or bumps) a 'View' row for every msgid in the chunk in a single
-// multi-row INSERT ... ON DUPLICATE KEY UPDATE, retrying transient connection/WSREP errors.
-// source is written only when the INSERT creates the row (first-touch); it is not overwritten
-// by the ON DUPLICATE KEY UPDATE clause.
-func insertViewBatch(db *gorm.DB, chunk []uint64, myid uint64, source interface{}) error {
+// buildInsertViewBatchQuery is a pure SQL-builder: no database needed - see
+// message_list.go's buildMTUnionAllMsgIDQuery for the established
+// convention this follows. Extracted from insertViewBatch (a pure
+// behaviour-preserving refactor - insertViewBatch's runtime SQL and
+// database.RetryExec call are unchanged) so the number-of-VALUE-tuples
+// parametrization (n = len(chunk), 1..markSeenChunk) can be proven correct
+// for any n via ormharness.AssertGoldenParametrizedShape
+// (markseen_tier9_test.go) rather than sampled at one or two chunk sizes -
+// see keep-raw site 40368b5c844a and
+// plans/active/orm-keepraw-adversarial-review.md §4.
+func buildInsertViewBatchQuery(chunk []uint64, myid uint64, source interface{}) (string, []interface{}) {
 	placeholders := make([]string, len(chunk))
 	args := make([]interface{}, 0, len(chunk)*4)
 	for i, msgID := range chunk {
 		placeholders[i] = "(?, ?, ?, 0, ?)"
 		args = append(args, msgID, myid, utils.MESSAGE_LIKES_VIEW, source)
 	}
-	return database.RetryExec(db,
-		"INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES "+
-			strings.Join(placeholders, ",")+
-			" ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
-		args...)
+	return "INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES " +
+		strings.Join(placeholders, ",") +
+		" ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1", args
+}
+
+// insertViewBatch inserts (or bumps) a 'View' row for every msgid in the chunk in a single
+// multi-row INSERT ... ON DUPLICATE KEY UPDATE, retrying transient connection/WSREP errors.
+// source is written only when the INSERT creates the row (first-touch); it is not overwritten
+// by the ON DUPLICATE KEY UPDATE clause.
+func insertViewBatch(db *gorm.DB, chunk []uint64, myid uint64, source interface{}) error {
+	sql, args := buildInsertViewBatchQuery(chunk, myid, source)
+	return database.RetryExec(db, sql, args...)
 }
 
 // dedupeSortedIDs returns the ids sorted ascending with duplicates removed.

@@ -276,19 +276,29 @@ func listModConfigs(c *fiber.Ctx) error {
 		//
 		// Use UNION to avoid the expensive double LEFT JOIN on memberships
 		// which caused full table scans on the 4.7M row memberships table.
-		db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE createdby = ? "+
-			"UNION "+
-			"SELECT "+configColumns+" FROM mod_configs WHERE `default` = 1 "+
-			"UNION "+
-			"SELECT "+configColumns+" FROM mod_configs WHERE id IN ("+
-			"SELECT m1.configid FROM memberships m1 "+
-			"WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) "+
-			"AND m1.groupid IN ("+
-			"SELECT m2.groupid FROM memberships m2 "+
-			"WHERE m2.userid = ? AND m2.role IN (?, ?)"+
-			")"+
-			") "+
-			"ORDER BY name", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&configs)
+		// ORM migration site e9ea468dab80 (Tier 2 keep-raw review). Top-level
+		// UNION with a trailing ORDER BY that applies to the whole union, not
+		// any one arm - BuildClauses={"SELECT"} means GORM renders only the
+		// SELECT clause, so ORDER BY has to be literal text inside the same
+		// fragment rather than a separate .Order() call (that clause would
+		// never be walked). Same mechanism as changes.go's GetChanges above.
+		tx := db.Table("mod_configs").Select(
+			configColumns+" FROM mod_configs WHERE createdby = ? "+
+				"UNION "+
+				"SELECT "+configColumns+" FROM mod_configs WHERE `default` = 1 "+
+				"UNION "+
+				"SELECT "+configColumns+" FROM mod_configs WHERE id IN ("+
+				"SELECT m1.configid FROM memberships m1 "+
+				"WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) "+
+				"AND m1.groupid IN ("+
+				"SELECT m2.groupid FROM memberships m2 "+
+				"WHERE m2.userid = ? AND m2.role IN (?, ?)"+
+				")"+
+				") "+
+				"ORDER BY name",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		tx.Scan(&configs)
 	}
 
 	if configs == nil {
@@ -349,30 +359,32 @@ func PostModConfig(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorised to copy this config")
 		}
 
-		// Copy from existing config.
-		// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-		// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-		// parallel load (GORM's connection pool may assign a different connection).
-		sqlDB, err := db.DB()
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
-			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
-			"fromname, subjreg, messageorder) "+
-			"SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
-			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
-			"fromname, subjreg, messageorder "+
-			"FROM mod_configs WHERE id = ?", req.Name, req.ID)
-		if err != nil {
-			stdlog.Printf("Failed to copy mod config %d: %v", req.ID, err)
+		// Copy from existing config. database.InsertSelect keeps the copy a single
+		// atomic INSERT ... SELECT (see database/clausebuilders.go); Clauses(res)
+		// reads the generated id back from the same sql.Result the write returned,
+		// never a separate SELECT LAST_INSERT_ID() - unsafe under parallel load,
+		// since GORM's connection pool could assign that SELECT a different
+		// connection.
+		// ORM migration site 6b9a23982cc9 (tier4).
+		res := gorm.WithResult()
+		tx := database.InsertSelect(db.Clauses(res), "mod_configs",
+			"(name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+				"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
+				"fromname, subjreg, messageorder) "+
+				"SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+				"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
+				"fromname, subjreg, messageorder "+
+				"FROM mod_configs WHERE id = ?", req.Name, req.ID)
+		if tx.Error != nil {
+			stdlog.Printf("Failed to copy mod config %d: %v", req.ID, tx.Error)
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to copy config")
 		}
 
 		var newID uint64
-		lastID, err := sqlResult.LastInsertId()
-		if err == nil && lastID > 0 {
-			newID = uint64(lastID)
+		if res.Result != nil {
+			if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+				newID = uint64(lastID)
+			}
 		}
 		if newID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
@@ -402,12 +414,11 @@ func PostModConfig(c *fiber.Ctx) error {
 			})
 		}
 
-		// Copy bulkops. Left raw (e137c396bd13, wave 2): INSERT ... SELECT has
-		// no GORM builder equivalent that keeps it a single atomic statement -
-		// no site with this shape has been converted anywhere in the codebase.
-		db.Exec("INSERT INTO mod_bulkops (title, configid, `set`, criterion, runevery, action, bouncingfor) "+
-			"SELECT title, ?, `set`, criterion, runevery, action, bouncingfor "+
-			"FROM mod_bulkops WHERE configid = ?", newID, req.ID)
+		// Copy bulkops. ORM migration site e137c396bd13 (tier4).
+		database.InsertSelect(db, "mod_bulkops",
+			"(title, configid, `set`, criterion, runevery, action, bouncingfor) "+
+				"SELECT title, ?, `set`, criterion, runevery, action, bouncingfor "+
+				"FROM mod_bulkops WHERE configid = ?", newID, req.ID)
 
 		// Log the creation.
 		// ORM migration site e07a25573e68 (wave 2).

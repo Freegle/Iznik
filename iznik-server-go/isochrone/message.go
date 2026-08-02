@@ -199,13 +199,27 @@ func markPinned(db *gorm.DB, res []message.MessageSummary) {
 	if len(res) == 0 {
 		return
 	}
-	ids := make([]string, len(res))
+	ids := make([]uint64, len(res))
 	for i, m := range res {
-		ids[i] = strconv.FormatUint(m.ID, 10)
+		ids[i] = m.ID
 	}
 	var pinnedIDs []uint64
-	db.Raw("SELECT msgid FROM messages_pinned WHERE msgid IN (" +
-		strings.Join(ids, ",") + ")").Scan(&pinnedIDs)
+	// ORM migration site 032b7f1b9500 (Tier 1 spatial review, round 2). The
+	// ids used to be formatted as decimal text and joined directly into the
+	// SQL string - a variable number of literal integers, which the
+	// extractor could never fold to one fixed golden no matter how good its
+	// constant-folding gets (the count depends on a runtime slice length,
+	// not a Go constant). Passing them as a bound []uint64 slice instead
+	// makes the SOURCE TEXT a single fixed "msgid IN ?" - GORM/the driver
+	// expand it to N placeholders at execution time, not in the source - so
+	// this is now the same "clean IN-list, list is the only variable part"
+	// shape already proven elsewhere (message/reach.go's ReachBlockedSet,
+	// site 7e7e69fa2f85). Strictly safer too: a msgid can never need escaping
+	// now.
+	db.Table("messages_pinned").
+		Select("msgid").
+		Where("msgid IN ?", ids).
+		Scan(&pinnedIDs)
 	if len(pinnedIDs) == 0 {
 		return
 	}
@@ -292,8 +306,15 @@ func Messages(c *fiber.Ctx) error {
 		// yet; ReachRadiusMetres falls back to the configured default extent in that case.
 		start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 		var ownCandidates []reachCandidateRow
-		db.Raw(
-			"SELECT m.lat, m.lng, m.id, "+
+		// ORM migration site 29289246c69b (Tier 1 spatial review). Bind order
+		// mirrors clause build order: SELECT's own binds (OUTCOME_TAKEN/
+		// RECEIVED, then the two subqueries' MESSAGE_LIKES_VIEW/
+		// CHAT_MESSAGE_INTERESTED) land first, then the bound Joins ON clause
+		// (myid, MESSAGE_LIKES_VIEW), then Where (myid, start,
+		// COLLECTION_PENDING) - the same order the original literal string
+		// passed its args in.
+		db.Table("messages m").
+			Select("m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 				"ANY_VALUE(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
 				"ANY_VALUE(mg.groupid) AS groupid, m.type, m.fromuser AS fromuser, "+
@@ -302,34 +323,31 @@ func Messages(c *fiber.Ctx) error {
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 				"ANY_VALUE(COALESCE(rr.lat, 0)) AS reach_lat, ANY_VALUE(COALESCE(rr.lng, 0)) AS reach_lng, "+
-				"ANY_VALUE(COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '')) AS reach_wkt "+
-				"FROM messages m "+
-				"INNER JOIN messages_groups mg ON mg.msgid = m.id "+
-				"LEFT JOIN messages_outcomes mo ON mo.msgid = m.id "+
-				"LEFT JOIN messages_promises mp ON mp.msgid = m.id "+
-				"LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ? "+
-				"LEFT JOIN rippling_reach rr ON rr.msgid = m.id "+
-				"WHERE m.fromuser = ? AND mg.arrival >= ? AND mo.id IS NULL "+
-				// Match My Posts' active-set exactly (message.go's HAVING clause): an
-				// Approved own post only counts as live while it is still in
-				// messages_spatial. Once it is pruned from spatial - expired, withdrawn,
-				// deleted, or taken - it must drop off browse at the same moment it drops
-				// off My Posts, not linger here for up to OPEN_AGE days (approved, no
-				// outcome row yet, arrival still within the window) because this own-posts
-				// arm queries the messages table directly and so bypasses spatial pruning.
-				// A PENDING post is never in spatial, so keep showing it via this arm - that
-				// is its whole point: the poster sees their post immediately while it awaits
-				// moderation, so it's less obvious a post is delayed. A REJECTED post is
-				// deliberately NOT shown here - a poster seeing their own rejected post linger in
-				// the browse feed is wrong (Discourse 9808); it belongs only in My Posts.
+				"ANY_VALUE(COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '')) AS reach_wkt",
+				utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
+				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
+			Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
+			Joins("LEFT JOIN messages_outcomes mo ON mo.msgid = m.id").
+			Joins("LEFT JOIN messages_promises mp ON mp.msgid = m.id").
+			Joins("LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = m.id").
+			// Match My Posts' active-set exactly (message.go's HAVING clause): an
+			// Approved own post only counts as live while it is still in
+			// messages_spatial. Once it is pruned from spatial - expired, withdrawn,
+			// deleted, or taken - it must drop off browse at the same moment it drops
+			// off My Posts, not linger here for up to OPEN_AGE days (approved, no
+			// outcome row yet, arrival still within the window) because this own-posts
+			// arm queries the messages table directly and so bypasses spatial pruning.
+			// A PENDING post is never in spatial, so keep showing it via this arm - that
+			// is its whole point: the poster sees their post immediately while it awaits
+			// moderation, so it's less obvious a post is delayed. A REJECTED post is
+			// deliberately NOT shown here - a poster seeing their own rejected post linger in
+			// the browse feed is wrong (Discourse 9808); it belongs only in My Posts.
+			Where("m.fromuser = ? AND mg.arrival >= ? AND mo.id IS NULL "+
 				"AND (EXISTS (SELECT 1 FROM messages_spatial ms WHERE ms.msgid = m.id) "+
-				"OR mg.collection = ?) "+
-				"GROUP BY m.id",
-			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
-			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED,
-			myid, utils.MESSAGE_LIKES_VIEW, myid, start,
-			utils.COLLECTION_PENDING,
-		).Scan(&ownCandidates)
+				"OR mg.collection = ?)", myid, start, utils.COLLECTION_PENDING).
+			Group("m.id").
+			Scan(&ownCandidates)
 
 		// Apply the SAME age-based expiry the My Posts endpoint uses, so a poster's
 		// own post that has aged out of its group's display window doesn't keep
@@ -431,7 +449,11 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 	// COALESCE to '' so users who have never set browseView (JSON_EXTRACT -> SQL NULL) scan cleanly
 	// into the non-nullable string instead of erroring "converting NULL to string is unsupported"
 	// on every such request. NULL still falls through to the "nearby" default below.
-	db.Raw("SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')), '') FROM users WHERE id = ?", myid).Scan(&setting)
+	// ORM migration site 7c6e312c8e3e (Tier 1 spatial review).
+	db.Table("users").
+		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')), '')").
+		Where("id = ?", myid).
+		Scan(&setting)
 	if setting == "mygroups" {
 		return "mygroups"
 	}
@@ -452,12 +474,15 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 // never clear.
 func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
-	db.Raw("SELECT DISTINCT ms.msgid FROM messages_spatial ms "+
-		"WHERE ms.successful = 0 "+
-		"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-		"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-		"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-		"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).Scan(&ids)
+	// ORM migration site 93c466090882 (Tier 1 spatial review).
+	db.Table("messages_spatial ms").
+		Select("DISTINCT ms.msgid").
+		Where("ms.successful = 0 "+
+			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
+			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+		Scan(&ids)
 	return ids
 }
 
@@ -585,13 +610,16 @@ func Count(c *fiber.Ctx) error {
 // instead of sticking on rows the feed never renders.
 func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	var count uint64 = 0
-	db.Raw("SELECT COUNT(DISTINCT ms.msgid) FROM messages_spatial ms "+
-		"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
-		"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
-		"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-		"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-		"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-		"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid, utils.MESSAGE_LIKES_VIEW, myid).Scan(&count)
+	// ORM migration site 771b502217d0 (Tier 1 spatial review).
+	db.Table("messages_spatial ms").
+		Select("COUNT(DISTINCT ms.msgid)").
+		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where("ms.successful = 0 AND ml.msgid IS NULL "+
+			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
+			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+		Scan(&count)
 	return count
 }
 
@@ -617,14 +645,16 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 	// Haversine — the same measure the feed uses — so badge and list agree at the boundary.
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	var candidates []reachCandidateRow
-	db.Raw("SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id "+
-		"FROM messages_spatial ms "+
-		"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
-		"WHERE ms.successful = 0 AND ml.msgid IS NULL "+
-		"AND EXISTS (SELECT 1 FROM messages_groups mg "+
-		"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
-		"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
-		"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid, utils.MESSAGE_LIKES_VIEW, myid).Scan(&candidates)
+	// ORM migration site cf109e997b23 (Tier 1 spatial review).
+	db.Table("messages_spatial ms").
+		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where("ms.successful = 0 AND ml.msgid IS NULL "+
+			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
+			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
+			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
+		Scan(&candidates)
 
 	var count uint64 = 0
 	for _, cand := range candidates {
@@ -652,7 +682,11 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 	var raw string
 	// COALESCE to '' for the same reason as effectiveBrowseView: users who have never set
 	// browseMaxDistance scan cleanly into the non-nullable string instead of erroring.
-	db.Raw("SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '') FROM users WHERE id = ?", myid).Scan(&raw)
+	// ORM migration site d533dd101d62 (Tier 1 spatial review).
+	db.Table("users").
+		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '')").
+		Where("id = ?", myid).
+		Scan(&raw)
 	if raw != "" {
 		if v, err := strconv.ParseFloat(raw, 64); err == nil {
 			return v

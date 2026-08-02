@@ -106,52 +106,66 @@ func List(c *fiber.Ctx) error {
 	reviewed := c.Query("reviewed", "1")
 	public := c.Query("public", "1")
 
-	var sql string
-	var args []interface{}
+	// ORM migration site 0ca4810292dc (Tier 3 keep-raw review). Three
+	// mutually-exclusive branches (authority / review-with-groups / plain)
+	// times an optional newsletterreviewed filter (not reachable on the
+	// authority branch) give 1 + 2 + 2 = 5 possible rendered forms, all
+	// declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_0ca4810292dc (iznik-server-go/test).
+	// Each branch's WHERE is built as a single string and passed to ONE
+	// Where() call: GORM's clause.Where wraps any fragment containing
+	// "AND"/"OR" in an extra paren pair once there is more than one Where
+	// expression to combine (clause/where.go buildExprs), which would
+	// diverge from the golden.
+	var tx *gorm.DB
 
 	if authorityid := c.Query("authorityid"); authorityid != "" {
 		// Filter stories by users whose location falls within the authority boundary.
 		authorityid64, _ := strconv.ParseUint(authorityid, 10, 64)
-		sql = "SELECT DISTINCT users_stories.id FROM users_stories " +
-			"INNER JOIN users ON users.id = users_stories.userid " +
-			"LEFT JOIN locations ON locations.id = users.lastlocation " +
-			"WHERE reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
+		whereSQL := "reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
 			"AND locations.lat IS NOT NULL " +
-			"AND ST_Contains((SELECT polygon FROM authorities WHERE id = ?), ST_SRID(POINT(locations.lng, locations.lat), ?)) " +
-			"ORDER BY date DESC LIMIT ?"
-		args = []interface{}{reviewed, public, authorityid64, utils.SRID, limit64}
+			"AND ST_Contains((SELECT polygon FROM authorities WHERE id = ?), ST_SRID(POINT(locations.lng, locations.lat), ?))"
+		tx = db.Table("users_stories").
+			Select("DISTINCT users_stories.id").
+			Joins("INNER JOIN users ON users.id = users_stories.userid").
+			Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
+			Where(whereSQL, reviewed, public, authorityid64, utils.SRID).
+			Order("date DESC").Limit(int(limit64))
 	} else {
 		// When reviewing (unreviewed stories), filter by moderator's active groups.
 		modGroupIDs := user.GetActiveModGroupIDs(myid)
 
+		var whereSQL string
+		var whereArgs []interface{}
+
 		if len(modGroupIDs) > 0 && reviewed == "0" {
 			// review listing has no public filter, has 31-day date cutoff.
 			storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
-			sql = "SELECT DISTINCT users_stories.id FROM users_stories " +
-				"INNER JOIN users ON users.id = users_stories.userid " +
-				"INNER JOIN memberships ON memberships.userid = users_stories.userid " +
-				"WHERE reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
-				"AND users_stories.date > ? " +
-				"AND memberships.groupid IN (?) AND memberships.collection = ?"
-			args = []interface{}{reviewed, storyCutoff, modGroupIDs, utils.COLLECTION_APPROVED}
+			whereSQL = "reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
+				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ?"
+			whereArgs = []interface{}{reviewed, storyCutoff, modGroupIDs, utils.COLLECTION_APPROVED}
+			tx = db.Table("users_stories").
+				Select("DISTINCT users_stories.id").
+				Joins("INNER JOIN users ON users.id = users_stories.userid").
+				Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid")
 		} else {
-			sql = "SELECT users_stories.id FROM users_stories " +
-				"INNER JOIN users ON users.id = users_stories.userid " +
-				"WHERE reviewed = ? AND public = ? AND userid IS NOT NULL AND users.deleted IS NULL"
-			args = []interface{}{reviewed, public}
+			whereSQL = "reviewed = ? AND public = ? AND userid IS NOT NULL AND users.deleted IS NULL"
+			whereArgs = []interface{}{reviewed, public}
+			tx = db.Table("users_stories").
+				Select("users_stories.id").
+				Joins("INNER JOIN users ON users.id = users_stories.userid")
 		}
 
 		if newsletterreviewed := c.Query("newsletterreviewed"); newsletterreviewed != "" {
-			sql += " AND newsletterreviewed = ?"
-			args = append(args, newsletterreviewed)
+			whereSQL += " AND newsletterreviewed = ?"
+			whereArgs = append(whereArgs, newsletterreviewed)
 		}
 
-		sql += " ORDER BY date DESC LIMIT ?"
-		args = append(args, limit64)
+		tx = tx.Where(whereSQL, whereArgs...).Order("date DESC").Limit(int(limit64))
 	}
 
 	var ids []uint64
-	db.Raw(sql, args...).Pluck("id", &ids)
+	tx.Pluck("id", &ids)
 
 	if ids == nil {
 		ids = make([]uint64, 0)
@@ -290,25 +304,21 @@ func CreateStory(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
+	// ORM migration site f6190b74d8d5 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback. (An earlier
+	// review cited this site as already converted using this exact pattern - it
+	// wasn't; this is the first real conversion of it.)
+	row := map[string]interface{}{
+		"public":   req.Public,
+		"userid":   myid,
+		"headline": req.Headline,
+		"story":    req.Story,
+	}
+	if err := db.Table("users_stories").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO users_stories (public, userid, headline, story) VALUES (?, ?, ?, ?)",
-		req.Public, myid, req.Headline, req.Story)
-
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	if req.Photo > 0 && id > 0 {
 		// ORM migration site cd54b640d303 (wave 2).

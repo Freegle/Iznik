@@ -55,7 +55,12 @@ func ListIsochrones(c *fiber.Ctx) error {
 
 	isochrones := []Isochrones{}
 
-	db.Raw("SELECT isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon FROM isochrones_users INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id WHERE isochrones_users.userid = ?", myid).Scan(&isochrones)
+	// ORM migration sites 701348841f78 / bff19d769e26 (Tier 1 spatial review).
+	db.Table("isochrones_users").
+		Select("isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon").
+		Joins("INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id").
+		Where("isochrones_users.userid = ?", myid).
+		Scan(&isochrones)
 
 	// Self-heal: if any isochrone has a POINT polygon (broken V2 creation), replace it
 	// with a real Mapbox polygon.
@@ -84,7 +89,12 @@ func ListIsochrones(c *fiber.Ctx) error {
 				}
 
 				// Re-fetch the isochrones.
-				db.Raw("SELECT isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon FROM isochrones_users INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id WHERE isochrones_users.userid = ?", myid).Scan(&isochrones)
+				// ORM migration sites 701348841f78 / bff19d769e26 (Tier 1 spatial review).
+				db.Table("isochrones_users").
+					Select("isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon").
+					Joins("INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id").
+					Where("isochrones_users.userid = ?", myid).
+					Scan(&isochrones)
 			}
 		}
 	}
@@ -99,8 +109,13 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 
 	// Check for existing isochrone with a real polygon (not a POINT).
 	var isoID uint64
-	db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) != 'POINT' ORDER BY id DESC LIMIT 1",
-		locationid, transport, minutes).Scan(&isoID)
+	// ORM migration site 34e1f2e54b22 (Tier 1 spatial review).
+	db.Table("isochrones").
+		Select("id").
+		Where("locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) != 'POINT'", locationid, transport, minutes).
+		Order("id DESC").
+		Limit(1).
+		Scan(&isoID)
 
 	if isoID > 0 {
 		return isoID
@@ -131,28 +146,57 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		// Check if there's an existing POINT isochrone with the same key — update it
 		// rather than INSERT IGNORE (which would silently skip due to unique key).
 		var existingPointID uint64
-		db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) = 'POINT' ORDER BY id DESC LIMIT 1",
-			locationid, transport, minutes).Scan(&existingPointID)
+		// ORM migration site 5eea52bb68f7 (Tier 1 spatial review).
+		db.Table("isochrones").
+			Select("id").
+			Where("locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) = 'POINT'", locationid, transport, minutes).
+			Order("id DESC").
+			Limit(1).
+			Scan(&existingPointID)
 
 		if existingPointID > 0 {
 			// Update the existing broken POINT isochrone with the real polygon.
-			db.Exec("UPDATE isochrones SET source = ?, polygon = "+
-				"CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END "+
-				"WHERE id = ?",
-				source, wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID, existingPointID)
+			// ORM migration site e0e7375e71aa (Tier 1 spatial review). Precedent:
+			// the sibling INSERT a few lines below (site d91a1a5d6b27) already
+			// puts the identical CASE/ST_SIMPLIFY/ST_GeomFromText expression
+			// into a gorm.Expr with the SRID as a plain bind - this is the same
+			// expression, targeted at an UPDATE instead of a Create. An explicit
+			// clause.Set (not Updates(map)) keeps source before polygon exactly
+			// as the original SET list had it, rather than relying on the
+			// harness's column-reorder tolerance for two independent assignments.
+			db.Table("isochrones").
+				Clauses(clause.Set{
+					{Column: clause.Column{Name: "source"}, Value: source},
+					{Column: clause.Column{Name: "polygon"}, Value: gorm.Expr(
+						"CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END",
+						wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID)},
+				}).
+				Where("id = ?", existingPointID).
+				Updates(map[string]interface{}{})
 			return existingPointID
 		}
 
 		// No existing row — insert fresh. Take the new id from the write result; the SELECT
 		// fallback below only runs if INSERT IGNORE skipped a pre-existing row (9832 class).
-		id, insErr := database.ExecInsertGetID(db, "INSERT IGNORE INTO isochrones (locationid, transport, minutes, source, polygon) VALUES (?, ?, ?, ?, "+
-			"CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END)",
-			locationid, transport, minutes, source, wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID)
-		if insErr != nil {
-			log.Printf("Failed to insert isochrone from %s for location %d: %v", source, locationid, insErr)
+		// ORM migration site d91a1a5d6b27 (insertid-conv). Table()+map Create
+		// reads the id back from the same sql.Result the INSERT returned,
+		// under the map key "@id" (see test/orm_insertid_test.go) - same as
+		// ExecInsertGetID it's a no-op (0) precisely when INSERT IGNORE
+		// skipped a duplicate, matching the existing isoID==0 fallback below.
+		row := map[string]interface{}{
+			"locationid": locationid,
+			"transport":  transport,
+			"minutes":    minutes,
+			"source":     source,
+			"polygon": gorm.Expr("CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END",
+				wkt, utils.SRID, wkt, utils.SRID, wkt, utils.SRID),
+		}
+		if err := db.Table("isochrones").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(row).Error; err != nil {
+			log.Printf("Failed to insert isochrone from %s for location %d: %v", source, locationid, err)
 			return 0
 		}
-		isoID = id
+		idInt64, _ := row["@id"].(int64)
+		isoID = uint64(idInt64)
 	} else {
 		// Both providers unavailable — fall back to location geometry as placeholder.
 		log.Printf("All isochrone providers failed for location %d, using location geometry as fallback", locationid)
@@ -203,7 +247,12 @@ func HealPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Is
 
 	if needsRefetch {
 		var refreshed []Isochrones
-		db.Raw("SELECT isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon FROM isochrones_users INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id WHERE isochrones_users.userid = ?", myid).Scan(&refreshed)
+		// ORM migration site 583d5d5394ad (Tier 1 spatial review).
+		db.Table("isochrones_users").
+			Select("isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon").
+			Joins("INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id").
+			Where("isochrones_users.userid = ?", myid).
+			Scan(&refreshed)
 		return refreshed
 	}
 
@@ -295,12 +344,31 @@ func CreateIsochrone(c *fiber.Ctx) error {
 	// Link user to isochrone (upsert). ON DUPLICATE KEY UPDATE ... id=LAST_INSERT_ID(id) makes the
 	// write report the id for both new and existing rows; take it from the result, not a
 	// read-split-routable SELECT (9832 class).
-	newID, err := database.ExecInsertGetID(db,
-		"INSERT INTO isochrones_users (userid, isochroneid, nickname) VALUES (?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE nickname = VALUES(nickname), id = LAST_INSERT_ID(id)",
-		myid, isoID, req.Nickname)
-	if err != nil {
+	// ORM migration site 79e591242114 (insertid-conv). GORM's own "@id" map
+	// writeback is skipped when RowsAffected is 0, which MySQL reports on
+	// EVERY re-link of an already-linked isochrone (the common case here,
+	// since a user re-opening the same isochrone hits the duplicate-key
+	// branch every time) - so Clauses(gorm.WithResult()) is needed, not
+	// "@id" (see test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap).
+	linkRes := gorm.WithResult()
+	result := db.Table("isochrones_users").Clauses(linkRes, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "nickname"}, Value: clause.Column{Table: "excluded", Name: "nickname"}},
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+		},
+	}).Create(map[string]interface{}{
+		"userid":      myid,
+		"isochroneid": isoID,
+		"nickname":    req.Nickname,
+	})
+	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to link isochrone")
+	}
+	var newID uint64
+	if linkRes.Result != nil {
+		if id, idErr := linkRes.Result.LastInsertId(); idErr == nil {
+			newID = uint64(id)
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})

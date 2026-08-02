@@ -110,34 +110,43 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.Title(name) //nolint:staticcheck
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
+	// ORM migration site c1fca2fe89a0 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback (proven in
+	// test/orm_insertid_test.go, same pattern shipped for over a dozen sibling
+	// sites - the "undocumented and untested" concern this site's keep-raw rule
+	// used to cite no longer applies).
+	row := map[string]interface{}{
+		"fullname": name,
+		"added":    gorm.Expr("NOW()"),
+	}
+	if err := db.Table("users").Create(row).Error; err != nil {
 		return 0, err
 	}
-
-	sqlResult, err := sqlDB.Exec("INSERT INTO users (fullname, added) VALUES (?, NOW())", name)
-	if err != nil {
-		return 0, err
-	}
-
-	lastID, err := sqlResult.LastInsertId()
-	if err != nil || lastID == 0 {
+	lastIDInt, _ := row["@id"].(int64)
+	if lastIDInt == 0 {
 		return 0, errors.New("failed to create user")
 	}
-	userid := uint64(lastID)
+	userid := uint64(lastIDInt)
 
 	// Set tnuserid.
+	// ORM migration site 3c0db7c93a36 (tier1). Plain single-table UPDATE, no id
+	// readback involved.
 	if tnuserid > 0 {
-		db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, userid)
+		db.Table("users").Where("id = ?", userid).Update("tnuserid", tnuserid)
 	}
 
 	// Add email.
+	// ORM migration site 52c033e59a9d (tier1). Plain, isolated, literal single-row
+	// INSERT; no id readback needed here.
 	canon := CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, added, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
-		userid, email, canon, reverseString(canon))
+	db.Table("users_emails").Create(map[string]interface{}{
+		"userid":    userid,
+		"email":     email,
+		"preferred": gorm.Expr("1"),
+		"added":     gorm.Expr("NOW()"),
+		"canon":     canon,
+		"backwards": reverseString(canon),
+	})
 
 	return userid, nil
 }

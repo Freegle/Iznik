@@ -8,6 +8,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type StdMsg struct {
@@ -140,23 +141,21 @@ func PostStdMsg(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// ORM migration site 132b1f639e73 (tier1). Plain, isolated, literal single-row
+	// INSERT (subjpref/subjsuff are fixed empty-string literals); id read back via
+	// GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"configid": req.Configid,
+		"title":    req.Title,
+		"subjpref": gorm.Expr("''"),
+		"subjsuff": gorm.Expr("''"),
+		"body":     gorm.Expr("''"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', '')", req.Configid, req.Title)
-	if err != nil {
+	if err := db.Table("mod_stdmsgs").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Create failed"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	// Apply optional attributes.
 	if req.Action != "" {

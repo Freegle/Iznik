@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm/clause"
 )
 
 type Team struct {
@@ -276,24 +277,20 @@ func PostTeam(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// ORM migration site 02f8f0aee316 (tier1). Plain, isolated, literal single-row
+	// INSERT; the generated id is read back via GORM's map-Create "@id" writeback
+	// (proven in test/orm_insertid_test.go), same pattern already shipped for over
+	// a dozen sibling sites.
+	row := map[string]interface{}{
+		"name":        req.Name,
+		"email":       req.Email,
+		"description": req.Description,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO teams (name, email, description) VALUES (?, ?, ?)",
-		req.Name, req.Email, req.Description)
-	if err != nil {
+	if err := db.Table("teams").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Create failed"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
@@ -348,8 +345,9 @@ func PatchTeam(c *fiber.Ctx) error {
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})
 		}
-		db.Exec("REPLACE INTO teams_members (userid, teamid, description) VALUES (?, ?, ?)",
-			req.Userid, req.ID, req.Description)
+		// ORM migration site f3a8b6237a60 (tier4).
+		db.Table("teams_members").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{"userid": req.Userid, "teamid": req.ID, "description": req.Description})
 	case "Remove":
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})

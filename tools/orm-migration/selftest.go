@@ -318,6 +318,63 @@ func runSelfCheck() []string {
 		fail("writer ddl", "expected the writer() DDL site to be inventoried, got %d sites", len(wq))
 	}
 
+	// fmt.Sprintf with a literal format and fully resolvable arguments is a
+	// static statement in disguise. utils.SRID is a compile-time constant, so
+	// leaving "%d" in the golden made those sites unconvertible for a reason
+	// that had nothing to do with SQL.
+	sprintfSrc := "package p\nfunc f() { db.Raw(fmt.Sprintf(\"SELECT ST_GeomFromText(?, %d) FROM t\", SRID)) }"
+	sp, _ := sitesInFile(token.NewFileSet(), "s.go", "s.go", sprintfSrc, false,
+		map[string]string{"SRID": "3857"})
+	if len(sp) != 1 {
+		fail("sprintf fold", "expected 1 site, got %d", len(sp))
+	} else {
+		if sp[0].GoldenSQL != "SELECT ST_GeomFromText(?, 3857) FROM t" {
+			fail("sprintf fold", "argument not substituted: %q", sp[0].GoldenSQL)
+		}
+		if sp[0].Dynamic {
+			fail("sprintf fold", "site marked dynamic although every argument resolved")
+		}
+	}
+
+	// A doubled %% in Go source is a single % in the SQL. Recording the doubled
+	// form made DATE_FORMAT goldens wrong rather than merely incomplete.
+	pctSrc := "package p\nfunc f() { db.Raw(fmt.Sprintf(\"SELECT DATE_FORMAT(d, '%%Y-%%m-%%d') FROM t\")) }"
+	pc, _ := sitesInFile(token.NewFileSet(), "p.go", "p.go", pctSrc, false, nil)
+	if len(pc) == 1 && pc[0].GoldenSQL != "SELECT DATE_FORMAT(d, '%Y-%m-%d') FROM t" {
+		fail("sprintf percent", "%%%% not unescaped: %q", pc[0].GoldenSQL)
+	}
+
+	// An argument that cannot be resolved must still mark the site dynamic -
+	// that statement really does have more than one form.
+	dynSrc := "package p\nfunc f() { db.Raw(fmt.Sprintf(\"SELECT * FROM t WHERE x = %d\", runtimeValue)) }"
+	dy, _ := sitesInFile(token.NewFileSet(), "d.go", "d.go", dynSrc, false, nil)
+	if len(dy) == 1 && !dy[0].Dynamic {
+		fail("sprintf dynamic", "unresolvable argument did not mark the site dynamic: %q", dy[0].GoldenSQL)
+	}
+
+	// SQL routed through a wrapper that takes the statement as an argument must
+	// be inventoried. database.RetryExec hid two production statements in
+	// message/markseen.go from the manifest entirely.
+	wrapSrc := "package p\nfunc f() { database.RetryExec(db, \"INSERT INTO t (a) VALUES (?)\", 1) }"
+	wr, _ := sitesInFile(token.NewFileSet(), "r.go", "r.go", wrapSrc, false, nil)
+	if len(wr) != 1 {
+		fail("sql wrapper", "RetryExec call was not inventoried, got %d sites", len(wr))
+	} else if wr[0].GoldenSQL != "INSERT INTO t (a) VALUES (?)" {
+		fail("sql wrapper", "wrong golden from wrapper: %q", wr[0].GoldenSQL)
+	}
+
+	// RetryQuery puts a destination BEFORE the SQL, so a fixed argument index
+	// would read the wrong argument.
+	wrQSrc := "package p\nfunc f() { database.RetryQuery(db, &dest, \"SELECT a FROM t\") }"
+	wqSites, _ := sitesInFile(token.NewFileSet(), "q.go", "q.go", wrQSrc, false, nil)
+	if len(wqSites) != 1 || wqSites[0].GoldenSQL != "SELECT a FROM t" {
+		got := ""
+		if len(wqSites) == 1 {
+			got = wqSites[0].GoldenSQL
+		}
+		fail("sql wrapper index", "RetryQuery's SQL argument not found (%d sites, golden %q)", len(wqSites), got)
+	}
+
 	return failures
 }
 

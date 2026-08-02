@@ -138,7 +138,16 @@ func ValidateToken(c *fiber.Ctx) (uint64, uint64, error) {
 	// Verify user still exists
 	db := database.DBConn
 	var exists bool
-	db.Raw("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
+	// ORM migration site 8ec21db34aa4 (Tier 2 keep-raw review). BuildClauses
+	// override: GORM's builder always adds a FROM clause once .Table() is
+	// called, but Statement.Build only renders the clause NAMES actually
+	// passed to it - restricting BuildClauses to {"SELECT"} renders the
+	// SELECT clause alone and drops the (still-registered but unwalked) FROM,
+	// matching a bare "SELECT EXISTS(...)" with no top-level FROM. Proven in
+	// ormharness/bareexists_test.go.
+	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	tx.Scan(&exists)
 	if !exists {
 		return 0, 0, nil
 	}
@@ -457,33 +466,25 @@ func PostChatReply(c *fiber.Ctx) error {
 	}
 
 	// Insert the message.
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
-			Success: false,
-			Message: "Failed to send message. Please try on Freegle.",
-		})
+	// ORM migration site 58cb0a225ebe (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"chatid":               chatID,
+		"userid":               userID,
+		"message":              message,
+		"type":                 utils.CHAT_MESSAGE_DEFAULT,
+		"date":                 gorm.Expr("NOW()"),
+		"processingsuccessful": gorm.Expr("1"),
 	}
-	sqlResult, err := sqlDB.Exec(`
-		INSERT INTO chat_messages (chatid, userid, message, type, date, processingsuccessful)
-		VALUES (?, ?, ?, ?, NOW(), 1)
-	`, chatID, userID, message, utils.CHAT_MESSAGE_DEFAULT)
-
-	if err != nil {
+	if err := db.Table("chat_messages").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
 			Success: false,
 			Message: "Failed to send message. Please try on Freegle.",
 		})
 	}
 
-	var messageID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		messageID = uint64(lastID)
-	}
+	messageIDInt, _ := row["@id"].(int64)
+	messageID := uint64(messageIDInt)
 
 	// Update chat room latest message time
 	// ORM migration site 0a874cdbfabf (wave 2).
@@ -635,7 +636,12 @@ func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 
 	db := database.DBConn
 	var exists bool
-	db.Raw("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
+	// ORM migration site faf666d9cb13 (Tier 2 keep-raw review). Same
+	// BuildClauses override as ValidateToken above; see the comment there and
+	// ormharness/bareexists_test.go.
+	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	tx.Scan(&exists)
 	if !exists {
 		return 0, 0
 	}

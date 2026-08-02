@@ -59,38 +59,6 @@ func GetSpammers(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
-	where := []string{"1=1"}
-	args := []interface{}{}
-
-	if collection != "" {
-		where = append(where, "spam_users.collection = ?")
-		args = append(args, collection)
-	}
-
-	if contextID > 0 {
-		where = append(where, "spam_users.id < ?")
-		args = append(args, contextID)
-	}
-
-	useridFilter, _ := strconv.ParseUint(c.Query("userid", "0"), 10, 64)
-	if useridFilter > 0 {
-		where = append(where, "spam_users.userid = ?")
-		args = append(args, useridFilter)
-	}
-
-	query := "SELECT DISTINCT spam_users.* FROM spam_users " +
-		"INNER JOIN users ON spam_users.userid = users.id "
-
-	if search != "" {
-		query += "LEFT JOIN users_emails ON users_emails.userid = spam_users.userid "
-		searchLike := "%" + search + "%"
-		where = append(where, "(users_emails.email LIKE ? OR users.fullname LIKE ?)")
-		args = append(args, searchLike, searchLike)
-	}
-
-	query += "WHERE " + strings.Join(where, " AND ") +
-		" ORDER BY spam_users.id DESC LIMIT 10"
-
 	type SpamRow struct {
 		ID         uint64  `json:"id"`
 		Userid     uint64  `json:"userid"`
@@ -102,8 +70,47 @@ func GetSpammers(c *fiber.Ctx) error {
 		Heldat     *string `json:"heldat"`
 	}
 
+	// ORM migration site d64650fb9560 (Tier 3 keep-raw review). Four
+	// independent toggles - collection!="", contextID>0, userid>0, search!="" -
+	// give 2x2x2x2 = 16 possible rendered forms, all declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_d64650fb9560
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	tx := db.Table("spam_users").
+		Select("DISTINCT spam_users.*").
+		Joins("INNER JOIN users ON spam_users.userid = users.id")
+
+	whereSQL := "1=1"
+	var whereArgs []interface{}
+
+	if collection != "" {
+		whereSQL += " AND spam_users.collection = ?"
+		whereArgs = append(whereArgs, collection)
+	}
+
+	if contextID > 0 {
+		whereSQL += " AND spam_users.id < ?"
+		whereArgs = append(whereArgs, contextID)
+	}
+
+	useridFilter, _ := strconv.ParseUint(c.Query("userid", "0"), 10, 64)
+	if useridFilter > 0 {
+		whereSQL += " AND spam_users.userid = ?"
+		whereArgs = append(whereArgs, useridFilter)
+	}
+
+	if search != "" {
+		tx = tx.Joins("LEFT JOIN users_emails ON users_emails.userid = spam_users.userid")
+		searchLike := "%" + search + "%"
+		whereSQL += " AND (users_emails.email LIKE ? OR users.fullname LIKE ?)"
+		whereArgs = append(whereArgs, searchLike, searchLike)
+	}
+
 	var rows []SpamRow
-	db.Raw(query, args...).Scan(&rows)
+	tx.Where(whereSQL, whereArgs...).Order("spam_users.id DESC").Limit(10).Scan(&rows)
 
 	if len(rows) == 0 {
 		rows = make([]SpamRow, 0)

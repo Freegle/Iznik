@@ -309,14 +309,23 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	}
 	db := database.DBConn
 	var rotateParentID uint64
-	db.Raw("SELECT `"+cfg.IDColumn+"` FROM `"+cfg.Table+"` WHERE id = ?", req.ID).Scan(&rotateParentID)
+	// ORM migration site 6f9c3996f035 (Tier 3 keep-raw review). cfg.IDColumn/
+	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
+	// reachable here - one rendered form per entry, declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_6f9c3996f035
+	// (iznik-server-go/test).
+	db.Table("`"+cfg.Table+"`").Select("`"+cfg.IDColumn+"`").Where("id = ?", req.ID).Scan(&rotateParentID)
 	if !ownsImageParent(myid, imgType, rotateParentID) {
 		return fiber.NewError(fiber.StatusForbidden, "Cannot rotate an image you do not own")
 	}
 
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`
 
-	result := db.Exec("UPDATE `"+cfg.Table+"` SET externalmods = ? WHERE id = ?", modsJSON, req.ID)
+	// ORM migration site 2ad46344c8b2 (Tier 3 keep-raw review). Same
+	// typeConfigs-driven table name as 6f9c3996f035 above - 10 possible
+	// rendered forms, declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_2ad46344c8b2 (iznik-server-go/test).
+	result := db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Update("externalmods", modsJSON)
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to rotate image")

@@ -332,6 +332,8 @@ func scan(root, repo string) ([]*Site, error) {
 		return nil, err
 	}
 
+	loadCrossPackageConsts(fset, root)
+
 	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -383,6 +385,38 @@ func scan(root, repo string) ([]*Site, error) {
 // single value, so a site using it genuinely has more than one form.
 var packageConstCache = map[string]map[string]string{}
 
+// crossPackageConsts holds exported constants of every package under the scan
+// root, keyed "pkg.Name" - utils.SRID and friends. Without it, a statement
+// built with fmt.Sprintf("... ST_GeomFromText(?, %d)", utils.SRID) keeps a
+// literal "%d" in its golden and is written off as dynamic, when in fact
+// utils.SRID is 3857 and the statement is entirely static. Same class of
+// self-inflicted caution as the same-package case, one import away.
+var crossPackageConsts map[string]string
+
+func loadCrossPackageConsts(fset *token.FileSet, root string) map[string]string {
+	if crossPackageConsts != nil {
+		return crossPackageConsts
+	}
+	crossPackageConsts = map[string]string{}
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.IsDir() {
+			return nil
+		}
+		if name := info.Name(); name == "vendor" || name == ".git" || name == "node_modules" {
+			return filepath.SkipDir
+		}
+		pkg := filepath.Base(path)
+		for name, val := range packageConsts(fset, path) {
+			// Only exported names can be referenced as pkg.Name from elsewhere.
+			if name != "" && name[0] >= 'A' && name[0] <= 'Z' {
+				crossPackageConsts[pkg+"."+name] = val
+			}
+		}
+		return nil
+	})
+	return crossPackageConsts
+}
+
 func packageConsts(fset *token.FileSet, dir string) map[string]string {
 	if cached, ok := packageConstCache[dir]; ok {
 		return cached
@@ -418,6 +452,16 @@ func packageConsts(fset *token.FileSet, dir string) map[string]string {
 				// literals.
 				if text, dynamic, ok := foldWith(vs.Values[0], nil); ok && !dynamic {
 					out[vs.Names[0].Name] = text
+					continue
+				}
+				// Numeric constants too. utils.SRID = 3857 is spliced into
+				// spatial SQL through fmt.Sprintf("%d", ...), and without this
+				// the golden keeps a literal "%d" - which is not SQL, cannot be
+				// compared against anything, and had 28 sites recorded as
+				// unconvertible for what is a limitation of this tool.
+				if lit, ok := vs.Values[0].(*ast.BasicLit); ok &&
+					(lit.Kind == token.INT || lit.Kind == token.FLOAT) {
+					out[vs.Names[0].Name] = lit.Value
 				}
 			}
 		}
@@ -566,6 +610,15 @@ func foldWith(e ast.Expr, consts map[string]string) (text string, dynamic bool, 
 			}
 		}
 		return "", false, false
+
+	case *ast.SelectorExpr:
+		// A qualified constant such as utils.SRID.
+		if pkg, ok := v.X.(*ast.Ident); ok && crossPackageConsts != nil {
+			if s, found := crossPackageConsts[pkg.Name+"."+v.Sel.Name]; found {
+				return s, false, true
+			}
+		}
+		return "", false, false
 	case *ast.BasicLit:
 		if v.Kind != token.STRING {
 			return "", false, false
@@ -599,11 +652,34 @@ func foldWith(e ast.Expr, consts map[string]string) (text string, dynamic bool, 
 		return foldWith(v.X, consts)
 
 	case *ast.CallExpr:
-		// fmt.Sprintf("...", x) - keep the format string, which retains the
-		// SQL shape, and treat the interpolations as holes.
 		if sel, isSel := v.Fun.(*ast.SelectorExpr); isSel && sel.Sel.Name == "Sprintf" && len(v.Args) > 0 {
-			if s, _, sok := foldWith(v.Args[0], consts); sok {
-				return s, true, true
+			if format, fdyn, fok := foldWith(v.Args[0], consts); fok {
+				// If every argument resolves to a constant, the statement is
+				// static and only LOOKED dynamic. Several spatial sites read
+				// fmt.Sprintf("... ST_GeomFromText(?, %d)", utils.SRID), fixed
+				// at compile time; keeping the %d in the golden left them
+				// impossible to convert for a reason that had nothing to do
+				// with SQL.
+				if !fdyn {
+					args := make([]string, 0, len(v.Args)-1)
+					resolved := true
+					for _, a := range v.Args[1:] {
+						txt, adyn, aok := foldWith(a, consts)
+						if !aok || adyn {
+							resolved = false
+							break
+						}
+						args = append(args, txt)
+					}
+					if resolved {
+						if out, ok := applySprintf(format, args); ok {
+							return out, false, true
+						}
+					}
+				}
+				// Otherwise keep the format string, which retains the SQL
+				// shape, and treat the interpolations as holes.
+				return format, true, true
 			}
 		}
 		return "", false, false
@@ -1198,4 +1274,46 @@ func write(path string, sites []*Site) error {
 		return err
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+// applySprintf substitutes resolved arguments into a literal format string.
+//
+// Deliberately conservative: it handles the verbs these call sites actually use
+// and refuses anything else, because a wrong substitution produces a
+// plausible-looking golden that no conversion could ever match - worse than
+// leaving the site dynamic.
+//
+// "%%" is unescaped, and that matters on its own. DATE_FORMAT(created,
+// '%%Y-%%m-%%d') in Go source is DATE_FORMAT(created, '%Y-%m-%d') in SQL, so
+// recording the doubled form made those goldens wrong rather than merely
+// incomplete.
+func applySprintf(format string, args []string) (string, bool) {
+	var b strings.Builder
+	argi := 0
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' || i+1 >= len(format) {
+			b.WriteByte(format[i])
+			continue
+		}
+		switch format[i+1] {
+		case '%':
+			b.WriteByte('%')
+			i++
+		case 'd', 's', 'v':
+			if argi >= len(args) {
+				return "", false
+			}
+			b.WriteString(args[argi])
+			argi++
+			i++
+		default:
+			// A width, precision or verb this does not model (%f, %.2f, %q).
+			// Refuse rather than guess.
+			return "", false
+		}
+	}
+	if argi != len(args) {
+		return "", false
+	}
+	return b.String(), true
 }

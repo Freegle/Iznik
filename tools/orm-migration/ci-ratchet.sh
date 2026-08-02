@@ -320,6 +320,23 @@ else
   note "fix: revert the site to raw db.Exec and add it to keep-raw.json with a reason"
 fi
 
+# --- Gate (l): keep-raw.json still agrees with the code ----------------------
+#
+# keep-raw.json is edited concurrently, and a read-modify-write on a 200-rule
+# file silently reverts other people's deletions. The file stays valid JSON and
+# every other gate keeps passing; only the counts stop being true.
+#
+# A rule saying "this site stays raw" for a site whose code carries a conversion
+# marker cannot be true of both at once, and that contradiction is what a
+# reverted deletion looks like from the outside.
+if bash "$SCRIPT_DIR/check-keepraw-coherence.sh" "$SCRIPT_DIR/keep-raw.json" "$SOURCE_ROOT" >"$WORKDIR/keepraw.txt" 2>&1; then
+  note "gate (l) OK: $(head -1 "$WORKDIR/keepraw.txt")"
+else
+  fail "keep-raw.json disagrees with the code:"
+  grep -vE '^check-keepraw-coherence: [0-9]+ rules' "$WORKDIR/keepraw.txt" | head -20
+  note "fix: a rule for a site that carries a conversion marker means a deletion was lost - re-remove it"
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"

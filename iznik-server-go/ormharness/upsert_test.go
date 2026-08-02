@@ -119,3 +119,55 @@ func TestUpsert_ValuesReferenceUsesExcludedTable(t *testing.T) {
 		t.Fatalf("expected VALUES(col) for an excluded-table reference, got: %s", sql)
 	}
 }
+
+// TestUpsert_InsertModifierKeywordSwap records what clause.Insert{Modifier}
+// renders THROUGH THIS PACKAGE'S SHARED dryRunDB, which is not the same
+// question as what GORM does by default.
+//
+// I wrote an earlier version of this test to settle a disagreement: a source
+// trace said Modifier:"REPLACE" must render the invalid "INSERT REPLACE INTO"
+// (AddClause sets c.Name="INSERT" at statement.go:278, Clause.Build writes the
+// name at clause.go:46, and Insert.Build adds only Modifier+"INTO"), while a
+// rendering came back with a clean "REPLACE INTO". I concluded the trace was
+// wrong, said so, and told the agent building a ClauseBuilders override to stop.
+//
+// I was wrong. RenderDryRunSQL goes through dryRunDB(), and dryRunDB() installs
+// database.RegisterCustomClauseBuilders (golden.go). The override was already
+// there, so the render measured the FIXED behaviour and I read it as the
+// default. TestReplaceInto_DefaultBehaviourWithoutAnyOverride, which builds a
+// *gorm.DB from a bare gorm.Open with no wiring, confirms the trace: unmodified
+// GORM renders "INSERT REPLACE INTO", and the override is load-bearing for all
+// 11 REPLACE INTO sites.
+//
+// The lesson is narrower than "render, do not read". Rendering only answers the
+// question you think it does if you control what you are rendering against, and
+// a package-level singleton that other code configures is exactly where that
+// control goes missing.
+func TestUpsert_InsertModifierKeywordSwap(t *testing.T) {
+	render := func(modifier string) string {
+		sql, err := RenderDryRunSQL(func(tx *gorm.DB) *gorm.DB {
+			return tx.Table("spam_whitelist_links").
+				Clauses(clause.Insert{Modifier: modifier}).
+				Create(map[string]interface{}{"domain": "x", "count": 1})
+		})
+		if err != nil {
+			t.Fatalf("render %q: %v", modifier, err)
+		}
+		return strings.ToUpper(strings.TrimSpace(sql))
+	}
+
+	// IGNORE is load-bearing: 35 converted sites depend on it rendering
+	// "INSERT IGNORE INTO", and it does so with or without the override.
+	if ignore := render("IGNORE"); !strings.HasPrefix(ignore, "INSERT IGNORE INTO") {
+		t.Fatalf("Modifier \"IGNORE\" no longer renders INSERT IGNORE INTO, which 35 converted sites rely on: %s", ignore)
+	}
+
+	// REPLACE renders correctly HERE only because dryRunDB carries the
+	// override. If this ever fails, the override has been removed or broken and
+	// the 11 REPLACE INTO sites are emitting invalid SQL - which is the whole
+	// reason the wiring exists.
+	if replace := render("REPLACE"); !strings.HasPrefix(replace, "REPLACE INTO") {
+		t.Fatalf("REPLACE no longer renders through the shared dryRunDB, so database.RegisterCustomClauseBuilders "+
+			"is missing or broken and the 11 REPLACE INTO sites emit invalid SQL: %s", replace)
+	}
+}
