@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 564,
+    "converted": 576,
     "keep-raw": 55,
-    "raw": 1017,
+    "raw": 1005,
     "test-fixture": 4223
   },
   "sites": {
@@ -2324,7 +2324,7 @@
     "050e3574aa6f": {
       "id": "050e3574aa6f",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 446,
+      "line": 453,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -4287,7 +4287,7 @@
     "086a07072de1": {
       "id": "086a07072de1",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 707,
+      "line": 717,
       "function": "ingestBulkItemPhotos",
       "receiver": "db",
       "method": "Raw",
@@ -5153,9 +5153,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0a6ca0656195": {
       "id": "0a6ca0656195",
@@ -18230,7 +18230,7 @@
     "239d2cb0036e": {
       "id": "239d2cb0036e",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 470,
+      "line": 477,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "db",
       "method": "Exec",
@@ -22747,9 +22747,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM messages_bulk_items WHERE msgid = ? AND id NOT IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2cb66c5383c4": {
       "id": "2cb66c5383c4",
@@ -24438,7 +24438,7 @@
     "2fb353882afe": {
       "id": "2fb353882afe",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 321,
+      "line": 322,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Raw",
@@ -27603,7 +27603,7 @@
     "35b87def61f8": {
       "id": "35b87def61f8",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 363,
+      "line": 365,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Exec",
@@ -29095,9 +29095,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_bulk_items SET available = 0 WHERE id = ? AND quantity = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3917903b1fed": {
       "id": "3917903b1fed",
@@ -42445,7 +42445,7 @@
     "54b1921a63a5": {
       "id": "54b1921a63a5",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 427,
+      "line": 433,
       "function": "sendAccessInstructions",
       "receiver": "db",
       "method": "Exec",
@@ -54035,9 +54035,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_bulk_slots WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6adffe958550": {
       "id": "6adffe958550",
@@ -59224,9 +59224,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_bulk_items SET quantity = ? WHERE id = ? AND msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "745526cc9010": {
       "id": "745526cc9010",
@@ -63570,9 +63570,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_bulk_items SET available = ? WHERE id = ? AND msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7ba4875e8aec": {
       "id": "7ba4875e8aec",
@@ -68724,9 +68724,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_attachments SET msgid = ? WHERE id = ? AND (msgid IS NULL OR msgid = ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "85edeab31954": {
       "id": "85edeab31954",
@@ -80646,7 +80646,7 @@
     "9e4c6da913a4": {
       "id": "9e4c6da913a4",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 473,
+      "line": 480,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "db",
       "method": "Exec",
@@ -91096,7 +91096,7 @@
     "b26bbbd1f279": {
       "id": "b26bbbd1f279",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 508,
+      "line": 515,
       "function": "upsertBulkItems",
       "receiver": "db",
       "method": "Exec",
@@ -92492,9 +92492,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b5235ac367c2": {
       "id": "b5235ac367c2",
@@ -99243,9 +99243,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO messages_bulk_slots (msgid, position, slot) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c2a2ce9b979d": {
       "id": "c2a2ce9b979d",
@@ -106105,9 +106105,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_bulk_items WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d02deddf93b1": {
       "id": "d02deddf93b1",
@@ -112392,9 +112392,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dcb8035d8383": {
       "id": "dcb8035d8383",
@@ -116109,9 +116109,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_bulk_items SET quantity = GREATEST(0, quantity - ?) WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e42b79018cdf": {
       "id": "e42b79018cdf",
@@ -127836,7 +127836,7 @@
     "faa9018435a3": {
       "id": "faa9018435a3",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 513,
+      "line": 520,
       "function": "upsertBulkItems",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128352,7 +128352,7 @@
     "fb88302d28cb": {
       "id": "fb88302d28cb",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 726,
+      "line": 736,
       "function": "ingestBulkItemPhotos",
       "receiver": "sqlDB",
       "method": "Exec",

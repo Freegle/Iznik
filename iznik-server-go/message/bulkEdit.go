@@ -273,14 +273,16 @@ func PostBulkEditOffer(c *fiber.Ctx) error {
 		if *req.Available {
 			av = 1
 		}
-		db.Exec("UPDATE messages_bulk_items SET available = ? WHERE id = ? AND msgid = ?", av, req.Itemid, msgid)
+		// ORM migration site 7b9310de870b (wave 2).
+		db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", req.Itemid, msgid).Update("available", av)
 	}
 	if req.Quantity != nil {
 		q := *req.Quantity
 		if q < 0 {
 			q = 0
 		}
-		db.Exec("UPDATE messages_bulk_items SET quantity = ? WHERE id = ? AND msgid = ?", q, req.Itemid, msgid)
+		// ORM migration site 74516dda0fb7 (wave 2).
+		db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", req.Itemid, msgid).Update("quantity", q)
 	}
 
 	recomputeBulkAvailableNow(db, msgid)
