@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // NoticeboardItem is a flat V2 response. Client fetches user details separately via /user/:id.
@@ -193,19 +194,50 @@ func PostNoticeboard(c *fiber.Ctx) error {
 
 		switch req.Action {
 		case "Refreshed":
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, refreshed, inactive) VALUES (?, ?, NOW(), 1, 0)", req.ID, myid)
-			db.Exec("UPDATE noticeboards SET lastcheckedat = NOW(), active = 1 WHERE id = ?", req.ID)
+			// ORM migration site b22dc6f55660 (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"refreshed":     gorm.Expr("1"),
+				"inactive":      gorm.Expr("0"),
+			})
+			// ORM migration site 4e32d794943f (wave 2).
+			db.Table("noticeboards").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"lastcheckedat": gorm.Expr("NOW()"), "active": gorm.Expr("1")})
 		case "Declined":
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, declined, inactive) VALUES (?, ?, NOW(), 1, 0)", req.ID, myid)
+			// ORM migration site 8e072007de59 (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"declined":      gorm.Expr("1"),
+				"inactive":      gorm.Expr("0"),
+			})
 		case "Inactive":
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, inactive) VALUES (?, ?, NOW(), 1)", req.ID, myid)
-			db.Exec("UPDATE noticeboards SET lastcheckedat = NOW(), active = 0 WHERE id = ?", req.ID)
+			// ORM migration site 29fd88a76f02 (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"inactive":      gorm.Expr("1"),
+			})
+			// ORM migration site 90267e07036b (wave 2).
+			db.Table("noticeboards").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"lastcheckedat": gorm.Expr("NOW()"), "active": gorm.Expr("0")})
 		case "Comments":
 			comments := ""
 			if req.Comments != nil {
 				comments = *req.Comments
 			}
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, comments, inactive) VALUES (?, ?, NOW(), ?, 0)", req.ID, myid, comments)
+			// ORM migration site fc070851caba (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"comments":      comments,
+				"inactive":      gorm.Expr("0"),
+			})
 		default:
 			return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 		}
@@ -301,27 +333,34 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Name != nil {
-		db.Exec("UPDATE noticeboards SET name = ? WHERE id = ?", *req.Name, req.ID)
+		// ORM migration site 231d70e1fa28 (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("name", *req.Name)
 	}
 	if req.Lat != nil {
-		db.Exec("UPDATE noticeboards SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+		// ORM migration site 96d656eb95cb (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("lat", *req.Lat)
 	}
 	if req.Lng != nil {
-		db.Exec("UPDATE noticeboards SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+		// ORM migration site 86722b0b3cff (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("lng", *req.Lng)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE noticeboards SET description = ? WHERE id = ?", *req.Description, req.ID)
+		// ORM migration site 0c12eb5cf095 (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Active != nil {
-		db.Exec("UPDATE noticeboards SET active = ? WHERE id = ?", *req.Active, req.ID)
+		// ORM migration site b4e8507b4bf0 (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("active", *req.Active)
 	}
 	if req.Lastcheckedat != nil {
-		db.Exec("UPDATE noticeboards SET lastcheckedat = ? WHERE id = ?", *req.Lastcheckedat, req.ID)
+		// ORM migration site 86acdf5e502f (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("lastcheckedat", *req.Lastcheckedat)
 	}
 
 	// Link photo if provided
 	if req.Photoid != nil {
-		db.Exec("UPDATE noticeboards_images SET noticeboardid = ? WHERE id = ?", req.ID, *req.Photoid)
+		// ORM migration site 42bec0874800 (wave 2).
+		db.Table("noticeboards_images").Where("id = ?", *req.Photoid).Update("noticeboardid", req.ID)
 	}
 
 	// Create newsfeed entry on first name assignment (when name was empty and is now being set)
@@ -395,7 +434,8 @@ func DeleteNoticeboard(c *fiber.Ctx) error {
 	}
 
 	// Delete the noticeboard
-	result := db.Exec("DELETE FROM noticeboards WHERE id = ?", id)
+	// ORM migration site 1689d28e9c22 (wave 2).
+	result := db.Table("noticeboards").Where("id = ?", id).Delete(nil)
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete noticeboard")
 	}

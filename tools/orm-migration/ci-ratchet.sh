@@ -273,6 +273,35 @@ else
   note "gate (h) OK: no half-converted groups of identical statements"
 fi
 
+# --- Gate (i): SET order that carries meaning --------------------------------
+#
+# GORM sorts map keys when building Updates(map[string]interface{}{...}), and
+# MySQL evaluates SET assignments left to right, so a conversion can reorder a
+# statement into computing something different. The golden-SQL harness cannot
+# catch this on its own: normaliseColumnOrder sorts SET lists on both sides so
+# that harmless reordering passes, which means it would wave through harmful
+# reordering too. The harness now declines to normalise these, and this gate
+# stops one being introduced without anyone looking at it.
+if bash "$SCRIPT_DIR/check-set-order.sh" "$SOURCE_ROOT" >"$WORKDIR/setorder.txt" 2>&1; then
+  note "gate (i) OK: $(tail -1 "$WORKDIR/setorder.txt")"
+else
+  fail "an UPDATE's SET order carries meaning, and GORM sorts map keys:"
+  grep '^SET ORDER' "$WORKDIR/setorder.txt" | head -20
+  note "fix: read the site. If the order matters, split it into separate statements or keep it raw."
+fi
+
+# --- Gate (j): uses of gorm/clause without the import ------------------------
+#
+# gofmt validates formatting, not compilation. A file using gorm.Expr with no
+# gorm import passes every cheap check and only fails the build, which costs a
+# full suite run to discover.
+if bash "$SCRIPT_DIR/check-imports.sh" "$SOURCE_ROOT" >"$WORKDIR/imports.txt" 2>&1; then
+  note "gate (j) OK: no missing gorm/clause/dbresolver imports"
+else
+  fail "a file uses gorm/clause/dbresolver without importing it:"
+  grep -E '^(MISSING IMPORT|BAD IMPORT PATH)' "$WORKDIR/imports.txt" | head -20
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"

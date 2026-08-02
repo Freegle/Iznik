@@ -401,9 +401,11 @@ func helperEnsureBatch(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest
 	// The driver pings EnsureBatch every loop cycle, so lastpolledat doubles as a
 	// heartbeat: the page treats a pause as confirmed once lastpolledat advances
 	// past pausedat (the loop has observed the pause and gone idle).
-	db.Exec("UPDATE helper_batches SET lastpolledat = NOW() WHERE id = ?", batchid)
+	// ORM migration site 257f269f3d36 (wave 2).
+	db.Table("helper_batches").Where("id = ?", batchid).Update("lastpolledat", gorm.Expr("NOW()"))
 	if req.Briefing != nil {
-		db.Exec("UPDATE helper_batches SET briefing = ? WHERE id = ?", *req.Briefing, batchid)
+		// ORM migration site da66ba09e8cf (wave 2).
+		db.Table("helper_batches").Where("id = ?", batchid).Update("briefing", *req.Briefing)
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "batchid": batchid})
 }
@@ -423,16 +425,21 @@ func helperSetStatus(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest) 
 	offerer, _, _ := helperAuthForMsg(db, myid, req.Msgid)
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
 	if *req.Status == "paused" {
-		db.Exec("UPDATE helper_batches SET status = ?, pausedat = NOW() WHERE id = ?", *req.Status, batchid)
+		// ORM migration site e7cb0b1990d3 (wave 2).
+		db.Table("helper_batches").Where("id = ?", batchid).
+			Updates(map[string]interface{}{"status": *req.Status, "pausedat": gorm.Expr("NOW()")})
 	} else {
-		db.Exec("UPDATE helper_batches SET status = ?, pausedat = NULL WHERE id = ?", *req.Status, batchid)
+		// ORM migration site fb65a4932547 (wave 2).
+		db.Table("helper_batches").Where("id = ?", batchid).
+			Updates(map[string]interface{}{"status": *req.Status, "pausedat": gorm.Expr("NULL")})
 	}
 	// The send mode (Automatic vs Approve) is orthogonal to pause/stop. In Approve
 	// mode the FSM proposes every outgoing message for the offerer to edit + approve.
 	if req.Automode != nil {
 		switch *req.Automode {
 		case "automatic", "approve":
-			db.Exec("UPDATE helper_batches SET automode = ? WHERE id = ?", *req.Automode, batchid)
+			// ORM migration site b7320249a46d (wave 2).
+			db.Table("helper_batches").Where("id = ?", batchid).Update("automode", *req.Automode)
 		default:
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid automode")
 		}
@@ -609,7 +616,8 @@ func insertHelperChat(db *gorm.DB, batchid, chatid, offerer, msgid, replierid ui
 	if err != nil {
 		return 0
 	}
-	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+	// ORM migration site 1f1db38c17ab (wave 2).
+	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 	var rid interface{}
 	if replierid > 0 {
 		rid = replierid
@@ -662,7 +670,8 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 			}
 		}
 	} else {
-		db.Exec("UPDATE helper_repliers SET chatid = ? WHERE id = ?", chatid, replierid)
+		// ORM migration site 80634b30b8a9 (wave 2).
+		db.Table("helper_repliers").Where("id = ?", replierid).Update("chatid", chatid)
 	}
 	kind := "other"
 	if req.Kind != nil {
@@ -758,7 +767,9 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 	finalText = strings.TrimSpace(finalText)
 
 	if *req.Decision == "dismiss" {
-		db.Exec("UPDATE helper_proposals SET status = 'dismissed', resolvedat = NOW(), resolvedby = ? WHERE id = ?", myid, *req.Proposalid)
+		// ORM migration site 0a2d7de8a9b7 (wave 2).
+		db.Table("helper_proposals").Where("id = ?", *req.Proposalid).
+			Updates(map[string]interface{}{"status": gorm.Expr("'dismissed'"), "resolvedat": gorm.Expr("NOW()"), "resolvedby": myid})
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 	if *req.Decision != "send" {
@@ -781,26 +792,41 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 			// ORM migration site 128798d274f6 (wave 1).
 			db.Table("messages_bulk_items_interest").Select("COALESCE(state,'')").
 				Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).Scan(&prior)
-			db.Exec("UPDATE messages_bulk_items_interest SET state = 'Reserved' WHERE bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid)
+			// ORM migration site a03b9302bbb8 (wave 2).
+			db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).
+				Update("state", gorm.Expr("'Reserved'"))
 			db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgid, replierUserid)
 			if prior != "Reserved" {
 				sendAccessInstructions(db, msgid, offerer, replierUserid)
 			}
 			if p.Replierid != nil {
-				db.Exec("UPDATE helper_item_states SET state = 'ALLOCATED' WHERE replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid)
-				db.Exec("UPDATE helper_repliers SET state = 'ALLOCATED' WHERE id = ? AND state IN ('QUALIFIED','GATHERING','NEW','ESCALATED','PARKED_REPLIED','PARKED_QUIET','TIMED_OUT')", *p.Replierid)
+				// ORM migration site 362515fa583b (wave 2).
+				db.Table("helper_item_states").Where("replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid).
+					Update("state", gorm.Expr("'ALLOCATED'"))
+				// ORM migration site 100ebe4c33c8 (wave 2).
+				db.Table("helper_repliers").
+					Where("id = ? AND state IN ('QUALIFIED','GATHERING','NEW','ESCALATED','PARKED_REPLIED','PARKED_QUIET','TIMED_OUT')", *p.Replierid).
+					Update("state", gorm.Expr("'ALLOCATED'"))
 			}
 		}
 	case "rejection":
 		if p.Replierid != nil && p.Bulkitemid != nil {
-			db.Exec("UPDATE helper_item_states SET state = 'REJECTED' WHERE replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid)
+			// ORM migration site 17c08ee0c835 (wave 2). Identical to 15b15ae11812
+			// (withdrawal_notice, below); converted together per gate (h).
+			db.Table("helper_item_states").Where("replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid).
+				Update("state", gorm.Expr("'REJECTED'"))
 		}
 		if replierUserid > 0 && p.Bulkitemid != nil {
-			db.Exec("UPDATE messages_bulk_items_interest SET state = 'Rejected' WHERE bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid)
+			// ORM migration site e2d465d97cf9 (wave 2).
+			db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).
+				Update("state", gorm.Expr("'Rejected'"))
 		}
 	case "withdrawal_notice":
 		if p.Replierid != nil && p.Bulkitemid != nil {
-			db.Exec("UPDATE helper_item_states SET state = 'REJECTED' WHERE replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid)
+			// ORM migration site 15b15ae11812 (wave 2). Identical to 17c08ee0c835
+			// (rejection, above); converted together per gate (h).
+			db.Table("helper_item_states").Where("replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid).
+				Update("state", gorm.Expr("'REJECTED'"))
 		}
 	case "escalation":
 		// Confirming an escalation moves the replier to ESCALATED with the AI's
@@ -811,7 +837,9 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 			if p.Summary != nil {
 				reason = *p.Summary
 			}
-			db.Exec("UPDATE helper_repliers SET state = 'ESCALATED', escalation_reason = ? WHERE id = ?", reason, *p.Replierid)
+			// ORM migration site a416584a1903 (wave 2).
+			db.Table("helper_repliers").Where("id = ?", *p.Replierid).
+				Updates(map[string]interface{}{"state": gorm.Expr("'ESCALATED'"), "escalation_reason": reason})
 		}
 	}
 
@@ -825,7 +853,9 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 		}
 	}
 
-	db.Exec("UPDATE helper_proposals SET status = 'sent', resolved_text = ?, resolvedat = NOW(), resolvedby = ? WHERE id = ?", finalText, myid, *req.Proposalid)
+	// ORM migration site 78e5a64166c8 (wave 2).
+	db.Table("helper_proposals").Where("id = ?", *req.Proposalid).
+		Updates(map[string]interface{}{"status": gorm.Expr("'sent'"), "resolved_text": finalText, "resolvedat": gorm.Expr("NOW()"), "resolvedby": myid})
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "chatmsgid": chatmsgid})
 }
 

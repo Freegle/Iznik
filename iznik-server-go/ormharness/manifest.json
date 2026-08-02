@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 751,
+    "converted": 982,
     "keep-raw": 55,
-    "raw": 830,
+    "raw": 599,
     "test-fixture": 4223
   },
   "sites": {
@@ -368,9 +368,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE volunteering SET heldby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "00a36d66e533": {
       "id": "00a36d66e533",
@@ -879,9 +879,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "01c4ce0da628": {
       "id": "01c4ce0da628",
@@ -1206,9 +1206,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users SET lastlocation = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "02963d1e570a": {
       "id": "02963d1e570a",
@@ -1250,9 +1250,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "02b7865c1d55": {
       "id": "02b7865c1d55",
@@ -1503,7 +1503,7 @@
     "033affad7d5a": {
       "id": "033affad7d5a",
       "file": "iznik-server-go/message/message.go",
-      "line": 4028,
+      "line": 4159,
       "function": "findOrCreateUserForDraft",
       "receiver": "db",
       "method": "Exec",
@@ -2029,9 +2029,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes_intended WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "048db12b9b08": {
       "id": "048db12b9b08",
@@ -2058,7 +2058,7 @@
     "049bc3f964cd": {
       "id": "049bc3f964cd",
       "file": "iznik-server-go/message/message.go",
-      "line": 2582,
+      "line": 2621,
       "function": "handleSpam",
       "receiver": "db",
       "method": "Exec",
@@ -2324,7 +2324,7 @@
     "050e3574aa6f": {
       "id": "050e3574aa6f",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 453,
+      "line": 466,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -3018,7 +3018,7 @@
     "062b91c70acc": {
       "id": "062b91c70acc",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1008,
+      "line": 1020,
       "function": "RecordReportVerdict",
       "receiver": "db",
       "method": "Exec",
@@ -3368,9 +3368,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET editedby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "06b4f286eaca": {
       "id": "06b4f286eaca",
@@ -3857,9 +3857,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET online = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "07c19e6abb31": {
       "id": "07c19e6abb31",
@@ -4167,9 +4167,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET contacturl = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "084853803fdb": {
       "id": "084853803fdb",
@@ -4255,9 +4255,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_groups SET deleted = 1, heldby = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "08695ba567a6": {
       "id": "08695ba567a6",
@@ -4287,7 +4287,7 @@
     "086a07072de1": {
       "id": "086a07072de1",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 717,
+      "line": 734,
       "function": "ingestBulkItemPhotos",
       "receiver": "db",
       "method": "Raw",
@@ -4510,7 +4510,7 @@
     "08d12a748d01": {
       "id": "08d12a748d01",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1227,
+      "line": 1255,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -4671,7 +4671,7 @@
     "09730933af57": {
       "id": "09730933af57",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1145,
+      "line": 1151,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -5131,9 +5131,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_proposals SET status = 'dismissed', resolvedat = NOW(), resolvedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0a3ffbf56687": {
       "id": "0a3ffbf56687",
@@ -5949,9 +5949,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards SET description = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c1bcc6cd9ae": {
       "id": "0c1bcc6cd9ae",
@@ -5993,9 +5993,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET description = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c301f910767": {
       "id": "0c301f910767",
@@ -6554,9 +6554,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET title = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0d11cb33e655": {
       "id": "0d11cb33e655",
@@ -6673,7 +6673,7 @@
     "0d3865cbb34e": {
       "id": "0d3865cbb34e",
       "file": "iznik-server-go/story/story.go",
-      "line": 489,
+      "line": 503,
       "function": "PostStory",
       "receiver": "db",
       "method": "Exec",
@@ -6979,9 +6979,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_notifications SET seen = 1 WHERE touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0e0bfc4f3b76": {
       "id": "0e0bfc4f3b76",
@@ -7640,7 +7640,7 @@
     "0f2ef8ae0f11": {
       "id": "0f2ef8ae0f11",
       "file": "iznik-server-go/message/message.go",
-      "line": 3499,
+      "line": 3601,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Raw",
@@ -7850,9 +7850,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_groups SET contentcheck_checked_at = NULL, contentcheck_reasons = NULL WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0fb5ac7141de": {
       "id": "0fb5ac7141de",
@@ -8094,9 +8094,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE helper_repliers SET state = 'ALLOCATED' WHERE id = ? AND state IN ('QUALIFIED','GATHERING','NEW','ESCALATED','PARKED_REPLIED','PARKED_QUIET','TIMED_OUT')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "100f09863914": {
       "id": "100f09863914",
@@ -8414,7 +8414,7 @@
     "10bcbd6a6404": {
       "id": "10bcbd6a6404",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1516,
+      "line": 1565,
       "function": "createRefer",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -8762,9 +8762,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "11791ee6d161": {
       "id": "11791ee6d161",
@@ -9148,7 +9148,7 @@
     "123512413259": {
       "id": "123512413259",
       "file": "iznik-server-go/message/helper.go",
-      "line": 657,
+      "line": 665,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -10373,7 +10373,7 @@
     "154548bd2551": {
       "id": "154548bd2551",
       "file": "iznik-server-go/communityevent/communityEvent.go",
-      "line": 462,
+      "line": 472,
       "function": "Update",
       "receiver": "db",
       "method": "Exec",
@@ -10509,7 +10509,7 @@
     "1590b130f529": {
       "id": "1590b130f529",
       "file": "iznik-server-go/message/message.go",
-      "line": 4344,
+      "line": 4475,
       "function": "PutMessageAs",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -10568,9 +10568,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_item_states SET state = 'REJECTED' WHERE replierid = ? AND bulkitemid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "15b7dd2cc0aa": {
       "id": "15b7dd2cc0aa",
@@ -10590,9 +10590,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET deleted = 1, deletedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "15c4586ac31e": {
       "id": "15c4586ac31e",
@@ -10787,9 +10787,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO users_searches (userid, term, locationid) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "160ecd77825f": {
       "id": "160ecd77825f",
@@ -11097,9 +11097,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM noticeboards WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1698b1a45bcf": {
       "id": "1698b1a45bcf",
@@ -11429,9 +11429,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM users_stories_likes WHERE storyid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1722b492f85b": {
       "id": "1722b492f85b",
@@ -11720,9 +11720,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_item_states SET state = 'REJECTED' WHERE replierid = ? AND bulkitemid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "17d7ad46f08a": {
       "id": "17d7ad46f08a",
@@ -12232,9 +12232,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_drafts SET groupid = ? WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "18e799d35d1d": {
       "id": "18e799d35d1d",
@@ -12923,9 +12923,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE communityevents SET deleted = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1a12de474647": {
       "id": "1a12de474647",
@@ -12945,9 +12945,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1a2b903d6e44": {
       "id": "1a2b903d6e44",
@@ -13033,9 +13033,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM communityevents_dates WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1a3d3778c0ff": {
       "id": "1a3d3778c0ff",
@@ -13391,9 +13391,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET contactemail = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1b15071af041": {
       "id": "1b15071af041",
@@ -13483,9 +13483,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1b2e7cc8e4f7": {
       "id": "1b2e7cc8e4f7",
@@ -15207,9 +15207,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_stories SET public = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1e5b5f293dd5": {
       "id": "1e5b5f293dd5",
@@ -15449,9 +15449,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'rejected' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1eb5dd8ca162": {
       "id": "1eb5dd8ca162",
@@ -15625,9 +15625,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1f1e8962edcb": {
       "id": "1f1e8962edcb",
@@ -16116,14 +16116,14 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1ff179ae0e2c": {
       "id": "1ff179ae0e2c",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1155,
+      "line": 1164,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -16275,9 +16275,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE users_stories SET newsletterreviewed = ?, newsletterreviewedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2045fb2e0152": {
       "id": "2045fb2e0152",
@@ -16678,9 +16678,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM newsfeed_likes WHERE newsfeedid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "20d8eda3a578": {
       "id": "20d8eda3a578",
@@ -17508,9 +17508,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "228f37745f00": {
       "id": "228f37745f00",
@@ -17711,9 +17711,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET subject = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "22dec8a3810f": {
       "id": "22dec8a3810f",
@@ -17755,9 +17755,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "22fe52cde61a": {
       "id": "22fe52cde61a",
@@ -17865,9 +17865,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards SET name = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "232a59789a88": {
       "id": "232a59789a88",
@@ -18179,9 +18179,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET `insert` = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "237f6872e0b8": {
       "id": "237f6872e0b8",
@@ -18230,7 +18230,7 @@
     "239d2cb0036e": {
       "id": "239d2cb0036e",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 477,
+      "line": 490,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "db",
       "method": "Exec",
@@ -18518,9 +18518,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_bulk_items_interest SET state = 'Withdrawn', quantity = 0 WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2404ea1da515": {
       "id": "2404ea1da515",
@@ -19383,9 +19383,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE helper_batches SET lastpolledat = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "258437a60f5d": {
       "id": "258437a60f5d",
@@ -19876,9 +19876,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE ai_images SET regeneration_notes = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "26966feda116": {
       "id": "26966feda116",
@@ -20015,7 +20015,7 @@
     "26c94565517d": {
       "id": "26c94565517d",
       "file": "iznik-server-go/message/message.go",
-      "line": 5220,
+      "line": 5402,
       "function": "createSystemChatMessage",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -20766,9 +20766,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE ai_images SET externaluid = ?, pending_externaluid = NULL, regeneration_notes = NULL, status = 'active' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2891d1ddef74": {
       "id": "2891d1ddef74",
@@ -20795,7 +20795,7 @@
     "28acafc7c5a8": {
       "id": "28acafc7c5a8",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1181,
+      "line": 1191,
       "function": "Post",
       "receiver": "db",
       "method": "Raw",
@@ -21228,9 +21228,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM communityevents_groups WHERE eventid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "295b3f47e01f": {
       "id": "295b3f47e01f",
@@ -21461,7 +21461,7 @@
     "29da9bf8d686": {
       "id": "29da9bf8d686",
       "file": "iznik-server-go/message/message.go",
-      "line": 5073,
+      "line": 5244,
       "function": "canModifyMessage",
       "receiver": "db",
       "method": "Raw",
@@ -21613,9 +21613,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, inactive) VALUES (?, ?, NOW(), 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2a03724f0b55": {
       "id": "2a03724f0b55",
@@ -21679,9 +21679,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET contacturl = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2a3da28961b1": {
       "id": "2a3da28961b1",
@@ -21831,9 +21831,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_drafts WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2ab0511a97e8": {
       "id": "2ab0511a97e8",
@@ -22235,9 +22235,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2bc054c87d1d": {
       "id": "2bc054c87d1d",
@@ -22348,9 +22348,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO volunteering_dates (volunteeringid, start, end, applyby) VALUES (?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2c0918de9946": {
       "id": "2c0918de9946",
@@ -23231,9 +23231,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO messages_reneged (userid, msgid) VALUES (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2de07c2af78b": {
       "id": "2de07c2af78b",
@@ -23986,9 +23986,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2f3126db180a": {
       "id": "2f3126db180a",
@@ -24184,9 +24184,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET deadline = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2f50c60a13d9": {
       "id": "2f50c60a13d9",
@@ -24296,9 +24296,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET pending = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2f7bc5ac2ba5": {
       "id": "2f7bc5ac2ba5",
@@ -24438,7 +24438,7 @@
     "2fb353882afe": {
       "id": "2fb353882afe",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 322,
+      "line": 330,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Raw",
@@ -24818,7 +24818,7 @@
     "309561e40e15": {
       "id": "309561e40e15",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 378,
+      "line": 382,
       "function": "getPendingMessageChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -25127,14 +25127,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM mod_stdmsgs WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "316bb6807874": {
       "id": "316bb6807874",
       "file": "iznik-server-go/volunteering/volunteering.go",
-      "line": 552,
+      "line": 564,
       "function": "Update",
       "receiver": "db",
       "method": "Exec",
@@ -25415,9 +25415,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE volunteering SET renewed = NOW(), expired = 0 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "31c8e8736fc6": {
       "id": "31c8e8736fc6",
@@ -25880,9 +25880,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE rippling_reach SET status = 'held', next_expansion_at = NULL WHERE msgid = ? AND status \u003c\u003e 'held'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "328714aec8e8": {
       "id": "328714aec8e8",
@@ -26234,9 +26234,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_edits SET reviewrequired = 0, revertedat = NOW() WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "334ca8b427fc": {
       "id": "334ca8b427fc",
@@ -26300,9 +26300,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes WHERE msgid = ? AND outcome = 'Expired'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "336c3b896227": {
       "id": "336c3b896227",
@@ -26544,9 +26544,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_groups SET collection = ? WHERE msgid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "33ad97a3417c": {
       "id": "33ad97a3417c",
@@ -26880,9 +26880,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_index WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "34552b8701df": {
       "id": "34552b8701df",
@@ -27550,9 +27550,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE newsfeed SET replyto = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "359b58e0adbe": {
       "id": "359b58e0adbe",
@@ -27603,7 +27603,7 @@
     "35b87def61f8": {
       "id": "35b87def61f8",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 365,
+      "line": 373,
       "function": "handleBulkInterestState",
       "receiver": "db",
       "method": "Exec",
@@ -27732,9 +27732,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE chat_messages SET message = ?, date = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "35f444696125": {
       "id": "35f444696125",
@@ -27842,9 +27842,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_item_states SET state = 'ALLOCATED' WHERE replierid = ? AND bulkitemid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3630de6042f3": {
       "id": "3630de6042f3",
@@ -28324,7 +28324,7 @@
     "3762cb36efcf": {
       "id": "3762cb36efcf",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1091,
+      "line": 1103,
       "function": "listMicroActions",
       "receiver": "db",
       "method": "Raw",
@@ -28743,7 +28743,7 @@
     "3843c361ded2": {
       "id": "3843c361ded2",
       "file": "iznik-server-go/message/message.go",
-      "line": 2324,
+      "line": 2340,
       "function": "MessageOriginGroup",
       "receiver": "db",
       "method": "Raw",
@@ -29678,9 +29678,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3a590db77867": {
       "id": "3a590db77867",
@@ -30752,7 +30752,7 @@
     "3c4828e01db8": {
       "id": "3c4828e01db8",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1156,
+      "line": 1165,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -30881,9 +30881,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, 'CommentOnYourPost', ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3c8ce70d666b": {
       "id": "3c8ce70d666b",
@@ -31451,9 +31451,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_stories SET headline = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3e5895f08a3e": {
       "id": "3e5895f08a3e",
@@ -31627,9 +31627,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "UPDATE messages_groups SET collection = ?, approvedby = ?, approvedat = NOW(), arrival = NOW() WHERE msgid = ? AND groupid IN ? AND collection != ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ead035b6e63": {
       "id": "3ead035b6e63",
@@ -31788,9 +31788,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3efc28211c66": {
       "id": "3efc28211c66",
@@ -32495,9 +32495,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes_intended WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "40657312c4c6": {
       "id": "40657312c4c6",
@@ -33249,7 +33249,7 @@
     "419abfa0cef3": {
       "id": "419abfa0cef3",
       "file": "iznik-server-go/message/message.go",
-      "line": 3075,
+      "line": 3156,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -33469,9 +33469,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, stdmsgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "420da617a823": {
       "id": "420da617a823",
@@ -33627,9 +33627,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET pending = ?, heldby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "427bf8bd0bc7": {
       "id": "427bf8bd0bc7",
@@ -33768,7 +33768,7 @@
     "42bb2fc5fe91": {
       "id": "42bb2fc5fe91",
       "file": "iznik-server-go/noticeboard/noticeboard.go",
-      "line": 252,
+      "line": 284,
       "function": "PostNoticeboard",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -33831,9 +33831,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards_images SET noticeboardid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "42c6ecf71f36": {
       "id": "42c6ecf71f36",
@@ -34720,7 +34720,7 @@
     "44a89f7db2ae": {
       "id": "44a89f7db2ae",
       "file": "iznik-server-go/message/message.go",
-      "line": 5343,
+      "line": 5532,
       "function": "recordAIDeletions",
       "receiver": "db",
       "method": "Exec",
@@ -35517,9 +35517,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_attachments SET msgid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "464269ab5416": {
       "id": "464269ab5416",
@@ -35717,9 +35717,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "46c5fb361ea2": {
       "id": "46c5fb361ea2",
@@ -35739,9 +35739,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET action = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "46ce8a67c944": {
       "id": "46ce8a67c944",
@@ -35986,9 +35986,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET deliverypossible = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "475e52382f07": {
       "id": "475e52382f07",
@@ -36494,9 +36494,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry hidden')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "47f08e863ceb": {
       "id": "47f08e863ceb",
@@ -37345,9 +37345,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET deleted = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "499f1611b6eb": {
       "id": "499f1611b6eb",
@@ -38125,9 +38125,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_likes SET pageview = 1, source = COALESCE(?, source) WHERE msgid = ? AND userid = ? AND type = 'View'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4ad5e4cbcc82": {
       "id": "4ad5e4cbcc82",
@@ -38222,7 +38222,7 @@
     "4aef5392a01f": {
       "id": "4aef5392a01f",
       "file": "iznik-server-go/message/helper.go",
-      "line": 457,
+      "line": 464,
       "function": "helperUpsertReplier",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -38542,7 +38542,7 @@
     "4bc6d0615816": {
       "id": "4bc6d0615816",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 761,
+      "line": 766,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Exec",
@@ -38852,9 +38852,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET contactname = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4c66d5c07826": {
       "id": "4c66d5c07826",
@@ -39580,9 +39580,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET edittext = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4df0fd7eb9b7": {
       "id": "4df0fd7eb9b7",
@@ -39734,9 +39734,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE noticeboards SET lastcheckedat = NOW(), active = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4e3574f52138": {
       "id": "4e3574f52138",
@@ -39980,9 +39980,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO messages_outcomes (msgid, outcome, happiness, comments) VALUES (?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4ee7fc2d40c6": {
       "id": "4ee7fc2d40c6",
@@ -40673,14 +40673,14 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "509cbeda4fad": {
       "id": "509cbeda4fad",
       "file": "iznik-server-go/message/message.go",
-      "line": 2033,
+      "line": 2034,
       "function": "isModForMessage",
       "receiver": "db",
       "method": "Raw",
@@ -40806,9 +40806,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET location = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5109c73526fd": {
       "id": "5109c73526fd",
@@ -41320,9 +41320,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "523de4e244bd": {
       "id": "523de4e244bd",
@@ -42369,9 +42369,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM messages_promises WHERE msgid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "547f1320a647": {
       "id": "547f1320a647",
@@ -42460,9 +42460,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "54ca1d4752b7": {
       "id": "54ca1d4752b7",
@@ -43996,7 +43996,7 @@
     "578ac6d80c06": {
       "id": "578ac6d80c06",
       "file": "iznik-server-go/message/message.go",
-      "line": 3131,
+      "line": 3221,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -44775,9 +44775,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ? AND deleted = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "58cb0a225ebe": {
       "id": "58cb0a225ebe",
@@ -47601,9 +47601,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET body = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5e8ceb487de1": {
       "id": "5e8ceb487de1",
@@ -47733,9 +47733,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM volunteering_groups WHERE volunteeringid = ? AND groupid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5ebede9fbef2": {
       "id": "5ebede9fbef2",
@@ -49138,9 +49138,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering_images SET opportunityid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6180dc848f02": {
       "id": "6180dc848f02",
@@ -49160,9 +49160,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "61944405cac9": {
       "id": "61944405cac9",
@@ -49548,7 +49548,7 @@
     "627297867656": {
       "id": "627297867656",
       "file": "iznik-server-go/message/message.go",
-      "line": 1849,
+      "line": 1843,
       "function": "GetRecentActivity",
       "receiver": "db",
       "method": "Raw",
@@ -49783,7 +49783,7 @@
     "62d2f10ad97c": {
       "id": "62d2f10ad97c",
       "file": "iznik-server-go/message/message.go",
-      "line": 4853,
+      "line": 5002,
       "function": "handleOutcomeIntended",
       "receiver": "db",
       "method": "Exec",
@@ -50107,9 +50107,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_by SET count = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "63845b4e7940": {
       "id": "63845b4e7940",
@@ -50946,9 +50946,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET timecommitment = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "650786d44079": {
       "id": "650786d44079",
@@ -51359,9 +51359,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, '', 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "65c84c4b1f1b": {
       "id": "65c84c4b1f1b",
@@ -51499,7 +51499,7 @@
     "6602f9905a74": {
       "id": "6602f9905a74",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 861,
+      "line": 866,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Exec",
@@ -52166,9 +52166,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6778e5c09350": {
       "id": "6778e5c09350",
@@ -52987,9 +52987,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents_images SET eventid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "68cdbff12f3b": {
       "id": "68cdbff12f3b",
@@ -53274,9 +53274,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET msgtype = ? WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "697921ca3810": {
       "id": "697921ca3810",
@@ -53325,7 +53325,7 @@
     "698ab1090087": {
       "id": "698ab1090087",
       "file": "iznik-server-go/message/message.go",
-      "line": 4015,
+      "line": 4146,
       "function": "findOrCreateUserForDraft",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -53856,9 +53856,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6a8dbf61f989": {
       "id": "6a8dbf61f989",
@@ -54885,7 +54885,7 @@
     "6c9b19809e6c": {
       "id": "6c9b19809e6c",
       "file": "iznik-server-go/message/message.go",
-      "line": 2492,
+      "line": 2520,
       "function": "RecordRippleEvent",
       "receiver": "db",
       "method": "Exec",
@@ -55013,9 +55013,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO messages_by (msgid, userid, count) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6cb82a19a791": {
       "id": "6cb82a19a791",
@@ -55261,9 +55261,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6d0d83bfc10d": {
       "id": "6d0d83bfc10d",
@@ -55608,7 +55608,7 @@
     "6dadb189bddc": {
       "id": "6dadb189bddc",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 824,
+      "line": 829,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Exec",
@@ -56767,9 +56767,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET approvedby = NULL, approvedat = NULL WHERE msgid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6fdb2c3b96f5": {
       "id": "6fdb2c3b96f5",
@@ -57618,7 +57618,7 @@
     "713e8b8dab08": {
       "id": "713e8b8dab08",
       "file": "iznik-server-go/story/story.go",
-      "line": 431,
+      "line": 442,
       "function": "LikeStory",
       "receiver": "db",
       "method": "Exec",
@@ -58456,9 +58456,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "72d0ba72e48e": {
       "id": "72d0ba72e48e",
@@ -58502,9 +58502,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, NULL, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "72d65779204c": {
       "id": "72d65779204c",
@@ -58754,9 +58754,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET deleted = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "736f5a982722": {
       "id": "736f5a982722",
@@ -58851,7 +58851,7 @@
     "7394291c903d": {
       "id": "7394291c903d",
       "file": "iznik-server-go/message/helper.go",
-      "line": 585,
+      "line": 592,
       "function": "helperCreateProposal",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -59557,9 +59557,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM users_stories WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "74b68409954c": {
       "id": "74b68409954c",
@@ -59761,9 +59761,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry attached to thread')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7516fae65a18": {
       "id": "7516fae65a18",
@@ -60212,9 +60212,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM newsfeed_unfollow WHERE userid = ? AND newsfeedid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "75d61d4835df": {
       "id": "75d61d4835df",
@@ -60366,9 +60366,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "76143dbb6ae1": {
       "id": "76143dbb6ae1",
@@ -60505,7 +60505,7 @@
     "7653c7a2e4ed": {
       "id": "7653c7a2e4ed",
       "file": "iznik-server-go/message/message.go",
-      "line": 2474,
+      "line": 2502,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -62107,9 +62107,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE helper_proposals SET status = 'sent', resolved_text = ?, resolvedat = NOW(), resolvedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "78ec93729d0c": {
       "id": "78ec93729d0c",
@@ -62151,9 +62151,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'outcome', ?, 'happiness', ?, 'comment', ?, 'userid', ?, 'byuser', ?, 'message', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "78f8300e262b": {
       "id": "78f8300e262b",
@@ -62252,7 +62252,7 @@
     "7940b0e0d9ff": {
       "id": "7940b0e0d9ff",
       "file": "iznik-server-go/aiimage/aiimage.go",
-      "line": 579,
+      "line": 580,
       "function": "ListReview",
       "receiver": "db",
       "method": "Raw",
@@ -63067,9 +63067,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET newdelstatus = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7ac193be718f": {
       "id": "7ac193be718f",
@@ -63577,7 +63577,7 @@
     "7ba4875e8aec": {
       "id": "7ba4875e8aec",
       "file": "iznik-server-go/message/helper.go",
-      "line": 468,
+      "line": 475,
       "function": "helperUpsertReplier",
       "receiver": "db",
       "method": "Exec",
@@ -63748,9 +63748,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7bed3e425bd4": {
       "id": "7bed3e425bd4",
@@ -64791,9 +64791,9 @@
       "dynamic": false,
       "args": 7,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7e61f7b2674c": {
       "id": "7e61f7b2674c",
@@ -64996,9 +64996,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO communityevents_dates (eventid, start, end) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7e8528d75832": {
       "id": "7e8528d75832",
@@ -65207,7 +65207,7 @@
     "7ec60cde5d39": {
       "id": "7ec60cde5d39",
       "file": "iznik-server-go/message/helper.go",
-      "line": 692,
+      "line": 701,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -65295,7 +65295,7 @@
     "7ee9b04b5de1": {
       "id": "7ee9b04b5de1",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1040,
+      "line": 1052,
       "function": "listMicroActions",
       "receiver": "c",
       "method": "Query",
@@ -65343,7 +65343,7 @@
     "7efd04588fb2": {
       "id": "7efd04588fb2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4789,
+      "line": 4936,
       "function": "handlePromise",
       "receiver": "db",
       "method": "Exec",
@@ -66047,9 +66047,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_repliers SET chatid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8078304fd756": {
       "id": "8078304fd756",
@@ -67278,7 +67278,7 @@
     "82f73ff0af1b": {
       "id": "82f73ff0af1b",
       "file": "iznik-server-go/message/helper.go",
-      "line": 617,
+      "line": 625,
       "function": "insertHelperChat",
       "receiver": "db",
       "method": "Exec",
@@ -67318,9 +67318,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8310b7f5a1f8": {
       "id": "8310b7f5a1f8",
@@ -67658,9 +67658,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET editedby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "83afed745dad": {
       "id": "83afed745dad",
@@ -68416,9 +68416,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8559ba808350": {
       "id": "8559ba808350",
@@ -69147,9 +69147,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards SET lng = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "867f9cdc3507": {
       "id": "867f9cdc3507",
@@ -69169,9 +69169,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET contactemail = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "86807526b494": {
       "id": "86807526b494",
@@ -69345,9 +69345,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards SET lastcheckedat = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "86b9ac32361c": {
       "id": "86b9ac32361c",
@@ -70956,9 +70956,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_notifications SET seen = 1 WHERE touser = ? AND newsfeedid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8a73414000b6": {
       "id": "8a73414000b6",
@@ -71205,9 +71205,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET body = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8ae3199867a2": {
       "id": "8ae3199867a2",
@@ -71718,7 +71718,7 @@
     "8c15ce918aa2": {
       "id": "8c15ce918aa2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4444,
+      "line": 4587,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -71757,14 +71757,14 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8c2181ff22ae": {
       "id": "8c2181ff22ae",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 537,
+      "line": 541,
       "function": "getAIImageReviewChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -71910,9 +71910,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET deadline = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8c7fcfa67a2b": {
       "id": "8c7fcfa67a2b",
@@ -72499,7 +72499,7 @@
     "8d359d691beb": {
       "id": "8d359d691beb",
       "file": "iznik-server-go/message/helper.go",
-      "line": 785,
+      "line": 798,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -72714,9 +72714,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE newsfeed SET reviewrequired = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8d9acac47724": {
       "id": "8d9acac47724",
@@ -72912,9 +72912,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_by WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8dfe6ce8ee59": {
       "id": "8dfe6ce8ee59",
@@ -72978,9 +72978,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, declined, inactive) VALUES (?, ?, NOW(), 1, 0)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8e0943203bec": {
       "id": "8e0943203bec",
@@ -73112,9 +73112,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET title = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8e568332ecdb": {
       "id": "8e568332ecdb",
@@ -73178,9 +73178,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET newmodstatus = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8eb6f5f0266e": {
       "id": "8eb6f5f0266e",
@@ -73310,9 +73310,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_attachments WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8ef287eeda8e": {
       "id": "8ef287eeda8e",
@@ -73530,9 +73530,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET pending_externaluid = NULL, regeneration_notes = NULL, status = 'active' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8f364b75de4b": {
       "id": "8f364b75de4b",
@@ -73954,9 +73954,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE noticeboards SET lastcheckedat = NOW(), active = 0 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "903beb28b71c": {
       "id": "903beb28b71c",
@@ -75251,9 +75251,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "928a533e67e6": {
       "id": "928a533e67e6",
@@ -75368,7 +75368,7 @@
     "92e739e16c30": {
       "id": "92e739e16c30",
       "file": "iznik-server-go/message/message.go",
-      "line": 3195,
+      "line": 3292,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -75430,9 +75430,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "92faf6d00109": {
       "id": "92faf6d00109",
@@ -76112,9 +76112,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM users_stories_likes WHERE storyid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "942e5686a415": {
       "id": "942e5686a415",
@@ -76288,9 +76288,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "948cd8f7e5a0": {
       "id": "948cd8f7e5a0",
@@ -76378,9 +76378,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE ai_images SET pending_externaluid = ?, status = 'regenerating' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "94f30360e6e9": {
       "id": "94f30360e6e9",
@@ -77339,9 +77339,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'regenerating' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "96b1fd8dbd45": {
       "id": "96b1fd8dbd45",
@@ -77430,9 +77430,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards SET lat = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "96d86d4c7c8a": {
       "id": "96d86d4c7c8a",
@@ -77765,9 +77765,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "979752536169": {
       "id": "979752536169",
@@ -78052,9 +78052,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9863356f7a37": {
       "id": "9863356f7a37",
@@ -78147,7 +78147,7 @@
     "98a9897d62e5": {
       "id": "98a9897d62e5",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1131,
+      "line": 1144,
       "function": "ForceRejectAIImage",
       "receiver": "db",
       "method": "Exec",
@@ -78416,7 +78416,7 @@
     "99713f48c505": {
       "id": "99713f48c505",
       "file": "iznik-server-go/message/message.go",
-      "line": 2790,
+      "line": 2849,
       "function": "handleRevertEdits",
       "receiver": "db",
       "method": "Exec",
@@ -78522,9 +78522,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_embeddings WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9995ff795ebe": {
       "id": "9995ff795ebe",
@@ -78588,9 +78588,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE rippling_reach SET rejected_groups = JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?) WHERE msgid = ? AND (rejected_groups IS NULL OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "99b4885acfb6": {
       "id": "99b4885acfb6",
@@ -79164,9 +79164,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9aef451307ee": {
       "id": "9aef451307ee",
@@ -79195,7 +79195,7 @@
     "9b0560d85c4d": {
       "id": "9b0560d85c4d",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 849,
+      "line": 854,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Exec",
@@ -79611,9 +79611,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET textbody = ?, message = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9bf0aed4b060": {
       "id": "9bf0aed4b060",
@@ -80239,9 +80239,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9d2ed89d6ee7": {
       "id": "9d2ed89d6ee7",
@@ -80646,7 +80646,7 @@
     "9e4c6da913a4": {
       "id": "9e4c6da913a4",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 480,
+      "line": 493,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "db",
       "method": "Exec",
@@ -81004,7 +81004,7 @@
     "9f06198e9799": {
       "id": "9f06198e9799",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 593,
+      "line": 597,
       "function": "getEEELabelChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -81141,7 +81141,7 @@
     "9f3a14137203": {
       "id": "9f3a14137203",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1365,
+      "line": 1408,
       "function": "createPost",
       "receiver": "db",
       "method": "Raw",
@@ -81685,9 +81685,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_bulk_items_interest SET state = 'Reserved' WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a04333e2822c": {
       "id": "a04333e2822c",
@@ -81909,9 +81909,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a091fd2b5c70": {
       "id": "a091fd2b5c70",
@@ -82626,9 +82626,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a232e8da4d5c": {
       "id": "a232e8da4d5c",
@@ -83291,9 +83291,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE newsfeed SET hidden = NULL, hiddenby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a33222e73ba8": {
       "id": "a33222e73ba8",
@@ -83840,9 +83840,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_repliers SET state = 'ESCALATED', escalation_reason = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a4250aa0ada3": {
       "id": "a4250aa0ada3",
@@ -84525,9 +84525,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a58900dacc0e": {
       "id": "a58900dacc0e",
@@ -86046,9 +86046,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_by WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a859a1034aad": {
       "id": "a859a1034aad",
@@ -86824,7 +86824,7 @@
     "aa142f16e0e0": {
       "id": "aa142f16e0e0",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1412,
+      "line": 1455,
       "function": "createPost",
       "receiver": "db",
       "method": "Exec",
@@ -87887,9 +87887,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO messages_by (userid, msgid, count) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "abfb1a4b10cb": {
       "id": "abfb1a4b10cb",
@@ -89817,7 +89817,7 @@
     "b00f9d848435": {
       "id": "b00f9d848435",
       "file": "iznik-server-go/message/message.go",
-      "line": 2169,
+      "line": 2170,
       "function": "addApprovedMessageToSpatialIndex",
       "receiver": "db",
       "method": "Exec",
@@ -90957,9 +90957,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, refreshed, inactive) VALUES (?, ?, NOW(), 1, 0)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b233643d8506": {
       "id": "b233643d8506",
@@ -91067,9 +91067,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b262bf75df3c": {
       "id": "b262bf75df3c",
@@ -91113,9 +91113,9 @@
       "dynamic": false,
       "args": 9,
       "goldenSql": "UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, photourl = ?, description = ? WHERE id = ? AND msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b272519754bd": {
       "id": "b272519754bd",
@@ -91384,9 +91384,9 @@
       "dynamic": false,
       "args": 15,
       "goldenSql": "INSERT INTO messages_edits (msgid, byuser, oldsubject, newsubject, oldtype, newtype, oldtext, newtext, olditems, newitems, oldimages, newimages, oldlocation, newlocation, reviewrequired) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b2eee425278d": {
       "id": "b2eee425278d",
@@ -91808,9 +91808,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages_attachments SET msgid = ?, `primary` = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b3efb1a1ed52": {
       "id": "b3efb1a1ed52",
@@ -92079,7 +92079,7 @@
     "b48b319835d0": {
       "id": "b48b319835d0",
       "file": "iznik-server-go/message/helper.go",
-      "line": 546,
+      "line": 553,
       "function": "helperSetItemState",
       "receiver": "db",
       "method": "Exec",
@@ -92404,9 +92404,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE noticeboards SET active = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b4fdb157e79e": {
       "id": "b4fdb157e79e",
@@ -92559,9 +92559,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'rejected' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b52d6579d52b": {
       "id": "b52d6579d52b",
@@ -92603,9 +92603,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b53a38710171": {
       "id": "b53a38710171",
@@ -92713,9 +92713,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET contactphone = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b55bc1dea84f": {
       "id": "b55bc1dea84f",
@@ -92779,9 +92779,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE messages SET textbody = ?, message = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b561dab1c2bd": {
       "id": "b561dab1c2bd",
@@ -93583,9 +93583,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_batches SET automode = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b741dbfb8df2": {
       "id": "b741dbfb8df2",
@@ -94190,9 +94190,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b8d3220fdb2f": {
       "id": "b8d3220fdb2f",
@@ -94609,9 +94609,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE newsfeed SET deleted = NOW(), deletedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b986dc546bdb": {
       "id": "b986dc546bdb",
@@ -94726,7 +94726,7 @@
     "b9a68fc74595": {
       "id": "b9a68fc74595",
       "file": "iznik-server-go/message/message.go",
-      "line": 2928,
+      "line": 2996,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -95895,9 +95895,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET availablenow = GREATEST(LEAST(availableinitially, availablenow - ?), 0) WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bc193af10f04": {
       "id": "bc193af10f04",
@@ -96438,9 +96438,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE newsfeed SET timestamp = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bd2017c1054c": {
       "id": "bd2017c1054c",
@@ -96720,7 +96720,7 @@
     "bde82a974f05": {
       "id": "bde82a974f05",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 426,
+      "line": 430,
       "function": "getApprovedMessageChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -97541,9 +97541,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET description = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bf995406cac4": {
       "id": "bf995406cac4",
@@ -98602,9 +98602,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c1cf9529710a": {
       "id": "c1cf9529710a",
@@ -98714,9 +98714,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM users_notifications WHERE newsfeedid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c1e9e27ce56c": {
       "id": "c1e9e27ce56c",
@@ -99294,7 +99294,7 @@
     "c2b7425e88e0": {
       "id": "c2b7425e88e0",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1118,
+      "line": 1130,
       "function": "RecordAIAttachmentDeletion",
       "receiver": "db",
       "method": "Exec",
@@ -99356,9 +99356,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c2dbe3fdacd4": {
       "id": "c2dbe3fdacd4",
@@ -99466,9 +99466,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET availablenow = availableinitially WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c32e36baeea5": {
       "id": "c32e36baeea5",
@@ -100464,7 +100464,7 @@
     "c4e30fd6a513": {
       "id": "c4e30fd6a513",
       "file": "iznik-server-go/noticeboard/noticeboard.go",
-      "line": 343,
+      "line": 382,
       "function": "PatchNoticeboard",
       "receiver": "db",
       "method": "Exec",
@@ -100663,9 +100663,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, 'CommentOnYourPost', ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c56d2f3db722": {
       "id": "c56d2f3db722",
@@ -100837,14 +100837,14 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "UPDATE microactions SET modfeedback = ?, score_positive = ?, score_negative = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c5c08e284c66": {
       "id": "c5c08e284c66",
       "file": "iznik-server-go/message/message.go",
-      "line": 3428,
+      "line": 3526,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -101194,9 +101194,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE newsfeed SET message = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c6bc61b0b8ca": {
       "id": "c6bc61b0b8ca",
@@ -101260,9 +101260,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c6e9ead89461": {
       "id": "c6e9ead89461",
@@ -101790,9 +101790,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'suppressed', pending_externaluid = NULL, regeneration_notes = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c7d4d6e14e0d": {
       "id": "c7d4d6e14e0d",
@@ -102612,9 +102612,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO messages_postings (msgid, groupid) VALUES (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c9633d8edcc8": {
       "id": "c9633d8edcc8",
@@ -103609,7 +103609,7 @@
     "cb477fe8b7d2": {
       "id": "cb477fe8b7d2",
       "file": "iznik-server-go/message/message.go",
-      "line": 3159,
+      "line": 3255,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -104007,9 +104007,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cc3eec4538f6": {
       "id": "cc3eec4538f6",
@@ -104029,9 +104029,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_edits SET reviewrequired = 0, approvedat = NOW() WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cc4e2bc9511e": {
       "id": "cc4e2bc9511e",
@@ -104527,9 +104527,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_stories_images SET storyid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cd6caaca0674": {
       "id": "cd6caaca0674",
@@ -104788,9 +104788,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes_intended WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ce1e07cdf428": {
       "id": "ce1e07cdf428",
@@ -105250,9 +105250,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_attachments WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cec5731fc7f3": {
       "id": "cec5731fc7f3",
@@ -105404,9 +105404,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET action = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cefeba03a293": {
       "id": "cefeba03a293",
@@ -106709,9 +106709,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET fromaddr = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d16f1f1adfc2": {
       "id": "d16f1f1adfc2",
@@ -106973,9 +106973,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET textbody = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d1af9f403e08": {
       "id": "d1af9f403e08",
@@ -107549,9 +107549,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE users_stories SET reviewed = ?, reviewedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d2ab18538fec": {
       "id": "d2ab18538fec",
@@ -107571,9 +107571,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE communityevents SET heldby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d2b3cf798cfb": {
       "id": "d2b3cf798cfb",
@@ -107931,9 +107931,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_attachments SET externaluid = ? WHERE externaluid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d373a76414bc": {
       "id": "d373a76414bc",
@@ -107960,7 +107960,7 @@
     "d3790f53ec52": {
       "id": "d3790f53ec52",
       "file": "iznik-server-go/message/helper.go",
-      "line": 603,
+      "line": 610,
       "function": "insertHelperChat",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -108264,9 +108264,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET heldby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d45bb67f185c": {
       "id": "d45bb67f185c",
@@ -108361,7 +108361,7 @@
     "d4724f1cfc67": {
       "id": "d4724f1cfc67",
       "file": "iznik-server-go/message/message.go",
-      "line": 3101,
+      "line": 3185,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Raw",
@@ -108579,9 +108579,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO microactions (actiontype, userid, version, comments, score_negative) VALUES (?, ?, 4, 'Ask to invite', 0)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d4d03b2cad0f": {
       "id": "d4d03b2cad0f",
@@ -108630,7 +108630,7 @@
     "d4f71ea17664": {
       "id": "d4f71ea17664",
       "file": "iznik-server-go/message/message.go",
-      "line": 2482,
+      "line": 2510,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -108850,9 +108850,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d5a498b4a706": {
       "id": "d5a498b4a706",
@@ -109156,9 +109156,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d62bd05cec68": {
       "id": "d62bd05cec68",
@@ -111092,9 +111092,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d9f0c06754d7": {
       "id": "d9f0c06754d7",
@@ -111136,9 +111136,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET contactphone = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d9f28fad3476": {
       "id": "d9f28fad3476",
@@ -111313,9 +111313,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_batches SET briefing = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "da717b317357": {
       "id": "da717b317357",
@@ -111745,7 +111745,7 @@
     "db4ec8586401": {
       "id": "db4ec8586401",
       "file": "iznik-server-go/message/message.go",
-      "line": 2257,
+      "line": 2268,
       "function": "handleApprove",
       "receiver": "db",
       "method": "Exec",
@@ -112054,9 +112054,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_groups WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dbfa47abafb2": {
       "id": "dbfa47abafb2",
@@ -112173,7 +112173,7 @@
     "dc26aeceefa9": {
       "id": "dc26aeceefa9",
       "file": "iznik-server-go/message/message.go",
-      "line": 2830,
+      "line": 2893,
       "function": "handlePartnerConsent",
       "receiver": "db",
       "method": "Exec",
@@ -112304,9 +112304,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_outcomes WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dc8c877624e5": {
       "id": "dc8c877624e5",
@@ -113675,9 +113675,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_stories SET story = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "df5ef3c60c65": {
       "id": "df5ef3c60c65",
@@ -113719,9 +113719,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET location = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "df7dc9f6f16f": {
       "id": "df7dc9f6f16f",
@@ -113838,7 +113838,7 @@
     "dfc3d2fdb2ba": {
       "id": "dfc3d2fdb2ba",
       "file": "iznik-server-go/message/helper.go",
-      "line": 537,
+      "line": 544,
       "function": "helperSetItemState",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -114375,7 +114375,7 @@
     "e0be009ca12b": {
       "id": "e0be009ca12b",
       "file": "iznik-server-go/message/message.go",
-      "line": 1972,
+      "line": 1973,
       "function": "constructLocationString",
       "receiver": "db",
       "method": "Raw",
@@ -114415,9 +114415,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (NULL, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e0cd4a54dacc": {
       "id": "e0cd4a54dacc",
@@ -114791,9 +114791,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET pending = ?, heldby = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e16cd7a04db8": {
       "id": "e16cd7a04db8",
@@ -115101,9 +115101,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e23982e76e69": {
       "id": "e23982e76e69",
@@ -115371,9 +115371,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages_bulk_items_interest SET state = 'Rejected' WHERE bulkitemid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e2d485938df9": {
       "id": "e2d485938df9",
@@ -117266,9 +117266,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "UPDATE messages_groups SET collection = ?, rejectedat = NOW(), heldby = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e6caa9a77f53": {
       "id": "e6caa9a77f53",
@@ -117611,7 +117611,7 @@
     "e78fcf444c47": {
       "id": "e78fcf444c47",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 730,
+      "line": 735,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Exec",
@@ -117871,9 +117871,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_batches SET status = ?, pausedat = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e7d7cae307a7": {
       "id": "e7d7cae307a7",
@@ -117965,7 +117965,7 @@
     "e7f18e30931f": {
       "id": "e7f18e30931f",
       "file": "iznik-server-go/message/message.go",
-      "line": 4400,
+      "line": 4536,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -118363,7 +118363,7 @@
     "e8a9588d340c": {
       "id": "e8a9588d340c",
       "file": "iznik-server-go/message/message.go",
-      "line": 5189,
+      "line": 5367,
       "function": "handleView",
       "receiver": "db",
       "method": "Exec",
@@ -118678,7 +118678,7 @@
     "e9346f66bbf4": {
       "id": "e9346f66bbf4",
       "file": "iznik-server-go/noticeboard/noticeboard.go",
-      "line": 134,
+      "line": 135,
       "function": "getList",
       "receiver": "db",
       "method": "Raw",
@@ -118762,9 +118762,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry unhidden')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e96c798f581c": {
       "id": "e96c798f581c",
@@ -119107,14 +119107,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_items WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e9f2c662be69": {
       "id": "e9f2c662be69",
       "file": "iznik-server-go/message/message.go",
-      "line": 3420,
+      "line": 3518,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -120300,7 +120300,7 @@
     "ec2405eade43": {
       "id": "ec2405eade43",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 781,
+      "line": 786,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Raw",
@@ -120428,9 +120428,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_spatial SET successful = 1 WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ec5b7110f5e6": {
       "id": "ec5b7110f5e6",
@@ -120547,7 +120547,7 @@
     "ecaf3f90bee2": {
       "id": "ecaf3f90bee2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4143,
+      "line": 4274,
       "function": "ResolveOnBehalfPosting",
       "receiver": "db",
       "method": "Raw",
@@ -120743,9 +120743,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE volunteering SET expired = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ed34569d9b36": {
       "id": "ed34569d9b36",
@@ -120943,9 +120943,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET pending = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ed9f3ce538e0": {
       "id": "ed9f3ce538e0",
@@ -121699,9 +121699,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef3852bfadf6": {
       "id": "ef3852bfadf6",
@@ -121831,9 +121831,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET heldby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef5ca788cc9e": {
       "id": "ef5ca788cc9e",
@@ -122007,9 +122007,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM volunteering_dates WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "efad22031b23": {
       "id": "efad22031b23",
@@ -122991,7 +122991,7 @@
     "f1d697db5654": {
       "id": "f1d697db5654",
       "file": "iznik-server-go/message/message.go",
-      "line": 5268,
+      "line": 5457,
       "function": "handleMove",
       "receiver": "tx",
       "method": "Exec",
@@ -123214,7 +123214,7 @@
     "f272e5ec73c0": {
       "id": "f272e5ec73c0",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 704,
+      "line": 708,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Raw",
@@ -123391,9 +123391,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f29fe97424b4": {
       "id": "f29fe97424b4",
@@ -123567,9 +123567,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f30f83210c11": {
       "id": "f30f83210c11",
@@ -125746,9 +125746,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE communityevents SET contactname = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f719d0218049": {
       "id": "f719d0218049",
@@ -126102,9 +126102,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE users_stories SET newsletter = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f7a0df385001": {
       "id": "f7a0df385001",
@@ -126197,7 +126197,7 @@
     "f7deed72f131": {
       "id": "f7deed72f131",
       "file": "iznik-server-go/message/message.go",
-      "line": 2151,
+      "line": 2152,
       "function": "addApprovedMessageToSpatialIndex",
       "receiver": "db.Clauses()",
       "method": "Raw",
@@ -126390,9 +126390,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE ai_images SET status = 'rejected' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f8087faccb01": {
       "id": "f8087faccb01",
@@ -126485,7 +126485,7 @@
     "f82ee651d4b9": {
       "id": "f82ee651d4b9",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 791,
+      "line": 796,
       "function": "PostResponse",
       "receiver": "db",
       "method": "Exec",
@@ -126941,9 +126941,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f912cbbc3625": {
       "id": "f912cbbc3625",
@@ -127007,9 +127007,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE messages SET editedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f93f2b62ae60": {
       "id": "f93f2b62ae60",
@@ -127080,7 +127080,7 @@
     "f961504c334d": {
       "id": "f961504c334d",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1392,
+      "line": 1435,
       "function": "createPost",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -127405,9 +127405,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fa07a0122370": {
       "id": "fa07a0122370",
@@ -127836,7 +127836,7 @@
     "faa9018435a3": {
       "id": "faa9018435a3",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 520,
+      "line": 537,
       "function": "upsertBulkItems",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128323,9 +128323,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE helper_batches SET status = ?, pausedat = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fb70ae1b33a5": {
       "id": "fb70ae1b33a5",
@@ -128352,7 +128352,7 @@
     "fb88302d28cb": {
       "id": "fb88302d28cb",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 736,
+      "line": 753,
       "function": "ingestBulkItemPhotos",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128617,9 +128617,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, comments, inactive) VALUES (?, ?, NOW(), ?, 0)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fc0988108db6": {
       "id": "fc0988108db6",
@@ -129492,7 +129492,7 @@
     "fde42951834d": {
       "id": "fde42951834d",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 237,
+      "line": 238,
       "function": "handleBulkInterest",
       "receiver": "db",
       "method": "Exec",
@@ -130289,9 +130289,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE volunteering SET title = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fed817abd10b": {
       "id": "fed817abd10b",
@@ -130516,7 +130516,7 @@
     "ff5193d35cf8": {
       "id": "ff5193d35cf8",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 480,
+      "line": 484,
       "function": "getPhotoRotateChallenge",
       "receiver": "db",
       "method": "Raw",

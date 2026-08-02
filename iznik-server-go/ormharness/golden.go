@@ -330,12 +330,82 @@ func normaliseColumnOrder(sql string) string {
 
 	if m := updateSetPattern.FindStringSubmatch(trimmed); m != nil {
 		assignments := splitList(m[2])
-		if len(assignments) > 1 {
+		if len(assignments) > 1 && !setOrderIsLoadBearing(assignments) {
 			sort.Strings(assignments)
 			return m[1] + strings.Join(assignments, ", ") + m[3]
 		}
 	}
 	return trimmed
+}
+
+// setOrderIsLoadBearing reports whether an UPDATE's SET list means something
+// different when reordered.
+//
+// MySQL evaluates assignments left to right, so
+//
+//	UPDATE t SET action = action + 1, rate = 100 * action / shown
+//
+// computes rate from the INCREMENTED action, while the reverse order computes
+// it from the old one. GORM sorts map keys when building Updates(map[...]),
+// which reorders the SET list, so a conversion can quietly change the answer.
+//
+// That matters here specifically because normaliseColumnOrder sorts SET lists
+// on both sides in order to accept harmless reordering - which means that
+// without this guard it would accept harmful reordering just as readily. A
+// normalisation that hides a class of bug has to know where that class starts.
+// Where the order carries meaning, we decline to normalise and let the exact
+// text be the thing the golden pins.
+//
+// Only a cross-reference counts. "action = action + 1" refers to itself, which
+// is order-independent; it is one assignment reading ANOTHER assignment's
+// column that makes position significant.
+func setOrderIsLoadBearing(assignments []string) bool {
+	cols := make([]string, 0, len(assignments))
+	rhs := make([]string, 0, len(assignments))
+	for _, a := range assignments {
+		eq := strings.Index(a, "=")
+		if eq < 0 {
+			return true // cannot parse it, so cannot prove reordering is safe
+		}
+		col := strings.TrimSpace(a[:eq])
+		col = strings.Trim(col, "`")
+		if i := strings.LastIndex(col, "."); i >= 0 {
+			col = col[i+1:]
+		}
+		cols = append(cols, col)
+		rhs = append(rhs, stripSQLStrings(a[eq+1:]))
+	}
+
+	for i, expr := range rhs {
+		for j, col := range cols {
+			if i == j || col == "" {
+				continue
+			}
+			if regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(col) + `\b`).MatchString(expr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// stripSQLStrings blanks out single-quoted literals so that a column name
+// appearing inside one ("note = 'check the rate'") is not mistaken for a
+// reference to that column.
+func stripSQLStrings(s string) string {
+	var b strings.Builder
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && inQuote && i+1 < len(s):
+			i++
+		case s[i] == '\'':
+			inQuote = !inQuote
+		case !inQuote:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 // splitList splits a comma-separated SQL fragment at top level, so that commas

@@ -222,8 +222,9 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 
 	// Withdraw interest (keep the row for history). No chat room needed.
 	for _, id := range withdraw {
-		db.Exec("UPDATE messages_bulk_items_interest SET state = 'Withdrawn', quantity = 0 WHERE bulkitemid = ? AND userid = ?",
-			id, target)
+		// ORM migration site 2403316ebe7c (wave 2).
+		db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", id, target).
+			Updates(map[string]interface{}{"state": gorm.Expr("'Withdrawn'"), "quantity": gorm.Expr("0")})
 	}
 
 	var chatid uint64
@@ -288,10 +289,17 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 			Where("chatid = ? AND userid = ? AND refmsgid = ? AND type = ?", chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).
 			Order("id DESC").Limit(1).Scan(&existingID)
 		if existingID > 0 {
-			db.Exec("UPDATE chat_messages SET message = ?, date = ? WHERE id = ?", body, time.Now(), existingID)
+			// ORM migration site 35ec3910a568 (wave 2).
+			db.Table("chat_messages").Where("id = ?", existingID).
+				Updates(map[string]interface{}{"message": body, "date": time.Now()})
 		} else {
-			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-				chatid, target, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+			// ORM migration site 1fec19922ea6 (wave 2). Identical to 54b1921a63a5
+			// (sendAccessInstructions, below); converted together per gate (h).
+			db.Table("chat_messages").Create(map[string]interface{}{
+				"chatid": chatid, "userid": target, "type": utils.CHAT_MESSAGE_INTERESTED,
+				"refmsgid": req.ID, "date": time.Now(), "message": body,
+				"processingrequired": gorm.Expr("1"),
+			})
 		}
 		// ORM migration site 0a3ffbf56687 (wave 2).
 		db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
@@ -430,8 +438,13 @@ func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser u
 		return
 	}
 	body := "Access instructions for collection:\n" + ai
-	db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-		chatid, fromuser, utils.CHAT_MESSAGE_DEFAULT, msgid, time.Now(), body)
+	// ORM migration site 54b1921a63a5 (wave 2). Identical to 1fec19922ea6
+	// (handleBulkInterest); converted together per gate (h).
+	db.Table("chat_messages").Create(map[string]interface{}{
+		"chatid": chatid, "userid": fromuser, "type": utils.CHAT_MESSAGE_DEFAULT,
+		"refmsgid": msgid, "date": time.Now(), "message": body,
+		"processingrequired": gorm.Expr("1"),
+	})
 	// ORM migration site dcb4fcaa8406 (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 }
@@ -512,8 +525,12 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		var itemID uint64
 		if in.ID > 0 {
 			itemID = in.ID
-			db.Exec("UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, photourl = ?, description = ? WHERE id = ? AND msgid = ?",
-				pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description, itemID, msgid)
+			// ORM migration site b26bbbd1f279 (wave 2).
+			db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", itemID, msgid).
+				Updates(map[string]interface{}{
+					"position": pos, "name": name, "quantity": qty, "condition": condition,
+					"dimensions": in.Dimensions, "photourl": in.Photourl, "description": in.Description,
+				})
 		} else {
 			sqlDB, err := db.DB()
 			if err == nil {

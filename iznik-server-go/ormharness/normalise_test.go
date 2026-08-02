@@ -78,6 +78,51 @@ func TestNormaliseColumnOrder_LeavesInsertSelectAlone(t *testing.T) {
 	}
 }
 
+func TestNormaliseColumnOrder_LeavesLoadBearingSetOrderAlone(t *testing.T) {
+	// MySQL evaluates SET assignments left to right, so this statement computes
+	// rate from the ALREADY-incremented action. Sorting the list would still
+	// leave action first here (a before r), but sorting is the wrong answer in
+	// principle: if the columns were named the other way round, the normalisation
+	// would swap them and then declare the two statements equal, hiding a real
+	// change in what gets written. Where order carries meaning we compare the
+	// exact text instead. Freegle has one live instance of this, engage_mails in
+	// user.go, found by tools/orm-migration/check-set-order.sh.
+	sql := "update engage_mails set action = action + 1, rate = coalesce(100 * action / shown, 0) where id = ?"
+	if normaliseColumnOrder(sql) != sql {
+		t.Fatalf("an order-dependent SET list was reordered:\n in  %s\n out %s", sql, normaliseColumnOrder(sql))
+	}
+
+	// The same statement written in the opposite order is a DIFFERENT statement,
+	// and must not be normalised into equality with the one above.
+	swapped := "update engage_mails set rate = coalesce(100 * action / shown, 0), action = action + 1 where id = ?"
+	if normaliseColumnOrder(sql) == normaliseColumnOrder(swapped) {
+		t.Fatal("two SET lists that compute different values were treated as equal")
+	}
+}
+
+func TestSetOrderIsLoadBearing(t *testing.T) {
+	cases := []struct {
+		name string
+		set  []string
+		want bool
+	}{
+		{"independent binds", []string{"status = ?", "resolvedat = now()"}, false},
+		{"self-reference only", []string{"shown = shown + 1", "status = ?"}, false},
+		{"cross-reference", []string{"action = action + 1", "rate = 100 * action / shown"}, true},
+		{"cross-reference backwards", []string{"rate = 100 * action / shown", "action = action + 1"}, true},
+		// A column name inside a quoted literal is text, not a reference.
+		{"column named in a string literal", []string{"note = 'check the rate later'", "rate = ?"}, false},
+		// Backticked and table-qualified names still have to be recognised, or a
+		// load-bearing order would slip past as unparseable-but-assumed-safe.
+		{"backticked column", []string{"`action` = `action` + 1", "rate = action * 2"}, true},
+	}
+	for _, c := range cases {
+		if got := setOrderIsLoadBearing(c.set); got != c.want {
+			t.Errorf("%s: setOrderIsLoadBearing(%v) = %v, want %v", c.name, c.set, got, c.want)
+		}
+	}
+}
+
 func TestCollapseInLists(t *testing.T) {
 	cases := [][2]string{
 		{"where id in ?", "where id in ?"},

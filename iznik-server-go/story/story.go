@@ -294,7 +294,8 @@ func CreateStory(c *fiber.Ctx) error {
 	}
 
 	if req.Photo > 0 && id > 0 {
-		db.Exec("UPDATE users_stories_images SET storyid = ? WHERE id = ?", id, req.Photo)
+		// ORM migration site cd54b640d303 (wave 2).
+		db.Table("users_stories_images").Where("id = ?", req.Photo).Update("storyid", id)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": id})
@@ -370,22 +371,30 @@ func UpdateStory(c *fiber.Ctx) error {
 
 	// Update settable attributes.
 	if p := toBoolInt(req.Public); p != nil {
-		db.Exec("UPDATE users_stories SET public = ? WHERE id = ?", *p, req.ID)
+		// ORM migration site 1e5a7a00c4ae (wave 2).
+		db.Table("users_stories").Where("id = ?", req.ID).Update("public", *p)
 	}
 	if req.Headline != nil {
-		db.Exec("UPDATE users_stories SET headline = ? WHERE id = ?", *req.Headline, req.ID)
+		// ORM migration site 3e4a98f99f9a (wave 2).
+		db.Table("users_stories").Where("id = ?", req.ID).Update("headline", *req.Headline)
 	}
 	if req.Story != nil {
-		db.Exec("UPDATE users_stories SET story = ? WHERE id = ?", *req.Story, req.ID)
+		// ORM migration site df4d580584c7 (wave 2).
+		db.Table("users_stories").Where("id = ?", req.ID).Update("story", *req.Story)
 	}
 	if r := toBoolInt(req.Reviewed); r != nil {
-		db.Exec("UPDATE users_stories SET reviewed = ?, reviewedby = ? WHERE id = ?", *r, myid, req.ID)
+		// ORM migration site d2a597ecda56 (wave 2).
+		db.Table("users_stories").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"reviewed": *r, "reviewedby": myid})
 	}
 	if nr := toBoolInt(req.Newsletterreviewed); nr != nil {
-		db.Exec("UPDATE users_stories SET newsletterreviewed = ?, newsletterreviewedby = ? WHERE id = ?", *nr, myid, req.ID)
+		// ORM migration site 2036212f3e48 (wave 2).
+		db.Table("users_stories").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"newsletterreviewed": *nr, "newsletterreviewedby": myid})
 	}
 	if n := toBoolInt(req.Newsletter); n != nil {
-		db.Exec("UPDATE users_stories SET newsletter = ? WHERE id = ?", *n, req.ID)
+		// ORM migration site f79c7ee2991c (wave 2).
+		db.Table("users_stories").Where("id = ?", req.ID).Update("newsletter", *n)
 	}
 
 	// Side effect: if story just became reviewed+public and wasn't from newsfeed, create newsfeed entry.
@@ -428,6 +437,8 @@ func LikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+	// Left raw: wave 3 (INSERT IGNORE with a duplicate at PostStory's Like case,
+	// site 0d3865cbb34e), not wave 2 - not this batch's scope.
 	db.Exec("INSERT IGNORE INTO users_stories_likes (storyid, userid) VALUES (?, ?)", req.ID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -455,7 +466,8 @@ func UnlikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM users_stories_likes WHERE storyid = ? AND userid = ?", req.ID, myid)
+	// ORM migration site 171408a9703d (wave 2).
+	db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -486,9 +498,12 @@ func PostStory(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Like":
+		// Left raw: wave 3 (INSERT IGNORE with a duplicate at LikeStory,
+		// site 713e8b8dab08), not wave 2 - not this batch's scope.
 		db.Exec("INSERT IGNORE INTO users_stories_likes (storyid, userid) VALUES (?, ?)", req.ID, myid)
 	case "Unlike":
-		db.Exec("DELETE FROM users_stories_likes WHERE storyid = ? AND userid = ?", req.ID, myid)
+		// ORM migration site 941fa556061a (wave 2).
+		db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}
@@ -515,7 +530,8 @@ func DeleteStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM users_stories WHERE id = ?", id)
+	// ORM migration site 74b27430dc33 (wave 2).
+	db.Table("users_stories").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

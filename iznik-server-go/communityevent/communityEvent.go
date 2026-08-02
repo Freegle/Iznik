@@ -420,34 +420,44 @@ func Update(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Title != nil {
-		db.Exec("UPDATE communityevents SET title = ? WHERE id = ?", *req.Title, req.ID)
+		// ORM migration site 8e45bcb23b19 (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Location != nil {
-		db.Exec("UPDATE communityevents SET location = ? WHERE id = ?", *req.Location, req.ID)
+		// ORM migration site df65cbf75e01 (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Pending != nil {
 		// Approving out of moderation is terminal, so clear the hold with it rather
 		// than leaving the event pinned as "Held" forever.
 		if *req.Pending {
-			db.Exec("UPDATE communityevents SET pending = ? WHERE id = ?", *req.Pending, req.ID)
+			// ORM migration site 2f79186b42bf (wave 2).
+			db.Table("communityevents").Where("id = ?", req.ID).Update("pending", *req.Pending)
 		} else {
-			db.Exec("UPDATE communityevents SET pending = ?, heldby = NULL WHERE id = ?", *req.Pending, req.ID)
+			// ORM migration site e150408f2d3e (wave 2).
+			db.Table("communityevents").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"pending": *req.Pending, "heldby": gorm.Expr("NULL")})
 		}
 	}
 	if req.Contactname != nil {
-		db.Exec("UPDATE communityevents SET contactname = ? WHERE id = ?", *req.Contactname, req.ID)
+		// ORM migration site f719a23dedc3 (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contactname", *req.Contactname)
 	}
 	if req.Contactphone != nil {
-		db.Exec("UPDATE communityevents SET contactphone = ? WHERE id = ?", *req.Contactphone, req.ID)
+		// ORM migration site b554bdcafe03 (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contactphone", *req.Contactphone)
 	}
 	if req.Contactemail != nil {
-		db.Exec("UPDATE communityevents SET contactemail = ? WHERE id = ?", *req.Contactemail, req.ID)
+		// ORM migration site 1af3dbf05d6b (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contactemail", *req.Contactemail)
 	}
 	if req.Contacturl != nil {
-		db.Exec("UPDATE communityevents SET contacturl = ? WHERE id = ?", *req.Contacturl, req.ID)
+		// ORM migration site 2a3bc76d4017 (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contacturl", *req.Contacturl)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE communityevents SET description = ? WHERE id = ?", *req.Description, req.ID)
+		// ORM migration site 0c2736a9cf30 (wave 2).
+		db.Table("communityevents").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 
 	// Process action
@@ -480,18 +490,25 @@ func Update(c *fiber.Ctx) error {
 		}
 	case "RemoveGroup":
 		if req.GroupID > 0 {
-			db.Exec("DELETE FROM communityevents_groups WHERE eventid = ? AND groupid = ?", req.ID, req.GroupID)
+			// ORM migration site 2951a7ffab4d (wave 2).
+			db.Table("communityevents_groups").Where("eventid = ? AND groupid = ?", req.ID, req.GroupID).Delete(nil)
 		}
 	case "AddDate":
-		db.Exec("INSERT INTO communityevents_dates (eventid, start, end) VALUES (?, ?, ?)",
-			req.ID, utils.NilIfEmpty(req.Start), utils.NilIfEmpty(req.End))
+		// ORM migration site 7e814fd678a7 (wave 2).
+		db.Table("communityevents_dates").Create(map[string]interface{}{
+			"eventid": req.ID,
+			"start":   utils.NilIfEmpty(req.Start),
+			"end":     utils.NilIfEmpty(req.End),
+		})
 	case "RemoveDate":
 		if req.DateID > 0 {
-			db.Exec("DELETE FROM communityevents_dates WHERE id = ?", req.DateID)
+			// ORM migration site 1a34f23b47dc (wave 2).
+			db.Table("communityevents_dates").Where("id = ?", req.DateID).Delete(nil)
 		}
 	case "SetPhoto":
 		if req.PhotoID > 0 {
-			db.Exec("UPDATE communityevents_images SET eventid = ? WHERE id = ?", req.ID, req.PhotoID)
+			// ORM migration site 68bba2319103 (wave 2).
+			db.Table("communityevents_images").Where("id = ?", req.PhotoID).Update("eventid", req.ID)
 		}
 	case "Hold":
 		if isModerator(myid, req.ID) {
@@ -499,11 +516,13 @@ func Update(c *fiber.Ctx) error {
 			if holder, name := eventHeldByAnother(db, req.ID, myid); holder != 0 {
 				return heldByAnotherResponse(c, holder, name)
 			}
-			db.Exec("UPDATE communityevents SET heldby = ? WHERE id = ?", myid, req.ID)
+			// ORM migration site ef582e5c1fb3 (wave 2).
+			db.Table("communityevents").Where("id = ?", req.ID).Update("heldby", myid)
 		}
 	case "Release":
 		if isModerator(myid, req.ID) {
-			db.Exec("UPDATE communityevents SET heldby = NULL WHERE id = ?", req.ID)
+			// ORM migration site d2ab18538fec (wave 2).
+			db.Table("communityevents").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		}
 	}
 
@@ -542,7 +561,8 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete.
-	db.Exec("UPDATE communityevents SET deleted = 1 WHERE id = ?", id)
+	// ORM migration site 1a05317673e7 (wave 2).
+	db.Table("communityevents").Where("id = ?", id).Update("deleted", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"success": true})
 }

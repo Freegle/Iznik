@@ -344,10 +344,14 @@ func getInviteChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	if count == 0 {
 		// Record a placeholder to ensure we don't ask too often
-		db.Exec(`
-			INSERT INTO microactions (actiontype, userid, version, comments, score_negative)
-			VALUES (?, ?, 4, 'Ask to invite', 0)
-		`, ChallengeInvite, userID)
+		// ORM migration site d4ce9c3f1fc1 (wave 2).
+		db.Table("microactions").Create(map[string]interface{}{
+			"actiontype":     ChallengeInvite,
+			"userid":         userID,
+			"version":        gorm.Expr("4"),
+			"comments":       gorm.Expr("'Ask to invite'"),
+			"score_negative": gorm.Expr("0"),
+		})
 
 		return &Challenge{
 			Type: ChallengeInvite,
@@ -712,9 +716,10 @@ func PostResponse(c *fiber.Ctx) error {
 			}
 
 			// Mark any notifications regarding this message as read
-			db.Exec(`UPDATE users_notifications SET seen = 1
-				WHERE touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'`,
-				myid, req.Msgid)
+			// ORM migration site 0e09727e66aa (wave 2).
+			db.Table("users_notifications").
+				Where("touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'", myid, req.Msgid).
+				Update("seen", gorm.Expr("1"))
 
 			// Record the response - insert or update
 			var msgcategory interface{}
@@ -915,8 +920,12 @@ func ModFeedback(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Update the microaction with mod feedback and scores.
-	db.Exec("UPDATE microactions SET modfeedback = ?, score_positive = ?, score_negative = ? WHERE id = ?",
-		req.Feedback, req.ScorePositive, req.ScoreNegative, req.ID)
+	// ORM migration site c5c083c3dc6e (wave 2).
+	db.Table("microactions").Where("id = ?", req.ID).Updates(map[string]interface{}{
+		"modfeedback":    req.Feedback,
+		"score_positive": req.ScorePositive,
+		"score_negative": req.ScoreNegative,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -930,8 +939,9 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string) {
 	if msgid == 0 {
 		return
 	}
-	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND collection = ?",
-		utils.COLLECTION_PENDING, reason, msgid, utils.COLLECTION_APPROVED)
+	// ORM migration site 5092091807c2 (wave 2).
+	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 }
 
 // FreezeReachIfOriginPending freezes a post's ripple once its ORIGIN copy is no longer
@@ -953,7 +963,9 @@ func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 	if approvedOrigin > 0 {
 		return
 	}
-	db.Exec("UPDATE rippling_reach SET status = 'held', next_expansion_at = NULL WHERE msgid = ? AND status <> 'held'", msgid)
+	// ORM migration site 328303c750b3 (wave 2).
+	db.Table("rippling_reach").Where("msgid = ? AND status <> 'held'", msgid).
+		Updates(map[string]interface{}{"status": gorm.Expr("'held'"), "next_expansion_at": gorm.Expr("NULL")})
 }
 
 // reporterIsModOf reports whether the reporter's verdict on the group they reported on
@@ -1127,7 +1139,8 @@ func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
 // is bad for any post of that item (not just irrelevant to the current post).
 // Records an audit microaction so the rejection is traceable.
 func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
-	db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	// ORM migration site 92faccbe5a21 (wave 2).
+	db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
 	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
 		VALUES (?, ?, ?, 'Reject', ?, 0)
 		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
@@ -1147,7 +1160,8 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 		Count(&rejectVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
-		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+		// ORM migration site c1b4117a14d4 (wave 2).
+		db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
 	}
 }
 
@@ -1166,6 +1180,8 @@ func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
 		Count(&suppressVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
-		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)
+		// ORM migration site d62b9f1b747c (wave 2).
+		db.Table("ai_images").Where("id = ? AND status IN ('active','rejected')", aiImageID).
+			Update("status", gorm.Expr("'suppressed'"))
 	}
 }

@@ -1125,13 +1125,19 @@ func Post(c *fiber.Ctx) error {
 				if owner.Replyto != nil && *owner.Replyto > 0 {
 					notifType = "LovedComment"
 				}
-				db.Exec("INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, ?, ?)",
-					myid, owner.Userid, notifType, req.ID)
+				// ORM migration site 72c7371e4220 (wave 2).
+				db.Table("users_notifications").Create(map[string]interface{}{
+					"fromuser":   myid,
+					"touser":     owner.Userid,
+					"type":       notifType,
+					"newsfeedid": req.ID,
+				})
 			}
 		}
 	case "Unlove":
 		if req.ID > 0 {
-			db.Exec("DELETE FROM newsfeed_likes WHERE newsfeedid = ? AND userid = ?", req.ID, myid)
+			// ORM migration site 20d3333b6657 (wave 2).
+			db.Table("newsfeed_likes").Where("newsfeedid = ? AND userid = ?", req.ID, myid).Delete(nil)
 		}
 	case "Seen":
 		if req.ID > 0 {
@@ -1144,11 +1150,14 @@ func Post(c *fiber.Ctx) error {
 			if currentSeenID == 0 || req.ID > currentSeenID {
 				db.Exec("REPLACE INTO newsfeed_users (userid, newsfeedid) VALUES (?, ?)", myid, req.ID)
 			}
-			db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ? AND newsfeedid = ?", myid, req.ID)
+			// ORM migration site 8a70c0aa1832 (wave 2).
+			db.Table("users_notifications").Where("touser = ? AND newsfeedid = ?", myid, req.ID).
+				Update("seen", gorm.Expr("1"))
 		}
 	case "Follow":
 		if req.ID > 0 {
-			db.Exec("DELETE FROM newsfeed_unfollow WHERE userid = ? AND newsfeedid = ?", myid, req.ID)
+			// ORM migration site 75b3dfc075ca (wave 2).
+			db.Table("newsfeed_unfollow").Where("userid = ? AND newsfeedid = ?", myid, req.ID).Delete(nil)
 		}
 	case "Unfollow":
 		if req.ID > 0 {
@@ -1157,7 +1166,8 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Report":
 		if req.ID > 0 {
-			db.Exec("UPDATE newsfeed SET reviewrequired = 1 WHERE id = ?", req.ID)
+			// ORM migration site 8d982395eb1f (wave 2).
+			db.Table("newsfeed").Where("id = ?", req.ID).Update("reviewrequired", gorm.Expr("1"))
 			// ORM migration site 958d1d242008 (wave 3), through the portable
 			// upsert wrapper. The conflict target is the composite
 			// (userid, newsfeedid) unique key: PostgreSQL requires it to be
@@ -1192,15 +1202,33 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Hide":
 		if req.ID > 0 && canHidePost(myid) {
-			db.Exec("UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?", myid, req.ID)
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry hidden')", log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_HIDDEN, myid)
+			// ORM migration site 67632eee8567 (wave 2).
+			db.Table("newsfeed").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"hidden": gorm.Expr("NOW()"), "hiddenby": myid})
+			// ORM migration site 47dfb0a3eebe (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log.LOG_TYPE_CHITCHAT,
+				"subtype":   log.LOG_SUBTYPE_HIDDEN,
+				"byuser":    myid,
+				"text":      gorm.Expr("'Newsfeed entry hidden'"),
+			})
 		} else if req.ID > 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
 	case "Unhide":
 		if req.ID > 0 && canHidePost(myid) {
-			db.Exec("UPDATE newsfeed SET hidden = NULL, hiddenby = NULL WHERE id = ?", req.ID)
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry unhidden')", log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_UNHIDDEN, myid)
+			// ORM migration site a32e0ffcd9e2 (wave 2).
+			db.Table("newsfeed").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"hidden": gorm.Expr("NULL"), "hiddenby": gorm.Expr("NULL")})
+			// ORM migration site e96850e959f9 (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log.LOG_TYPE_CHITCHAT,
+				"subtype":   log.LOG_SUBTYPE_UNHIDDEN,
+				"byuser":    myid,
+				"text":      gorm.Expr("'Newsfeed entry unhidden'"),
+			})
 		} else if req.ID > 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
@@ -1234,11 +1262,18 @@ func Post(c *fiber.Ctx) error {
 		// The real post now exists, so the ChitChat copy is redundant: hide it
 		// exactly as the Hide action does, so it stops collecting replies. The
 		// member still sees their own hidden post, with the notice on it.
-		db.Exec("UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?", myid, req.ID)
+		// ORM migration site 3efb8e22cd38 (wave 2).
+		db.Table("newsfeed").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"hidden": gorm.Expr("NOW()"), "hiddenby": myid})
 
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, ?)",
-			log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_CREATED, myid,
-			fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid))
+		// ORM migration site d58a719af7e5 (wave 2).
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log.LOG_TYPE_CHITCHAT,
+			"subtype":   log.LOG_SUBTYPE_CREATED,
+			"byuser":    myid,
+			"text":      fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid),
+		})
 	case "ReferToWanted":
 		if req.ID > 0 {
 			createRefer(db, myid, req.ID, "ReferToWanted", 0)
@@ -1262,8 +1297,16 @@ func Post(c *fiber.Ctx) error {
 			// ORM migration site 5fc8acdf88b8 (wave 1).
 			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Count(&modCount)
 			if modCount > 0 {
-				db.Exec("UPDATE newsfeed SET replyto = ? WHERE id = ?", req.Replyto, req.ID)
-				db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry attached to thread')", log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_ATTACHED_TO_THREAD, myid)
+				// ORM migration site 359a8dec20e2 (wave 2).
+				db.Table("newsfeed").Where("id = ?", req.ID).Update("replyto", req.Replyto)
+				// ORM migration site 750cbc27385c (wave 2).
+				db.Table("logs").Create(map[string]interface{}{
+					"timestamp": gorm.Expr("NOW()"),
+					"type":      log.LOG_TYPE_CHITCHAT,
+					"subtype":   log.LOG_SUBTYPE_ATTACHED_TO_THREAD,
+					"byuser":    myid,
+					"text":      gorm.Expr("'Newsfeed entry attached to thread'"),
+				})
 			} else {
 				return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 			}
@@ -1420,7 +1463,8 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 func bumpThread(db *gorm.DB, replyto uint64) {
 	bump := replyto
 	for bump > 0 {
-		db.Exec("UPDATE newsfeed SET timestamp = NOW() WHERE id = ?", bump)
+		// ORM migration site bd0d10b12d60 (wave 2).
+		db.Table("newsfeed").Where("id = ?", bump).Update("timestamp", gorm.Expr("NOW()"))
 		var parent *uint64
 		// ORM migration site 084c277ca6e1 (wave 1).
 		db.Table("newsfeed").Select("replyto").Where("id = ?", bump).Scan(&parent)
@@ -1490,8 +1534,13 @@ func notifyThreadContributors(db *gorm.DB, posterUserid uint64, newPostID uint64
 	// Notify contributors — point to the new post (the reply) so the notification
 	// shows its message rather than the original thread-head's message.
 	for uid := range contributed {
-		db.Exec("INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, 'CommentOnYourPost', ?)",
-			posterUserid, uid, newPostID)
+		// ORM migration site 3c78baa8b628 (wave 2).
+		db.Table("users_notifications").Create(map[string]interface{}{
+			"fromuser":   posterUserid,
+			"touser":     uid,
+			"type":       gorm.Expr("'CommentOnYourPost'"),
+			"newsfeedid": newPostID,
+		})
 	}
 }
 
@@ -1531,8 +1580,13 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid 
 		// ORM migration site b8962955bf49 (wave 1).
 		db.Table("newsfeed").Select("userid").Where("id = ?", nfID).Scan(&originalUserid)
 		if originalUserid > 0 && originalUserid != myid {
-			db.Exec("INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, 'CommentOnYourPost', ?)",
-				myid, originalUserid, nfID)
+			// ORM migration site c56bbfcef4f1 (wave 2).
+			db.Table("users_notifications").Create(map[string]interface{}{
+				"fromuser":   myid,
+				"touser":     originalUserid,
+				"type":       gorm.Expr("'CommentOnYourPost'"),
+				"newsfeedid": nfID,
+			})
 		}
 	}
 }
@@ -1569,7 +1623,8 @@ func Edit(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to edit this post")
 	}
 
-	db.Exec("UPDATE newsfeed SET message = ? WHERE id = ?", req.Message, req.ID)
+	// ORM migration site c6ae40a34425 (wave 2).
+	db.Table("newsfeed").Where("id = ?", req.ID).Update("message", req.Message)
 
 	return c.JSON(fiber.Map{"success": true})
 }
@@ -1598,8 +1653,11 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete
-	db.Exec("UPDATE newsfeed SET deleted = NOW(), deletedby = ? WHERE id = ?", myid, id)
-	db.Exec("DELETE FROM users_notifications WHERE newsfeedid = ?", id)
+	// ORM migration site b9777a2b2dc3 (wave 2).
+	db.Table("newsfeed").Where("id = ?", id).
+		Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "deletedby": myid})
+	// ORM migration site c1dcf61cde69 (wave 2).
+	db.Table("users_notifications").Where("newsfeedid = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
 }

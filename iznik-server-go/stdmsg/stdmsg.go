@@ -160,22 +160,28 @@ func PostStdMsg(c *fiber.Ctx) error {
 
 	// Apply optional attributes.
 	if req.Action != "" {
-		db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", req.Action, newID)
+		// ORM migration site 46c5fb361ea2 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("action", req.Action)
 	}
 	if req.Subjpref != "" {
-		db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", req.Subjpref, newID)
+		// ORM migration site 116e92a68ac4 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("subjpref", req.Subjpref)
 	}
 	if req.Subjsuff != "" {
-		db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", req.Subjsuff, newID)
+		// ORM migration site 46bebb6b38be (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("subjsuff", req.Subjsuff)
 	}
 	if req.Body != "" {
-		db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", req.Body, newID)
+		// ORM migration site 8ad8c1589208 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("body", req.Body)
 	}
 	if req.Rarelyused != 0 {
-		db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", req.Rarelyused, newID)
+		// ORM migration site 948c386a078b (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("rarelyused", req.Rarelyused)
 	}
 	if req.Autosend != 0 {
-		db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", req.Autosend, newID)
+		// ORM migration site 2ba672ef4292 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("autosend", req.Autosend)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
@@ -237,37 +243,48 @@ func PatchStdMsg(c *fiber.Ctx) error {
 	}
 
 	if req.Title != nil {
-		db.Exec("UPDATE mod_stdmsgs SET title = ? WHERE id = ?", *req.Title, req.ID)
+		// ORM migration site 0d06dc492d55 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Action != nil {
-		db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", *req.Action, req.ID)
+		// ORM migration site cef43692b937 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("action", *req.Action)
 	}
 	if req.Subjpref != nil {
-		db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", *req.Subjpref, req.ID)
+		// ORM migration site f29e07819b1a (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("subjpref", *req.Subjpref)
 	}
 	if req.Subjsuff != nil {
-		db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", *req.Subjsuff, req.ID)
+		// ORM migration site f9fc836339e6 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("subjsuff", *req.Subjsuff)
 	}
 	if req.Body != nil {
-		db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", *req.Body, req.ID)
+		// ORM migration site 5e8a95612260 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("body", *req.Body)
 	}
 	if req.Rarelyused != nil {
-		db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", *req.Rarelyused, req.ID)
+		// ORM migration site 82fe128d30d3 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("rarelyused", *req.Rarelyused)
 	}
 	if req.Autosend != nil {
-		db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", *req.Autosend, req.ID)
+		// ORM migration site 6a8c185c8d22 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("autosend", *req.Autosend)
 	}
 	if req.Newmodstatus != nil {
-		db.Exec("UPDATE mod_stdmsgs SET newmodstatus = ? WHERE id = ?", *req.Newmodstatus, req.ID)
+		// ORM migration site 8e96c309ddf2 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("newmodstatus", *req.Newmodstatus)
 	}
 	if req.Newdelstatus != nil {
-		db.Exec("UPDATE mod_stdmsgs SET newdelstatus = ? WHERE id = ?", *req.Newdelstatus, req.ID)
+		// ORM migration site 7ab15f7bfb8f (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("newdelstatus", *req.Newdelstatus)
 	}
 	if req.Edittext != nil {
-		db.Exec("UPDATE mod_stdmsgs SET edittext = ? WHERE id = ?", *req.Edittext, req.ID)
+		// ORM migration site 4dcf8ff38c9f (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("edittext", *req.Edittext)
 	}
 	if req.Insert != nil {
-		db.Exec("UPDATE mod_stdmsgs SET `insert` = ? WHERE id = ?", *req.Insert, req.ID)
+		// ORM migration site 2379cd419502 (wave 2).
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("insert", *req.Insert)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -316,7 +333,8 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
-	db.Exec("DELETE FROM mod_stdmsgs WHERE id = ?", req.ID)
+	// ORM migration site 3157418b1d37 (wave 2).
+	db.Table("mod_stdmsgs").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

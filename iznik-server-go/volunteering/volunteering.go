@@ -504,40 +504,52 @@ func Update(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Title != nil {
-		db.Exec("UPDATE volunteering SET title = ? WHERE id = ?", *req.Title, req.ID)
+		// ORM migration site fecdb8962d43 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Location != nil {
-		db.Exec("UPDATE volunteering SET location = ? WHERE id = ?", *req.Location, req.ID)
+		// ORM migration site 50c0868c92b5 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Online != nil {
-		db.Exec("UPDATE volunteering SET online = ? WHERE id = ?", *req.Online, req.ID)
+		// ORM migration site 07c0237d777f (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("online", *req.Online)
 	}
 	if req.Pending != nil {
 		// Approving out of moderation is terminal, so clear the hold with it rather
 		// than leaving the opportunity pinned as "Held" forever.
 		if *req.Pending {
-			db.Exec("UPDATE volunteering SET pending = ? WHERE id = ?", *req.Pending, req.ID)
+			// ORM migration site ed8f1877c12d (wave 2).
+			db.Table("volunteering").Where("id = ?", req.ID).Update("pending", *req.Pending)
 		} else {
-			db.Exec("UPDATE volunteering SET pending = ?, heldby = NULL WHERE id = ?", *req.Pending, req.ID)
+			// ORM migration site 4266b747f8a4 (wave 2).
+			db.Table("volunteering").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"pending": *req.Pending, "heldby": gorm.Expr("NULL")})
 		}
 	}
 	if req.Contactname != nil {
-		db.Exec("UPDATE volunteering SET contactname = ? WHERE id = ?", *req.Contactname, req.ID)
+		// ORM migration site 4c66c27b96e8 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contactname", *req.Contactname)
 	}
 	if req.Contactphone != nil {
-		db.Exec("UPDATE volunteering SET contactphone = ? WHERE id = ?", *req.Contactphone, req.ID)
+		// ORM migration site d9f1684bf3f5 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contactphone", *req.Contactphone)
 	}
 	if req.Contactemail != nil {
-		db.Exec("UPDATE volunteering SET contactemail = ? WHERE id = ?", *req.Contactemail, req.ID)
+		// ORM migration site 867f9cdc3507 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contactemail", *req.Contactemail)
 	}
 	if req.Contacturl != nil {
-		db.Exec("UPDATE volunteering SET contacturl = ? WHERE id = ?", *req.Contacturl, req.ID)
+		// ORM migration site 0843893a3fbd (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contacturl", *req.Contacturl)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE volunteering SET description = ? WHERE id = ?", *req.Description, req.ID)
+		// ORM migration site bf8ac50709c6 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Timecommitment != nil {
-		db.Exec("UPDATE volunteering SET timecommitment = ? WHERE id = ?", *req.Timecommitment, req.ID)
+		// ORM migration site 64fac395f93e (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("timecommitment", *req.Timecommitment)
 	}
 
 	// Process action
@@ -570,34 +582,47 @@ func Update(c *fiber.Ctx) error {
 		}
 	case "RemoveGroup":
 		if req.GroupID > 0 {
-			db.Exec("DELETE FROM volunteering_groups WHERE volunteeringid = ? AND groupid = ?", req.ID, req.GroupID)
+			// ORM migration site 5eaf662c8a88 (wave 2).
+			db.Table("volunteering_groups").Where("volunteeringid = ? AND groupid = ?", req.ID, req.GroupID).Delete(nil)
 		}
 	case "AddDate":
-		db.Exec("INSERT INTO volunteering_dates (volunteeringid, start, end, applyby) VALUES (?, ?, ?, ?)",
-			req.ID, utils.NilIfEmpty(req.Start), utils.NilIfEmpty(req.End), utils.NilIfEmpty(req.Applyby))
+		// ORM migration site 2c08313624b0 (wave 2).
+		db.Table("volunteering_dates").Create(map[string]interface{}{
+			"volunteeringid": req.ID,
+			"start":          utils.NilIfEmpty(req.Start),
+			"end":            utils.NilIfEmpty(req.End),
+			"applyby":        utils.NilIfEmpty(req.Applyby),
+		})
 	case "RemoveDate":
 		if req.DateID > 0 {
-			db.Exec("DELETE FROM volunteering_dates WHERE id = ?", req.DateID)
+			// ORM migration site efa4579b0ab9 (wave 2).
+			db.Table("volunteering_dates").Where("id = ?", req.DateID).Delete(nil)
 		}
 	case "SetPhoto":
 		if req.PhotoID > 0 {
-			db.Exec("UPDATE volunteering_images SET opportunityid = ? WHERE id = ?", req.ID, req.PhotoID)
+			// ORM migration site 61789e80dec9 (wave 2).
+			db.Table("volunteering_images").Where("id = ?", req.PhotoID).Update("opportunityid", req.ID)
 		}
 	case "Renew":
-		db.Exec("UPDATE volunteering SET renewed = NOW(), expired = 0 WHERE id = ?", req.ID)
+		// ORM migration site 31c33cd10585 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"renewed": gorm.Expr("NOW()"), "expired": gorm.Expr("0")})
 	case "Expire":
-		db.Exec("UPDATE volunteering SET expired = 1 WHERE id = ?", req.ID)
+		// ORM migration site ed33579ad786 (wave 2).
+		db.Table("volunteering").Where("id = ?", req.ID).Update("expired", gorm.Expr("1"))
 	case "Hold":
 		if isModerator(myid, req.ID) {
 			// Don't take a hold off another mod - Release is how you do that.
 			if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
 				return heldByAnotherResponse(c, holder, name)
 			}
-			db.Exec("UPDATE volunteering SET heldby = ? WHERE id = ?", myid, req.ID)
+			// ORM migration site d453c74c2969 (wave 2).
+			db.Table("volunteering").Where("id = ?", req.ID).Update("heldby", myid)
 		}
 	case "Release":
 		if isModerator(myid, req.ID) {
-			db.Exec("UPDATE volunteering SET heldby = NULL WHERE id = ?", req.ID)
+			// ORM migration site 00a14dc95872 (wave 2).
+			db.Table("volunteering").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		}
 	}
 
@@ -636,7 +661,9 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete.
-	db.Exec("UPDATE volunteering SET deleted = 1, deletedby = ? WHERE id = ?", myid, id)
+	// ORM migration site 15b7dd2cc0aa (wave 2).
+	db.Table("volunteering").Where("id = ?", id).
+		Updates(map[string]interface{}{"deleted": gorm.Expr("1"), "deletedby": myid})
 
 	return c.JSON(fiber.Map{"success": true})
 }
