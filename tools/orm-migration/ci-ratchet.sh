@@ -457,6 +457,14 @@ else
   fi
   for svc_dir in "${service_dirs[@]}"; do
     svc_name="$(basename "$svc_dir")"
+    # services/laravel/ follows a different convention (PHP, not Go; its own
+    # extractor and lifecycle - see gate (q) below) and does not have an
+    # "iznik-laravel-go" source tree to check against. Excluded here rather
+    # than made to fit the "iznik-$name-go" convention below, so this loop's
+    # behaviour for spatial/routing is unchanged.
+    if [ "$svc_name" = "laravel" ]; then
+      continue
+    fi
     svc_manifest="$svc_dir/manifest.json"
     svc_rules="$svc_dir/keep-raw.json"
     # Convention: services/spatial -> iznik-spatial-go, services/routing ->
@@ -555,6 +563,158 @@ else
       note "gate (p) OK for services/$svc_name/: manifest matches re-extraction, every site triaged with a reason"
     fi
   done
+fi
+
+# --- Gate (q): Laravel (iznik-batch) raw-SQL inventory ------------------------
+#
+# The PHP counterpart to gates (b)/(c)/(d)/(e)/(g) above, for
+# tools/orm-migration/services/laravel/manifest.json (extractor:
+# tools/orm-migration/php-extractor/extract.php - a nikic/php-parser AST walk
+# over iznik-batch, not a Go one; see that file's header comment for the
+# enumerated raw-SQL method surface and how it was verified against the
+# framework source rather than copied from memory).
+#
+# Unlike gate (p)'s services (spatial/routing), this manifest carries the
+# FULL raw/in-progress/converted/keep-raw/test-fixture/retired lifecycle
+# (plus a Laravel-only "excluded" status for the SQLite classification-store
+# cluster - see extract.php), because iznik-batch's raw-SQL surface has not
+# been triaged yet; it is exactly where iznik-server-go's own manifest
+# started. So this checks (b)/(c)/(d)/(e)/(g)'s Laravel equivalents, not
+# gate (p)'s narrower "everything must already be keep-raw or test-fixture"
+# contract. It does NOT port gates (f)/(h)-(o): those all guard the
+# conversion/parity-test lifecycle (Gate 2), and nothing is being converted
+# yet - there is no harness for this manifest in this branch. Porting them
+# now would be guarding against a failure mode that cannot occur.
+#
+# Self-guarding in TWO ways, both deliberate:
+#   - No services/laravel/manifest.json committed: skip. Same reasoning as
+#     gate (p) and this file's own top-level self-guard in the orb step - an
+#     unpublished manifest is not a gate, it is a comment.
+#   - No `php` on PATH: skip, rather than fail. Go and jq are HARD required
+#     at the top of this script (the whole ratchet cannot run without them),
+#     but making php equally hard would break every OTHER gate here -
+#     including the Go-only ones - on any machine that legitimately has no
+#     PHP installed, which is backwards for one optional gate. CI needs to
+#     install php before this step the same way the orb installs Go on
+#     demand for this one (see that step's own comment); that wiring is NOT
+#     done here, and is a known, reported gap rather than something silently
+#     assumed to already exist - see README.md.
+#
+# THE EXPLICIT-BASELINE FIX: gate (d) above falls back to the COMMITTED
+# manifest's own raw+in-progress count when "ratchet.baseline" is absent - a
+# self-initialising ceiling, documented as deliberate earlier in this file.
+# In practice that fallback lets the ceiling silently ratchet upward: a PR
+# that adds raw debt commits a manifest whose own counts already include the
+# increase, so the fallback re-derives its limit from the thing it is
+# supposed to be limiting, and the gate reports OK. This gate refuses that
+# fallback outright for the Laravel manifest: a missing "ratchet.baseline" is
+# a hard FAIL here, never a self-initialising default. The existing gate (d)
+# for the Go manifest is NOT changed to match - that would be a bigger,
+# separately-reviewable change to a gate other work already depends on,
+# outside the scope of adding a new one - but the inconsistency between the
+# two is real and worth reconciling later.
+LARAVEL_MANIFEST="$SCRIPT_DIR/services/laravel/manifest.json"
+LARAVEL_RULES="$SCRIPT_DIR/services/laravel/keep-raw.json"
+LARAVEL_EXTRACTOR_DIR="$SCRIPT_DIR/php-extractor"
+LARAVEL_SOURCE_ROOT="$REPO_ROOT/iznik-batch"
+
+if [ ! -f "$LARAVEL_MANIFEST" ]; then
+  note "gate (q) SKIP: no $LARAVEL_MANIFEST - Laravel ORM migration tooling not present on this branch"
+elif ! command -v php >/dev/null 2>&1; then
+  note "gate (q) SKIP: no php on PATH - cannot regenerate the Laravel inventory to check it (README.md: CI needs to install php for this step, the same way it installs Go above; that wiring is not yet done)"
+elif ! jq -e . "$LARAVEL_MANIFEST" >/dev/null 2>&1; then
+  fail "services/laravel/manifest.json is not valid JSON"
+else
+  if [ ! -d "$LARAVEL_EXTRACTOR_DIR/vendor" ]; then
+    note "gate (q): installing php-extractor's own (small, standalone) composer dependencies"
+    if ! (cd "$LARAVEL_EXTRACTOR_DIR" && composer install --no-interaction --quiet) >"$WORKDIR/laravel-composer.log" 2>&1; then
+      cat "$WORKDIR/laravel-composer.log" >&2
+      fail "php-extractor: composer install failed (see output above)"
+    fi
+  fi
+
+  LARAVEL_TEMP="$WORKDIR/laravel-manifest.json"
+  cp "$LARAVEL_MANIFEST" "$LARAVEL_TEMP"
+  if ! php "$LARAVEL_EXTRACTOR_DIR/extract.php" --root="$LARAVEL_SOURCE_ROOT" --repo="$REPO_ROOT" --out="$LARAVEL_TEMP" --rules="$LARAVEL_RULES" >"$WORKDIR/laravel-extract.log" 2>&1; then
+    cat "$WORKDIR/laravel-extract.log" >&2
+    fail "php-extractor: extract.php failed to regenerate the Laravel manifest (see output above)"
+  else
+    cat "$WORKDIR/laravel-extract.log"
+
+    # (b)-equivalent: raw SQL in iznik-batch but not in the committed manifest.
+    jq -n --slurpfile c "$LARAVEL_MANIFEST" --slurpfile t "$LARAVEL_TEMP" '
+      ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+      [ $temp | keys[] | select($committed[.] == null) |
+        {id: ., file: $temp[.].file, line: $temp[.].line, function: $temp[.].function, goldenSql: $temp[.].goldenSql} ]
+    ' >"$WORKDIR/laravel-new-sites.json"
+    laravel_new_count=$(jq 'length' "$WORKDIR/laravel-new-sites.json")
+    if [ "$laravel_new_count" -gt 0 ]; then
+      fail "services/laravel: $laravel_new_count raw SQL site(s) found in iznik-batch but missing from the committed manifest:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]  \(.function)()  \(.goldenSql)"' "$WORKDIR/laravel-new-sites.json" | head -20
+      note "fix: cd tools/orm-migration/php-extractor && php extract.php, review the new sites, set an explicit status for each, and commit the updated manifest.json"
+    fi
+
+    # (c)-equivalent: goldenSql drifted from the committed manifest.
+    jq -n --slurpfile c "$LARAVEL_MANIFEST" --slurpfile t "$LARAVEL_TEMP" '
+      ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+      [ $temp | keys[] | select($committed[.] != null) | select($committed[.].goldenSql != $temp[.].goldenSql) |
+        {id: ., file: $temp[.].file, line: $temp[.].line, committedSql: $committed[.].goldenSql, actualSql: $temp[.].goldenSql} ]
+    ' >"$WORKDIR/laravel-drift.json"
+    laravel_drift_count=$(jq 'length' "$WORKDIR/laravel-drift.json")
+    if [ "$laravel_drift_count" -gt 0 ]; then
+      fail "services/laravel: $laravel_drift_count site(s) whose committed goldenSql no longer matches the real source:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]\n    committed: \(.committedSql)\n    actual:    \(.actualSql)"' "$WORKDIR/laravel-drift.json" | head -20
+      note "fix: regenerate services/laravel/manifest.json from source and commit the result"
+    fi
+
+    # (d)-equivalent, with the explicit-baseline fix described above.
+    laravel_baseline=$(jq -r '.ratchet.baseline // "MISSING"' "$LARAVEL_MANIFEST")
+    if [ "$laravel_baseline" = "MISSING" ]; then
+      fail "services/laravel/manifest.json has no explicit ratchet.baseline - this gate refuses the self-initialising fallback gate (d) uses above (see this gate's header comment for why)"
+    else
+      laravel_current=$(jq '[.sites[] | select(.status == "raw" or .status == "in-progress")] | length' "$LARAVEL_TEMP")
+      if [ "$laravel_current" -gt "$laravel_baseline" ]; then
+        fail "services/laravel: raw+in-progress count is $laravel_current, above the ratchet baseline of $laravel_baseline"
+        note "fix: this PR added raw SQL debt to iznik-batch, or reverted a site's status back to raw/in-progress. Back it out, or lower/raise ratchet.baseline in services/laravel/manifest.json in the same PR with a reason"
+      else
+        note "gate (q) OK (d-equivalent): raw+in-progress count is $laravel_current, at or below the ratchet baseline of $laravel_baseline"
+      fi
+    fi
+
+    # (e)-equivalent: keep-raw needs a written reason. "excluded" sites carry
+    # the same requirement - "this is a different database engine" still
+    # needs saying, not just asserting via a bare status.
+    jq -n --slurpfile c "$LARAVEL_MANIFEST" '
+      [ $c[0].sites | to_entries[] | select(.value.status == "keep-raw" or .value.status == "excluded") |
+        select((.value.reason // "") | gsub("\\s";"") | length == 0) |
+        {id: .key, file: .value.file, line: .value.line, status: .value.status} ]
+    ' >"$WORKDIR/laravel-noreason.json"
+    laravel_noreason_count=$(jq 'length' "$WORKDIR/laravel-noreason.json")
+    if [ "$laravel_noreason_count" -gt 0 ]; then
+      fail "services/laravel: $laravel_noreason_count site(s) marked keep-raw/excluded with no written reason:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]  status=\(.status)"' "$WORKDIR/laravel-noreason.json" | head -20
+    fi
+
+    # (g)-equivalent: committed manifest stale (says raw+present, re-extraction disagrees).
+    jq -n --slurpfile c "$LARAVEL_MANIFEST" --slurpfile t "$LARAVEL_TEMP" '
+      ($c[0].sites) as $committed | ($t[0].sites) as $temp |
+      [ $committed | keys[] |
+        select($committed[.].presentInCode == true) |
+        select($committed[.].status == "raw" or $committed[.].status == "in-progress") |
+        select($temp[.] == null or $temp[.].presentInCode == false) |
+        {id: ., file: $committed[.].file, line: $committed[.].line} ]
+    ' >"$WORKDIR/laravel-stale.json"
+    laravel_stale_count=$(jq 'length' "$WORKDIR/laravel-stale.json")
+    if [ "$laravel_stale_count" -gt 0 ]; then
+      fail "services/laravel: $laravel_stale_count site(s) recorded as raw and present, but re-extraction no longer finds them - the committed manifest is stale:"
+      jq -r '.[] | "  \(.file):\(.line)  [\(.id)]"' "$WORKDIR/laravel-stale.json" | head -20
+      note "fix: regenerate services/laravel/manifest.json and commit it together with the conversions"
+    fi
+
+    if [ "$laravel_new_count" -eq 0 ] && [ "$laravel_drift_count" -eq 0 ] && [ "$laravel_noreason_count" -eq 0 ] && [ "$laravel_stale_count" -eq 0 ]; then
+      note "gate (q) OK: services/laravel/manifest.json matches re-extraction, no new/drifted/stale/unjustified sites"
+    fi
+  fi
 fi
 
 # --- Summary -----------------------------------------------------------------

@@ -1,0 +1,13 @@
+{
+    "name": "freegle/orm-migration-php-extractor",
+    "description": "Raw-SQL inventory extractor for iznik-batch (Laravel), the PHP counterpart to tools/orm-migration/extract.go. A standalone tool, not a dependency of iznik-batch itself - see README.md in the parent directory for why: it needs nikic/php-parser explicitly and stably, not as a transitive dev-dependency of iznik-batch's own phpunit/psy install (which is exactly the kind of thing that breaks silently on an unrelated upgrade), and it must stay cheap to `composer install` in CI since the ratchet gate runs before any container - including the batch container - has started, so it cannot lean on iznik-batch's own (much larger) vendor tree.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.2",
+        "nikic/php-parser": "^5.7"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
