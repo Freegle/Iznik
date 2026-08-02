@@ -1,11 +1,13 @@
 package dashboard
 
 import (
+	"context"
 	json2 "encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // GetDashboard handles GET /dashboard with component-based or legacy response.
@@ -350,28 +353,44 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	return result
 }
 
+// usersReplyingWindowDays bounds each messages_groups arrival-range scan in getUsersReplying to at
+// most a week of rows, regardless of how wide the dashboard's overall date range is (Admins can
+// pick "systemwide" across ~442 groups, or a custom range back to 2015) - keeps every individual
+// statement a cheap seek on the existing `arrival` index instead of one scan across a large
+// fraction of the 9.4M-row table.
+const usersReplyingWindowDays = 7
+
+// usersReplyingBatch bounds each chat_messages IN (...) lookup in getUsersReplying so the
+// statement stays a bounded set of keyed lookups on the existing refmsgid index, rather than
+// growing with the number of messages the date range/group scope matched.
+const usersReplyingBatch = 1500
+
+// usersReplyingDeadline bounds the whole chunked walk. The fiber request context can't be used
+// for this (fasthttp only cancels it on server shutdown), so without an explicit deadline an
+// abandoned systemwide/wide-range request would keep stepping through every remaining window.
+const usersReplyingDeadline = 60 * time.Second
+
 func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
-	db := database.DBConn
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), usersReplyingDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
 
-	type UserCount struct {
-		Count  int
-		Userid uint64
+	// Step 1: which messages got replies in scope, and how many of the selected groups each one
+	// matched (a message crossposted to k of them counts k times below, matching the old single
+	// JOIN's behaviour of producing one row per (chat_message, messages_groups) match).
+	multiplicity := repliedMessageMultiplicity(db, groupIDs, startQ, endQ)
+	if len(multiplicity) == 0 {
+		return []map[string]interface{}{}
 	}
 
-	var users []UserCount
-	// ORM migration site 4a0837c4271f (wave 4).
-	db.Table("chat_messages").
-		Select("COUNT(*) AS count, chat_messages.userid").
-		Joins("INNER JOIN messages_groups ON messages_groups.msgid = chat_messages.refmsgid").
-		Where("messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) AND chat_messages.type = ?",
-			startQ, endQ, groupIDs, utils.CHAT_MESSAGE_INTERESTED).
-		Group("chat_messages.userid").
-		Order("count DESC").
-		Limit(5).
-		Scan(&users)
+	// Step 2: batch-fetch reply counts per (message, user) for those messages, then fold them
+	// into per-user totals weighted by multiplicity.
+	rows := repliesForMessages(db, multiplicity)
+	totals := mergeReplyCounts(rows, multiplicity)
+	users := topUserCounts(totals, 5)
 
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
@@ -385,6 +404,155 @@ func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]inter
 		}
 	}
 	return result
+}
+
+// repliedMessageMultiplicity walks [startQ, endQ] in usersReplyingWindowDays-day sub-windows, each
+// running a bounded arrival-indexed scan of messages_groups, and returns how many times each msgid
+// matched the group scope. startQ/endQ follow GetDashboard's convention: endQ is already the
+// desired end date plus one day, so "arrival <= endQ" on the final window reproduces the original
+// query's inclusive-through-the-last-day semantics exactly; interior windows use a strict "<"
+// upper bound (equal to the next window's lower bound) so no arrival can be double-counted across
+// windows.
+func repliedMessageMultiplicity(db *gorm.DB, groupIDs []uint64, startQ, endQ string) map[uint64]int {
+	multiplicity := make(map[uint64]int)
+
+	start, err := time.Parse("2006-01-02", startQ)
+	if err != nil {
+		return multiplicity
+	}
+	end, err := time.Parse("2006-01-02", endQ)
+	if err != nil {
+		return multiplicity
+	}
+
+	for winStart := start; winStart.Before(end); winStart = winStart.AddDate(0, 0, usersReplyingWindowDays) {
+		winEnd := winStart.AddDate(0, 0, usersReplyingWindowDays)
+		last := !winEnd.Before(end)
+		if last {
+			winEnd = end
+		}
+
+		var msgids []uint64
+		var err error
+		if last {
+			err = db.Raw("SELECT msgid FROM messages_groups WHERE arrival >= ? AND arrival <= ? AND groupid IN (?)",
+				winStart.Format("2006-01-02"), winEnd.Format("2006-01-02"), groupIDs).Scan(&msgids).Error
+		} else {
+			err = db.Raw("SELECT msgid FROM messages_groups WHERE arrival >= ? AND arrival < ? AND groupid IN (?)",
+				winStart.Format("2006-01-02"), winEnd.Format("2006-01-02"), groupIDs).Scan(&msgids).Error
+		}
+		if err != nil {
+			// Fail the whole component (empty top-5, like the replaced single
+			// statement did on error) rather than silently missing a window's
+			// worth of messages from the counts.
+			return map[uint64]int{}
+		}
+
+		for _, id := range msgids {
+			multiplicity[id]++
+		}
+	}
+
+	return multiplicity
+}
+
+// refUserCount is one row of "how many replies did this user leave on this message", as batched
+// out of chat_messages by repliesForMessages.
+type refUserCount struct {
+	Refmsgid uint64
+	Userid   uint64
+	Count    int
+}
+
+// repliesForMessages batches the msgids in multiplicity into usersReplyingBatch-sized IN (...)
+// lookups against chat_messages (existing refmsgid index), so no single statement grows with the
+// number of messages the date range/group scope matched.
+func repliesForMessages(db *gorm.DB, multiplicity map[uint64]int) []refUserCount {
+	msgids := make([]uint64, 0, len(multiplicity))
+	for id := range multiplicity {
+		msgids = append(msgids, id)
+	}
+
+	var rows []refUserCount
+	for _, batch := range chunkUint64s(msgids, usersReplyingBatch) {
+		var batchRows []refUserCount
+		if err := db.Raw("SELECT refmsgid, userid, COUNT(*) AS count FROM chat_messages "+
+			"WHERE refmsgid IN (?) AND type = ? GROUP BY refmsgid, userid",
+			batch, utils.CHAT_MESSAGE_INTERESTED).Scan(&batchRows).Error; err != nil {
+			// All-or-nothing, matching the replaced single statement's
+			// fail-empty behaviour.
+			return nil
+		}
+		rows = append(rows, batchRows...)
+	}
+
+	return rows
+}
+
+// chunkUint64s splits ids into consecutive batches of at most size, preserving order. Pure and
+// DB-free so it can be unit tested directly; size <= 0 is treated as "everything in one batch"
+// rather than looping forever.
+func chunkUint64s(ids []uint64, size int) [][]uint64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	if size <= 0 {
+		size = len(ids)
+	}
+
+	batches := make([][]uint64, 0, (len(ids)+size-1)/size)
+	for start := 0; start < len(ids); start += size {
+		end := start + size
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batches = append(batches, ids[start:end])
+	}
+	return batches
+}
+
+// mergeReplyCounts folds per-(msgid,userid) reply counts into per-user totals, weighting each row
+// by that msgid's multiplicity. This PRESERVES the original single-statement query's behaviour: a
+// message crossposted to k of the selected groups had its INNER JOIN row - and so its replies -
+// counted k times, so this multiplies each (msgid,userid) count by k before summing rather than
+// deduplicating msgids.
+func mergeReplyCounts(rows []refUserCount, multiplicity map[uint64]int) map[uint64]int {
+	totals := make(map[uint64]int)
+	for _, r := range rows {
+		k := multiplicity[r.Refmsgid]
+		if k == 0 {
+			continue
+		}
+		totals[r.Userid] += r.Count * k
+	}
+	return totals
+}
+
+// userCount is one entry of the sorted-and-limited output of topUserCounts.
+type userCount struct {
+	Userid uint64
+	Count  int
+}
+
+// topUserCounts sorts totals desc by count (userid asc as a deterministic tie-break - the replaced
+// "ORDER BY count DESC" had no secondary key either, so ties were never guaranteed any particular
+// order) and returns at most limit entries, replicating the original query's
+// "ORDER BY count DESC LIMIT 5" in application code.
+func topUserCounts(totals map[uint64]int, limit int) []userCount {
+	users := make([]userCount, 0, len(totals))
+	for userid, count := range totals {
+		users = append(users, userCount{Userid: userid, Count: count})
+	}
+	sort.Slice(users, func(i, j int) bool {
+		if users[i].Count != users[j].Count {
+			return users[i].Count > users[j].Count
+		}
+		return users[i].Userid < users[j].Userid
+	})
+	if len(users) > limit {
+		users = users[:limit]
+	}
+	return users
 }
 
 func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
@@ -661,4 +829,3 @@ func parseRelativeDate(s string) time.Time {
 		return t
 	}
 }
-

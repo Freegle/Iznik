@@ -2,6 +2,7 @@ package rippling
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -780,9 +781,57 @@ type Section3RippledOut struct {
 	RippleDrive           DriveStat `json:"ripple_drive_min"`
 }
 
+// dayWindowLayout is the datetime format used for the synthesised chunk boundaries handed back to
+// MySQL. It always includes a time component, which MySQL accepts equally well for a date-only
+// boundary (midnight), so it is safe to use regardless of which layout the caller's start/end used.
+const dayWindowLayout = "2006-01-02 15:04:05"
+
+// dayWindows splits [start,end) into half-open 1-day sub-windows, so a rippling_reach/chat_messages
+// scan over a wide date range runs as many short statements instead of one that can hold a Galera
+// commit-certification queue for minutes. If either bound doesn't parse (free-form query params -
+// accepts both the "YYYY-MM-DD" a plain date input sends and the full "YYYY-MM-DD HH:MM:SS" default)
+// or start is not before end, it falls back to the original [start,end) as a single window: MySQL
+// still validates and runs it exactly as it does today, just unchunked.
+func dayWindows(start, end string) [][2]string {
+	layouts := []string{dayWindowLayout, "2006-01-02"}
+	parse := func(s string) (time.Time, bool) {
+		for _, l := range layouts {
+			if t, err := time.Parse(l, s); err == nil {
+				return t, true
+			}
+		}
+		return time.Time{}, false
+	}
+	st, ok1 := parse(start)
+	en, ok2 := parse(end)
+	if !ok1 || !ok2 || !st.Before(en) {
+		return [][2]string{{start, end}}
+	}
+	var windows [][2]string
+	for d := st; d.Before(en); d = d.AddDate(0, 0, 1) {
+		next := d.AddDate(0, 0, 1)
+		if next.After(en) {
+			next = en
+		}
+		windows = append(windows, [2]string{d.Format(dayWindowLayout), next.Format(dayWindowLayout)})
+	}
+	return windows
+}
+
 // rippledOutSection computes the server-derived rippled-out reply/taker shares (pure SQL) over
 // replies to rippled posts in the window + stratum.
+// rippledOutDeadline bounds rippledOutSection's chunked walks. Each per-day
+// statement is short, but a wide range issues many, and the fiber request
+// context can't do this (fasthttp only cancels it on server shutdown) - so
+// without it an abandoned tab load would keep stepping through the remaining
+// windows to completion.
+const rippledOutDeadline = 120 * time.Second
+
 func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3RippledOut {
+	ctx, cancel := context.WithTimeout(context.Background(), rippledOutDeadline)
+	defer cancel()
+	db = db.WithContext(ctx)
+
 	var raw struct {
 		Replies        int
 		RippledReplies int
@@ -791,63 +840,98 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 		ClientRippled  int
 	}
 	// The shares query and the rescue-floor query are independent and both heavy (the rescue floor
-	// is the slowest single query on the tab), so run them concurrently.
+	// is the slowest single query on the tab), so run them concurrently. Each is also chunked into
+	// 1-day sub-windows and summed in Go: both are plain COUNT/SUM aggregates over rows disjointly
+	// partitioned by the column each chunks on (cm.date below, rr.created_at in the rescue query),
+	// so per-chunk totals summed in Go equal the single-window total exactly - no DISTINCT and no
+	// cross-window dependency to break additivity.
 	var wg sync.WaitGroup
 	wg.Add(2)
-	// ORM migration site 791c683326a8 (Tier 3 keep-raw review). stratumSQL is
-	// one of StratumFilter's 4 fixed strings - 4 possible rendered forms, all
-	// declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_791c683326a8 (iznik-server-go/test).
-	innerShares := "(SELECT " +
-		"(NOT EXISTS(SELECT 1 FROM messages_groups og " +
-		"INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid " +
-		"AND mem.collection = 'Approved' AND mem.added < og.arrival " +
-		"WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, " +
-		"EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, " +
-		"EXISTS(SELECT 1 FROM rippling_reply_attribution rra " +
-		"WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid " +
-		"AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled " +
-		"FROM chat_messages cm " +
-		"JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0" + stratumSQL +
-		" JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer'" +
-		" WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?" +
-		" AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)" +
-		") d"
 
 	go func() {
 		defer wg.Done()
-		db.Table(innerShares, start, end).
-			Select("COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, " +
-				"SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled").
-			Scan(&raw)
+		// NOT converted here (raw): master replaced the single unchunked
+		// query (site 791c683326a8) with a per-day chunked loop - see this
+		// function's own doc comment on rippledOutDeadline/why both goroutines
+		// are chunked. Re-doing the .Table(innerShares,...) conversion per
+		// chunk was not attempted under a merge; left raw for a properly
+		// tested follow-up.
+		for _, w := range dayWindows(start, end) {
+			var chunk struct {
+				Replies        int
+				RippledReplies int
+				Takers         int
+				RippledTakers  int
+				ClientRippled  int
+			}
+			if err := db.Raw(`
+			SELECT COUNT(*) AS replies,
+			       SUM(rippled) AS rippled_replies,
+			       SUM(is_taker) AS takers,
+			       SUM(rippled AND is_taker) AS rippled_takers,
+			       SUM(client_rippled) AS client_rippled
+			FROM (
+			    SELECT
+			      (NOT EXISTS(SELECT 1 FROM messages_groups og
+			                  INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid
+			                    AND mem.collection = 'Approved' AND mem.added < og.arrival
+			                  WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled,
+			      EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker,
+			      EXISTS(SELECT 1 FROM rippling_reply_attribution rra
+			             WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid
+			               AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled
+			    FROM chat_messages cm
+			    JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0`+stratumSQL+`
+			    JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer'
+			    WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?
+			      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+			) d`, w[0], w[1]).Scan(&chunk).Error; err != nil {
+				// Zero the whole metric, matching the unchunked query's
+				// all-or-nothing failure shape - a partially-summed total
+				// would look plausible while silently missing days.
+				raw.Replies, raw.RippledReplies, raw.Takers, raw.RippledTakers, raw.ClientRippled = 0, 0, 0, 0, 0
+				break
+			}
+			raw.Replies += chunk.Replies
+			raw.RippledReplies += chunk.RippledReplies
+			raw.Takers += chunk.Takers
+			raw.RippledTakers += chunk.RippledTakers
+			raw.ClientRippled += chunk.ClientRippled
+		}
 	}()
 
 	// Rescue floor: DISTINCT posts that were taken AND had at least one reply AND had NO reply
 	// from an established home-group member - so the take could only have come via rippling.
-	//
-	// ORM migration site 8cdbd33d1052 (Tier 3 keep-raw review). Same
-	// stratumSQL toggle as 791c683326a8 above - 4 possible rendered forms,
-	// all declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_8cdbd33d1052 (iznik-server-go/test).
-	innerRescue := "(SELECT rr.msgid " +
-		"FROM rippling_reach rr " +
-		"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' " +
-		"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0" + stratumSQL +
-		" AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)" +
-		" AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid)" +
-		" AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')" +
-		" AND NOT EXISTS(" +
-		"SELECT 1 FROM chat_messages ch " +
-		"INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 " +
-		"INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid " +
-		"AND mem.collection = 'Approved' AND mem.added < og.arrival " +
-		"WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')" +
-		") x"
-
 	var rescued int
 	go func() {
 		defer wg.Done()
-		db.Table(innerRescue, start, end).Select("COUNT(*)").Scan(&rescued)
+		// NOT converted here (raw): master replaced the single unchunked
+		// query (site 8cdbd33d1052) with a per-day chunked loop, same
+		// reasoning as innerShares above.
+		for _, w := range dayWindows(start, end) {
+			var chunkRescued int
+			if err := db.Raw(`
+			SELECT COUNT(*) FROM (
+			    SELECT rr.msgid
+			    FROM rippling_reach rr
+			    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
+			    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
+			      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
+			      AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid)
+			      AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')
+			      AND NOT EXISTS(
+			          SELECT 1 FROM chat_messages ch
+			          INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0
+			          INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid
+			            AND mem.collection = 'Approved' AND mem.added < og.arrival
+			          WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')
+			) x`, w[0], w[1]).Scan(&chunkRescued).Error; err != nil {
+				// As above: all-or-nothing rather than a silent undercount.
+				rescued = 0
+				break
+			}
+			rescued += chunkRescued
+		}
 	}()
 
 	wg.Wait()

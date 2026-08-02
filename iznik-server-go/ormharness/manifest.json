@@ -2,10 +2,10 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1595,
-    "keep-raw": 39,
+    "converted": 1591,
+    "keep-raw": 52,
     "retired": 41,
-    "test-fixture": 4261
+    "test-fixture": 4267
   },
   "ratchet": {
     "baseline": 0,
@@ -2293,7 +2293,7 @@
     "04eaeb226006": {
       "id": "04eaeb226006",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4672,
+      "line": 4673,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -2943,7 +2943,7 @@
     "05d46baf544b": {
       "id": "05d46baf544b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3404,
+      "line": 3405,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -4081,7 +4081,7 @@
     "0804d8f0906b": {
       "id": "0804d8f0906b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4097,
+      "line": 4098,
       "function": "TestGetUserEmailFieldPopulatedForFDEmail",
       "receiver": "db",
       "method": "Exec",
@@ -4549,7 +4549,7 @@
     "08afc6822964": {
       "id": "08afc6822964",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1180,
+      "line": 1181,
       "function": "TestPutMessageUnauthenticatedPersistentSeriesMatchesSession",
       "receiver": "db",
       "method": "Raw",
@@ -5116,6 +5116,31 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "09f9c28c58ac": {
+      "id": "09f9c28c58ac",
+      "file": "iznik-server-go/message/bounds.go",
+      "line": 52,
+      "function": "viewedMessageIDs",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages_likes"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT msgid FROM messages_likes WHERE userid = ? AND type = ? AND msgid IN (?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Master merge (#1230) introduced this function to replace a LEFT JOIN messages_likes + CASE that used to compute 'unseen' inline in the Bounds() spatial query (see site 951837c820f1 below, same merge). The no-location myGroupsBoundingBox fallback can match most of messages_spatial, turning the old inline join into tens of thousands of per-row point lookups into the 86M-row messages_likes table; this function instead batches the ids it needs to check into boundsLikesChunk-sized IN (...) queries, one per chunk. A GORM .Table().Where().Scan() form is plausible for the query inside the loop, but re-converting a chunked call site introduced by a merge, without a validated Layer 1/2 parity pass for that exact shape, is not a decision to make casually under conflict resolution - see the resolution principle recorded on the analytics.go/emailtracking.go sites from the same merge.",
+      "porting": "PostgreSQL: ordinary parameterised SELECT ... WHERE ... IN (?), no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass.",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted"
+    },
     "09fdb1faf03a": {
       "id": "09fdb1faf03a",
       "file": "iznik-server-go/test/message_test.go",
@@ -5207,7 +5232,7 @@
     "0a22a00179c3": {
       "id": "0a22a00179c3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4722,
+      "line": 4723,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -6989,7 +7014,7 @@
     "0ddefb27ab4c": {
       "id": "0ddefb27ab4c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4618,
+      "line": 4619,
       "function": "TestUserInfo_OfferCountNotInflatedByRipple",
       "receiver": "db",
       "method": "Exec",
@@ -7011,7 +7036,7 @@
     "0dee111c6c33": {
       "id": "0dee111c6c33",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3871,
+      "line": 3872,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -7033,7 +7058,7 @@
     "0dff62634f76": {
       "id": "0dff62634f76",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1514,
+      "line": 1515,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Exec",
@@ -8651,7 +8676,7 @@
     "10e5d21f93f9": {
       "id": "10e5d21f93f9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4616,
+      "line": 4617,
       "function": "TestUserInfo_OfferCountNotInflatedByRipple",
       "receiver": "db",
       "method": "Exec",
@@ -8874,7 +8899,7 @@
     "116269b786f6": {
       "id": "116269b786f6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 304,
+      "line": 305,
       "function": "TestInventNameFallsBackToGeneratedName",
       "receiver": "db",
       "method": "Exec",
@@ -9051,7 +9076,7 @@
     "11c4695daf16": {
       "id": "11c4695daf16",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2270,
+      "line": 2271,
       "function": "TestUserBans",
       "receiver": "db",
       "method": "Exec",
@@ -9413,7 +9438,7 @@
     "129979edb305": {
       "id": "129979edb305",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 160,
+      "line": 161,
       "function": "TestUserComments",
       "receiver": "db",
       "method": "Exec",
@@ -9567,7 +9592,7 @@
     "130dc802fd1a": {
       "id": "130dc802fd1a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3115,
+      "line": 3116,
       "function": "TestFetchMTModmailsCount",
       "receiver": "db",
       "method": "Exec",
@@ -10147,7 +10172,7 @@
     "140a5199bbc2": {
       "id": "140a5199bbc2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3396,
+      "line": 3397,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Raw",
@@ -11242,7 +11267,7 @@
     "1698b1a45bcf": {
       "id": "1698b1a45bcf",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4068,
+      "line": 4069,
       "function": "TestGetUserEmailsVisibleToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -11374,7 +11399,7 @@
     "16dded1623b5": {
       "id": "16dded1623b5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1432,
+      "line": 1433,
       "function": "TestPatchUserMuteChitchat",
       "receiver": "db",
       "method": "Raw",
@@ -13877,7 +13902,7 @@
     "1b8a39ffb693": {
       "id": "1b8a39ffb693",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 734,
+      "line": 735,
       "function": "TestPostUserAddEmailSupportForOtherUser",
       "receiver": "db",
       "method": "Exec",
@@ -14151,7 +14176,7 @@
     "1c3b4894ce64": {
       "id": "1c3b4894ce64",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1629,
+      "line": 1630,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Raw",
@@ -14844,7 +14869,7 @@
     "1d6c787f74ae": {
       "id": "1d6c787f74ae",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 797,
+      "line": 798,
       "function": "TestPostUserAddEmailAlreadyOnSameUser",
       "receiver": "db",
       "method": "Exec",
@@ -15026,7 +15051,7 @@
     "1db901d8a753": {
       "id": "1db901d8a753",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4651,
+      "line": 4652,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -15070,7 +15095,7 @@
     "1dc0de1f4daf": {
       "id": "1dc0de1f4daf",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3942,
+      "line": 3943,
       "function": "TestPatchUserTrustlevelSelfBasic",
       "receiver": "db",
       "method": "Raw",
@@ -15628,7 +15653,7 @@
     "1e9265ff80f2": {
       "id": "1e9265ff80f2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 227,
+      "line": 228,
       "function": "TestInventNameForBlankUser",
       "receiver": "db",
       "method": "Exec",
@@ -15891,6 +15916,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "1f06f3c60701": {
+      "id": "1f06f3c60701",
+      "file": "iznik-server-go/test/emailtracking_test.go",
+      "line": 236,
+      "function": "TestEmailTrackingClickExternalURLCuratedCommunityNewsItem",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "community_news_areas"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id FROM community_news_areas WHERE anchorgroupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "1f1099442513": {
       "id": "1f1099442513",
       "file": "iznik-server-go/test/session_patch_flexint_test.go",
@@ -15979,6 +16026,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "1f554f10d05a": {
+      "id": "1f554f10d05a",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "line": 438,
+      "function": "repliedMessageMultiplicity",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages_groups"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT msgid FROM messages_groups WHERE arrival \u003e= ? AND arrival \u003c= ? AND groupid IN (?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Master merge (#1230) replaced this site's single GORM query (site 4a0837c4271f) with a per-usersReplyingWindowDays-day chunked loop over messages_groups, feeding repliesForMessages/mergeReplyCounts/topUserCounts (see also sites e847c11cbd51, 70fe8fe8c804 in the same call chain). This is the last-window arm ('arrival \u003c= endQ'); the interior-window arm is site e847c11cbd51. Accepted master's chunked form as-is per the resolution principle for this merge: a GORM re-conversion of a chunked call site needs its own validated Layer 1/2 parity pass, not a guess made while resolving a conflict.",
+      "porting": "PostgreSQL: ordinary parameterised SQL, no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass.",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted"
     },
     "1f5798e8214d": {
       "id": "1f5798e8214d",
@@ -16388,7 +16460,7 @@
     "1faf484477cd": {
       "id": "1faf484477cd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3230,
+      "line": 3231,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Exec",
@@ -16507,7 +16579,7 @@
     "200be5912838": {
       "id": "200be5912838",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 270,
+      "line": 271,
       "function": "TestInventNamePersistsBadStoredNames",
       "receiver": "db",
       "method": "Raw",
@@ -17255,7 +17327,7 @@
     "216edd50bc02": {
       "id": "216edd50bc02",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3731,
+      "line": 3732,
       "function": "TestSettingsDefaultsModOnlyFields",
       "receiver": "db",
       "method": "Exec",
@@ -17435,7 +17507,7 @@
     "21b81e602b7c": {
       "id": "21b81e602b7c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3457,
+      "line": 3458,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -17613,7 +17685,7 @@
     "21e9e881aa90": {
       "id": "21e9e881aa90",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3610,
+      "line": 3611,
       "function": "TestGetDeletedUserNameAsNonMod",
       "receiver": "db",
       "method": "Exec",
@@ -18282,7 +18354,7 @@
     "232ff1042cb8": {
       "id": "232ff1042cb8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1537,
+      "line": 1538,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Raw",
@@ -18621,7 +18693,7 @@
     "239fee656058": {
       "id": "239fee656058",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1264,
+      "line": 1265,
       "function": "TestPatchUserSettingsMergesNotReplaces",
       "receiver": "db",
       "method": "Exec",
@@ -19028,7 +19100,7 @@
     "244bb5d76dd2": {
       "id": "244bb5d76dd2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4148,
+      "line": 4149,
       "function": "TestGetUserPartnerGeneratesEmailWhenNoneExists",
       "receiver": "db",
       "method": "Exec",
@@ -19298,7 +19370,7 @@
     "24dc4ecd98fd": {
       "id": "24dc4ecd98fd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2957,
+      "line": 2958,
       "function": "TestGetUserFetchMT_MessageHistoryOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -19791,7 +19863,7 @@
     "2595bbd76a3f": {
       "id": "2595bbd76a3f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4164,
+      "line": 4165,
       "function": "TestGetUserPartnerGeneratesEmailWhenNoneExists",
       "receiver": "db",
       "method": "Raw",
@@ -20600,7 +20672,7 @@
     "273f25f5ff6e": {
       "id": "273f25f5ff6e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1560,
+      "line": 1561,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Exec",
@@ -21046,7 +21118,7 @@
     "284dfbc44866": {
       "id": "284dfbc44866",
       "file": "iznik-server-go/emailtracking/emailtracking.go",
-      "line": 1502,
+      "line": 1712,
       "function": "DigestClickPositions",
       "receiver": "db",
       "method": "Raw",
@@ -21059,9 +21131,12 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "{{built at runtime: denomQuery}}",
-      "presentInCode": false,
+      "presentInCode": true,
       "hasParityTest": true,
-      "status": "converted"
+      "status": "keep-raw",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction, not a fresh review decision - recorded here because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query (the digest-size denominator) with a per-date-window chunked db.Raw() loop (chunkDateWindows) plus a FORCE INDEX(sent_at) hint, a deliberate fix for a real production hang (a wide default/admin-selected date range over email_tracking - millions of rows, JSON metadata per row - made the chart hang without it), which must not be silently reverted. Accepted master's rewrite as-is (raw) rather than re-converted to GORM under a merge, for the same reason given on site 791c683326a8: re-converting a chunked-loop call site without a validated Layer 1/2 parity pass for its new shape is not a decision to make casually inside a conflict resolution.",
+      "porting": "PostgreSQL: JSON_LENGTH has a Postgres equivalent (jsonb_array_length after a cast) and FORCE INDEX has no direct equivalent (Postgres has no per-query index hints; the planner would need a different nudge, e.g. a partial/covering index). The chunking loop itself is plain Go. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
     "285861d7b37c": {
       "id": "285861d7b37c",
@@ -21334,7 +21409,7 @@
     "28e697bae6c5": {
       "id": "28e697bae6c5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4092,
+      "line": 4093,
       "function": "TestGetUserEmailFieldPopulatedForFDEmail",
       "receiver": "db",
       "method": "Exec",
@@ -21783,7 +21858,7 @@
     "298cb21e8360": {
       "id": "298cb21e8360",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1831,
+      "line": 1832,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Exec",
@@ -22743,7 +22818,7 @@
     "2bc7b9fec847": {
       "id": "2bc7b9fec847",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 137,
+      "line": 138,
       "function": "TestUserComments",
       "receiver": "db",
       "method": "Exec",
@@ -22919,7 +22994,7 @@
     "2c15f20e4552": {
       "id": "2c15f20e4552",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3492,
+      "line": 3493,
       "function": "TestUserSearch_DeletedSearchesExcluded",
       "receiver": "db",
       "method": "Exec",
@@ -23096,7 +23171,7 @@
     "2c5c4c40cc8f": {
       "id": "2c5c4c40cc8f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4321,
+      "line": 4322,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Raw",
@@ -23989,7 +24064,7 @@
     "2e56f3cbfde7": {
       "id": "2e56f3cbfde7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1603,
+      "line": 1604,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Exec",
@@ -26314,7 +26389,7 @@
     "3247baee5681": {
       "id": "3247baee5681",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4587,
+      "line": 4588,
       "function": "TestMessageHistory_NoDuplicatesOnRipple",
       "receiver": "db",
       "method": "Exec",
@@ -26448,7 +26523,7 @@
     "328aa087c775": {
       "id": "328aa087c775",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4067,
+      "line": 4068,
       "function": "TestGetUserEmailsVisibleToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -26611,7 +26686,7 @@
     "32ec2269dd89": {
       "id": "32ec2269dd89",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1906,
+      "line": 1907,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -26633,7 +26708,7 @@
     "32ee9168d6b1": {
       "id": "32ee9168d6b1",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1712,
+      "line": 1713,
       "function": "TestLimboUserSelfDelete",
       "receiver": "db",
       "method": "Raw",
@@ -26655,7 +26730,7 @@
     "32f6315f3f0d": {
       "id": "32f6315f3f0d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2853,
+      "line": 2854,
       "function": "TestGetUserFetchMT_WithModtoolsComments",
       "receiver": "db",
       "method": "Exec",
@@ -27127,7 +27202,7 @@
     "33b18b7b3546": {
       "id": "33b18b7b3546",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4674,
+      "line": 4675,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -27217,7 +27292,7 @@
     "33f2e373f35b": {
       "id": "33f2e373f35b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2766,
+      "line": 2767,
       "function": "TestGetUserFetchMT_AdminSeesDonations",
       "receiver": "db",
       "method": "Exec",
@@ -28004,6 +28079,33 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "353ec02d1e21": {
+      "id": "353ec02d1e21",
+      "file": "iznik-server-go/recommendations/stats.go",
+      "line": 293,
+      "function": "Stats",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages",
+        "cohort",
+        "messages_likes"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 5,
+      "goldenSql": "WITH cohort AS ( SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes WHERE source IN (?, ?) AND timestamp \u003e= ? GROUP BY userid) SELECT /*+ MAX_EXECUTION_TIME(10000) */ cohort.holdout, COUNT(*) users, COALESCE(SUM(r.replies), 0) replies FROM cohort LEFT JOIN (SELECT cm.userid, COUNT(*) replies FROM chat_messages cm JOIN cohort ON cohort.userid = cm.userid WHERE cm.type = 'Interested' AND cm.date \u003e= ? GROUP BY cm.userid) r ON r.userid = cohort.userid GROUP BY cohort.holdout",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Master merge (#1230) replaced this site's derived-table LEFT JOIN (site c9e06d962d78, holdout-vs-shown cohort reply counts) with a WITH cohort AS (...) CTE that joins the cohort into chat_messages BEFORE the reply-count GROUP BY. chat_messages has no index led by `type`, so an unconditional GROUP BY userid over it must fully scan the whole userid_2 (userid, date, refmsgid, type) index before the cohort restriction can apply; joining the cohort in first via the CTE lets MySQL seek userid_2 per cohort user instead (cohort is historically a few thousand users at most vs. tens of millions of chat_messages rows) - a real performance fix, not a style change. Accepted master's CTE form as-is: re-converting a CTE-shaped .Table()-text call to a GORM chain needs its own validated Layer 1/2 parity pass (GORM's CTE support is thin), not a guess made while resolving a conflict.",
+      "porting": "PostgreSQL: WITH ... AS (...) CTEs are standard syntax and port directly; the /*+ MAX_EXECUTION_TIME(10000) */ hint has no direct equivalent (use statement_timeout instead). Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, CTE rewrite not yet re-converted"
+    },
     "354a2a791523": {
       "id": "354a2a791523",
       "file": "iznik-server-go/test/session_test.go",
@@ -28255,7 +28357,7 @@
     "35cee4642074": {
       "id": "35cee4642074",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4554,
+      "line": 4555,
       "function": "TestMessageHistory_NoDuplicatesOnRepost",
       "receiver": "db",
       "method": "Exec",
@@ -28455,7 +28557,7 @@
     "3649811bddea": {
       "id": "3649811bddea",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3456,
+      "line": 3457,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -28727,7 +28829,7 @@
     "370fec186220": {
       "id": "370fec186220",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1685,
+      "line": 1686,
       "function": "TestLimboUserAdmin",
       "receiver": "db",
       "method": "Raw",
@@ -30278,7 +30380,7 @@
     "3a60b4ef4fa9": {
       "id": "3a60b4ef4fa9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2405,
+      "line": 2406,
       "function": "TestSpammers_FilterByUserid",
       "receiver": "db",
       "method": "Exec",
@@ -30697,7 +30799,7 @@
     "3b0686c5e40e": {
       "id": "3b0686c5e40e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1542,
+      "line": 1543,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Raw",
@@ -31093,7 +31195,7 @@
     "3bea64a9a2b3": {
       "id": "3bea64a9a2b3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4115,
+      "line": 4116,
       "function": "partnerKey",
       "receiver": "db",
       "method": "Exec",
@@ -31565,7 +31667,7 @@
     "3cc2c2cd663a": {
       "id": "3cc2c2cd663a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3056,
+      "line": 3057,
       "function": "TestGetUserMembershipsPostingStatus",
       "receiver": "db",
       "method": "Exec",
@@ -32117,7 +32219,7 @@
     "3e5e8144fa1a": {
       "id": "3e5e8144fa1a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3229,
+      "line": 3230,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -32271,7 +32373,7 @@
     "3ead035b6e63": {
       "id": "3ead035b6e63",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4072,
+      "line": 4073,
       "function": "TestGetUserEmailsVisibleToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -32508,7 +32610,7 @@
     "3efef6d7b4e0": {
       "id": "3efef6d7b4e0",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2207,
+      "line": 2208,
       "function": "TestUserChatrooms_ModCanSee",
       "receiver": "db",
       "method": "Exec",
@@ -32746,7 +32848,7 @@
     "3f5842a7fcec": {
       "id": "3f5842a7fcec",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4316,
+      "line": 4317,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -33767,7 +33869,7 @@
     "4143cf0a5f0f": {
       "id": "4143cf0a5f0f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1690,
+      "line": 1691,
       "function": "TestLimboUserAdmin",
       "receiver": "db",
       "method": "Raw",
@@ -34810,7 +34912,7 @@
     "434f1b73ed5d": {
       "id": "434f1b73ed5d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1218,
+      "line": 1219,
       "function": "TestPatchUserDisplayname",
       "receiver": "db",
       "method": "Raw",
@@ -35987,7 +36089,7 @@
     "4597a8191f84": {
       "id": "4597a8191f84",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1901,
+      "line": 1902,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -36931,7 +37033,7 @@
     "47a2285eb533": {
       "id": "47a2285eb533",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3516,
+      "line": 3517,
       "function": "TestUserSearch_UniqueTermsReturned",
       "receiver": "db",
       "method": "Exec",
@@ -37241,7 +37343,7 @@
     "47f08e863ceb": {
       "id": "47f08e863ceb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3672,
+      "line": 3673,
       "function": "TestGetUserReturnsGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -37776,7 +37878,7 @@
     "491a189bedcb": {
       "id": "491a189bedcb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3835,
+      "line": 3836,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Exec",
@@ -38541,7 +38643,7 @@
     "4a6e4c68de8a": {
       "id": "4a6e4c68de8a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3417,
+      "line": 3418,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -38673,7 +38775,7 @@
     "4a956f7caa7f": {
       "id": "4a956f7caa7f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 754,
+      "line": 755,
       "function": "TestPostUserAddEmailSupportForOtherUser",
       "receiver": "db",
       "method": "Raw",
@@ -39180,7 +39282,7 @@
     "4b6b86de2a8a": {
       "id": "4b6b86de2a8a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3868,
+      "line": 3869,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -40435,7 +40537,7 @@
     "4e03094ae34d": {
       "id": "4e03094ae34d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 628,
+      "line": 629,
       "function": "TestPostUserRemoveEmail",
       "receiver": "db",
       "method": "Raw",
@@ -40857,7 +40959,7 @@
     "4f0096172973": {
       "id": "4f0096172973",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4856,
+      "line": 4857,
       "function": "TestPatchUserSettingsBySharedGroupModPersists",
       "receiver": "db",
       "method": "Exec",
@@ -41711,7 +41813,7 @@
     "513bedff17c4": {
       "id": "513bedff17c4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 542,
+      "line": 543,
       "function": "TestPostUserRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -42066,7 +42168,7 @@
     "51e63f6d2562": {
       "id": "51e63f6d2562",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2118,
+      "line": 2119,
       "function": "TestPostUserMergeByEmail",
       "receiver": "db",
       "method": "Raw",
@@ -42181,7 +42283,7 @@
     "523de4e244bd": {
       "id": "523de4e244bd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3971,
+      "line": 3972,
       "function": "TestPatchUserTrustlevelSelfEmpty",
       "receiver": "db",
       "method": "Raw",
@@ -42494,7 +42596,7 @@
     "52ec3508f186": {
       "id": "52ec3508f186",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3696,
+      "line": 3697,
       "function": "TestSettingsDefaultsApplied",
       "receiver": "db",
       "method": "Exec",
@@ -42648,7 +42750,7 @@
     "531cda60ee16": {
       "id": "531cda60ee16",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1300,
+      "line": 1301,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Raw",
@@ -43188,7 +43290,7 @@
     "546e94fb14b5": {
       "id": "546e94fb14b5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 114,
+      "line": 115,
       "function": "TestUserComments",
       "receiver": "db",
       "method": "Exec",
@@ -45072,7 +45174,7 @@
     "57cda8e30715": {
       "id": "57cda8e30715",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4551,
+      "line": 4552,
       "function": "TestMessageHistory_NoDuplicatesOnRepost",
       "receiver": "db",
       "method": "Exec",
@@ -45165,7 +45267,7 @@
     "58060aa7bdc7": {
       "id": "58060aa7bdc7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3831,
+      "line": 3832,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Raw",
@@ -45231,7 +45333,7 @@
     "581c281d1190": {
       "id": "581c281d1190",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4475,
+      "line": 4476,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -45400,7 +45502,7 @@
     "5851bfc807ce": {
       "id": "5851bfc807ce",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1124,
+      "line": 1125,
       "function": "TestPutUserPersistentSeriesMatchesSession",
       "receiver": "db",
       "method": "Raw",
@@ -45737,7 +45839,7 @@
     "58e70578ebc8": {
       "id": "58e70578ebc8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1749,
+      "line": 1750,
       "function": "TestLimboUserAdminCannotDeleteModerator",
       "receiver": "db",
       "method": "Exec",
@@ -46457,7 +46559,7 @@
     "5aad9cd3e6b7": {
       "id": "5aad9cd3e6b7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2799,
+      "line": 2800,
       "function": "TestGetUserFetchMT_NonAdminNoDonations",
       "receiver": "db",
       "method": "Exec",
@@ -46821,7 +46923,7 @@
     "5b02467a64cd": {
       "id": "5b02467a64cd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4775,
+      "line": 4776,
       "function": "TestGetUserInfoOffersNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -47574,7 +47676,7 @@
     "5ca4a7c867ed": {
       "id": "5ca4a7c867ed",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4812,
+      "line": 4813,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Raw",
@@ -47973,7 +48075,7 @@
     "5d6857bafb6d": {
       "id": "5d6857bafb6d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4820,
+      "line": 4821,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -48085,7 +48187,7 @@
     "5db8ffd5db74": {
       "id": "5db8ffd5db74",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2987,
+      "line": 2988,
       "function": "TestGetUserFetchMT_MessageHistoryOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -48551,7 +48653,7 @@
     "5e8ceb487de1": {
       "id": "5e8ceb487de1",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1586,
+      "line": 1587,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -48800,7 +48902,7 @@
     "5f2d0d9e1e5a": {
       "id": "5f2d0d9e1e5a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4324,
+      "line": 4325,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -48868,7 +48970,7 @@
     "5f43e5224a19": {
       "id": "5f43e5224a19",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1929,
+      "line": 1930,
       "function": "TestLimboUserLogsGroupLeft",
       "receiver": "db",
       "method": "Raw",
@@ -49068,7 +49170,7 @@
     "5f934a7d6db1": {
       "id": "5f934a7d6db1",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4718,
+      "line": 4719,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -49983,7 +50085,7 @@
     "61567b8dcc08": {
       "id": "61567b8dcc08",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1587,
+      "line": 1588,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -51525,7 +51627,7 @@
     "6435e4e7cf3c": {
       "id": "6435e4e7cf3c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4489,
+      "line": 4490,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -52030,7 +52132,7 @@
     "650786d44079": {
       "id": "650786d44079",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4585,
+      "line": 4586,
       "function": "TestMessageHistory_NoDuplicatesOnRipple",
       "receiver": "db",
       "method": "Exec",
@@ -52167,7 +52269,7 @@
     "65509fb56944": {
       "id": "65509fb56944",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1325,
+      "line": 1326,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Raw",
@@ -52718,7 +52820,7 @@
     "665753dda825": {
       "id": "665753dda825",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2075,
+      "line": 2076,
       "function": "TestPostUserMergeWithStringIDs",
       "receiver": "db",
       "method": "Raw",
@@ -53394,7 +53496,7 @@
     "679c26d9e0b7": {
       "id": "679c26d9e0b7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1760,
+      "line": 1761,
       "function": "TestLimboUserAdminCannotDeleteModerator",
       "receiver": "db",
       "method": "Exec",
@@ -53993,7 +54095,7 @@
     "689063fbd244": {
       "id": "689063fbd244",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3874,
+      "line": 3875,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -54214,7 +54316,7 @@
     "68f472205846": {
       "id": "68f472205846",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2384,
+      "line": 2385,
       "function": "TestUserFetchMT_ReturnsModFields",
       "receiver": "db",
       "method": "Exec",
@@ -54750,7 +54852,7 @@
     "6a06676f7124": {
       "id": "6a06676f7124",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2486,
+      "line": 2487,
       "function": "TestSearchUsers_ByName",
       "receiver": "db",
       "method": "Exec",
@@ -55067,7 +55169,7 @@
     "6ab503f77c22": {
       "id": "6ab503f77c22",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 85,
+      "line": 86,
       "function": "TestUserComments",
       "receiver": "db",
       "method": "Exec",
@@ -55486,7 +55588,7 @@
     "6b293fb7d890": {
       "id": "6b293fb7d890",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3405,
+      "line": 3406,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -55576,7 +55678,7 @@
     "6b473f063436": {
       "id": "6b473f063436",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4339,
+      "line": 4340,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -58778,7 +58880,7 @@
     "70fdb24c3434": {
       "id": "70fdb24c3434",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4719,
+      "line": 4720,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -58796,6 +58898,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "70fe8fe8c804": {
+      "id": "70fe8fe8c804",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "line": 479,
+      "function": "repliesForMessages",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT refmsgid, userid, COUNT(*) AS count FROM chat_messages WHERE refmsgid IN (?) AND type = ? GROUP BY refmsgid, userid",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Master merge (#1230) introduced this function as part of the same dashboard 'top repliers' rewrite as sites 1f554f10d05a/e847c11cbd51 above: it batches the msgids repliedMessageMultiplicity found into usersReplyingBatch-sized IN (...) lookups against chat_messages, so no single statement grows with the number of messages the date range/group scope matched. Accepted as-is under the same merge-resolution principle: re-converting a chunked call site introduced by a merge needs its own validated parity pass.",
+      "porting": "PostgreSQL: ordinary parameterised SELECT ... GROUP BY, no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass.",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted"
     },
     "7104e922999e": {
       "id": "7104e922999e",
@@ -58980,7 +59107,7 @@
     "7190dfa3d88a": {
       "id": "7190dfa3d88a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2760,
+      "line": 2761,
       "function": "TestGetUserFetchMT_AdminSeesDonations",
       "receiver": "db",
       "method": "Exec",
@@ -59048,7 +59175,7 @@
     "71b08063be7e": {
       "id": "71b08063be7e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4667,
+      "line": 4668,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -59158,7 +59285,7 @@
     "71fa7dbcc25a": {
       "id": "71fa7dbcc25a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1605,
+      "line": 1606,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Exec",
@@ -59405,7 +59532,7 @@
     "72566f9136c6": {
       "id": "72566f9136c6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3493,
+      "line": 3494,
       "function": "TestUserSearch_DeletedSearchesExcluded",
       "receiver": "db",
       "method": "Exec",
@@ -59427,7 +59554,7 @@
     "72648328dbf6": {
       "id": "72648328dbf6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3458,
+      "line": 3459,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -60008,6 +60135,31 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "737319df46b7": {
+      "id": "737319df46b7",
+      "file": "iznik-server-go/recommendations/stats.go",
+      "line": 164,
+      "function": "Stats",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages_likes"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source, COUNT(*) impressions, SUM(pageview = 1) clicks FROM messages_likes WHERE type = 'View' AND source IN ? AND timestamp \u003e= ? AND timestamp \u003c ? GROUP BY d, source",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Master merge (#1230) replaced this site's single unchunked GORM query (site 22036e3caf64, funnelRows: per-day impressions/clicks per source) with a per-calendar-day chunked loop over messages_likes (dayWindows), a fix for a real production issue: over the full requested window (up to 365 days) the source/type-filtered scan plus the non-covering pageview/type lookup was enough to stall Galera's applier. Accepted master's chunked form as-is per the resolution principle for this merge: a GORM re-conversion of a chunked call site needs its own validated Layer 1/2 parity pass, not a guess made while resolving a conflict.",
+      "porting": "PostgreSQL: the /*+ MAX_EXECUTION_TIME(10000) */ optimizer hint has no direct Postgres equivalent (use statement_timeout at the session/transaction level instead); SUM(pageview = 1) needs SUM(CASE WHEN pageview = 1 THEN 1 ELSE 0 END) or SUM((pageview = 1)::int). The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
+    },
     "737c3082cfe2": {
       "id": "737c3082cfe2",
       "file": "iznik-server-go/test/admin_test.go",
@@ -60171,7 +60323,7 @@
     "73ad79ef3a37": {
       "id": "73ad79ef3a37",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3833,
+      "line": 3834,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Exec",
@@ -63369,7 +63521,7 @@
     "78da0b032328": {
       "id": "78da0b032328",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 523,
+      "line": 524,
       "function": "TestPostUserRatingReviewed",
       "receiver": "db",
       "method": "Exec",
@@ -63413,7 +63565,7 @@
     "78ec93729d0c": {
       "id": "78ec93729d0c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3515,
+      "line": 3516,
       "function": "TestUserSearch_UniqueTermsReturned",
       "receiver": "db",
       "method": "Exec",
@@ -63454,6 +63606,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "78f805d9c88a": {
+      "id": "78f805d9c88a",
+      "file": "iznik-server-go/test/emailtracking_test.go",
+      "line": 239,
+      "function": "TestEmailTrackingClickExternalURLCuratedCommunityNewsItem",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "community_news_items"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "INSERT INTO community_news_items (areaid, title, snippet, url) VALUES (?, ?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "78f8300e262b": {
       "id": "78f8300e262b",
       "file": "iznik-server-go/test/message_test.go",
@@ -63479,7 +63653,7 @@
     "791c683326a8": {
       "id": "791c683326a8",
       "file": "iznik-server-go/rippling/analytics.go",
-      "line": 778,
+      "line": 867,
       "function": "rippledOutSection",
       "receiver": "db",
       "method": "Raw",
@@ -63500,16 +63674,17 @@
       "dynamic": true,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers \u003e 0{{expr}} JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date \u003e= ? AND cm.date \u003c ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d",
-      "presentInCode": false,
+      "presentInCode": true,
       "hasParityTest": true,
-      "status": "converted",
-      "porting": "PostgreSQL: no single translation - the statement is assembled at runtime, so each shape needs its own review. The SQL inside is generally ordinary, so the port cost is in reading the builder rather than in dialect features. Worth reviewing these for whether the dynamic assembly is still needed at all, since several build a WHERE from a fixed set of options that a query builder could express directly.",
-      "category": "Runtime-varying SQL"
+      "status": "keep-raw",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction (a site whose raw SQL is present cannot be 'converted', whatever its history), not a fresh review decision - recorded here explicitly because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query with a per-day chunked db.Raw() loop (dayWindows), a deliberate performance fix (the unchunked form was the slowest query on the rippling analytics tab and could stall the applier over a wide date range) that must not be silently reverted. The inner query text inside the loop is byte-identical to what this site id already named from an earlier point in this branch's history, which is why the id and its stale 'converted' status carried forward unchanged rather than the site appearing as new. Master's rewrite was accepted as-is (raw) rather than re-converted to GORM under a merge: re-doing an ORM conversion for a chunked-loop call site without a validated Layer 1/2 parity pass for that exact new shape is exactly the risk this reason exists to avoid taking casually.",
+      "porting": "PostgreSQL: ordinary parameterised aggregate SQL once ported dialect-by-dialect (EXISTS/NOT EXISTS, no MySQL-only functions) - the chunking loop itself is plain Go and needs no port. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
     "7934c6ceb3f2": {
       "id": "7934c6ceb3f2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4824,
+      "line": 4825,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -63640,7 +63815,7 @@
     "7949bf3bb29a": {
       "id": "7949bf3bb29a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4127,
+      "line": 4128,
       "function": "TestGetUserPartnerSeesExistingInternalEmail",
       "receiver": "db",
       "method": "Exec",
@@ -63772,7 +63947,7 @@
     "798207b61044": {
       "id": "798207b61044",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3060,
+      "line": 3061,
       "function": "TestGetUserMembershipsPostingStatus",
       "receiver": "db",
       "method": "Exec",
@@ -64465,7 +64640,7 @@
     "7ae0227aa1c0": {
       "id": "7ae0227aa1c0",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4331,
+      "line": 4332,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -64531,7 +64706,7 @@
     "7aea75ddc132": {
       "id": "7aea75ddc132",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 245,
+      "line": 246,
       "function": "TestInventNameForBlankUser",
       "receiver": "db",
       "method": "Raw",
@@ -65109,7 +65284,7 @@
     "7bed3e425bd4": {
       "id": "7bed3e425bd4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1667,
+      "line": 1668,
       "function": "TestLimboUserAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -65309,7 +65484,7 @@
     "7c484bd0ff4c": {
       "id": "7c484bd0ff4c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4715,
+      "line": 4716,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -65428,7 +65603,7 @@
     "7c9a2ee4c493": {
       "id": "7c9a2ee4c493",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2524,
+      "line": 2525,
       "function": "TestSearchUsers_ByEmail",
       "receiver": "db",
       "method": "Exec",
@@ -65632,7 +65807,7 @@
     "7d182c9df469": {
       "id": "7d182c9df469",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1655,
+      "line": 1656,
       "function": "TestLimboUserSelf",
       "receiver": "db",
       "method": "Raw",
@@ -67115,7 +67290,7 @@
     "7fb5467dafe4": {
       "id": "7fb5467dafe4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1252,
+      "line": 1253,
       "function": "TestPatchUserSettings",
       "receiver": "db",
       "method": "Raw",
@@ -67778,7 +67953,7 @@
     "814f854216b4": {
       "id": "814f854216b4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2431,
+      "line": 2432,
       "function": "TestUserFetchMT_HidesModFieldsFromNonMod",
       "receiver": "db",
       "method": "Exec",
@@ -68862,7 +69037,7 @@
     "83613ed1ad64": {
       "id": "83613ed1ad64",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4659,
+      "line": 4660,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -70620,7 +70795,7 @@
     "86865bcdf341": {
       "id": "86865bcdf341",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1212,
+      "line": 1213,
       "function": "TestPatchUserDisplayname",
       "receiver": "db",
       "method": "Raw",
@@ -71190,7 +71365,7 @@
     "87c2d4059051": {
       "id": "87c2d4059051",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1776,
+      "line": 1777,
       "function": "TestPostUserUnbounce",
       "receiver": "db",
       "method": "Exec",
@@ -71300,7 +71475,7 @@
     "87d469ee286a": {
       "id": "87d469ee286a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4422,
+      "line": 4423,
       "function": "TestUserLocationChangesModInfo",
       "receiver": "db",
       "method": "Exec",
@@ -71774,7 +71949,7 @@
     "88f85832a579": {
       "id": "88f85832a579",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2361,
+      "line": 2362,
       "function": "TestUserLogins",
       "receiver": "db",
       "method": "Exec",
@@ -72016,7 +72191,7 @@
     "89bd06e187e9": {
       "id": "89bd06e187e9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3671,
+      "line": 3672,
       "function": "TestGetUserReturnsGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -72530,7 +72705,7 @@
     "8aa080a6a9b2": {
       "id": "8aa080a6a9b2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1956,
+      "line": 1957,
       "function": "TestUnsubscribeLogsGroupLeft",
       "receiver": "db",
       "method": "Raw",
@@ -72666,7 +72841,7 @@
     "8ae48078a611": {
       "id": "8ae48078a611",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1561,
+      "line": 1562,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Exec",
@@ -73355,6 +73530,31 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "8c6d59a41036": {
+      "id": "8c6d59a41036",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "line": 1429,
+      "function": "isCommunityNewsItemURL",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "community_news_items"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT COUNT(*) FROM community_news_items WHERE url = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "New function from master merge (#1230), unrelated to any of the ten conflicted hunks this merge resolved - master added it directly, with no conflict marker involved. It is a trivial single-table SELECT COUNT(*), the same shape as the ~551 sites converted in Wave 1, and .Table('community_news_items').Where('url = ?', url).Count(\u0026count) is a safe, mechanical rewrite. It was tried during this merge resolution and reverted: this harness only counts a site 'converted' once it is both absent from the code AND has a recorded parity test proving the rewrite (extract.go's own gate n logic), and writing that proof is out of scope for a conflict-resolution pass whose job is to reconcile master's behaviour into this branch, not to convert new sites master happened to add alongside it. Left raw and flagged here as a good fast-follow candidate for the next single-table-SELECT conversion batch.",
+      "porting": "PostgreSQL: ordinary parameterised SELECT COUNT(*), no MySQL-only functions. Straightforward Wave-1-style conversion candidate - no porting concerns.",
+      "category": "Master merge: genuinely new code, unconverted"
+    },
     "8c7fcfa67a2b": {
       "id": "8c7fcfa67a2b",
       "file": "iznik-server-go/test/message_test.go",
@@ -73609,7 +73809,7 @@
     "8cdbd33d1052": {
       "id": "8cdbd33d1052",
       "file": "iznik-server-go/rippling/analytics.go",
-      "line": 807,
+      "line": 913,
       "function": "rippledOutSection",
       "receiver": "db",
       "method": "Raw",
@@ -73629,11 +73829,12 @@
       "dynamic": true,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at \u003e= ? AND rr.created_at \u003c ? AND rr.total_freeglers \u003e 0{{expr}} AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x",
-      "presentInCode": false,
+      "presentInCode": true,
       "hasParityTest": true,
-      "status": "converted",
-      "porting": "PostgreSQL: no single translation - the statement is assembled at runtime, so each shape needs its own review. The SQL inside is generally ordinary, so the port cost is in reading the builder rather than in dialect features. Worth reviewing these for whether the dynamic assembly is still needed at all, since several build a WHERE from a fixed set of options that a query builder could express directly.",
-      "category": "Runtime-varying SQL"
+      "status": "keep-raw",
+      "reason": "Same situation as site 791c683326a8 in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's per-day chunked rewrite of the rescue-floor query, accepted as-is rather than re-converted under the merge.",
+      "porting": "PostgreSQL: ordinary parameterised SQL (EXISTS/NOT EXISTS subqueries), no MySQL-only functions - the chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
     "8cde974d316e": {
       "id": "8cde974d316e",
@@ -74414,7 +74615,7 @@
     "8dfe6ce8ee59": {
       "id": "8dfe6ce8ee59",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1579,
+      "line": 1580,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -75257,7 +75458,7 @@
     "8fc19768d8df": {
       "id": "8fc19768d8df",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4480,
+      "line": 4481,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Raw",
@@ -75279,7 +75480,7 @@
     "8ff82b09cd55": {
       "id": "8ff82b09cd55",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3664,
+      "line": 3665,
       "function": "TestGetUserReturnsGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -75481,7 +75682,7 @@
     "903beb28b71c": {
       "id": "903beb28b71c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4026,
+      "line": 4027,
       "function": "TestPatchUserTrustlevelOtherUserForbidden",
       "receiver": "db",
       "method": "Raw",
@@ -75635,7 +75836,7 @@
     "906eee9102de": {
       "id": "906eee9102de",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4817,
+      "line": 4818,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -75657,7 +75858,7 @@
     "90728c2951b6": {
       "id": "90728c2951b6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4673,
+      "line": 4674,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -76205,7 +76406,7 @@
     "9183d6edf00b": {
       "id": "9183d6edf00b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2114,
+      "line": 2115,
       "function": "TestPostUserMergeByEmail",
       "receiver": "db",
       "method": "Raw",
@@ -76675,7 +76876,7 @@
     "926d2ac61974": {
       "id": "926d2ac61974",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4656,
+      "line": 4657,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Raw",
@@ -76833,7 +77034,7 @@
     "92c50b3faa52": {
       "id": "92c50b3faa52",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2017,
+      "line": 2018,
       "function": "TestPostUserMerge",
       "receiver": "db",
       "method": "Raw",
@@ -77095,6 +77296,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "9354815fe87a": {
+      "id": "9354815fe87a",
+      "file": "iznik-server-go/test/emailtracking_test.go",
+      "line": 237,
+      "function": "TestEmailTrackingClickExternalURLCuratedCommunityNewsItem",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "community_news_areas"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM community_news_areas WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -77702,7 +77925,7 @@
     "9430e4dc01b3": {
       "id": "9430e4dc01b3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3514,
+      "line": 3515,
       "function": "TestUserSearch_UniqueTermsReturned",
       "receiver": "db",
       "method": "Exec",
@@ -78077,10 +78300,39 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "951837c820f1": {
+      "id": "951837c820f1",
+      "file": "iznik-server-go/message/bounds.go",
+      "line": 105,
+      "function": "Bounds",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "groups",
+        "messages_spatial"
+      ],
+      "mysqlisms": [
+        "backticks",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 11,
+      "goldenSql": "SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival FROM messages_spatial INNER JOIN `groups` ON groups.id = messages_spatial.groupid WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Master merge (#1230) replaced this site's GORM chain, which used a LEFT JOIN messages_likes + CASE to compute 'unseen' inline, with this plain db.Raw() ST_Contains spatial query plus the separate viewedMessageIDs/applyUnseen pair (site 09f9c28c58ac above) for 'unseen'. The join form turned a wide, no-location bounding box into tens of thousands of per-row messages_likes lookups; master's fix removes that fan-out. Accepted master's raw form as-is: a GORM re-conversion of the simplified query is plausible but this exact site had already been through one prior spatial-review round before this merge, so re-guessing its ORM form again under a conflict, rather than as a properly tested standalone attempt, was declined per the resolution principle used across this merge (analytics.go, emailtracking.go, dashboard.go, stats.go).",
+      "porting": "PostgreSQL: ST_Contains/ST_SRID/POLYGON/LINESTRING/POINT are PostGIS equivalents (ST_Contains, ST_MakeEnvelope or ST_GeomFromText, ST_SetSRID) rather than direct syntax carries. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted.",
+      "category": "Master merge: reintroduced verbatim, spatial fan-out fix not yet re-converted"
+    },
     "953a7a782aea": {
       "id": "953a7a782aea",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 526,
+      "line": 527,
       "function": "TestPostUserRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -80144,7 +80396,7 @@
     "9995ff795ebe": {
       "id": "9995ff795ebe",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2014,
+      "line": 2015,
       "function": "TestPostUserMerge",
       "receiver": "db",
       "method": "Raw",
@@ -80457,7 +80709,7 @@
     "9a419c25f967": {
       "id": "9a419c25f967",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1281,
+      "line": 1282,
       "function": "TestPatchUserSettingsMergesNotReplaces",
       "receiver": "db",
       "method": "Raw",
@@ -80567,7 +80819,7 @@
     "9aa98b9c0e9a": {
       "id": "9aa98b9c0e9a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4550,
+      "line": 4551,
       "function": "TestMessageHistory_NoDuplicatesOnRepost",
       "receiver": "db",
       "method": "Exec",
@@ -81710,7 +81962,7 @@
     "9cd5501ddfde": {
       "id": "9cd5501ddfde",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2339,
+      "line": 2340,
       "function": "TestUserMembershipHistory",
       "receiver": "db",
       "method": "Exec",
@@ -82150,7 +82402,7 @@
     "9e0bbcc0d15d": {
       "id": "9e0bbcc0d15d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2316,
+      "line": 2317,
       "function": "TestUserApplied",
       "receiver": "db",
       "method": "Exec",
@@ -82465,7 +82717,7 @@
     "9ee45d83bbd9": {
       "id": "9ee45d83bbd9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4779,
+      "line": 4780,
       "function": "TestGetUserInfoOffersNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -82487,7 +82739,7 @@
     "9ee734081267": {
       "id": "9ee734081267",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3544,
+      "line": 3545,
       "function": "TestUserSearch_LimitedTo10",
       "receiver": "db",
       "method": "Exec",
@@ -83222,7 +83474,7 @@
     "a01479a9f407": {
       "id": "a01479a9f407",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4490,
+      "line": 4491,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -84057,7 +84309,7 @@
     "a1a5a51ce47a": {
       "id": "a1a5a51ce47a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2022,
+      "line": 2023,
       "function": "TestPostUserMerge",
       "receiver": "db",
       "method": "Raw",
@@ -84653,7 +84905,7 @@
     "a2ab9af6f4f4": {
       "id": "a2ab9af6f4f4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3635,
+      "line": 3636,
       "function": "TestGetUserReturnsEngagement",
       "receiver": "db",
       "method": "Exec",
@@ -84697,7 +84949,7 @@
     "a2be5132eedd": {
       "id": "a2be5132eedd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 223,
+      "line": 224,
       "function": "TestInventNameForBlankUser",
       "receiver": "db",
       "method": "Raw",
@@ -85075,7 +85327,7 @@
     "a39357135fd0": {
       "id": "a39357135fd0",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 221,
+      "line": 222,
       "function": "TestInventNameForBlankUser",
       "receiver": "db",
       "method": "Exec",
@@ -85163,7 +85415,7 @@
     "a3a79738b0ae": {
       "id": "a3a79738b0ae",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4723,
+      "line": 4724,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -85207,7 +85459,7 @@
     "a3b3f0b7e730": {
       "id": "a3b3f0b7e730",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4773,
+      "line": 4774,
       "function": "TestGetUserInfoOffersNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -85342,7 +85594,7 @@
     "a3e68a04ea4f": {
       "id": "a3e68a04ea4f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1512,
+      "line": 1513,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Exec",
@@ -85584,7 +85836,7 @@
     "a4377ca54b0e": {
       "id": "a4377ca54b0e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3231,
+      "line": 3232,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -85961,7 +86213,7 @@
     "a4d2c1f4222e": {
       "id": "a4d2c1f4222e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3547,
+      "line": 3548,
       "function": "TestUserSearch_LimitedTo10",
       "receiver": "db",
       "method": "Exec",
@@ -86556,7 +86808,7 @@
     "a63fa533848d": {
       "id": "a63fa533848d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3872,
+      "line": 3873,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -86622,7 +86874,7 @@
     "a6503e4ca53d": {
       "id": "a6503e4ca53d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3957,
+      "line": 3958,
       "function": "TestPatchUserTrustlevelSelfEmpty",
       "receiver": "db",
       "method": "Exec",
@@ -86754,7 +87006,7 @@
     "a69bc153d4e4": {
       "id": "a69bc153d4e4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1386,
+      "line": 1387,
       "function": "TestPatchUserAboutMe",
       "receiver": "db",
       "method": "Raw",
@@ -86776,7 +87028,7 @@
     "a6a1c2c8f806": {
       "id": "a6a1c2c8f806",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 893,
+      "line": 894,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -86974,7 +87226,7 @@
     "a6fc6178a24b": {
       "id": "a6fc6178a24b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 948,
+      "line": 949,
       "function": "TestPutUserDuplicateEmail",
       "receiver": "db",
       "method": "Raw",
@@ -87133,7 +87385,7 @@
     "a72aaf4ddb0c": {
       "id": "a72aaf4ddb0c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 583,
+      "line": 584,
       "function": "TestPostUserAddEmailAlreadyUsed",
       "receiver": "db",
       "method": "Exec",
@@ -88030,7 +88282,7 @@
     "a8c5605e5ef7": {
       "id": "a8c5605e5ef7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 978,
+      "line": 979,
       "function": "TestPutUserDuplicateEmailAuthenticated",
       "receiver": "db",
       "method": "Raw",
@@ -88277,7 +88529,7 @@
     "a9a5efc5b31f": {
       "id": "a9a5efc5b31f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3583,
+      "line": 3584,
       "function": "TestGetDeletedUserNameAsMod",
       "receiver": "db",
       "method": "Exec",
@@ -88327,7 +88579,7 @@
     "a9acb20bf048": {
       "id": "a9acb20bf048",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3064,
+      "line": 3065,
       "function": "TestGetUserMembershipsPostingStatus",
       "receiver": "db",
       "method": "Exec",
@@ -89144,7 +89396,7 @@
     "aae0f099b963": {
       "id": "aae0f099b963",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1068,
+      "line": 1069,
       "function": "TestPutUserWithGroup",
       "receiver": "db",
       "method": "Raw",
@@ -90121,7 +90373,7 @@
     "acf4c5a7c899": {
       "id": "acf4c5a7c899",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3917,
+      "line": 3918,
       "function": "TestPatchUserTrustlevelSelfDeclined",
       "receiver": "db",
       "method": "Raw",
@@ -91533,7 +91785,7 @@
     "afc78c728df4": {
       "id": "afc78c728df4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 570,
+      "line": 571,
       "function": "TestPostUserAddEmail",
       "receiver": "db",
       "method": "Raw",
@@ -91901,7 +92153,7 @@
     "b076a3868f3b": {
       "id": "b076a3868f3b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 889,
+      "line": 890,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -92414,7 +92666,7 @@
     "b197b3c50db7": {
       "id": "b197b3c50db7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3232,
+      "line": 3233,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Exec",
@@ -93643,7 +93895,7 @@
     "b41e1fdc7f83": {
       "id": "b41e1fdc7f83",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1854,
+      "line": 1855,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Raw",
@@ -94440,7 +94692,7 @@
     "b55029466bb4": {
       "id": "b55029466bb4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3755,
+      "line": 3756,
       "function": "TestSettingsDefaultsModOnlyFields",
       "receiver": "db",
       "method": "Exec",
@@ -94889,7 +95141,7 @@
     "b661226c0e79": {
       "id": "b661226c0e79",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4176,
+      "line": 4177,
       "function": "TestGetUserPartnerFixesWrongUserIDInEmail",
       "receiver": "db",
       "method": "Exec",
@@ -94911,7 +95163,7 @@
     "b6617e072713": {
       "id": "b6617e072713",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2071,
+      "line": 2072,
       "function": "TestPostUserMergeWithStringIDs",
       "receiver": "db",
       "method": "Raw",
@@ -95758,7 +96010,7 @@
     "b854b9d2aed8": {
       "id": "b854b9d2aed8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4198,
+      "line": 4199,
       "function": "TestGetUserModSeesTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -96028,7 +96280,7 @@
     "b8da745e0e42": {
       "id": "b8da745e0e42",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 902,
+      "line": 903,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -97625,7 +97877,7 @@
     "bbf4d149b8c2": {
       "id": "bbf4d149b8c2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4345,
+      "line": 4346,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -98037,7 +98289,7 @@
     "bc90798e8eb6": {
       "id": "bc90798e8eb6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3902,
+      "line": 3903,
       "function": "TestPatchUserTrustlevelSelfDeclined",
       "receiver": "db",
       "method": "Raw",
@@ -98719,7 +98971,7 @@
     "be3c01c20794": {
       "id": "be3c01c20794",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1298,
+      "line": 1299,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Exec",
@@ -98851,7 +99103,7 @@
     "be77e097e6eb": {
       "id": "be77e097e6eb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2293,
+      "line": 2294,
       "function": "TestUserNewsfeed",
       "receiver": "db",
       "method": "Exec",
@@ -99708,7 +99960,7 @@
     "c043dccafb53": {
       "id": "c043dccafb53",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1702,
+      "line": 1703,
       "function": "TestLimboUserSelfDelete",
       "receiver": "db",
       "method": "Exec",
@@ -99772,7 +100024,7 @@
     "c04e7d769eda": {
       "id": "c04e7d769eda",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4420,
+      "line": 4421,
       "function": "TestUserLocationChangesModInfo",
       "receiver": "db",
       "method": "Exec",
@@ -100080,7 +100332,7 @@
     "c1068aea0a24": {
       "id": "c1068aea0a24",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1850,
+      "line": 1851,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Raw",
@@ -101119,6 +101371,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "c2a317a64a9e": {
+      "id": "c2a317a64a9e",
+      "file": "iznik-server-go/test/emailtracking_test.go",
+      "line": 233,
+      "function": "TestEmailTrackingClickExternalURLCuratedCommunityNewsItem",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "community_news_areas"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 5,
+      "goldenSql": "INSERT INTO community_news_areas (anchorgroupid, name, lat, lng, groupids) VALUES (?, ?, ?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "c2b348d05824": {
       "id": "c2b348d05824",
       "file": "iznik-server-go/test/bulk_offer_test.go",
@@ -101257,7 +101531,7 @@
     "c2ebc2532301": {
       "id": "c2ebc2532301",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4231,
+      "line": 4232,
       "function": "TestGetUserPartnerSeesTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -101702,7 +101976,7 @@
     "c4077939b1f3": {
       "id": "c4077939b1f3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1895,
+      "line": 1896,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -105242,7 +105516,7 @@
     "cac44e797c6f": {
       "id": "cac44e797c6f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4346,
+      "line": 4347,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -105358,7 +105632,7 @@
     "cb000fd5c0fa": {
       "id": "cb000fd5c0fa",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3455,
+      "line": 3456,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -105512,7 +105786,7 @@
     "cb3b3531b32e": {
       "id": "cb3b3531b32e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1795,
+      "line": 1796,
       "function": "TestPostUserUnbounce",
       "receiver": "db",
       "method": "Raw",
@@ -106879,7 +107153,7 @@
     "ce3ab3d9fe38": {
       "id": "ce3ab3d9fe38",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3143,
+      "line": 3144,
       "function": "TestFetchMTModmailsGroupFilter",
       "receiver": "db",
       "method": "Exec",
@@ -107055,7 +107329,7 @@
     "ce910ff93f32": {
       "id": "ce910ff93f32",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 268,
+      "line": 269,
       "function": "TestInventNamePersistsBadStoredNames",
       "receiver": "db",
       "method": "Exec",
@@ -107551,7 +107825,7 @@
     "cf35b3767bb2": {
       "id": "cf35b3767bb2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2247,
+      "line": 2248,
       "function": "TestUserEmailHistory",
       "receiver": "db",
       "method": "Exec",
@@ -107575,7 +107849,7 @@
     "cf4f01d4ce8e": {
       "id": "cf4f01d4ce8e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4278,
+      "line": 4279,
       "function": "TestGetUserInvalidPartnerSeesNoEmail",
       "receiver": "db",
       "method": "Exec",
@@ -107932,7 +108206,7 @@
     "d00e479bcbac": {
       "id": "d00e479bcbac",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4257,
+      "line": 4258,
       "function": "TestGetUserInvalidPartnerSeesNoTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -110364,6 +110638,32 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "d484e88b9f8b": {
+      "id": "d484e88b9f8b",
+      "file": "iznik-server-go/recommendations/stats.go",
+      "line": 189,
+      "function": "Stats",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages",
+        "messages_likes"
+      ],
+      "mysqlisms": null,
+      "complexity": "moderate",
+      "wave": 4,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies FROM messages_likes ml JOIN chat_messages cm ON cm.refmsgid = ml.msgid AND cm.userid = ml.userid AND cm.type = 'Interested' AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY WHERE ml.source IN ? AND ml.pageview = 1 AND ml.timestamp \u003e= ? AND ml.timestamp \u003c ? GROUP BY d, ml.source",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Same situation as site 737319df46b7 in this same function (see that entry for the full explanation): master's chunked replacement for site eba122e9abad (replyRows: per-day attributed replies per source, joining chat_messages), accepted as-is under the same merge-resolution principle.",
+      "porting": "PostgreSQL: the /*+ MAX_EXECUTION_TIME(10000) */ hint has no direct equivalent (use statement_timeout instead); INTERVAL 7 DAY is valid Postgres syntax as-is. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
+    },
     "d494ff33b118": {
       "id": "d494ff33b118",
       "file": "iznik-server-go/test/message_test.go",
@@ -110503,7 +110803,7 @@
     "d4cceaf6419f": {
       "id": "d4cceaf6419f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3777,
+      "line": 3778,
       "function": "TestSettingsNotVisibleToOtherUsers",
       "receiver": "db",
       "method": "Exec",
@@ -112095,7 +112395,7 @@
     "d7e38e8a502a": {
       "id": "d7e38e8a502a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4336,
+      "line": 4337,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Raw",
@@ -112139,7 +112439,7 @@
     "d7fafc5da523": {
       "id": "d7fafc5da523",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 162,
+      "line": 163,
       "function": "TestUserComments",
       "receiver": "db",
       "method": "Exec",
@@ -112161,7 +112461,7 @@
     "d80918759047": {
       "id": "d80918759047",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2156,
+      "line": 2157,
       "function": "TestPostUserMergeByModerator",
       "receiver": "db",
       "method": "Raw",
@@ -112430,7 +112730,7 @@
     "d88fb227a188": {
       "id": "d88fb227a188",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4825,
+      "line": 4826,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -112787,7 +113087,7 @@
     "d923689e83fb": {
       "id": "d923689e83fb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1442,
+      "line": 1443,
       "function": "TestPatchUserPasswordBySupportUser",
       "receiver": "db",
       "method": "Exec",
@@ -113591,7 +113891,7 @@
     "daf10bce6a66": {
       "id": "daf10bce6a66",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1358,
+      "line": 1359,
       "function": "TestPatchUserOnHoliday",
       "receiver": "db",
       "method": "Raw",
@@ -113861,7 +114161,7 @@
     "db77dab683de": {
       "id": "db77dab683de",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4809,
+      "line": 4810,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -113883,7 +114183,7 @@
     "db7f7588f6e6": {
       "id": "db7f7588f6e6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1217,
+      "line": 1218,
       "function": "TestPatchUserDisplayname",
       "receiver": "db",
       "method": "Raw",
@@ -114016,7 +114316,7 @@
     "dbbc8ec8cc14": {
       "id": "dbbc8ec8cc14",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 897,
+      "line": 898,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -114516,7 +114816,7 @@
     "dce69264c9c0": {
       "id": "dce69264c9c0",
       "file": "iznik-server-go/emailtracking/emailtracking.go",
-      "line": 1549,
+      "line": 1772,
       "function": "DigestClickPositions",
       "receiver": "db",
       "method": "Raw",
@@ -114529,9 +114829,12 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "{{built at runtime: clickQuery}}",
-      "presentInCode": false,
+      "presentInCode": true,
       "hasParityTest": true,
-      "status": "converted"
+      "status": "keep-raw",
+      "reason": "Same situation as site 284dfbc44866 in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's chunked rewrite of the click-position numerator query, accepted as-is rather than re-converted under the merge.",
+      "porting": "PostgreSQL: ordinary parameterised SQL plus a REGEXP predicate (Postgres: ~ operator, same pattern) - no other MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
     "dceb5300132b": {
       "id": "dceb5300132b",
@@ -114668,7 +114971,7 @@
     "dd39bf646cc2": {
       "id": "dd39bf646cc2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 306,
+      "line": 307,
       "function": "TestInventNameFallsBackToGeneratedName",
       "receiver": "db",
       "method": "Raw",
@@ -115004,7 +115307,7 @@
     "ddc9310cf597": {
       "id": "ddc9310cf597",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2160,
+      "line": 2161,
       "function": "TestPostUserMergeByModerator",
       "receiver": "db",
       "method": "Raw",
@@ -115092,7 +115395,7 @@
     "de0a400ef89e": {
       "id": "de0a400ef89e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 812,
+      "line": 813,
       "function": "TestPostUserAddEmailAlreadyOnSameUser",
       "receiver": "db",
       "method": "Raw",
@@ -115575,6 +115878,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "df250b71784c": {
+      "id": "df250b71784c",
+      "file": "iznik-server-go/test/user_test.go",
+      "line": 4907,
+      "function": "TestPrivateLocationName_FallsBackToClosestPostcode",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -116550,7 +116875,7 @@
     "e0f734b15a19": {
       "id": "e0f734b15a19",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1624,
+      "line": 1625,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Raw",
@@ -116682,7 +117007,7 @@
     "e11258545cce": {
       "id": "e11258545cce",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1304,
+      "line": 1305,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Exec",
@@ -116863,7 +117188,7 @@
     "e16cd7a04db8": {
       "id": "e16cd7a04db8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1580,
+      "line": 1581,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -118243,7 +118568,7 @@
     "e3f235387b03": {
       "id": "e3f235387b03",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 275,
+      "line": 276,
       "function": "TestInventNamePersistsBadStoredNames",
       "receiver": "db",
       "method": "Exec",
@@ -118552,7 +118877,7 @@
     "e4a79ed03656": {
       "id": "e4a79ed03656",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4872,
+      "line": 4873,
       "function": "TestPatchUserSettingsBySharedGroupModPersists",
       "receiver": "db",
       "method": "Raw",
@@ -118908,7 +119233,7 @@
     "e57e655a3497": {
       "id": "e57e655a3497",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3393,
+      "line": 3394,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -120233,7 +120558,7 @@
     "e810ac70cc7c": {
       "id": "e810ac70cc7c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 785,
+      "line": 786,
       "function": "TestPostUserAddEmailOrphanedRow",
       "receiver": "db",
       "method": "Raw",
@@ -120339,6 +120664,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "e847c11cbd51": {
+      "id": "e847c11cbd51",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "line": 441,
+      "function": "repliedMessageMultiplicity",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages_groups"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT msgid FROM messages_groups WHERE arrival \u003e= ? AND arrival \u003c ? AND groupid IN (?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "Same situation as site 1f554f10d05a in this same function (see that entry for the full explanation): this is the interior-window arm ('arrival \u003c winEnd') of master's chunked replacement for site 4a0837c4271f, accepted as-is under the same merge-resolution principle.",
+      "porting": "PostgreSQL: ordinary parameterised SQL, no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass.",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted"
     },
     "e851ab5e12cb": {
       "id": "e851ab5e12cb",
@@ -121020,7 +121370,7 @@
     "e980c5928981": {
       "id": "e980c5928981",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4204,
+      "line": 4205,
       "function": "TestGetUserModSeesTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -121506,7 +121856,7 @@
     "ea434b904bd5": {
       "id": "ea434b904bd5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4483,
+      "line": 4484,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -121772,7 +122122,7 @@
     "eab0f67ec731": {
       "id": "eab0f67ec731",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 448,
+      "line": 449,
       "function": "TestPostUserRateUp",
       "receiver": "db",
       "method": "Raw",
@@ -121840,7 +122190,7 @@
     "ead545149f3e": {
       "id": "ead545149f3e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 609,
+      "line": 610,
       "function": "TestPostUserRemoveEmail",
       "receiver": "db",
       "method": "Exec",
@@ -122468,7 +122818,7 @@
     "ec168455a698": {
       "id": "ec168455a698",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2739,
+      "line": 2740,
       "function": "TestGetUserFetchMT_AdminSeesEmails",
       "receiver": "db",
       "method": "Exec",
@@ -122515,7 +122865,7 @@
     "ec1ae5d13430": {
       "id": "ec1ae5d13430",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3998,
+      "line": 3999,
       "function": "TestPatchUserTrustlevelSelfForbiddenElevated",
       "receiver": "db",
       "method": "Raw",
@@ -123099,7 +123449,7 @@
     "ed769c3eb9f6": {
       "id": "ed769c3eb9f6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1716,
+      "line": 1717,
       "function": "TestLimboUserSelfDelete",
       "receiver": "db",
       "method": "Raw",
@@ -123519,7 +123869,7 @@
     "ee5fa4e7e00e": {
       "id": "ee5fa4e7e00e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 479,
+      "line": 480,
       "function": "TestPostUserRateDown",
       "receiver": "db",
       "method": "Raw",
@@ -124563,7 +124913,7 @@
     "f057722c8e88": {
       "id": "f057722c8e88",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4093,
+      "line": 4094,
       "function": "TestGetUserEmailFieldPopulatedForFDEmail",
       "receiver": "db",
       "method": "Exec",
@@ -124676,7 +125026,7 @@
     "f06c3adec99d": {
       "id": "f06c3adec99d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 294,
+      "line": 295,
       "function": "TestInventNamePersistsBadStoredNames",
       "receiver": "db",
       "method": "Raw",
@@ -125802,7 +126152,7 @@
     "f2f0cca3eb4a": {
       "id": "f2f0cca3eb4a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1830,
+      "line": 1831,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Exec",
@@ -127085,7 +127435,7 @@
     "f51240d98389": {
       "id": "f51240d98389",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4051,
+      "line": 4052,
       "function": "TestPatchUserTrustlevelModOnOther",
       "receiver": "db",
       "method": "Raw",
@@ -127219,7 +127569,7 @@
     "f56902dc18f5": {
       "id": "f56902dc18f5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3491,
+      "line": 3492,
       "function": "TestUserSearch_DeletedSearchesExcluded",
       "receiver": "db",
       "method": "Exec",
@@ -129124,6 +129474,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "f8b946f7d635": {
+      "id": "f8b946f7d635",
+      "file": "iznik-server-go/test/user_test.go",
+      "line": 4903,
+      "function": "TestPrivateLocationName_FallsBackToClosestPostcode",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) VALUES ('Test', ?, ?, 'User', NULL, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "f8e3c0e5323d": {
       "id": "f8e3c0e5323d",
       "file": "iznik-server-go/test/message_test.go",
@@ -130674,7 +131046,7 @@
     "fb70ae1b33a5": {
       "id": "fb70ae1b33a5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 766,
+      "line": 767,
       "function": "TestPostUserAddEmailOrphanedRow",
       "receiver": "db",
       "method": "Exec",
@@ -131537,7 +131909,7 @@
     "fd66376845d7": {
       "id": "fd66376845d7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1874,
+      "line": 1875,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -132381,7 +132753,7 @@
     "fe85d9a196cd": {
       "id": "fe85d9a196cd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3827,
+      "line": 3828,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Exec",
@@ -132995,7 +133367,7 @@
     "ffa8bdf92b08": {
       "id": "ffa8bdf92b08",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4417,
+      "line": 4418,
       "function": "TestUserLocationChangesModInfo",
       "receiver": "db",
       "method": "Exec",

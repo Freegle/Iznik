@@ -183,12 +183,12 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l.id, l.name, ST_X(ST_Centroid(COALESCE(l.ourgeometry, l.geometry))) AS lng, ST_Y(ST_Centroid(COALESCE(l.ourgeometry, l.geometry))) AS lat FROM locations l WHERE l.type = 'Postcode' AND COALESCE(l.ourgeometry, l.geometry) IS NOT NULL ORDER BY RAND() LIMIT ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "Standalone comparison utility guarded by \"//go:build ignore\"; not compiled into the service binary, run manually via `go build -o compare compare.go`. It already connects to both MySQL and a separate PostgreSQL comparison host directly (its hardcoded PostgreSQL credential was removed in PR #1231 after being found during this scoping pass; that credential needs rotating regardless of anything in this manifest).",
-      "porting": "Not applicable for Phase 4: this is a one-off dev tool, not a migration target. If it is kept after the cutover it would need MySQL's ORDER BY RAND() changed to PostgreSQL's ORDER BY RANDOM(); ST_X/ST_Y/ST_Centroid are already dialect-portable, PostGIS uses the same names.",
-      "category": "Not applicable: standalone comparison tool"
+      "reason": "Standalone comparison utility guarded by \"//go:build ignore\"; was not compiled into the service binary, run manually via `go build -o compare compare.go`. It connected to both MySQL and a separate PostgreSQL comparison host directly (its hardcoded PostgreSQL credential was removed in PR #1231 after being found during this scoping pass). Deleted entirely from master ahead of merging feat/orm-migration-v2 (#1230) - master's behaviour wins per that merge's resolution principle, so the deletion was kept rather than reintroduced. The rule stays (by file path) rather than being removed, so a file resurrected at this path is not silently treated as new, undeclared raw SQL; the manifest entry now correctly shows presentInCode: false.",
+      "porting": "Not applicable: the file no longer exists. This rule is retained only so a resurrection of iznik-spatial-go/compare.go is not treated as new/undeclared raw SQL.",
+      "category": "Not applicable: file deleted upstream"
     },
     "565c8b1f8e77": {
       "id": "565c8b1f8e77",

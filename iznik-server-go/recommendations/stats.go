@@ -1,6 +1,7 @@
 package recommendations
 
 import (
+	"context"
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
@@ -8,6 +9,13 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
+
+// statsDeadline bounds the whole Stats request. Each chunked statement is
+// individually capped with MAX_EXECUTION_TIME, but a wide window issues many
+// statements, and c.Context() alone would never fire (fasthttp only cancels it
+// on server shutdown) - so without this an abandoned request would keep
+// stepping through the remaining day-windows to completion.
+const statsDeadline = 60 * time.Second
 
 // trackedSources are the recommendation surfaces whose funnel we report. The
 // similar-posts strip tags its impressions "similar_posts"; the wanted→offer
@@ -62,6 +70,30 @@ type HoldoutStats struct {
 	ShownRepliesPerUser float64 `json:"shownRepliesPerUser"`
 }
 
+// funnelRow is one (day, source) group from the Q12 impressions/clicks scan
+// of messages_likes, whether read from a single statement or merged from
+// per-day chunks.
+type funnelRow struct {
+	D           string `gorm:"column:d"`
+	Source      string `gorm:"column:source"`
+	Impressions int64  `gorm:"column:impressions"`
+	Clicks      int64  `gorm:"column:clicks"`
+}
+
+// replyRow is one (day, source) group from the Q6 attributed-replies scan.
+type replyRow struct {
+	D       string `gorm:"column:d"`
+	Source  string `gorm:"column:source"`
+	Replies int64  `gorm:"column:replies"`
+}
+
+// windowBounds is a half-open [Start, End) timestamp range, pre-formatted for
+// use as SQL bind parameters, spanning at most one calendar day.
+type windowBounds struct {
+	Start string
+	End   string
+}
+
 // Stats returns the recommendation funnel (impressions → clicks → attributed
 // replies) per source, plus the holdout comparison, for the ModTools sysadmin
 // "Recommendations" tab.
@@ -73,7 +105,9 @@ type HoldoutStats struct {
 //
 // GET /api/modtools/recommendations/stats?days=30 — Support or Admin only.
 func Stats(c *fiber.Ctx) error {
-	db := database.DBConn
+	ctx, cancel := context.WithTimeout(c.Context(), statsDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
 
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -90,7 +124,9 @@ func Stats(c *fiber.Ctx) error {
 	if days > 365 {
 		days = 365
 	}
-	since := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+	now := time.Now()
+	sinceTime := now.AddDate(0, 0, -days)
+	since := sinceTime.Format("2006-01-02 15:04:05")
 
 	// These queries aggregate messages_likes (~75M rows). They are fast ONLY with
 	// the messages_likes_source_ts_user (source, timestamp, userid) index; without
@@ -100,53 +136,71 @@ func Stats(c *fiber.Ctx) error {
 	// `degraded`) rather than timing the whole request out.
 	degraded := false
 
+	// Q12 and Q6 below both filter messages_likes mostly on source+timestamp,
+	// which messages_likes_source_ts_user covers up to pageview/type, so every
+	// matching row still needs a non-covering lookup for those two columns. Over
+	// the full requested window (up to 365 days) that lookup count alone is
+	// enough to turn one statement into a multi-minute scan that stalls Galera's
+	// applier. Both are therefore run as one statement PER CALENDAR DAY
+	// (dayWindows) instead of one statement over the whole window - each
+	// statement's matching-row count is then capped at a single day's worth -
+	// and the per-day (date, source) rows are merged back together in Go
+	// (mergeFunnelRows/mergeReplyRows). Because a window never straddles a
+	// calendar day, merging is a safety net, not the source of correctness: each
+	// window already contributes exactly the rows a single unchunked query would
+	// group under that day.
+	windows := dayWindows(sinceTime, now)
+
 	// Per-day impressions + clicks per source.
-	var funnelRows []struct {
-		D           string `gorm:"column:d"`
-		Source      string `gorm:"column:source"`
-		Impressions int64  `gorm:"column:impressions"`
-		Clicks      int64  `gorm:"column:clicks"`
+	// NOT converted here (raw): master replaced the single unchunked GORM
+	// query (site 22036e3caf64) with a per-calendar-day chunked loop over
+	// `windows` - see the comment above this block on why (an unchunked scan
+	// over up to 365 days was enough to stall Galera's applier). Re-doing
+	// the ORM conversion per-chunk was not attempted under a merge; left raw
+	// for a properly tested follow-up.
+	var funnelRows []funnelRow
+	for _, w := range windows {
+		var chunk []funnelRow
+		if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source,
+		               COUNT(*) impressions,
+		               SUM(pageview = 1) clicks
+		        FROM messages_likes
+		        WHERE type = 'View' AND source IN ? AND timestamp >= ? AND timestamp < ?
+		        GROUP BY d, source`, trackedSources, w.Start, w.End).Scan(&chunk).Error; err != nil {
+			// Fail the whole metric, not just this day: a partially-summed
+			// funnel would look complete while silently missing days. Empty
+			// + degraded is the documented contract for an aborted query.
+			degraded = true
+			funnelRows = nil
+			break
+		}
+		funnelRows = append(funnelRows, chunk...)
 	}
-	// ORM migration site 22036e3caf64 (tier4). The hint has to live inside the
-	// Select() string, not a separate call: GORM's Select() stores the whole
-	// string as one Raw:true column (Statement.Schema is nil under our
-	// .Table() convention - callbacks/query.go), so it renders verbatim after
-	// "SELECT " exactly like the raw SQL did. See
-	// ormharness/maxexecutiontime_test.go for why the ordinary AssertGoldenSQL
-	// comparison alone cannot prove this: Canonical() strips every /* */
-	// comment from BOTH sides before comparing, so a conversion that silently
-	// dropped the hint would still pass it.
-	if err := db.Table("messages_likes").
-		Select("/*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source, COUNT(*) impressions, SUM(pageview = 1) clicks").
-		Where("type = 'View' AND source IN ? AND timestamp >= ?", trackedSources, since).
-		Group("d, source").
-		Scan(&funnelRows).Error; err != nil {
-		degraded = true
-	}
+	funnelRows = mergeFunnelRows(funnelRows)
 
 	// Per-day attributed replies per source: an opened (pageview=1) tagged view
 	// followed within 7 days by an Interested reply to that post by the same user.
-	var replyRows []struct {
-		D       string `gorm:"column:d"`
-		Source  string `gorm:"column:source"`
-		Replies int64  `gorm:"column:replies"`
+	// NOT converted here (raw): same reasoning as funnelRows above - master
+	// replaced the single unchunked GORM query (site eba122e9abad) with a
+	// per-day chunked loop.
+	var replyRows []replyRow
+	for _, w := range windows {
+		var chunk []replyRow
+		if err := db.Raw(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies
+		        FROM messages_likes ml
+		        JOIN chat_messages cm ON cm.refmsgid = ml.msgid AND cm.userid = ml.userid
+		             AND cm.type = 'Interested'
+		             AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY
+		        WHERE ml.source IN ? AND ml.pageview = 1 AND ml.timestamp >= ? AND ml.timestamp < ?
+		        GROUP BY d, ml.source`, trackedSources, w.Start, w.End).Scan(&chunk).Error; err != nil {
+			// As above: all-or-nothing per metric.
+			degraded = true
+			replyRows = nil
+			break
+		}
+		replyRows = append(replyRows, chunk...)
 	}
-	// ORM migration site eba122e9abad (tier4). The JOIN is written verbatim
-	// inside .Table(...), the same "table text contains a space" escape hatch
-	// already proven for multi-table UPDATE...JOIN conversions
-	// (ormharness/updatejoin_replace_test.go) - chainable_api.go's Table()
-	// sets Statement.TableExpr to a raw clause.Expr whenever name contains a
-	// space, so the JOIN never has to travel through Statement.Joins at all.
-	if err := db.Table(`messages_likes ml
-	        JOIN chat_messages cm ON cm.refmsgid = ml.msgid AND cm.userid = ml.userid
-	             AND cm.type = 'Interested'
-	             AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY`).
-		Select("/*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies").
-		Where("ml.source IN ? AND ml.pageview = 1 AND ml.timestamp >= ?", trackedSources, since).
-		Group("d, ml.source").
-		Scan(&replyRows).Error; err != nil {
-		degraded = true
-	}
+	replyRows = mergeReplyRows(replyRows)
 
 	// Assemble per-source aggregates keyed by (source -> date -> point).
 	bySource := make(map[string]*SourceStats)
@@ -214,25 +268,41 @@ func Stats(c *fiber.Ctx) error {
 	// messages_likes LEFT JOIN chat_messages on userid alone, with no message
 	// correlation, fans every view row out across every Interested message that user
 	// sent; aggregating replies per user first keeps the join small and correct.
+	//
+	// The cohort is computed once as a CTE and then JOINed into chat_messages
+	// BEFORE the reply-count GROUP BY, rather than aggregating all of
+	// chat_messages first and joining the (much smaller) cohort on afterwards.
+	// chat_messages has no index led by `type`, so an unconditional
+	// `GROUP BY userid` over it must fully materialize via a full scan of the
+	// whole userid_2 (userid, date, refmsgid, type) index before the cohort
+	// restriction can be applied. Joining the cohort in first lets MySQL seek
+	// userid_2 per cohort user instead (ref access, cohort is historically a few
+	// thousand users at most vs. tens of millions of chat_messages rows).
 	var cohortRows []struct {
 		Holdout int   `gorm:"column:holdout"`
 		Users   int64 `gorm:"column:users"`
 		Replies int64 `gorm:"column:replies"`
 	}
-	// ORM migration site c9e06d962d78 (tier4). The two derived tables and
-	// their LEFT JOIN are verbatim .Table(...) text, with their own binds
-	// passed as that call's args - the same clause.Expr{SQL, Vars} mechanism
-	// Table() uses for a plain JOIN, extended to a subquery FROM.
-	if err := db.Table(`(SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes
-	              WHERE source IN (?, ?) AND timestamp >= ?
-	              GROUP BY userid) u
-	        LEFT JOIN (SELECT userid, COUNT(*) replies FROM chat_messages
-	                   WHERE type = 'Interested' AND date >= ?
-	                   GROUP BY userid) r ON r.userid = u.userid`,
-		holdoutShownSource, holdoutShownSource, holdoutControlSource, since, since).
-		Select("/*+ MAX_EXECUTION_TIME(10000) */ u.holdout, COUNT(*) users, COALESCE(SUM(r.replies), 0) replies").
-		Group("u.holdout").
-		Scan(&cohortRows).Error; err != nil {
+	// NOT converted here (raw): master replaced the derived-table LEFT JOIN
+	// (site c9e06d962d78) with a CTE that joins the cohort into chat_messages
+	// BEFORE the reply-count GROUP BY - see the comment above this block for
+	// why (lets MySQL seek chat_messages per cohort user via userid_2 instead
+	// of a full scan). Re-doing the .Table()-text conversion for the CTE form
+	// was not attempted under a merge; left raw for a properly tested
+	// follow-up.
+	if err := db.Raw(`WITH cohort AS (
+	            SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes
+	            WHERE source IN (?, ?) AND timestamp >= ?
+	            GROUP BY userid)
+	        SELECT /*+ MAX_EXECUTION_TIME(10000) */ cohort.holdout,
+	               COUNT(*) users,
+	               COALESCE(SUM(r.replies), 0) replies
+	        FROM cohort
+	        LEFT JOIN (SELECT cm.userid, COUNT(*) replies FROM chat_messages cm
+	                   JOIN cohort ON cohort.userid = cm.userid
+	                   WHERE cm.type = 'Interested' AND cm.date >= ?
+	                   GROUP BY cm.userid) r ON r.userid = cohort.userid
+	        GROUP BY cohort.holdout`, holdoutShownSource, holdoutShownSource, holdoutControlSource, since, since).Scan(&cohortRows).Error; err != nil {
 		degraded = true
 	}
 
@@ -274,4 +344,96 @@ func sortDaily(points []DailyPoint) {
 			points[j-1], points[j] = points[j], points[j-1]
 		}
 	}
+}
+
+// dayWindows splits [since, until) into consecutive calendar-day-aligned
+// windows, so DATE(timestamp) is constant within each window and a query run
+// per window can never split one calendar day's rows across two chunks. That
+// alignment holds regardless of whether this process's timezone matches the
+// DB session's: every interior boundary is a midnight wall-clock value, which
+// formats to a "... 00:00:00" string, and MySQL both compares these bounds and
+// evaluates DATE(timestamp) in the same session timezone - so each window
+// covers exactly one session-timezone calendar day whatever day Go thinks it
+// is. (This matters because the attributed-replies query dedups COUNT(DISTINCT)
+// per window; a day straddling two windows could double-count.) The first
+// window is clipped to `since` (which need not itself sit on a day boundary);
+// the last is clipped to `until`. Returns nil if since is not before until.
+func dayWindows(since, until time.Time) []windowBounds {
+	if !since.Before(until) {
+		return nil
+	}
+	const layout = "2006-01-02 15:04:05"
+	loc := since.Location()
+	dayStart := time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, loc)
+
+	var windows []windowBounds
+	for dayStart.Before(until) {
+		next := dayStart.AddDate(0, 0, 1)
+		start := dayStart
+		if start.Before(since) {
+			start = since
+		}
+		end := next
+		if end.After(until) {
+			end = until
+		}
+		windows = append(windows, windowBounds{
+			Start: start.Format(layout),
+			End:   end.Format(layout),
+		})
+		dayStart = next
+	}
+	return windows
+}
+
+// mergeFunnelRows combines per-window funnel rows into at most one row per
+// (date, source), summing impressions and clicks. Each window is day-aligned
+// so it already contributes at most one row per source, but merging by key
+// (rather than a plain concat) keeps the result correct - and matching what a
+// single unchunked query would return - even if that ever stops being true.
+func mergeFunnelRows(rows []funnelRow) []funnelRow {
+	type key struct{ d, source string }
+	merged := make(map[key]*funnelRow, len(rows))
+	order := make([]key, 0, len(rows))
+	for _, r := range rows {
+		k := key{r.D, r.Source}
+		if existing, ok := merged[k]; ok {
+			existing.Impressions += r.Impressions
+			existing.Clicks += r.Clicks
+		} else {
+			rc := r
+			merged[k] = &rc
+			order = append(order, k)
+		}
+	}
+	out := make([]funnelRow, 0, len(order))
+	for _, k := range order {
+		out = append(out, *merged[k])
+	}
+	return out
+}
+
+// mergeReplyRows combines per-window reply rows into at most one row per
+// (date, source), summing replies. See mergeFunnelRows for why merging by key
+// (rather than a plain concat) is the safe default even though day-aligned
+// windows only ever produce one row per key each.
+func mergeReplyRows(rows []replyRow) []replyRow {
+	type key struct{ d, source string }
+	merged := make(map[key]*replyRow, len(rows))
+	order := make([]key, 0, len(rows))
+	for _, r := range rows {
+		k := key{r.D, r.Source}
+		if existing, ok := merged[k]; ok {
+			existing.Replies += r.Replies
+		} else {
+			rc := r
+			merged[k] = &rc
+			order = append(order, k)
+		}
+	}
+	out := make([]replyRow, 0, len(order))
+	for _, k := range order {
+		out = append(out, *merged[k])
+	}
+	return out
 }

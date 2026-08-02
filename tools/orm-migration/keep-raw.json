@@ -219,6 +219,110 @@
       "category": "Proven builder, still raw",
       "reason": "Proven, but still raw - NOT converted. The WHERE is assembled from a logtype switch plus five independently optional fragments, 352 reachable combinations, far past what AssertGoldenShapes can enumerate. That is now covered rather than deferred: buildGetLogsQuery is extracted as a pure builder and AssertGoldenWhereFieldwise proves it in 11 cases instead of 352, verifying each factor's contribution in isolation against a full rendered statement. Two hand-rolled placeholder loops also became native IN (?) slice binds, removing the failure mode where the placeholder count and the bind count are maintained separately. What has NOT changed is that the statement is still built as text and executed by db.Raw, so ratchet gate (n) correctly refuses to count it as converted - and did exactly that when the rule was briefly cleared. Converting it properly needs a GORM composition for a WHERE built at runtime, which is a different problem from proving the text is right.",
       "porting": "PostgreSQL: the builder is the porting unit, one function rather than fragments scattered through the handler. The statement is ordinary parameterised SQL - the pieces to check on port are the date arithmetic and the LIKE search, not the structure."
+    },
+    {
+      "id": "791c683326a8",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "rippledOutSection",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction (a site whose raw SQL is present cannot be 'converted', whatever its history), not a fresh review decision - recorded here explicitly because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query with a per-day chunked db.Raw() loop (dayWindows), a deliberate performance fix (the unchunked form was the slowest query on the rippling analytics tab and could stall the applier over a wide date range) that must not be silently reverted. The inner query text inside the loop is byte-identical to what this site id already named from an earlier point in this branch's history, which is why the id and its stale 'converted' status carried forward unchanged rather than the site appearing as new. Master's rewrite was accepted as-is (raw) rather than re-converted to GORM under a merge: re-doing an ORM conversion for a chunked-loop call site without a validated Layer 1/2 parity pass for that exact new shape is exactly the risk this reason exists to avoid taking casually.",
+      "porting": "PostgreSQL: ordinary parameterised aggregate SQL once ported dialect-by-dialect (EXISTS/NOT EXISTS, no MySQL-only functions) - the chunking loop itself is plain Go and needs no port. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "8cdbd33d1052",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "function": "rippledOutSection",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
+      "reason": "Same situation as site 791c683326a8 in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's per-day chunked rewrite of the rescue-floor query, accepted as-is rather than re-converted under the merge.",
+      "porting": "PostgreSQL: ordinary parameterised SQL (EXISTS/NOT EXISTS subqueries), no MySQL-only functions - the chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "284dfbc44866",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "DigestClickPositions",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction, not a fresh review decision - recorded here because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query (the digest-size denominator) with a per-date-window chunked db.Raw() loop (chunkDateWindows) plus a FORCE INDEX(sent_at) hint, a deliberate fix for a real production hang (a wide default/admin-selected date range over email_tracking - millions of rows, JSON metadata per row - made the chart hang without it), which must not be silently reverted. Accepted master's rewrite as-is (raw) rather than re-converted to GORM under a merge, for the same reason given on site 791c683326a8: re-converting a chunked-loop call site without a validated Layer 1/2 parity pass for its new shape is not a decision to make casually inside a conflict resolution.",
+      "porting": "PostgreSQL: JSON_LENGTH has a Postgres equivalent (jsonb_array_length after a cast) and FORCE INDEX has no direct equivalent (Postgres has no per-query index hints; the planner would need a different nudge, e.g. a partial/covering index). The chunking loop itself is plain Go. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "dce69264c9c0",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "DigestClickPositions",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
+      "reason": "Same situation as site 284dfbc44866 in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's chunked rewrite of the click-position numerator query, accepted as-is rather than re-converted under the merge.",
+      "porting": "PostgreSQL: ordinary parameterised SQL plus a REGEXP predicate (Postgres: ~ operator, same pattern) - no other MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "09f9c28c58ac",
+      "file": "iznik-server-go/message/bounds.go",
+      "function": "viewedMessageIDs",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted",
+      "reason": "Master merge (#1230) introduced this function to replace a LEFT JOIN messages_likes + CASE that used to compute 'unseen' inline in the Bounds() spatial query (see site 951837c820f1 below, same merge). The no-location myGroupsBoundingBox fallback can match most of messages_spatial, turning the old inline join into tens of thousands of per-row point lookups into the 86M-row messages_likes table; this function instead batches the ids it needs to check into boundsLikesChunk-sized IN (...) queries, one per chunk. A GORM .Table().Where().Scan() form is plausible for the query inside the loop, but re-converting a chunked call site introduced by a merge, without a validated Layer 1/2 parity pass for that exact shape, is not a decision to make casually under conflict resolution - see the resolution principle recorded on the analytics.go/emailtracking.go sites from the same merge.",
+      "porting": "PostgreSQL: ordinary parameterised SELECT ... WHERE ... IN (?), no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass."
+    },
+    {
+      "id": "951837c820f1",
+      "file": "iznik-server-go/message/bounds.go",
+      "function": "Bounds",
+      "category": "Master merge: reintroduced verbatim, spatial fan-out fix not yet re-converted",
+      "reason": "Master merge (#1230) replaced this site's GORM chain, which used a LEFT JOIN messages_likes + CASE to compute 'unseen' inline, with this plain db.Raw() ST_Contains spatial query plus the separate viewedMessageIDs/applyUnseen pair (site 09f9c28c58ac above) for 'unseen'. The join form turned a wide, no-location bounding box into tens of thousands of per-row messages_likes lookups; master's fix removes that fan-out. Accepted master's raw form as-is: a GORM re-conversion of the simplified query is plausible but this exact site had already been through one prior spatial-review round before this merge, so re-guessing its ORM form again under a conflict, rather than as a properly tested standalone attempt, was declined per the resolution principle used across this merge (analytics.go, emailtracking.go, dashboard.go, stats.go).",
+      "porting": "PostgreSQL: ST_Contains/ST_SRID/POLYGON/LINESTRING/POINT are PostGIS equivalents (ST_Contains, ST_MakeEnvelope or ST_GeomFromText, ST_SetSRID) rather than direct syntax carries. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted."
+    },
+    {
+      "id": "1f554f10d05a",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "function": "repliedMessageMultiplicity",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted",
+      "reason": "Master merge (#1230) replaced this site's single GORM query (site 4a0837c4271f) with a per-usersReplyingWindowDays-day chunked loop over messages_groups, feeding repliesForMessages/mergeReplyCounts/topUserCounts (see also sites e847c11cbd51, 70fe8fe8c804 in the same call chain). This is the last-window arm ('arrival <= endQ'); the interior-window arm is site e847c11cbd51. Accepted master's chunked form as-is per the resolution principle for this merge: a GORM re-conversion of a chunked call site needs its own validated Layer 1/2 parity pass, not a guess made while resolving a conflict.",
+      "porting": "PostgreSQL: ordinary parameterised SQL, no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass."
+    },
+    {
+      "id": "e847c11cbd51",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "function": "repliedMessageMultiplicity",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted",
+      "reason": "Same situation as site 1f554f10d05a in this same function (see that entry for the full explanation): this is the interior-window arm ('arrival < winEnd') of master's chunked replacement for site 4a0837c4271f, accepted as-is under the same merge-resolution principle.",
+      "porting": "PostgreSQL: ordinary parameterised SQL, no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass."
+    },
+    {
+      "id": "70fe8fe8c804",
+      "file": "iznik-server-go/dashboard/dashboard.go",
+      "function": "repliesForMessages",
+      "category": "Master merge: new chunked-loop performance fix, not yet converted",
+      "reason": "Master merge (#1230) introduced this function as part of the same dashboard 'top repliers' rewrite as sites 1f554f10d05a/e847c11cbd51 above: it batches the msgids repliedMessageMultiplicity found into usersReplyingBatch-sized IN (...) lookups against chat_messages, so no single statement grows with the number of messages the date range/group scope matched. Accepted as-is under the same merge-resolution principle: re-converting a chunked call site introduced by a merge needs its own validated parity pass.",
+      "porting": "PostgreSQL: ordinary parameterised SELECT ... GROUP BY, no MySQL-only functions. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass."
+    },
+    {
+      "id": "737319df46b7",
+      "file": "iznik-server-go/recommendations/stats.go",
+      "function": "GetDashboard",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
+      "reason": "Master merge (#1230) replaced this site's single unchunked GORM query (site 22036e3caf64, funnelRows: per-day impressions/clicks per source) with a per-calendar-day chunked loop over messages_likes (dayWindows), a fix for a real production issue: over the full requested window (up to 365 days) the source/type-filtered scan plus the non-covering pageview/type lookup was enough to stall Galera's applier. Accepted master's chunked form as-is per the resolution principle for this merge: a GORM re-conversion of a chunked call site needs its own validated Layer 1/2 parity pass, not a guess made while resolving a conflict.",
+      "porting": "PostgreSQL: the /*+ MAX_EXECUTION_TIME(10000) */ optimizer hint has no direct Postgres equivalent (use statement_timeout at the session/transaction level instead); SUM(pageview = 1) needs SUM(CASE WHEN pageview = 1 THEN 1 ELSE 0 END) or SUM((pageview = 1)::int). The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "d484e88b9f8b",
+      "file": "iznik-server-go/recommendations/stats.go",
+      "function": "GetDashboard",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
+      "reason": "Same situation as site 737319df46b7 in this same function (see that entry for the full explanation): master's chunked replacement for site eba122e9abad (replyRows: per-day attributed replies per source, joining chat_messages), accepted as-is under the same merge-resolution principle.",
+      "porting": "PostgreSQL: the /*+ MAX_EXECUTION_TIME(10000) */ hint has no direct equivalent (use statement_timeout instead); INTERVAL 7 DAY is valid Postgres syntax as-is. The chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "353ec02d1e21",
+      "file": "iznik-server-go/recommendations/stats.go",
+      "function": "GetDashboard",
+      "category": "Master merge: reintroduced verbatim, CTE rewrite not yet re-converted",
+      "reason": "Master merge (#1230) replaced this site's derived-table LEFT JOIN (site c9e06d962d78, holdout-vs-shown cohort reply counts) with a WITH cohort AS (...) CTE that joins the cohort into chat_messages BEFORE the reply-count GROUP BY. chat_messages has no index led by `type`, so an unconditional GROUP BY userid over it must fully scan the whole userid_2 (userid, date, refmsgid, type) index before the cohort restriction can apply; joining the cohort in first via the CTE lets MySQL seek userid_2 per cohort user instead (cohort is historically a few thousand users at most vs. tens of millions of chat_messages rows) - a real performance fix, not a style change. Accepted master's CTE form as-is: re-converting a CTE-shaped .Table()-text call to a GORM chain needs its own validated Layer 1/2 parity pass (GORM's CTE support is thin), not a guess made while resolving a conflict.",
+      "porting": "PostgreSQL: WITH ... AS (...) CTEs are standard syntax and port directly; the /*+ MAX_EXECUTION_TIME(10000) */ hint has no direct equivalent (use statement_timeout instead). Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again."
+    },
+    {
+      "id": "8c6d59a41036",
+      "file": "iznik-server-go/emailtracking/emailtracking.go",
+      "function": "isCommunityNewsItemURL",
+      "category": "Master merge: genuinely new code, unconverted",
+      "reason": "New function from master merge (#1230), unrelated to any of the ten conflicted hunks this merge resolved - master added it directly, with no conflict marker involved. It is a trivial single-table SELECT COUNT(*), the same shape as the ~551 sites converted in Wave 1, and .Table('community_news_items').Where('url = ?', url).Count(&count) is a safe, mechanical rewrite. It was tried during this merge resolution and reverted: this harness only counts a site 'converted' once it is both absent from the code AND has a recorded parity test proving the rewrite (extract.go's own gate n logic), and writing that proof is out of scope for a conflict-resolution pass whose job is to reconcile master's behaviour into this branch, not to convert new sites master happened to add alongside it. Left raw and flagged here as a good fast-follow candidate for the next single-table-SELECT conversion batch.",
+      "porting": "PostgreSQL: ordinary parameterised SELECT COUNT(*), no MySQL-only functions. Straightforward Wave-1-style conversion candidate - no porting concerns."
     }
   ]
 }

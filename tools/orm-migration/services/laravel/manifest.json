@@ -1,5 +1,5 @@
 {
-    "generated": "2026-08-02T21:24:13Z",
+    "generated": "2026-08-02T22:23:51Z",
     "root": "iznik-batch",
     "counts": {
         "raw": 567,
@@ -12239,7 +12239,7 @@
         "21c764087977": {
             "id": "21c764087977",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 130,
+            "line": 131,
             "class": "PushNotificationService",
             "function": "notifyGroupMods",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12267,7 +12267,7 @@
         "7c9db632531a": {
             "id": "7c9db632531a",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 162,
+            "line": 163,
             "class": "PushNotificationService",
             "function": "notify",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12295,7 +12295,7 @@
         "bf6d88273e85": {
             "id": "bf6d88273e85",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 232,
+            "line": 233,
             "class": "PushNotificationService",
             "function": "notifyUser",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12323,7 +12323,7 @@
         "145c4a4728a0": {
             "id": "145c4a4728a0",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 310,
+            "line": 311,
             "class": "PushNotificationService",
             "function": "consumerUnreadCounts",
             "receiver": "DB::table()->join()->whereIn()->where()",
@@ -12351,7 +12351,7 @@
         "6bac4dbbcabe": {
             "id": "6bac4dbbcabe",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 456,
+            "line": 457,
             "class": "PushNotificationService",
             "function": "getBadgeBreakdown",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12379,7 +12379,7 @@
         "736d589f6852": {
             "id": "736d589f6852",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 483,
+            "line": 484,
             "class": "PushNotificationService",
             "function": "getBadgeBreakdown",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12410,7 +12410,7 @@
         "bc6f3a49472c": {
             "id": "bc6f3a49472c",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 502,
+            "line": 503,
             "class": "PushNotificationService",
             "function": "getBadgeBreakdown",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12441,7 +12441,7 @@
         "76ef313d1c6d": {
             "id": "76ef313d1c6d",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 516,
+            "line": 517,
             "class": "PushNotificationService",
             "function": "getBadgeBreakdown",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12471,7 +12471,7 @@
         "eba8a4c424be": {
             "id": "eba8a4c424be",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 676,
+            "line": 677,
             "class": "PushNotificationService",
             "function": "notifyTest",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12499,7 +12499,7 @@
         "358b3716020f": {
             "id": "358b3716020f",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 870,
+            "line": 871,
             "class": "PushNotificationService",
             "function": "getGroupSettings",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12527,7 +12527,7 @@
         "290c878bdae5": {
             "id": "290c878bdae5",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 927,
+            "line": 928,
             "class": "PushNotificationService",
             "function": "sendChatMessagePush",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12555,7 +12555,7 @@
         "2ced8b69d566": {
             "id": "2ced8b69d566",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 1070,
+            "line": 1071,
             "class": "PushNotificationService",
             "function": "getActiveGroupMods",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -12583,7 +12583,7 @@
         "060d6cce1405": {
             "id": "060d6cce1405",
             "file": "iznik-batch/app/Services/PushNotificationService.php",
-            "line": 1239,
+            "line": 1247,
             "class": "PushNotificationService",
             "function": "notifyDailyNewPosts",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17170,7 +17170,7 @@
         "ab9079466345": {
             "id": "ab9079466345",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1239,
+            "line": 1275,
             "class": "WhatJobsService",
             "function": "prepareTempTable",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17196,7 +17196,7 @@
         "ae6b8be479d0": {
             "id": "ae6b8be479d0",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1240,
+            "line": 1276,
             "class": "WhatJobsService",
             "function": "prepareTempTable",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17222,7 +17222,7 @@
         "cd3f21359d36": {
             "id": "cd3f21359d36",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1271,
+            "line": 1307,
             "class": "WhatJobsService",
             "function": "insertJobs",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17250,7 +17250,7 @@
         "4f53e3451291": {
             "id": "4f53e3451291",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1315,
+            "line": 1351,
             "class": "WhatJobsService",
             "function": "insertJobs",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17276,7 +17276,7 @@
         "070fcd677982": {
             "id": "070fcd677982",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1333,
+            "line": 1369,
             "class": "WhatJobsService",
             "function": "swapTables",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17302,7 +17302,7 @@
         "61ae4d6fb5fa": {
             "id": "61ae4d6fb5fa",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1334,
+            "line": 1370,
             "class": "WhatJobsService",
             "function": "swapTables",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17328,7 +17328,7 @@
         "7af23c2fb7e8": {
             "id": "7af23c2fb7e8",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1335,
+            "line": 1371,
             "class": "WhatJobsService",
             "function": "swapTables",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17354,7 +17354,7 @@
         "05af6812abd7": {
             "id": "05af6812abd7",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1341,
+            "line": 1377,
             "class": "WhatJobsService",
             "function": "analyseClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17382,7 +17382,7 @@
         "b3ba7ebf8c17": {
             "id": "b3ba7ebf8c17",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1344,
+            "line": 1380,
             "class": "WhatJobsService",
             "function": "analyseClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17411,7 +17411,7 @@
         "c47a7643ee63": {
             "id": "c47a7643ee63",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1352,
+            "line": 1388,
             "class": "WhatJobsService",
             "function": "analyseClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17439,7 +17439,7 @@
         "c7c21a152e19": {
             "id": "c7c21a152e19",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1356,
+            "line": 1392,
             "class": "WhatJobsService",
             "function": "analyseClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17465,7 +17465,7 @@
         "808ef0c86a20": {
             "id": "808ef0c86a20",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1357,
+            "line": 1393,
             "class": "WhatJobsService",
             "function": "analyseClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17494,7 +17494,7 @@
         "d1a96390ba50": {
             "id": "d1a96390ba50",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1363,
+            "line": 1399,
             "class": "WhatJobsService",
             "function": "analyseClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17525,7 +17525,7 @@
         "fc9b72f253b8": {
             "id": "fc9b72f253b8",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1376,
+            "line": 1412,
             "class": "WhatJobsService",
             "function": "updateClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17553,7 +17553,7 @@
         "1de2f2022f0c": {
             "id": "1de2f2022f0c",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1380,
+            "line": 1416,
             "class": "WhatJobsService",
             "function": "updateClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17581,7 +17581,7 @@
         "ae53f7c6596e": {
             "id": "ae53f7c6596e",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1387,
+            "line": 1423,
             "class": "WhatJobsService",
             "function": "updateClickability",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -17609,7 +17609,7 @@
         "08d09e064c52": {
             "id": "08d09e064c52",
             "file": "iznik-batch/app/Services/WhatJobsService.php",
-            "line": 1393,
+            "line": 1429,
             "class": "WhatJobsService",
             "function": "getMaxish",
             "receiver": "Illuminate\\Support\\Facades\\DB",

@@ -1,7 +1,10 @@
 package emailtracking
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	neturl "net/url"
@@ -204,10 +207,24 @@ func Click(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Redirect("/")
 	}
-	destinationURL := RepairDoubledSiteURL(string(urlBytes))
+	rawURL := string(urlBytes)
+	destinationURL := RepairDoubledSiteURL(rawURL)
 
-	// Validate URL
-	if destinationURL == "" || !isValidRedirectURL(destinationURL) {
+	// Validate URL: either one of our own domains, or carrying a signature the
+	// mailer minted at send time. Community News items link to arbitrary
+	// external sites (parkrun, council pages...), which the allowlist would
+	// bounce to "/" - the signature proves we generated the link, so honouring
+	// it doesn't open the endpoint to open-redirect abuse. The signature is
+	// over the raw destination as the mailer signed it, pre-repair.
+	//
+	// Third chance: an exact match against the curated Community News items.
+	// Emails sent before link signing existed carry no signature, but their
+	// destinations are all URLs we curated into community_news_items, so a
+	// lookup there retro-fixes those links without opening the endpoint up.
+	if destinationURL == "" ||
+		(!isValidRedirectURL(destinationURL) &&
+			!hasValidLinkSignature(rawURL, c.Query("sig")) &&
+			!isCommunityNewsItemURL(db, destinationURL)) {
 		return c.Redirect("/")
 	}
 
@@ -1375,6 +1392,44 @@ func RepairDoubledSiteURL(u string) string {
 	return u
 }
 
+// hasValidLinkSignature reports whether sig is a valid HMAC over the raw
+// destination URL, minted by the mailer (iznik-batch EmailTracking::
+// getTrackedLinkUrl) at send time. A valid signature lets the redirect honour
+// destinations outside our own-domain allowlist - Community News items link
+// to arbitrary external sites - without becoming an open redirect: only URLs
+// we put in an email carry a signature. Reuses the AMP secret, which both
+// sides already share, with a purpose prefix so AMP signatures and link
+// signatures aren't interchangeable.
+func hasValidLinkSignature(rawURL string, sig string) bool {
+	if rawURL == "" || sig == "" {
+		return false
+	}
+
+	secret := os.Getenv("AMP_SECRET")
+	if secret == "" {
+		secret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if secret == "" {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("redirect:" + rawURL))
+	expected := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(expected), []byte(sig))
+}
+
+// isCommunityNewsItemURL reports whether url is the exact destination of a
+// curated Community News item. Items are authored by our own team, so
+// redirecting to one is safe; this exists to keep links working in Community
+// News emails sent before tracked links carried a signature.
+func isCommunityNewsItemURL(db *gorm.DB, url string) bool {
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM community_news_items WHERE url = ?", url).Scan(&count)
+	return count > 0
+}
+
 // isValidRedirectURL validates URL is safe for redirect
 func isValidRedirectURL(url string) bool {
 	if url == "" {
@@ -1466,6 +1521,80 @@ type DigestPositionStat struct {
 	CTR float64 `json:"ctr"`
 }
 
+// digestChunkDays bounds how much history a single email_tracking statement
+// scans in DigestClickPositions. email_tracking is 6M+ rows with no composite
+// (email_type, sent_at) index, so a FORCE INDEX(sent_at) scan over a wide
+// user-selected range can take minutes and stall Galera cluster-wide commits.
+const digestChunkDays = 1
+
+// digestDateWindow is one [Start, End] sub-range of a chunked date query,
+// pre-formatted for direct use as SQL BETWEEN bounds.
+type digestDateWindow struct {
+	Start string
+	End   string
+}
+
+// chunkDateWindows splits [startDate, endDateTime] into contiguous windows no
+// wider than chunkDays. Every email_tracking row's sent_at falls inside
+// exactly one window, so summing GROUP BY-aggregated counts across these
+// disjoint windows is mathematically identical to running one query over the
+// whole range - just without any single statement scanning more than
+// chunkDays worth of rows.
+func chunkDateWindows(startDate, endDateTime string, chunkDays int) ([]digestDateWindow, error) {
+	if chunkDays <= 0 {
+		chunkDays = 1
+	}
+
+	start, err := parseDigestBound(startDate)
+	if err != nil {
+		return nil, err
+	}
+	end, err := parseDigestBound(endDateTime)
+	if err != nil {
+		return nil, err
+	}
+
+	if !end.After(start) {
+		return []digestDateWindow{{Start: startDate, End: endDateTime}}, nil
+	}
+
+	const layout = "2006-01-02 15:04:05"
+	var windows []digestDateWindow
+	for chunkStart := start; !chunkStart.After(end); {
+		chunkEnd := chunkStart.AddDate(0, 0, chunkDays).Add(-time.Second)
+		if chunkEnd.After(end) {
+			chunkEnd = end
+		}
+		windows = append(windows, digestDateWindow{
+			Start: chunkStart.Format(layout),
+			End:   chunkEnd.Format(layout),
+		})
+		chunkStart = chunkEnd.Add(time.Second)
+	}
+	return windows, nil
+}
+
+// parseDigestBound parses a start/end bound as supplied to
+// DigestClickPositions: either a bare date or a date with a time component
+// (endDateTime always has one by the time it reaches here; startDate may or
+// may not).
+func parseDigestBound(s string) (time.Time, error) {
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	}
+	var lastErr error
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return time.Time{}, lastErr
+}
+
 // DigestClickPositions returns the click-through rate by post position within
 // unified digest emails. This shows how a post's vertical position in the
 // digest affects whether recipients click it.
@@ -1494,8 +1623,17 @@ type DigestPositionStat struct {
 // @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} fiber.Error "Unauthorized"
 // @Failure 403 {object} fiber.Error "Forbidden"
+// digestClickPositionsDeadline bounds the whole chunked walk below: each
+// per-window statement is short, but a wide admin-selected range issues many of
+// them, and the fiber request context alone would never fire (fasthttp only
+// cancels it on server shutdown), so an abandoned request would otherwise keep
+// stepping through the remaining windows.
+const digestClickPositionsDeadline = 60 * time.Second
+
 func DigestClickPositions(c *fiber.Ctx) error {
-	db := database.DBConn
+	ctx, cancel := context.WithTimeout(c.Context(), digestClickPositionsDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
 
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -1528,67 +1666,74 @@ func DigestClickPositions(c *fiber.Ctx) error {
 
 	// By default consider all unified digest types; allow an exact-type override.
 	emailType := c.Query("type", "")
-
-	// cohortWhere builds the shared type/tnuserid/metadata/date-range
-	// conditions - keeping the two queries below on the same cohort - for
-	// either query's own e./u. aliases, plus any extra condition that query
-	// needs appended (the click query's link_position REGEXP). The only
-	// real toggle is the type filter (default 'UnifiedDigest%' vs an
-	// explicit type), giving 2 possible rendered forms per query. Returns
-	// ONE combined string for ONE Where() call: GORM's clause.Where wraps
-	// any fragment containing "AND"/"OR" in an extra paren pair once there
-	// is more than one Where expression to combine (clause/where.go
-	// buildExprs), which would diverge from the golden.
-	cohortWhere := func(extra string) (string, []interface{}) {
-		sql := "e.email_type LIKE 'UnifiedDigest%'"
-		var args []interface{}
-		if emailType != "" {
-			sql = "e.email_type = ?"
-			args = append(args, emailType)
-		}
-		sql += " AND u.tnuserid IS NULL AND e.metadata IS NOT NULL " +
-			"AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0 AND e.sent_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
-		if extra != "" {
-			sql += " AND " + extra
-		}
-		return sql, args
+	typeClause := "e.email_type LIKE 'UnifiedDigest%'"
+	var typeArgs []interface{}
+	if emailType != "" {
+		typeClause = "e.email_type = ?"
+		typeArgs = append(typeArgs, emailType)
 	}
+
+	// Conditions shared by both queries to keep the cohort consistent.
+	cohort := typeClause + `
+		AND u.tnuserid IS NULL
+		AND e.metadata IS NOT NULL
+		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
+		AND e.sent_at BETWEEN ? AND ?`
 
 	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
 	//    posts displayed positions 0..num_posts-1.
-	//
-	// ORM migration site 284dfbc44866 (Tier 3 keep-raw review). The type
-	// toggle above gives 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_284dfbc44866
-	// (iznik-server-go/test).
-	var sizeRows []struct {
-		NumPosts int   `gorm:"column:num_posts"`
-		Cnt      int64 `gorm:"column:cnt"`
+	denomQuery := `
+		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
+		-- Force the sent_at index: otherwise the optimiser full-scans the whole
+		-- table (millions of rows + per-row JSON) instead of range-scanning the
+		-- date window, which made the chart hang.
+		FROM email_tracking e FORCE INDEX (sent_at)
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		GROUP BY num_posts`
+
+	// Run both this query and clickQuery below in short date sub-windows
+	// instead of one scan over the whole requested range - see
+	// chunkDateWindows. Falls back to a single window over the whole range
+	// if the bounds don't parse in an expected format, matching the prior
+	// (unchunked) behaviour.
+	windows, err := chunkDateWindows(startDate, endDateTime, digestChunkDays)
+	if err != nil {
+		windows = []digestDateWindow{{Start: startDate, End: endDateTime}}
 	}
-	// Force the sent_at index: otherwise the optimiser full-scans the whole
-	// table (millions of rows + per-row JSON) instead of range-scanning the
-	// date window, which made the chart hang.
-	denomWhereSQL, denomWhereArgs := cohortWhere("")
-	db.Table("email_tracking e FORCE INDEX (sent_at)").
-		Select("JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt").
-		Joins("LEFT JOIN users u ON e.userid = u.id").
-		Where(denomWhereSQL, denomWhereArgs...).
-		Group("num_posts").Scan(&sizeRows)
+
+	sizeCounts := make(map[int]int64)
+	for _, w := range windows {
+		denomArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			NumPosts int   `gorm:"column:num_posts"`
+			Cnt      int64 `gorm:"column:cnt"`
+		}
+		if err := db.Raw(denomQuery, denomArgs...).Scan(&chunkRows).Error; err != nil {
+			// Fail the whole distribution (empty chart, like the replaced
+			// single statement did on error) rather than silently returning
+			// totals missing an unknown subset of days.
+			sizeCounts = map[int]int64{}
+			break
+		}
+		for _, r := range chunkRows {
+			sizeCounts[r.NumPosts] += r.Cnt
+		}
+	}
 
 	maxPosts := 0
-	for _, r := range sizeRows {
-		if r.NumPosts > maxPosts {
-			maxPosts = r.NumPosts
+	for numPosts := range sizeCounts {
+		if numPosts > maxPosts {
+			maxPosts = numPosts
 		}
 	}
 
 	// shown[n] = number of digests whose size was greater than n (i.e. displayed
-	// a post at position n). sizeRows is small (one row per distinct digest size).
+	// a post at position n).
 	shown := make([]int64, maxPosts)
-	for _, r := range sizeRows {
-		for n := 0; n < r.NumPosts && n < maxPosts; n++ {
-			shown[n] += r.Cnt
+	for numPosts, cnt := range sizeCounts {
+		for n := 0; n < numPosts && n < maxPosts; n++ {
+			shown[n] += cnt
 		}
 	}
 
@@ -1604,45 +1749,51 @@ func DigestClickPositions(c *fiber.Ctx) error {
 	// exclude the summary-index links ("yN") and image links ("iN"): the summary
 	// sits at the top of the email, so a "yN" click is not a signal about the
 	// post's vertical position.
-	// ORM migration site dce69264c9c0 (Tier 3 keep-raw review). Same type
-	// toggle as 284dfbc44866 above - 2 possible rendered forms, both declared
-	// in ormharness/shapes.json and proven by TestTier3Shapes_dce69264c9c0
-	// (iznik-server-go/test).
-	var clickRows []struct {
-		LinkPosition  string `gorm:"column:link_position"`
-		EmailsClicked int64  `gorm:"column:emails_clicked"`
-		Clicks        int64  `gorm:"column:clicks"`
-	}
-	clickWhereSQL, clickWhereArgs := cohortWhere("c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'")
-	db.Table("email_tracking_clicks c").
-		Select("c.link_position AS link_position, "+
-			"COUNT(DISTINCT c.email_tracking_id) AS emails_clicked, "+
-			"COUNT(*) AS clicks").
-		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
-		Joins("LEFT JOIN users u ON e.userid = u.id").
-		Where(clickWhereSQL, clickWhereArgs...).
-		Group("c.link_position").Scan(&clickRows)
+	clickQuery := `
+		SELECT c.link_position AS link_position,
+		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
+		       COUNT(*) AS clicks
+		FROM email_tracking_clicks c
+		JOIN email_tracking e ON c.email_tracking_id = e.id
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
+		GROUP BY c.link_position`
 
 	emailsClickedByPos := make(map[int]int64)
 	clicksByPos := make(map[int]int64)
-	for _, r := range clickRows {
-		// link_position is "post_N" or "pN"; extract the trailing integer
-		// position regardless of the prefix/separator.
-		s := r.LinkPosition
-		i := len(s)
-		for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
-			i--
+	for _, w := range windows {
+		clickArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			LinkPosition  string `gorm:"column:link_position"`
+			EmailsClicked int64  `gorm:"column:emails_clicked"`
+			Clicks        int64  `gorm:"column:clicks"`
 		}
-		if i == len(s) {
-			// No trailing digits - not a positional label.
-			continue
+		if err := db.Raw(clickQuery, clickArgs...).Scan(&chunkRows).Error; err != nil {
+			// As above: all-or-nothing for the click counts.
+			emailsClickedByPos = map[int]int64{}
+			clicksByPos = map[int]int64{}
+			break
 		}
-		n, err := strconv.Atoi(s[i:])
-		if err != nil || n < 0 {
-			continue
+		for _, r := range chunkRows {
+			// link_position is "post_N" or "pN"; extract the trailing integer
+			// position regardless of the prefix/separator.
+			s := r.LinkPosition
+			i := len(s)
+			for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+				i--
+			}
+			if i == len(s) {
+				// No trailing digits - not a positional label.
+				continue
+			}
+			n, err := strconv.Atoi(s[i:])
+			if err != nil || n < 0 {
+				continue
+			}
+			emailsClickedByPos[n] += r.EmailsClicked
+			clicksByPos[n] += r.Clicks
 		}
-		emailsClickedByPos[n] += r.EmailsClicked
-		clicksByPos[n] += r.Clicks
 	}
 
 	// 3. Build the per-position result, ascending, skipping positions never shown.

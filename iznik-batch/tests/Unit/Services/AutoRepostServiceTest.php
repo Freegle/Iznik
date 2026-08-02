@@ -654,6 +654,65 @@ class AutoRepostServiceTest extends TestCase
     }
 
     /**
+     * A rippled-in row that reaches the WARNING window is skipped, not warned.
+     *
+     * The test above exercises the same branch only by luck: it gives the home group a row
+     * in the window too, and process() iterates groups with inRandomOrder() (V1 ORDER BY
+     * RAND()). When home happens to go first it stamps lastautopostwarning on every row of
+     * the message, so the rippled rows arrive with lastwarnago ~0, fail the outer window
+     * condition and never reach the rippled_in skip at all — one ordering in three. That
+     * makes coverage of that line a dice roll, and it has repeatedly failed Coveralls on
+     * branches that touch no PHP whatsoever.
+     *
+     * Here only the rippled row is in the window: the home row is fresh, so nothing can
+     * stamp it first and no ordering can dodge the branch.
+     */
+    public function test_rippled_in_row_in_warning_window_is_skipped_not_warned(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $home = $this->createTestGroup();
+        $rippled = $this->createTestGroup();
+
+        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subHours(1)]);
+        $this->createMembership($user, $home, ['added' => now()->subDays(30)]);
+        $this->createMembership($user, $rippled, ['added' => now()->subDays(30)]);
+
+        $message = $this->createTestMessage($user, $home, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Home posting fresh: outside both the warning and repost windows, so it cannot
+        // stamp lastautopostwarning regardless of the order groups are processed in.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $home->id)
+            ->update(['arrival' => now()->subHours(1), 'autoreposts' => 0, 'rippled_in' => 0]);
+
+        // Rippled-in posting inside the warning window (offer interval 3d => 48-72h).
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $rippled->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(50),
+            'autoreposts' => 0,
+            'rippled_in' => 1,
+        ]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['warned'], 'a rippled-in row must never warn on its own');
+        $this->assertEquals(0, $stats['reposted'], 'still mid-window, nothing to repost yet');
+        $this->assertGreaterThan(0, $stats['skipped'], 'the rippled-in row must be counted as skipped');
+
+        // Nothing stamped, because no reminder was sent for it.
+        $mgRippled = DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $rippled->id)->first();
+        $this->assertNull($mgRippled->lastautopostwarning);
+    }
+
+    /**
      * Rippling-out: a rippled-in posting (rippled_in=1) is still reposted on its group to
      * keep the item fresh there, but it never generates its own repost reminder email.
      */
