@@ -755,7 +755,7 @@ class WhatJobsService
             $titleClean = $title ? html_entity_decode($title, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
 
             yield [
-                'location'        => $location ? html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
+                'location'        => $location ? $this->titleCaseLocation(html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8')) : null,
                 'title'           => $titleClean,
                 'city'            => $city ? html_entity_decode($city, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
                 'state'           => $state ? html_entity_decode($state, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
@@ -1195,6 +1195,42 @@ class WhatJobsService
         $body = str_replace(["\r\n", "\r", "\n", '–', 'Â'], [' ', ' ', ' ', '-', '-'], $body);
         $body = substr($body, 0, 256) . ' ';
         return $body;
+    }
+
+    /**
+     * Fix the casing of an all-lowercase feed location for display.
+     *
+     * The WhatJobs feed supplies most locations entirely lowercase ("stockton
+     * on tees", "poole, dorset" - ~80% of rows), which looks broken in job
+     * ads. When the value contains no uppercase at all, title-case it UK-style:
+     * every word capitalised except linking words ("Newcastle upon Tyne",
+     * "Weston-super-Mare"), with apostrophes and dotted abbreviations left
+     * intact ("Bishop's Stortford", "St. Columb"). A value with any existing
+     * uppercase is the feed's own deliberate casing ("Dunham on the Hill") and
+     * passes through untouched.
+     */
+    public function titleCaseLocation(?string $location): ?string
+    {
+        if ($location === null || $location === '' || $location !== mb_strtolower($location, 'UTF-8')) {
+            return $location;
+        }
+
+        // Linking words stay lowercase mid-name, per UK place-name convention
+        // ("Stockton-on-Tees", "Ashby-de-la-Zouch", "Chapel-en-le-Frith").
+        $connectors = ['on', 'upon', 'under', 'by', 'in', 'of', 'the', 'and', 'at',
+            'le', 'la', 'de', 'en', 'cum', 'super', 'next', 'over', 'with'];
+
+        $first = true;
+
+        return preg_replace_callback('/[^\s,\-\/]+/u', function ($m) use (&$first, $connectors) {
+            $word = $m[0];
+            if (!$first && in_array($word, $connectors, true)) {
+                return $word;
+            }
+            $first = false;
+
+            return mb_strtoupper(mb_substr($word, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($word, 1, null, 'UTF-8');
+        }, $location);
     }
 
     public function canonicalJobTitle(?string $title): ?string
