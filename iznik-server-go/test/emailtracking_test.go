@@ -1,8 +1,11 @@
 package test
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +165,76 @@ func TestEmailTrackingClickInvalidURL(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusFound, resp.StatusCode)
 	assert.Equal(t, "/", resp.Header.Get("Location")) // Redirects to home
+}
+
+// signRedirectURL mirrors the batch EmailTracking::getTrackedLinkUrl HMAC:
+// hex(hmac-sha256("redirect:" + url, AMP_SECRET)).
+func signRedirectURL(url string, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("redirect:" + url))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestEmailTrackingClickExternalURLUnsigned(t *testing.T) {
+	// An external destination without a signature must bounce to home, not
+	// redirect - the endpoint would otherwise be an open redirect.
+	tracking := createTestTrackingRecord(t)
+	defer cleanupTestTracking(t, tracking.TrackingID)
+
+	destinationURL := "https://www.parkrun.org.uk/sunnyhill/"
+	encodedURL := base64.StdEncoding.EncodeToString([]byte(destinationURL))
+
+	req := httptest.NewRequest("GET", "/e/d/r/"+tracking.TrackingID+"?url="+encodedURL+"&p=item_1&a=item", nil)
+	resp, err := getApp().Test(req, -1)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/", resp.Header.Get("Location"))
+}
+
+func TestEmailTrackingClickExternalURLSigned(t *testing.T) {
+	// A signed external destination (Community News items link to arbitrary
+	// external sites) redirects and records the click.
+	t.Setenv("AMP_SECRET", "test-link-signing-secret")
+
+	tracking := createTestTrackingRecord(t)
+	defer cleanupTestTracking(t, tracking.TrackingID)
+
+	destinationURL := "https://www.parkrun.org.uk/sunnyhill/"
+	encodedURL := base64.StdEncoding.EncodeToString([]byte(destinationURL))
+	sig := signRedirectURL(destinationURL, "test-link-signing-secret")
+
+	req := httptest.NewRequest("GET", "/e/d/r/"+tracking.TrackingID+"?url="+encodedURL+"&sig="+sig+"&p=item_1&a=item", nil)
+	resp, err := getApp().Test(req, -1)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, destinationURL, resp.Header.Get("Location"))
+
+	db := database.DBConn
+	var updated emailtracking.EmailTracking
+	db.Where("tracking_id = ?", tracking.TrackingID).First(&updated)
+	assert.NotNil(t, updated.ClickedAt)
+	assert.Equal(t, destinationURL, *updated.ClickedLink)
+}
+
+func TestEmailTrackingClickExternalURLBadSignature(t *testing.T) {
+	// A wrong signature must not unlock the redirect.
+	t.Setenv("AMP_SECRET", "test-link-signing-secret")
+
+	tracking := createTestTrackingRecord(t)
+	defer cleanupTestTracking(t, tracking.TrackingID)
+
+	destinationURL := "https://www.parkrun.org.uk/sunnyhill/"
+	encodedURL := base64.StdEncoding.EncodeToString([]byte(destinationURL))
+	sig := signRedirectURL("https://some-other-url.example.com/", "test-link-signing-secret")
+
+	req := httptest.NewRequest("GET", "/e/d/r/"+tracking.TrackingID+"?url="+encodedURL+"&sig="+sig, nil)
+	resp, err := getApp().Test(req, -1)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/", resp.Header.Get("Location"))
 }
 
 func TestEmailTrackingImage(t *testing.T) {

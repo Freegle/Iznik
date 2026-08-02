@@ -1,7 +1,9 @@
 package emailtracking
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	neturl "net/url"
@@ -204,10 +206,16 @@ func Click(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Redirect("/")
 	}
-	destinationURL := RepairDoubledSiteURL(string(urlBytes))
+	rawURL := string(urlBytes)
+	destinationURL := RepairDoubledSiteURL(rawURL)
 
-	// Validate URL
-	if destinationURL == "" || !isValidRedirectURL(destinationURL) {
+	// Validate URL: either one of our own domains, or carrying a signature the
+	// mailer minted at send time. Community News items link to arbitrary
+	// external sites (parkrun, council pages...), which the allowlist would
+	// bounce to "/" - the signature proves we generated the link, so honouring
+	// it doesn't open the endpoint to open-redirect abuse. The signature is
+	// over the raw destination as the mailer signed it, pre-repair.
+	if destinationURL == "" || (!isValidRedirectURL(destinationURL) && !hasValidLinkSignature(rawURL, c.Query("sig"))) {
 		return c.Redirect("/")
 	}
 
@@ -1311,6 +1319,34 @@ func RepairDoubledSiteURL(u string) string {
 		}
 	}
 	return u
+}
+
+// hasValidLinkSignature reports whether sig is a valid HMAC over the raw
+// destination URL, minted by the mailer (iznik-batch EmailTracking::
+// getTrackedLinkUrl) at send time. A valid signature lets the redirect honour
+// destinations outside our own-domain allowlist - Community News items link
+// to arbitrary external sites - without becoming an open redirect: only URLs
+// we put in an email carry a signature. Reuses the AMP secret, which both
+// sides already share, with a purpose prefix so AMP signatures and link
+// signatures aren't interchangeable.
+func hasValidLinkSignature(rawURL string, sig string) bool {
+	if rawURL == "" || sig == "" {
+		return false
+	}
+
+	secret := os.Getenv("AMP_SECRET")
+	if secret == "" {
+		secret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if secret == "" {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("redirect:" + rawURL))
+	expected := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(expected), []byte(sig))
 }
 
 // isValidRedirectURL validates URL is safe for redirect
