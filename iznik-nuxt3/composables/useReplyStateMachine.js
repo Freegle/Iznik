@@ -111,10 +111,12 @@ import { ref, computed, getCurrentInstance, watch, onScopeDispose } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
+import { useGroupStore } from '~/stores/group'
 import { useReplyStore } from '~/stores/reply'
 import { useMe } from '~/composables/useMe'
 import { useReplyToPost } from '~/composables/useReplyToPost'
 import { action } from '~/composables/useClientLog'
+import { milesAway } from '~/composables/useDistance'
 
 // State enum
 export const ReplyState = {
@@ -226,6 +228,55 @@ function logError(message, err, state, messageId = null) {
   })
 }
 
+// When a reply-triggered auto-join has no group in common with the replier, pick
+// the group CLOSEST to the replier - not the post's origin/home group, and not
+// whichever group happens to be first or last in msg.groups (API ordering is
+// arbitrary, and messages_groups doesn't carry lat/lng so we look each candidate
+// up via the group store). Distance is to the group's centre point, which is
+// simple and available client-side; nearest-polygon-edge would be more accurate
+// for large/oddly-shaped areas but is a possible future refinement, not built here.
+//
+// If we don't know the replier's own location, there's nothing to compare
+// distances against - fall back to the previous (arbitrary) behaviour of the
+// last group in the list, rather than inventing a cleverer rule.
+async function closestGroupToReplier(
+  messageGroups,
+  replierLat,
+  replierLng,
+  groupStore
+) {
+  const fallbackId = messageGroups[messageGroups.length - 1]?.groupid ?? null
+
+  // A single-group post has a forced answer regardless of distance - skip the
+  // location check and the group-store fetch entirely rather than doing a
+  // pointless lookup on the critical path of the most common reply case.
+  if (messageGroups.length <= 1) {
+    return fallbackId
+  }
+
+  if (!replierLat && !replierLng) {
+    return fallbackId
+  }
+
+  const groups = await Promise.all(
+    messageGroups.map((messageGroup) => groupStore.fetch(messageGroup.groupid))
+  )
+
+  let closestId = null
+  let closestMiles = null
+  for (const group of groups) {
+    if (!group) continue
+    const miles = milesAway(replierLat, replierLng, group.lat, group.lng)
+    if (miles === null) continue
+    if (closestMiles === null || miles < closestMiles) {
+      closestId = group.id
+      closestMiles = miles
+    }
+  }
+
+  return closestId ?? fallbackId
+}
+
 export function useReplyStateMachine(messageId, options = {}) {
   // When stayOnPage is set, completing the reply creates and sends the chat but
   // does NOT navigate to it — used when replying from a list page (browse /
@@ -234,6 +285,7 @@ export function useReplyStateMachine(messageId, options = {}) {
   const instance = getCurrentInstance()
   const authStore = useAuthStore()
   const messageStore = useMessageStore()
+  const groupStore = useGroupStore()
   const replyStore = useReplyStore()
   const { me, myid, myGroups, fetchMe } = useMe()
   const { forceLogin, loggedInEver } = storeToRefs(authStore)
@@ -965,12 +1017,12 @@ export function useReplyStateMachine(messageId, options = {}) {
         return
       }
 
-      // Check if already a member
+      // Check if already a member of any group the message is on - if so, we
+      // never join anything (see closestGroupToReplier for the "which group"
+      // decision when there's no overlap).
       let isMember = false
-      let groupToJoin = null
 
       for (const messageGroup of msg.groups) {
-        groupToJoin = messageGroup.groupid
         for (const key of Object.keys(myGroups.value || {})) {
           const group = myGroups.value[key]
           if (messageGroup.groupid === group.id) {
@@ -980,6 +1032,15 @@ export function useReplyStateMachine(messageId, options = {}) {
         }
         if (isMember) break
       }
+
+      const groupToJoin = isMember
+        ? null
+        : await closestGroupToReplier(
+            msg.groups,
+            me.value?.lat,
+            me.value?.lng,
+            groupStore
+          )
 
       log('Group membership check:', { isMember, groupToJoin })
 

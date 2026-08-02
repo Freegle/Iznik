@@ -19,6 +19,7 @@ const {
   mockReplyToPostFn,
   mockSaveDraft,
   mockClearDraft,
+  mockGroupFetch,
 } = vi.hoisted(() => ({
   mockClearReply: vi.fn(),
   mockMessageFetch: vi.fn(),
@@ -27,6 +28,7 @@ const {
   mockReplyToPostFn: vi.fn(),
   mockSaveDraft: vi.fn(),
   mockClearDraft: vi.fn(),
+  mockGroupFetch: vi.fn(),
 }))
 
 // ============================================================
@@ -105,6 +107,16 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetch: mockMessageFetch,
     byId: mockMessageById,
+  }),
+}))
+
+// ============================================================
+// GROUP STORE MOCK — used to look up lat/lng for the "closest group" join pick
+// ============================================================
+
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => ({
+    fetch: mockGroupFetch,
   }),
 }))
 
@@ -260,6 +272,8 @@ beforeEach(() => {
     id: MSG_ID,
     groups: [{ groupid: 100 }],
   })
+  // Default: no group data (tests that care about distance configure this themselves).
+  mockGroupFetch.mockResolvedValue(null)
   // Default: the post is reply-eligible (no reach block) unless a test overrides byId.
   mockMessageById.mockReturnValue(null)
   mockReplyToPostFn.mockResolvedValue(MSG_ID)
@@ -1228,6 +1242,150 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
 
     expect(mockForceLogin.value).toBe(true)
     expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
+  })
+})
+
+// ============================================================
+// Multi-group posts: which group do we auto-join?
+//
+// Requirement (Edward, 2026-08-02): only join when the replier has no group in
+// common with the post, and when we do join, pick the group CLOSEST to the
+// replier - not the post's origin/home group, and not whichever group happens to
+// be first or last in msg.groups (API ordering is arbitrary). Regression case:
+// Glen replied to a post on Runcton-area Portsmouth_Freegle and was auto-joined
+// to Portsmouth, nowhere near him. See
+// plans/2026-08-02-reply-join-closest-group.md.
+// ============================================================
+describe('handleJoinGroup: closest-group selection for multi-group posts', () => {
+  async function doLoggedInSubmit(result) {
+    result.startTyping()
+    result.replyText.value = 'My reply'
+    await result.submit()
+    await flushPromises()
+  }
+
+  // Replier is in central London. GROUP_FAR (Edinburgh) is ~330 miles away,
+  // GROUP_MEDIUM (Birmingham) ~100 miles, GROUP_CLOSEST ~1 mile. The message lists
+  // them far/closest/medium - so the closest group sits in the MIDDLE of the
+  // array, not first (would pass under a naive "first wins" bug) and not last
+  // (today's actual bug - groupToJoin is overwritten on every loop iteration and
+  // ends up as the last entry).
+  const REPLIER_LAT = 51.5074
+  const REPLIER_LNG = -0.1278
+  const GROUP_FAR = { id: 301, lat: 55.9533, lng: -3.1883 } // Edinburgh
+  const GROUP_CLOSEST = { id: 302, lat: 51.51, lng: -0.13 } // Central London
+  const GROUP_MEDIUM = { id: 303, lat: 52.4862, lng: -1.8904 } // Birmingham
+
+  function mockGroupFixtures() {
+    mockGroupFetch.mockImplementation((id) =>
+      Promise.resolve(
+        {
+          [GROUP_FAR.id]: GROUP_FAR,
+          [GROUP_CLOSEST.id]: GROUP_CLOSEST,
+          [GROUP_MEDIUM.id]: GROUP_MEDIUM,
+        }[id] || null
+      )
+    )
+  }
+
+  it('no join at all when the replier is already a member of one of the groups', async () => {
+    mockMeValue = { id: 10, lat: REPLIER_LAT, lng: REPLIER_LNG }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: GROUP_MEDIUM.id } } // member of one of the three
+    mockGroupFixtures()
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [
+        { groupid: GROUP_FAR.id },
+        { groupid: GROUP_CLOSEST.id },
+        { groupid: GROUP_MEDIUM.id },
+      ],
+    })
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    await doLoggedInSubmit(result)
+
+    expect(mockAuthStore.joinGroup).not.toHaveBeenCalled()
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
+
+  it('joins the group closest to the replier when there is no overlap - not first, not last', async () => {
+    mockMeValue = { id: 10, lat: REPLIER_LAT, lng: REPLIER_LNG }
+    mockMyidValue = 10
+    mockMyGroupsValue = {} // no memberships at all
+    mockGroupFixtures()
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [
+        { groupid: GROUP_FAR.id }, // first
+        { groupid: GROUP_CLOSEST.id }, // middle - the correct pick
+        { groupid: GROUP_MEDIUM.id }, // last
+      ],
+    })
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    await doLoggedInSubmit(result)
+
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
+      10,
+      GROUP_CLOSEST.id,
+      false
+    )
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
+
+  it('falls back to the last group in the list when the replier has no known location', async () => {
+    mockMeValue = { id: 10 } // no lat/lng
+    mockMyidValue = 10
+    mockMyGroupsValue = {}
+    mockGroupFixtures()
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [
+        { groupid: GROUP_FAR.id },
+        { groupid: GROUP_CLOSEST.id },
+        { groupid: GROUP_MEDIUM.id }, // last - previous (arbitrary) behaviour
+      ],
+    })
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    await doLoggedInSubmit(result)
+
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
+      10,
+      GROUP_MEDIUM.id,
+      false
+    )
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+    // No location known, so there's nothing to look distances up against.
+    expect(mockGroupFetch).not.toHaveBeenCalled()
+  })
+
+  it('joins a single-group post directly without any group-store lookup, even with a known location', async () => {
+    mockMeValue = { id: 10, lat: REPLIER_LAT, lng: REPLIER_LNG }
+    mockMyidValue = 10
+    mockMyGroupsValue = {} // no memberships
+    mockGroupFixtures()
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: GROUP_CLOSEST.id }],
+    })
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    await doLoggedInSubmit(result)
+
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
+      10,
+      GROUP_CLOSEST.id,
+      false
+    )
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+    // A single-group post has a forced answer - no need to look up distance.
+    expect(mockGroupFetch).not.toHaveBeenCalled()
   })
 })
 
