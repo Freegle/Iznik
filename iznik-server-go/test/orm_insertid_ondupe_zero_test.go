@@ -63,6 +63,7 @@ package test
 // bogus column in the second call's generated INSERT.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -141,13 +142,15 @@ func TestInsertID_WithResultSurvivesOnDuplicateNoOpUpdate(t *testing.T) {
 		res := gorm.WithResult()
 		row := map[string]interface{}{"domain": domain, "count": count}
 		err := db.Table(insertIDProbeTable).
-			Set("gorm:result", res).
-			Clauses(clause.OnConflict{
+			Clauses(res, clause.OnConflict{
 				DoUpdates: clause.Assignments(map[string]interface{}{"id": gorm.Expr("LAST_INSERT_ID(id)")}),
 			}).
 			Create(row).Error
-		if err != nil || res.Result == nil {
+		if err != nil {
 			return 0, err
+		}
+		if res.Result == nil {
+			return 0, fmt.Errorf("Clauses(gorm.WithResult()) did not populate Result")
 		}
 		return res.Result.LastInsertId()
 	}

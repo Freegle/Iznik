@@ -3,9 +3,10 @@
   "root": "iznik-server-go",
   "counts": {
     "converted": 1378,
-    "keep-raw": 244,
+    "keep-raw": 245,
+    "raw": 11,
     "retired": 22,
-    "test-fixture": 4234
+    "test-fixture": 4249
   },
   "sites": {
     "00053e96d76f": {
@@ -12953,6 +12954,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "19e7e64a183b": {
+      "id": "19e7e64a183b",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 128,
+      "function": "TestRetryExec_WithArgs",
+      "receiver": "database",
+      "method": "RetryExec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE users SET fullname = fullname WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "19ebff28e260": {
       "id": "19ebff28e260",
       "file": "iznik-server-go/test/ai_image_suppress_test.go",
@@ -14213,6 +14236,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "1c763aa6ec12": {
+      "id": "1c763aa6ec12",
+      "file": "iznik-server-go/user/user.go",
+      "line": 1868,
+      "function": "handleAddEmail",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users_emails"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 6,
+      "goldenSql": "INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, ?, NOW(), ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "1c816b81bfc1": {
       "id": "1c816b81bfc1",
       "file": "iznik-server-go/test/group_test.go",
@@ -14485,6 +14530,28 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "1d13aa15278e": {
+      "id": "1d13aa15278e",
+      "file": "iznik-server-go/donations/stripeipn.go",
+      "line": 107,
+      "function": "handleChargeSucceeded",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users_donations"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 10,
+      "goldenSql": "INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source, TransactionType, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "1d1ceb63b0ea": {
       "id": "1d1ceb63b0ea",
@@ -14936,7 +15003,7 @@
     "1dd99d969f8b": {
       "id": "1dd99d969f8b",
       "file": "iznik-server-go/test/orm_insertid_ondupe_zero_test.go",
-      "line": 85,
+      "line": 91,
       "function": "TestInsertID_OnDuplicateNoOpUpdateLosesAtID",
       "receiver": "db",
       "method": "Exec",
@@ -21044,6 +21111,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Held per group badge', 'Test body', 'Test body')",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "28d0a2ded0b5": {
+      "id": "28d0a2ded0b5",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 152,
+      "function": "TestRetryExecResult_BadSQL",
+      "receiver": "database",
+      "method": "RetryExecResult",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "nonexistent_table_xyz"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "UPDATE nonexistent_table_xyz SET foo = bar",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -31205,6 +31294,32 @@
       "status": "retired",
       "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at systemlogs/systemlogs.go:291. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
     },
+    "3cbad581b884": {
+      "id": "3cbad581b884",
+      "file": "iznik-server-go/message/message.go",
+      "line": 4658,
+      "function": "PutMessageAs",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "id",
+        "items"
+      ],
+      "mysqlisms": [
+        "last-insert-id",
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "3cbbbb9d99f9": {
       "id": "3cbbbb9d99f9",
       "file": "iznik-server-go/group/group_test.go",
@@ -31631,7 +31746,7 @@
     "3dcf5630e1b1": {
       "id": "3dcf5630e1b1",
       "file": "iznik-server-go/test/orm_insertid_ondupe_zero_test.go",
-      "line": 129,
+      "line": 138,
       "function": "TestInsertID_WithResultSurvivesOnDuplicateNoOpUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -32458,6 +32573,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "3f5f05129eb6": {
+      "id": "3f5f05129eb6",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 88,
+      "function": "TestRetryQuery_Success",
+      "receiver": "database",
+      "method": "RetryQuery",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT COUNT(*) FROM users WHERE id = 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "3f7c0f6a48d7": {
       "id": "3f7c0f6a48d7",
       "file": "iznik-server-go/test/messageoutcome_pending_test.go",
@@ -32744,6 +32881,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "40368b5c844a": {
+      "id": "40368b5c844a",
+      "file": "iznik-server-go/message/markseen.go",
+      "line": 128,
+      "function": "insertViewBatch",
+      "receiver": "database",
+      "method": "RetryExec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "messages_likes",
+        "timestamp"
+      ],
+      "mysqlisms": [
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": true,
+      "args": 2,
+      "goldenSql": "INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES {{expr}} ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "403972fe8a0e": {
       "id": "403972fe8a0e",
@@ -33272,6 +33434,28 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "DELETE FROM messages_groups WHERE msgid IN (?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "41260d96e86f": {
+      "id": "41260d96e86f",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 140,
+      "function": "TestRetryExecResult_ZeroRows",
+      "receiver": "database",
+      "method": "RetryExecResult",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "UPDATE users SET fullname = fullname WHERE id = 0",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -42493,7 +42677,7 @@
     "53ea7c086b86": {
       "id": "53ea7c086b86",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 101,
+      "line": 114,
       "function": "TestInsertID_IsPerStatementNotPerConnectionRace",
       "receiver": "db",
       "method": "Exec",
@@ -49528,6 +49712,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "61743c35d6ce": {
+      "id": "61743c35d6ce",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 146,
+      "function": "TestRetryExecResult_WithArgs",
+      "receiver": "database",
+      "method": "RetryExecResult",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE users SET fullname = fullname WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "61746c6621c7": {
       "id": "61746c6621c7",
       "file": "iznik-server-go/test/message_origin_group_test.go",
@@ -49774,6 +49980,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "61e26594c74d": {
+      "id": "61e26594c74d",
+      "file": "iznik-server-go/message/markseen.go",
+      "line": 104,
+      "function": "MarkSeen",
+      "receiver": "database",
+      "method": "RetryExec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "messages_likes",
+        "timestamp"
+      ],
+      "mysqlisms": [
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 5,
+      "goldenSql": "INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES (?, ?, ?, 0, ?) ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "61eacfe7082f": {
       "id": "61eacfe7082f",
@@ -51023,6 +51254,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "64439d15a9ad": {
+      "id": "64439d15a9ad",
+      "file": "iznik-server-go/newsfeed/newsfeed.go",
+      "line": 1363,
+      "function": "Post",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users_stories"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "6443a7273274": {
       "id": "6443a7273274",
@@ -52401,6 +52654,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "66db17ec82a8": {
+      "id": "66db17ec82a8",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 133,
+      "function": "TestRetryExec_BadSQL",
+      "receiver": "database",
+      "method": "RetryExec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "nonexistent_table_xyz"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "UPDATE nonexistent_table_xyz SET foo = bar",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "66dcfe4d081d": {
       "id": "66dcfe4d081d",
       "file": "iznik-server-go/test/location_velocity_test.go",
@@ -53271,6 +53546,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM microactions WHERE aiimageid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "68626be4681c": {
+      "id": "68626be4681c",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 123,
+      "function": "TestRetryExec_Success",
+      "receiver": "database",
+      "method": "RetryExec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "UPDATE users SET fullname = fullname WHERE id = 0",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -59821,6 +60118,32 @@
       "porting": "PostgreSQL/PostGIS: most ST_* names carry over, but three things change. ST_Distance_Sphere becomes ST_DistanceSphere or a cast to geography; MySQL's axis order for SRID 4326 is lat/lng while PostGIS is lng/lat, which silently transposes coordinates if unhandled; and MBRContains and friends have no PostGIS equivalent - use \u0026\u0026 (bounding-box overlap) or ST_Intersects. Getting the axis order wrong shows wrong nearby posts without erroring.",
       "category": "Spatial"
     },
+    "74620d093074": {
+      "id": "74620d093074",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "line": 159,
+      "function": "EnsureIsochroneExists",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "isochrones",
+        "locations"
+      ],
+      "mysqlisms": [
+        "insert-ignore",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 6,
+      "goldenSql": "INSERT IGNORE INTO isochrones (locationid, transport, minutes, polygon) SELECT ?, ?, ?, COALESCE(geometry, ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "7470288c95b7": {
       "id": "7470288c95b7",
       "file": "iznik-server-go/chat/chatmessage.go",
@@ -61979,6 +62302,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "77b7a706593a": {
+      "id": "77b7a706593a",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 94,
+      "function": "TestRetryQuery_WithArgs",
+      "receiver": "database",
+      "method": "RetryQuery",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT COUNT(*) FROM users WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "77c44a3c0af9": {
       "id": "77c44a3c0af9",
       "file": "iznik-server-go/test/user_merge_test.go",
@@ -63212,6 +63557,32 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "79e591242114": {
+      "id": "79e591242114",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "line": 298,
+      "function": "CreateIsochrone",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "isochrones_users",
+        "nickname"
+      ],
+      "mysqlisms": [
+        "last-insert-id",
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "INSERT INTO isochrones_users (userid, isochroneid, nickname) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE nickname = VALUES(nickname), id = LAST_INSERT_ID(id)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "79f37a360fe5": {
       "id": "79f37a360fe5",
@@ -64575,6 +64946,32 @@
       "reason": "Embeds utils.AuthorReachCapWhere; see the note on message/search.go. Named in plan 7.5.",
       "porting": "PostgreSQL: the hard one, and named in plan 7.5. AuthorReachCapWhere combines three things that each translate differently. JSON_EXTRACT / JSON_UNQUOTE become -\u003e\u003e or #\u003e\u003e and are not interchangeable with MySQL's on NULL handling. The haversine arithmetic is plain SQL and ports as-is, but should be replaced by ST_DWithin on geography, which is both correct and index-assisted. The spatial predicates follow the spatial note. Because this fragment is spliced into many callers, port it once behind the repository layer plan 7.5 asks for, and give it its own integration test before any caller moves.",
       "category": "Reach-cap WHERE fragment (plan 7.5 named)"
+    },
+    "7c79dc685e02": {
+      "id": "7c79dc685e02",
+      "file": "iznik-server-go/message/message.go",
+      "line": 3671,
+      "function": "applyPatchMessageCore",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "id",
+        "items"
+      ],
+      "mysqlisms": [
+        "last-insert-id",
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "7c97423b11f1": {
       "id": "7c97423b11f1",
@@ -72023,6 +72420,32 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "8b5c2fb72f8a": {
+      "id": "8b5c2fb72f8a",
+      "file": "iznik-server-go/test/insert_id_test.go",
+      "line": 24,
+      "function": "TestExecInsertGetID",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "id",
+        "items"
+      ],
+      "mysqlisms": [
+        "last-insert-id",
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "8b630aa01b5f": {
       "id": "8b630aa01b5f",
       "file": "iznik-server-go/test/insert_id_test.go",
@@ -74594,6 +75017,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "903690748476": {
+      "id": "903690748476",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 103,
+      "function": "TestRetryQuery_ScanIntoStruct",
+      "receiver": "database",
+      "method": "RetryQuery",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT id FROM users LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "903beb28b71c": {
       "id": "903beb28b71c",
@@ -78937,6 +79382,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "990cc13deb7e": {
+      "id": "990cc13deb7e",
+      "file": "iznik-server-go/address/address.go",
+      "line": 48,
+      "function": "Create",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "REPLACE",
+      "tables": [
+        "users_addresses"
+      ],
+      "mysqlisms": [
+        "replace-into"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 6,
+      "goldenSql": "REPLACE INTO users_addresses (userid, pafid, instructions, lat, lng) VALUES (?, ?, ?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "9927041a0bda": {
       "id": "9927041a0bda",
       "file": "iznik-server-go/test/newsfeed_test.go",
@@ -79452,6 +79921,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "9a37292fb851": {
+      "id": "9a37292fb851",
+      "file": "iznik-server-go/message/message.go",
+      "line": 4277,
+      "function": "findOrCreateUserForDraft",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "sessions"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 4,
+      "goldenSql": "INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId from the exact connection that ran it. See the shared note on CreatePartnerUser below: GORM's map-valued Create writes the new id back under the literal key \"@id\" when no schema is parsed, which is undocumented, contradicts GORM's own 'Create From Map' documentation, and has no coverage in GORM's test suite. Found by the Wave 2 write pilot.",
+      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
+      "category": "INSERT whose generated id is read back"
     },
     "9a37a8dda3d3": {
       "id": "9a37a8dda3d3",
@@ -82355,6 +82849,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "a02547df6c3a": {
+      "id": "a02547df6c3a",
+      "file": "iznik-server-go/test/orm_insertid_test.go",
+      "line": 224,
+      "function": "TestInsertID_WithResultBeatsTheRowsAffectedZeroTrap",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "a0364ddc241e": {
       "id": "a0364ddc241e",
       "file": "iznik-server-go/test/bulk_offer_test.go",
@@ -83340,6 +83856,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "a22d23d293c9": {
+      "id": "a22d23d293c9",
+      "file": "iznik-server-go/test/newsfeed_convert_test.go",
+      "line": 31,
+      "function": "makeChitChatMod",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "teams"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "INSERT INTO teams (name) VALUES ('ChitChat Moderation')",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "a232e8da4d5c": {
       "id": "a232e8da4d5c",
@@ -84731,6 +85269,32 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "a461dd5531b8": {
+      "id": "a461dd5531b8",
+      "file": "iznik-server-go/test/insert_id_test.go",
+      "line": 35,
+      "function": "TestExecInsertGetID",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "id",
+        "items"
+      ],
+      "mysqlisms": [
+        "last-insert-id",
+        "on-duplicate-key"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -92473,8 +93037,8 @@
     "b3a1c79e86e5": {
       "id": "b3a1c79e86e5",
       "file": "iznik-server-go/test/orm_insertid_ondupe_zero_test.go",
-      "line": 178,
-      "function": "TestInsertID_MapReuseAcrossCallsLeaksStaleID",
+      "line": 214,
+      "function": "TestInsertID_MapReuseAcrossCallsPoisonsTheSecondInsert",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -95231,6 +95795,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "b910ae2f51a9": {
+      "id": "b910ae2f51a9",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 109,
+      "function": "TestRetryQuery_BadSQL",
+      "receiver": "database",
+      "method": "RetryQuery",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "nonexistent_table_xyz"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT FROM nonexistent_table_xyz",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "b91b1dace445": {
       "id": "b91b1dace445",
@@ -104306,7 +104892,7 @@
     "caf954b5ea54": {
       "id": "caf954b5ea54",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 75,
+      "line": 79,
       "function": "TestInsertID_WithResultExposesSQLResult",
       "receiver": "db",
       "method": "Exec",
@@ -106157,7 +106743,7 @@
     "cec2724370a0": {
       "id": "cec2724370a0",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 167,
+      "line": 180,
       "function": "TestInsertID_ConcurrentInsertsEachGetTheirOwnID",
       "receiver": "db",
       "method": "Exec",
@@ -110076,6 +110662,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "d626395faf85": {
+      "id": "d626395faf85",
+      "file": "iznik-server-go/test/database_test.go",
+      "line": 115,
+      "function": "TestRetryQuery_NonExistentTable",
+      "receiver": "database",
+      "method": "RetryQuery",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "table_that_does_not_exist_abc123"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT COUNT(*) FROM table_that_does_not_exist_abc123",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "d62b9f1b747c": {
       "id": "d62b9f1b747c",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
@@ -111598,6 +112206,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "d91a1a5d6b27": {
+      "id": "d91a1a5d6b27",
+      "file": "iznik-server-go/isochrone/isochrone.go",
+      "line": 148,
+      "function": "EnsureIsochroneExists",
+      "receiver": "database",
+      "method": "ExecInsertGetID",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "isochrones"
+      ],
+      "mysqlisms": [
+        "insert-ignore",
+        "spatial"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 11,
+      "goldenSql": "INSERT IGNORE INTO isochrones (locationid, transport, minutes, source, polygon) VALUES (?, ?, ?, ?, CASE WHEN ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) IS NULL THEN ST_GeomFromText(?, ?) ELSE ST_SIMPLIFY(ST_GeomFromText(?, ?), 0.01) END)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "d91c81b6c972": {
       "id": "d91c81b6c972",
@@ -116674,7 +117307,7 @@
     "e3554e58c8f3": {
       "id": "e3554e58c8f3",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 43,
+      "line": 44,
       "function": "TestInsertID_MapCreateReturnsIDUnderAtID",
       "receiver": "db",
       "method": "Exec",

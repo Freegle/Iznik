@@ -27,6 +27,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // insertIDProbeTable uses a table that already exists in the test schema and
@@ -69,17 +70,29 @@ func TestInsertID_WithResultExposesSQLResult(t *testing.T) {
 	res := gorm.WithResult()
 	row := map[string]interface{}{"domain": "orm-insertid-probe-2.example", "count": 1}
 
-	if err := db.Table(insertIDProbeTable).Set("gorm:result", res).Create(row).Error; err != nil {
+	// gorm.WithResult() returns a value implementing ModifyStatement, which GORM
+	// applies through Clauses - NOT through Set("gorm:result", ...), which does
+	// nothing and was my mistake the first time round (generics.go:22).
+	if err := db.Table(insertIDProbeTable).Clauses(res).Create(row).Error; err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	defer db.Exec("DELETE FROM "+insertIDProbeTable+" WHERE domain = ?", "orm-insertid-probe-2.example")
 
 	if res.Result == nil {
-		t.Skip("gorm:result not populated by this GORM version; the @id path above is the one to use")
+		t.Fatal("Clauses(gorm.WithResult()) did not populate Result; check generics.go ModifyStatement")
 	}
 	id, err := res.Result.LastInsertId()
 	if err != nil || id <= 0 {
 		t.Fatalf("LastInsertId from gorm.WithResult: id=%d err=%v", id, err)
+	}
+
+	// It must name the row we wrote, not merely be positive.
+	var domain string
+	if err := db.Table(insertIDProbeTable).Select("domain").Where("id = ?", id).Row().Scan(&domain); err != nil {
+		t.Fatalf("reading back %d: %v", id, err)
+	}
+	if domain != "orm-insertid-probe-2.example" {
+		t.Fatalf("WithResult id %d points at %q", id, domain)
 	}
 }
 
@@ -194,4 +207,59 @@ func TestInsertID_ConcurrentInsertsEachGetTheirOwnID(t *testing.T) {
 	if got != workers {
 		t.Errorf("only %d of %d workers reported", got, workers)
 	}
+}
+
+// TestInsertID_WithResultBeatsTheRowsAffectedZeroTrap asks whether the raw
+// sql.Result route sidesteps the one thing that blocks converting the ten
+// ON DUPLICATE KEY UPDATE ... id = LAST_INSERT_ID(id) sites.
+//
+// GORM's own writeback is guarded by RowsAffected != 0 (callbacks/create.go),
+// so a no-op upsert leaves "@id" absent. But Clauses(gorm.WithResult()) hands
+// back the driver's sql.Result itself, and LastInsertId there is read straight
+// off the OK packet with no RowsAffected condition anywhere near it. If that
+// holds, those ten are convertible after all and need no fallback lookup.
+func TestInsertID_WithResultBeatsTheRowsAffectedZeroTrap(t *testing.T) {
+	db := database.DBConn
+	domain := "orm-insertid-withresult-noop.example"
+	defer db.Exec("DELETE FROM "+insertIDProbeTable+" WHERE domain = ?", domain)
+
+	upsert := func() (int64, int64, error) {
+		res := gorm.WithResult()
+		row := map[string]interface{}{"domain": domain, "count": 1}
+		tx := db.Table(insertIDProbeTable).Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			},
+		}).Create(row)
+		if tx.Error != nil {
+			return 0, 0, tx.Error
+		}
+		if res.Result == nil {
+			return 0, tx.RowsAffected, nil
+		}
+		id, err := res.Result.LastInsertId()
+		return id, tx.RowsAffected, err
+	}
+
+	firstID, _, err := upsert()
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if firstID <= 0 {
+		t.Fatalf("first upsert reported no id")
+	}
+
+	// Identical values: the duplicate-key branch runs and changes nothing, so
+	// MySQL reports 0 rows affected. This is precisely where "@id" goes missing.
+	secondID, affected, err := upsert()
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if secondID != firstID {
+		t.Fatalf("no-op upsert via WithResult returned id %d, want %d (rowsAffected=%d) - "+
+			"the sql.Result route does NOT beat the trap, so the ten LAST_INSERT_ID(id) sites "+
+			"still need a fallback lookup", secondID, firstID, affected)
+	}
+	t.Logf("WithResult returned the correct id %d even with rowsAffected=%d, so the ten "+
+		"LAST_INSERT_ID(id) sites are convertible without a fallback lookup", secondID, affected)
 }

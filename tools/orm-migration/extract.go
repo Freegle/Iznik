@@ -102,6 +102,39 @@ var sqlMethods = map[string]bool{
 	"Prepare": true, "PrepareContext": true,
 }
 
+// sqlWrappers are helpers in this codebase that TAKE a SQL string and run it
+// themselves. Their call sites are real raw SQL and have to be inventoried, but
+// they are invisible to a scan that only knows GORM's method names, because the
+// call looks like database.RetryExec(db, "INSERT ...", args...) rather than
+// db.Exec(...).
+//
+// This was the most serious finding of the keep-raw review, and it is not about
+// convertibility at all - it is about the inventory being wrong. Plan 7.1's
+// claim is that the manifest is "exhaustive by construction" because it is
+// generated from the code. It was not: message/markseen.go has two production
+// INSERT ... ON DUPLICATE KEY UPDATE statements running through RetryExec, and
+// the manifest contained ZERO sites for that file. Not deferred, not keep-raw -
+// absent, and so invisible to every gate built on top.
+//
+// The argument index matters because these do not all put the SQL first:
+// RetryQuery takes a destination before it.
+var sqlWrappers = map[string]int{
+	"RetryExec":       1, // database.RetryExec(db, sql, args...)
+	"RetryExecResult": 1, // database.RetryExecResult(db, sql, args...)
+	"RetryQuery":      2, // database.RetryQuery(db, dest, sql, args...)
+	"ExecInsertGetID": 1, // database.ExecInsertGetID(db, query, args...)
+}
+
+// sqlArgIndex returns the position of the SQL string in a call to name, and
+// whether name carries SQL at all.
+func sqlArgIndex(name string) (int, bool) {
+	if sqlMethods[name] {
+		return 0, true
+	}
+	i, ok := sqlWrappers[name]
+	return i, ok
+}
+
 // leadingKeyword matches the first word of a statement. This is the filter that
 // keeps non-SQL Exec() calls (template execution, os/exec) out of the manifest:
 // if the folded first argument does not begin with a SQL verb, it is not a site.
@@ -417,12 +450,16 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 					return true
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || !sqlMethods[sel.Sel.Name] {
+				if !ok {
+					return true
+				}
+				argIdx, carriesSQL := sqlArgIndex(sel.Sel.Name)
+				if !carriesSQL || len(call.Args) <= argIdx {
 					return true
 				}
 
 				recv := exprString(sel.X)
-				text, dynamic, ok := foldWith(call.Args[0], consts)
+				text, dynamic, ok := foldWith(call.Args[argIdx], consts)
 
 				var sql, source string
 				switch {
@@ -455,7 +492,7 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, co
 					// unclassifiable-but-present is what keeps the inventory
 					// exhaustive; a site absent from the manifest is invisible to
 					// the ratchet, which is the one failure the plan forbids.
-					sql = "{{built at runtime: " + exprString(call.Args[0]) + "}}"
+					sql = "{{built at runtime: " + exprString(call.Args[argIdx]) + "}}"
 					dynamic = true
 					source = "variable"
 
