@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -121,6 +122,17 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 		collapseInLists(wantCanon) == collapseInLists(gotCanon) {
 		return
 	}
+
+	// Fourth acceptable form: column ordering. GORM emits map-valued Create
+	// columns and Updates assignments alphabetically, which a handwritten
+	// statement rarely matches. normaliseColumnOrder moves each column together
+	// with its value, so the mapping is preserved and a mispaired conversion
+	// still fails; see its doc comment.
+	wantOrdered := normaliseColumnOrder(collapseInLists(wantCanon))
+	if wantOrdered == normaliseColumnOrder(collapseInLists(gotCanon)) ||
+		wantOrdered == normaliseColumnOrder(collapseInLists(resolved)) {
+		return
+	}
 	// Report against whichever form is closer to the golden, so the failure is
 	// about the real difference rather than about placeholder spelling. A
 	// golden that kept "limit ?" was dynamic to begin with, so the unresolved
@@ -201,6 +213,97 @@ var inListPattern = regexp.MustCompile(`(?i)\bin\s*(?:\(\s*\?(?:\s*,\s*\?)*\s*\)
 // one alone.
 func collapseInLists(sql string) string {
 	return inListPattern.ReplaceAllString(sql, "in ?")
+}
+
+var (
+	// Single-row INSERT with an explicit column list. Multi-row VALUES and
+	// INSERT ... SELECT deliberately do not match, and are left alone.
+	insertColumnsPattern = regexp.MustCompile(`(?is)^(insert(?:\s+ignore)?\s+into\s+\S+\s*)\(([^()]*)\)\s*values\s*\(([^()]*)\)(.*)$`)
+	// The SET list of an UPDATE, up to WHERE or end of statement.
+	updateSetPattern = regexp.MustCompile(`(?is)^(update\s+.*?\sset\s+)(.*?)(\s+where\s.*|\s*)$`)
+)
+
+// normaliseColumnOrder rewrites an INSERT's column list, and an UPDATE's SET
+// list, into a canonical order.
+//
+// GORM emits the columns of a map-valued Create, and the assignments of a
+// map-valued Updates, in ALPHABETICAL key order. A handwritten statement almost
+// never uses that order, so the two diverge on ordering alone. That is a large
+// systemic category rather than a handful of sites: writing an approved diff
+// for each would be pure toil, and would bury the diffs that record something
+// real.
+//
+// This is safe because it moves each column TOGETHER WITH its value, so the
+// column-to-value mapping is preserved exactly. A conversion that paired a
+// column with the wrong value still produces different pairs and still fails.
+// It is applied to both sides of the comparison, never to one alone, and it
+// only touches the single-row INSERT and the SET list; anything else, including
+// multi-row VALUES and INSERT ... SELECT, is returned unchanged.
+func normaliseColumnOrder(sql string) string {
+	trimmed := strings.TrimSpace(sql)
+
+	if m := insertColumnsPattern.FindStringSubmatch(trimmed); m != nil {
+		cols := splitList(m[2])
+		vals := splitList(m[3])
+		if len(cols) == len(vals) && len(cols) > 1 {
+			type pair struct{ col, val string }
+			pairs := make([]pair, len(cols))
+			for i := range cols {
+				pairs[i] = pair{cols[i], vals[i]}
+			}
+			sort.Slice(pairs, func(i, j int) bool { return pairs[i].col < pairs[j].col })
+
+			c := make([]string, len(pairs))
+			v := make([]string, len(pairs))
+			for i, p := range pairs {
+				c[i], v[i] = p.col, p.val
+			}
+			return m[1] + "(" + strings.Join(c, ", ") + ") values (" + strings.Join(v, ", ") + ")" + m[4]
+		}
+		return trimmed
+	}
+
+	if m := updateSetPattern.FindStringSubmatch(trimmed); m != nil {
+		assignments := splitList(m[2])
+		if len(assignments) > 1 {
+			sort.Strings(assignments)
+			return m[1] + strings.Join(assignments, ", ") + m[3]
+		}
+	}
+	return trimmed
+}
+
+// splitList splits a comma-separated SQL fragment at top level, so that commas
+// inside a function call such as COALESCE(a, b) do not split it.
+func splitList(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	inQuote := byte(0)
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			if c == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"', '`':
+			inQuote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, strings.TrimSpace(s[start:]))
+	return out
 }
 
 // resolveLimitOffset puts the bound LIMIT and OFFSET values back into the

@@ -6,11 +6,18 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"gorm.io/gorm"
 )
 
 // saveProfileImage inserts a profile picture URL for a user.
 // GetProfileRecord uses ORDER BY id DESC LIMIT 1, so the latest INSERT is always shown.
 // Only called when a real (non-silhouette) picture URL is available.
+//
+// Left raw (9ccb23bbcdaf, wave 2): golden column order (userid, url, default,
+// contenttype) is not alphabetical and two of the four values are literals
+// (0, 'image/jpeg') the golden never binds, so a map-valued Create would both
+// reorder the column list and bind values the golden writes inline - reported
+// rather than forced.
 func saveProfileImage(userID uint64, pictureURL string) {
 	if pictureURL == "" {
 		return
@@ -73,6 +80,17 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		// directly from the MySQL protocol response — never issue a separate
 		// SELECT LAST_INSERT_ID() as it's unsafe under parallel load (GORM's
 		// connection pool may assign a different connection).
+		//
+		// Left raw (bbbc465b075c, wave 2): this INSERT exists specifically to
+		// call sql.Result.LastInsertId() on the same connection that ran it -
+		// the read/write split makes a follow-up SELECT unsafe. GORM's
+		// map-Create id writeback for a schema-less Table()+map call is
+		// undocumented behaviour, not something to rely on for a fresh user
+		// id (see the Wave 2 pilot's writeup for the same reasoning on
+		// 698ab1090087/c1fca2fe89a0/da7e48606815). The golden column order
+		// (fullname, firstname, lastname, added) is also not alphabetical,
+		// so even setting the id question aside, a map Create would reorder
+		// the column list.
 		sqlDB, err := db.DB()
 		if err != nil {
 			return 0, fmt.Errorf("failed to get sql.DB: %w", err)
@@ -91,6 +109,10 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		userID = uint64(lastID)
 
 		// Add email if provided.
+		// Left raw (f6bd87f2df8e, wave 2): golden column order (userid, email,
+		// preferred, validated, canon, backwards) is not alphabetical, so a
+		// map-valued Create would reorder the column list - reported rather
+		// than forced.
 		if email != "" {
 			canon := user.CanonicalizeEmail(email)
 			db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
@@ -117,10 +139,15 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	}
 
 	// Update last access on the social login record.
-	db.Exec("UPDATE users_logins SET lastaccess = NOW() WHERE userid = ? AND type = ?",
-		userID, loginType)
+	// ORM migration site cdcc4a38c65d (wave 2).
+	db.Table("users_logins").Where("userid = ? AND type = ?", userID, loginType).
+		Update("lastaccess", gorm.Expr("NOW()"))
 
 	// Update name if missing.
+	// Left raw (994ffacdcb47, wave 2): three SET columns whose golden order
+	// (firstname, lastname, fullname) is not alphabetical ("fullname" sorts
+	// before "lastname"), so Updates(map) would reorder the SET list -
+	// reported rather than forced.
 	if fullname != "" {
 		db.Exec("UPDATE users SET firstname = ?, lastname = ?, fullname = ? WHERE id = ? AND (fullname IS NULL OR fullname = '')",
 			firstname, lastname, fullname, userID)

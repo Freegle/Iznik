@@ -531,6 +531,9 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 	newKey := utils.RandomHex(16)
 
 	// Insert the login key. Use uid=userid as a unique identifier.
+	// Left raw (812775236c88, wave 2): golden column order (userid, type, uid,
+	// credentials) is not alphabetical, so a map-valued Create would reorder
+	// the column list - reported rather than forced.
 	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, ?, ?, ?)",
 		userID, utils.LOGIN_TYPE_LINK, fmt.Sprintf("%d", userID), newKey)
 
@@ -654,18 +657,28 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// log first (byuser NULL — no acting Freegle user in the partner flow), since
 		// the eager delete leaves nothing for the later cleanup cron to log.
 		user.LogGroupLeftForApprovedMemberships(db, targetID, 0)
-		db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
+		// ORM migration site aeda8c91f9ff (wave 2). Converted together with its
+		// identical twin in the self-service flow below (54406e904bd5).
+		db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
 
-		db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
+		// ORM migration site c38c5422a649 (wave 2). Converted together with its
+		// identical twin in the self-service flow below (da41536965a2).
+		db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
 
 		// V1 parity (User::delete with $log=TRUE): audit trail for the deletion.
 		// byuser is NULL because there is no acting Freegle user in the partner flow.
+		// Left raw (02506a663a0e, wave 2): golden column order (timestamp, type,
+		// subtype, user, byuser) is not alphabetical, so a map-valued Create
+		// would reorder the column list - reported rather than forced.
 		db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, NULL)",
 			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID)
 
 		// GDPR erasure: partner-deleted accounts have no recovery affordance (the partner
 		// owns the contract), so unlike the self-service flow we blank message content
 		// immediately rather than deferring to the 14-day grace cleanup.
+		// Left raw (735b4f446b8e, wave 2): nine SET columns whose golden order is
+		// not alphabetical, so Updates(map) would reorder the SET list - reported
+		// rather than forced.
 		db.Exec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", targetID)
 		db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID)
 
@@ -712,7 +725,9 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	// audit log first (byuser = the user themselves), since the eager delete leaves
 	// nothing for the later cleanup cron to log.
 	user.LogGroupLeftForApprovedMemberships(db, myid, myid)
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED)
+	// ORM migration site 54406e904bd5 (wave 2). Converted together with its
+	// identical twin in the partner flow above (aeda8c91f9ff).
+	db.Table("memberships").Where("userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Delete(nil)
 
 	// Soft-delete: user can recover by logging back in within ~14 days.
 	// GDPR erasure of message content (and any other personal data) is performed by the
@@ -720,14 +735,19 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	// UserManagementService::forgetInactiveUsers → User::forget). Doing it here would
 	// destroy data that the user could otherwise restore by signing back in — which is
 	// exactly the recovery affordance the soft-delete is supposed to preserve.
-	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", myid)
+	// ORM migration site da41536965a2 (wave 2). Converted together with its
+	// identical twin in the partner flow above (c38c5422a649).
+	db.Table("users").Where("id = ?", myid).Update("deleted", gorm.Expr("NOW()"))
 
 	// V1 parity (User::delete with $log=TRUE): record the deletion in the audit log.
+	// Left raw (9f1d1bde8950, wave 2): same golden column-order mismatch as
+	// 02506a663a0e above - reported rather than forced.
 	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
 		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, myid, myid)
 
 	// Destroy session so the user is logged out.
-	db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
+	// ORM migration site 5e425bd87624 (wave 2).
+	db.Table("sessions").Where("userid = ?", myid).Delete(nil)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -1798,7 +1818,12 @@ func PatchSession(c *fiber.Ctx) error {
 			}
 
 			// Clear all preferred flags for this user, then set the confirmed email as preferred.
-			db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", myid)
+			// ORM migration site fc7cf4ff8b35 (wave 2).
+			db.Table("users_emails").Where("userid = ?", myid).Update("preferred", gorm.Expr("0"))
+			// Left raw (db15655f044f, wave 2): four SET columns whose golden
+			// order (userid, preferred, validated, validatekey) is not
+			// alphabetical, so Updates(map) would reorder the SET list -
+			// reported rather than forced.
 			db.Exec("UPDATE users_emails SET userid = ?, preferred = 1, validated = NOW(), validatekey = NULL WHERE id = ?", myid, mail.ID)
 
 			// Confirming the key proves this address accepts mail: the member had to
@@ -1813,8 +1838,10 @@ func PatchSession(c *fiber.Ctx) error {
 			// unbounce: the per-address timestamp (gates welcome mail via
 			// whereNull('bounced')) and the per-user suspension flag.
 			// Safe if the address later fails again: BounceService re-suspends.
-			db.Exec("UPDATE users_emails SET bounced = NULL WHERE id = ?", mail.ID)
-			db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", myid)
+			// ORM migration site 54fd76b4cc2c (wave 2).
+			db.Table("users_emails").Where("id = ?", mail.ID).Update("bounced", gorm.Expr("NULL"))
+			// ORM migration site 3fc481b1a1a6 (wave 2).
+			db.Table("users").Where("id = ?", myid).Update("bouncing", gorm.Expr("0"))
 		}
 
 		return c.JSON(fiber.Map{
@@ -1928,6 +1955,9 @@ func PatchSession(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Left raw (3e8f726f0ef8, wave 2): golden column order (userid,
+			// text, timestamp) is not alphabetical, so a map-valued Create
+			// would reorder the column list - reported rather than forced.
 			db.Exec("INSERT INTO users_aboutme (userid, text, timestamp) VALUES (?, ?, NOW())", myid, *req.Aboutme)
 		}()
 	}
@@ -2041,10 +2071,12 @@ func DeleteSession(c *fiber.Ctx) error {
 
 		if series > 0 {
 			// Close the whole current login series (all its tabs/token rotations).
-			db.Exec("DELETE FROM sessions WHERE userid = ? AND series = ?", myid, series)
+			// ORM migration site c49c4a6dd162 (wave 2).
+			db.Table("sessions").Where("userid = ? AND series = ?", myid, series).Delete(nil)
 		} else if sessionId > 0 {
 			// Series unavailable but the row is known — delete just that row.
-			db.Exec("DELETE FROM sessions WHERE id = ? AND userid = ?", sessionId, myid)
+			// ORM migration site 5f7862e7e461 (wave 2).
+			db.Table("sessions").Where("id = ? AND userid = ?", sessionId, myid).Delete(nil)
 		}
 		// If the current session cannot be identified at all, do NOT delete every
 		// session for the user. A logout that can't scope itself must no-op rather

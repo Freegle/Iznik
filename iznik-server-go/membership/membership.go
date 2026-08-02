@@ -152,16 +152,18 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Hold":
-		if result := db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
-			myid, req.Userid, req.Groupid); result.Error != nil {
+		// ORM migration site 7301cba96a50 (wave 2).
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", myid); result.Error != nil {
 			stdlog.Printf("Failed to hold membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_HOLD, req.Groupid, req.Userid, myid, "")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Release":
-		db.Exec("UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ORM migration site 19356cdf20b2 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", gorm.Expr("NULL"))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_RELEASE, req.Groupid, req.Userid, myid, "")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -186,8 +188,11 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Approve":
-		if result := db.Exec("UPDATE memberships SET collection = ?, heldby = NULL WHERE userid = ? AND groupid = ?",
-			utils.COLLECTION_APPROVED, req.Userid, req.Groupid); result.Error != nil {
+		// ORM migration site eeb78024d807 (wave 2). Map keys "collection" and
+		// "heldby" already sort alphabetically in that order, so Updates(map)
+		// emits the same SET order as the golden without needing an approved diff.
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Updates(map[string]interface{}{"collection": utils.COLLECTION_APPROVED, "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			stdlog.Printf("Failed to approve membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
 
@@ -208,8 +213,9 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Reject", "Delete Approved Member":
-		if result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection IN (?, ?)",
-			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED); result.Error != nil {
+		// ORM migration site dd9f2b939bce (wave 2).
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection IN (?, ?)",
+			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED).Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to reject membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
 
@@ -236,10 +242,14 @@ func PostMemberships(c *fiber.Ctx) error {
 	case "Ban":
 		// V1 parity: removeMembership($ban=true) deletes the memberships row entirely, then
 		// writes to users_banned. There is no memberships.collection='Banned' row in V1.
-		if result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid); result.Error != nil {
+		// ORM migration site 98ee705a8a74 (wave 2). Converted together with its
+		// identical twin in DeleteMemberships (d60d7b2e0f2a): a half-converted
+		// pair renumbers the survivor's site ID, so gate (h) refuses the split state.
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to delete membership for ban user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
+		// users_banned INSERT ... ON DUPLICATE KEY UPDATE left raw: wave 3 (upsert), not wave 2.
 		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
 			req.Userid, req.Groupid, myid)
 		// V1 parity: removeMembership($ban=true) logs type=Group/subtype=Left/text="via ban"
@@ -248,21 +258,23 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	case "Unban":
 		// V1 parity: unban() deletes from users_banned only — there is no memberships row to delete.
-		db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ORM migration site 3747c49ac43e (wave 2).
+		db.Table("users_banned").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).Delete(nil)
 		// V1 parity: unban() does not log.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewHold":
 		// ReviewHold is used in the chat review context - sets heldby on the membership.
-		db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
-			myid, req.Userid, req.Groupid)
+		// ORM migration site 39aa0175d3ce (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", myid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewRelease":
 		// ReviewRelease clears the heldby on the membership (chat review context).
-		db.Exec("UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ORM migration site 8190a1ccc42c (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
@@ -271,9 +283,18 @@ func PostMemberships(c *fiber.Ctx) error {
 		// otherwise the row keeps a heldby that nothing clears, and the member shows as
 		// held again the next time they are flagged. Only this group's row is touched,
 		// so a hold on an adjacent community is left alone.
-		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
-			"WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		//
+		// ORM migration site 93875f6e74f0 (wave 2). Updates(map) emits the SET
+		// list alphabetically, which is not the golden's order; the harness
+		// normalises column order on both sides, moving each column with its
+		// value, so the pairing is still proved.
+		db.Table("memberships").
+			Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Updates(map[string]interface{}{
+				"reviewedat":        gorm.Expr("NOW()"),
+				"reviewrequestedat": gorm.Expr("NULL"),
+				"heldby":            gorm.Expr("NULL"),
+			})
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "HappinessReviewed":
@@ -284,7 +305,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "happiness must be a valid ID")
 		}
-		db.Exec("UPDATE messages_outcomes SET reviewed = 1 WHERE id = ?", happinessID)
+		// ORM migration site f15eacecdc43 (wave 2).
+		db.Table("messages_outcomes").Where("id = ?", happinessID).Update("reviewed", gorm.Expr("1"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	default:
@@ -748,7 +770,8 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	for _, r := range rows {
 		if !hasLogins[r.User1] || !hasLogins[r.User2] {
 			// Auto-mark as notified since these are not actionable.
-			db.Exec("UPDATE users_related SET notified = 1 WHERE id = ?", r.ID)
+			// ORM migration site 0477a681ffd6 (wave 2).
+			db.Table("users_related").Where("id = ?", r.ID).Update("notified", gorm.Expr("1"))
 			continue
 		}
 
@@ -1231,7 +1254,10 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
 	}
 
-	// Insert membership.
+	// Insert membership. Left raw (759766c83c01, wave 2): golden column order
+	// (userid, groupid, role, collection) is not alphabetical, so a map-valued
+	// Create would render "(collection, groupid, role, userid)" instead -
+	// reported rather than forced. Identical twin: addMemberToGroup (27aa0e237120).
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
 		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
 
@@ -1239,6 +1265,10 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// Laravel batch (memberships:process) sends the group welcome email,
 	// runs spam checks, and applies review flags. Without this row the
 	// cron has nothing to do and welcomes are silently dropped.
+	// Left raw (32d907621f09, wave 2): same map-Create column-reorder issue
+	// (golden order userid, groupid, collection, processingrequired is not
+	// alphabetical) plus a literal "1" the golden never binds. Identical twin:
+	// addMemberToGroup (2f0c55ec88d6).
 	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
 		userid, groupid, utils.COLLECTION_APPROVED)
 
@@ -1281,7 +1311,9 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
-	// Insert membership as approved member.
+	// Insert membership as approved member. Left raw (27aa0e237120, wave 2):
+	// identical twin of putMembershipsPartner's insert (759766c83c01) - same
+	// map-Create column-reorder issue, reported rather than forced.
 	result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
 		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
 
@@ -1290,6 +1322,8 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		// Laravel batch (memberships:process) sends the group welcome email,
 		// runs spam checks, and applies review flags. Without this row the
 		// cron has nothing to do and welcomes are silently dropped.
+		// Left raw (2f0c55ec88d6, wave 2): identical twin of putMembershipsPartner's
+		// insert (32d907621f09) - same map-Create column-reorder issue.
 		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
 			userid, groupid, utils.COLLECTION_APPROVED)
 
@@ -1367,7 +1401,10 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
-		db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userid, req.Groupid)
+		// ORM migration site d60d7b2e0f2a (wave 2). Converted together with its
+		// identical twin in PostMemberships's Ban action (98ee705a8a74).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).Delete(nil)
+		// users_banned INSERT ... ON DUPLICATE KEY UPDATE left raw: wave 3 (upsert), not wave 2.
 		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
 			userid, req.Groupid, myid)
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "via ban")
@@ -1386,8 +1423,10 @@ func DeleteMemberships(c *fiber.Ctx) error {
 	}
 
 	// Remove the membership.
-	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-		userid, req.Groupid, utils.COLLECTION_APPROVED)
+	// ORM migration site 535641088fb3 (wave 2). Converted together with its
+	// identical twin in deleteMembershipsPartner (0fe2da6629e8).
+	result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
+		userid, req.Groupid, utils.COLLECTION_APPROVED).Delete(nil)
 
 	if result.RowsAffected > 0 {
 		// V1 parity: User::removeMembership() always logs Group/Left when the
@@ -1436,8 +1475,10 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 	}
 
 	// Remove the membership.
-	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-		userid, groupid, utils.COLLECTION_APPROVED)
+	// ORM migration site 0fe2da6629e8 (wave 2). Converted together with its
+	// identical twin in DeleteMemberships (535641088fb3).
+	result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
+		userid, groupid, utils.COLLECTION_APPROVED).Delete(nil)
 
 	if result.RowsAffected > 0 {
 		// V1 parity: User::removeMembership() always logs Group/Left when the
@@ -1512,20 +1553,23 @@ func PatchMemberships(c *fiber.Ctx) error {
 
 	// Update whichever settings were provided.
 	if req.Emailfrequency != nil {
-		db.Exec("UPDATE memberships SET emailfrequency = ? WHERE userid = ? AND groupid = ?",
-			int(*req.Emailfrequency), userid, req.Groupid)
+		// ORM migration site c3cff12ce730 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("emailfrequency", int(*req.Emailfrequency))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
 			fmt.Sprintf("emailfrequency=%d", int(*req.Emailfrequency)))
 	}
 
 	if req.Eventsallowed != nil {
-		db.Exec("UPDATE memberships SET eventsallowed = ? WHERE userid = ? AND groupid = ?",
-			int(*req.Eventsallowed), userid, req.Groupid)
+		// ORM migration site 02963d1e570a (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("eventsallowed", int(*req.Eventsallowed))
 	}
 
 	if req.Volunteeringallowed != nil {
-		db.Exec("UPDATE memberships SET volunteeringallowed = ? WHERE userid = ? AND groupid = ?",
-			int(*req.Volunteeringallowed), userid, req.Groupid)
+		// ORM migration site 54535c67055f (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("volunteeringallowed", int(*req.Volunteeringallowed))
 	}
 
 	if req.Settings != nil {
@@ -1548,8 +1592,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 				}
 			}
 		}
-		db.Exec("UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
-			string(*req.Settings), userid, req.Groupid)
+		// ORM migration site 3d8f2d88b42d (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("settings", string(*req.Settings))
 	}
 
 	if req.Configid != nil {
@@ -1565,8 +1610,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 		if configID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Config not found")
 		}
-		db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
-			*req.Configid, userid, req.Groupid)
+		// ORM migration site 683e16a0d881 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("configid", *req.Configid)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_CONFIG_CHANGE, req.Groupid, userid, myid,
 			fmt.Sprintf("configid=%d", *req.Configid))
 	}
@@ -1576,8 +1622,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change posting status")
 		}
-		db.Exec("UPDATE memberships SET ourPostingStatus = ? WHERE userid = ? AND groupid = ?",
-			*req.OurPostingStatus, userid, req.Groupid)
+		// ORM migration site 5a436bd174af (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("ourPostingStatus", *req.OurPostingStatus)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_POSTING_STATUS, req.Groupid, userid, myid,
 			*req.OurPostingStatus)
 	}
@@ -1602,8 +1649,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 			}
 		}
 
-		db.Exec("UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ? AND collection = ?",
-			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
+		// ORM migration site 948119564065 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", userid, req.Groupid, utils.COLLECTION_APPROVED).
+			Update("role", targetRole)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
 
 		// V1 parity (User::updateSystemRole, legacy V1 PHP implementation):
@@ -1620,8 +1668,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 			// Promote: only flip 'User' to 'Moderator'. V1 used the same
 			// guard (UPDATE … WHERE systemrole = 'User') so Support / Admin
 			// users are never silently demoted to Moderator.
-			db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-				utils.SYSTEMROLE_MODERATOR, userid, utils.SYSTEMROLE_USER)
+			// ORM migration site 58a93e92bdd0 (wave 2).
+			db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_USER).
+				Update("systemrole", utils.SYSTEMROLE_MODERATOR)
 		} else {
 			// Demote: V1 only reverts systemrole to 'User' if the user no
 			// longer holds Moderator / Owner on ANY other approved group.
@@ -1632,8 +1681,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
 				Count(&remaining)
 			if remaining == 0 {
-				db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-					utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)
+				// ORM migration site e28d4a7241be (wave 2).
+				db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_MODERATOR).
+					Update("systemrole", utils.SYSTEMROLE_USER)
 			}
 		}
 	}
