@@ -220,7 +220,9 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT id, archived, externaluid, externalmods FROM volunteering_images WHERE opportunityid = ? ORDER BY id DESC LIMIT 1", id).Scan(&image)
+			// ORM migration site fff128f61679 (wave 1).
+			db.Table("volunteering_images").Select("id, archived, externaluid, externalmods").
+				Where("opportunityid = ?", id).Order("id DESC").Limit(1).Scan(&image)
 
 			if image.ID > 0 {
 				if image.Externaluid != "" {
@@ -243,7 +245,8 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT groupid FROM volunteering_groups WHERE volunteeringid = ?", id).Pluck("groupid", &groups)
+			// ORM migration site e0cd4a54dacc (wave 1).
+			db.Table("volunteering_groups").Where("volunteeringid = ?", id).Pluck("groupid", &groups)
 		}()
 
 		wg.Add(1)
@@ -251,7 +254,8 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT * FROM volunteering_dates WHERE volunteeringid = ?", id).Scan(&dates)
+			// ORM migration site b0844c29851e (wave 1).
+			db.Table("volunteering_dates").Where("volunteeringid = ?", id).Scan(&dates)
 		}()
 
 		wg.Wait()
@@ -298,7 +302,8 @@ func canModify(myid uint64, volunteeringID uint64) bool {
 	db := database.DBConn
 
 	var ownerID *uint64
-	db.Raw("SELECT userid FROM volunteering WHERE id = ?", volunteeringID).Scan(&ownerID)
+	// ORM migration site e12bc9781fda (wave 1).
+	db.Table("volunteering").Select("userid").Where("id = ?", volunteeringID).Scan(&ownerID)
 
 	if ownerID != nil && *ownerID == myid {
 		return true
@@ -328,7 +333,8 @@ func isModerator(myid uint64, volunteeringID uint64) bool {
 func isMemberOfGroup(myid uint64, groupid uint64) bool {
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Scan(&count)
+	// ORM migration site f4ea5e89a6aa (wave 1).
+	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Count(&count)
 	return count > 0
 }
 
@@ -437,12 +443,14 @@ type PatchRequest struct {
 // this opportunity, or 0 if it is free to act on.
 func volunteeringHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
 	var holder uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM volunteering WHERE id = ?", id).Scan(&holder)
+	// ORM migration site fe225e945349 (wave 1).
+	db.Table("volunteering").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
 	if holder == 0 || holder == myid {
 		return 0, ""
 	}
 	var name string
-	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&name)
+	// ORM migration site eb24d79c1868 (wave 1).
+	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
 	return holder, name
 }
 
@@ -475,7 +483,8 @@ func Update(c *fiber.Ctx) error {
 	// Check the volunteering exists
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM volunteering WHERE id = ?", req.ID).Scan(&exists)
+	// ORM migration site 757206d64631 (wave 1).
+	db.Table("volunteering").Select("id").Where("id = ?", req.ID).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Volunteering not found")
 	}
@@ -545,7 +554,8 @@ func Update(c *fiber.Ctx) error {
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this volunteering opportunity.
 			var ownerID *uint64
-			db.Raw("SELECT userid FROM volunteering WHERE id = ?", req.ID).Scan(&ownerID)
+			// ORM migration site 51ccb0455fec (wave 1).
+			db.Table("volunteering").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 			if ownerID != nil && *ownerID > 0 {
 				volID := req.ID
 				newsfeed.CreateNewsfeedEntry(newsfeed.TypeVolunteerOpportunity, *ownerID, req.GroupID, nil, &volID)
@@ -615,7 +625,8 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM volunteering WHERE id = ?", id).Scan(&exists)
+	// ORM migration site c9633d8edcc8 (wave 1).
+	db.Table("volunteering").Select("id").Where("id = ?", id).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Volunteering not found")
 	}

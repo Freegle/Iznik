@@ -165,9 +165,9 @@ func GetChallenge(c *fiber.Ctx) error {
 
 	// Get user's trust level
 	var trustLevel string
-	err := db.Raw(`
-		SELECT COALESCE(trustlevel, ?) FROM users WHERE id = ?
-	`, TrustBasic, userID).Scan(&trustLevel).Error
+	// ORM migration site 2d399fd44a2c (wave 1).
+	err := db.Table("users").Select("COALESCE(trustlevel, ?)", TrustBasic).
+		Where("id = ?", userID).Scan(&trustLevel).Error
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -336,12 +336,11 @@ func contains(slice []string, str string) bool {
 // getInviteChallenge returns an invite challenge if the user hasn't been asked recently
 func getInviteChallenge(db *gorm.DB, userID uint64) *Challenge {
 	// Check if we've asked in the last 31 days
-	var count int
-	db.Raw(`
-		SELECT COUNT(*) FROM microactions
-		WHERE userid = ? AND actiontype = ?
-		AND DATEDIFF(NOW(), timestamp) < 31
-	`, userID, ChallengeInvite).Scan(&count)
+	var count int64
+	// ORM migration site fa53f46653e6 (wave 1).
+	db.Table("microactions").
+		Where("userid = ? AND actiontype = ? AND DATEDIFF(NOW(), timestamp) < 31", userID, ChallengeInvite).
+		Count(&count)
 
 	if count == 0 {
 		// Record a placeholder to ensure we don't ask too often
@@ -737,10 +736,10 @@ func PostResponse(c *fiber.Ctx) error {
 			// If rejection, check if we have quorum to send for review
 			if response == "Reject" {
 				var rejectCount int64
-				db.Raw(`SELECT COUNT(*) FROM microactions
-					WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
-					AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`,
-					req.Msgid).Scan(&rejectCount)
+				// ORM migration site 5a4706a34749 (wave 1).
+				db.Table("microactions").
+					Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", req.Msgid).
+					Count(&rejectCount)
 
 				if rejectCount >= int64(ApprovalQuorum) {
 					// Quorum reached — pull the post back to Pending on ALL the
@@ -797,8 +796,8 @@ func PostResponse(c *fiber.Ctx) error {
 		rotated := false
 		if req.Response != nil && *req.Response == "Reject" {
 			var voteCount int64
-			db.Raw("SELECT COUNT(*) FROM microactions WHERE rotatedimage = ? AND result = 'Reject'",
-				req.Photoid).Scan(&voteCount)
+			// ORM migration site c94e3bfae9b3 (wave 1).
+			db.Table("microactions").Where("rotatedimage = ? AND result = 'Reject'", req.Photoid).Count(&voteCount)
 
 			if voteCount >= int64(ApprovalQuorum) {
 				// Enough votes - the batch process handles the actual rotation
@@ -947,8 +946,10 @@ func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 		return
 	}
 	var approvedOrigin int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?",
-		msgid, utils.COLLECTION_APPROVED).Scan(&approvedOrigin)
+	// ORM migration site 85e57d30b7c7 (wave 1).
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Count(&approvedOrigin)
 	if approvedOrigin > 0 {
 		return
 	}
@@ -965,8 +966,10 @@ func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
 		return false
 	}
 	var c int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
-		reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&c)
+	// ORM migration site 2b059ba266dc (wave 1).
+	db.Table("memberships").
+		Where("userid = ? AND groupid = ? AND role IN (?, ?)", reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&c)
 	return c > 0
 }
 
@@ -990,7 +993,8 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	// A poster reporting their own post must not count toward the quorum.
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", msgid).Scan(&fromuser)
+	// ORM migration site 1514d35d670c (wave 1).
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
 	if fromuser == reporterID {
 		return
 	}
@@ -1015,9 +1019,10 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
 		var rejectCount int64
-		db.Raw(`SELECT COUNT(*) FROM microactions
-			WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
-			AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`, msgid).Scan(&rejectCount)
+		// ORM migration site bc4e3f39c868 (wave 1).
+		db.Table("microactions").
+			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
+			Count(&rejectCount)
 		if rejectCount >= int64(ApprovalQuorum) {
 			SendForReviewAllGroups(db, msgid, reason)
 		}
@@ -1134,10 +1139,12 @@ func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
 // so the image is hidden from end users and surfaced for admin regeneration.
 func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 	var totalVotes, rejectVotes int64
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
-		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Reject'`,
-		aiImageID, ChallengeAIImageReview).Scan(&rejectVotes)
+	// ORM migration site 253bc6651f22 (wave 1).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = ?", aiImageID, ChallengeAIImageReview).Count(&totalVotes)
+	// ORM migration site 4a4e6ef7b504 (wave 1).
+	db.Table("microactions").
+		Where("aiimageid = ? AND actiontype = ? AND result = 'Reject'", aiImageID, ChallengeAIImageReview).
+		Count(&rejectVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
 		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
@@ -1151,10 +1158,12 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 // Regenerate refuses. Suppress overrides a prior 'rejected' state.
 func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
 	var totalVotes, suppressVotes int64
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
-		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Suppress'`,
-		aiImageID, ChallengeAIImageReview).Scan(&suppressVotes)
+	// ORM migration site bb15df86ae5f (wave 1).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = ?", aiImageID, ChallengeAIImageReview).Count(&totalVotes)
+	// ORM migration site c011457f1962 (wave 1).
+	db.Table("microactions").
+		Where("aiimageid = ? AND actiontype = ? AND result = 'Suppress'", aiImageID, ChallengeAIImageReview).
+		Count(&suppressVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
 		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)

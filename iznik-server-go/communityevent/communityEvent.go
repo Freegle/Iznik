@@ -154,7 +154,9 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT id, archived, externaluid, externalmods FROM communityevents_images WHERE eventid = ? ORDER BY id DESC LIMIT 1", id).Scan(&image)
+			// ORM migration site b91b1dace445 (wave 1).
+			db.Table("communityevents_images").Select("id, archived, externaluid, externalmods").
+				Where("eventid = ?", id).Order("id DESC").Limit(1).Scan(&image)
 
 			if image.ID > 0 {
 				if image.Externaluid != "" {
@@ -177,7 +179,8 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT groupid FROM communityevents_groups WHERE eventid = ?", id).Pluck("groupid", &groups)
+			// ORM migration site 03a8e9d4e6f9 (wave 1).
+			db.Table("communityevents_groups").Where("eventid = ?", id).Pluck("groupid", &groups)
 		}()
 
 		wg.Add(1)
@@ -185,7 +188,8 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT * FROM communityevents_dates WHERE eventid = ?", id).Scan(&dates)
+			// ORM migration site d0fb8ea8e991 (wave 1).
+			db.Table("communityevents_dates").Where("eventid = ?", id).Scan(&dates)
 		}()
 
 		wg.Wait()
@@ -221,7 +225,8 @@ func canModify(myid uint64, eventID uint64) bool {
 	db := database.DBConn
 
 	var ownerID *uint64
-	db.Raw("SELECT userid FROM communityevents WHERE id = ?", eventID).Scan(&ownerID)
+	// ORM migration site fb639d4f1343 (wave 1).
+	db.Table("communityevents").Select("userid").Where("id = ?", eventID).Scan(&ownerID)
 
 	if ownerID != nil && *ownerID == myid {
 		return true
@@ -250,7 +255,8 @@ func isModerator(myid uint64, eventID uint64) bool {
 func isMemberOfGroup(myid uint64, groupid uint64) bool {
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Scan(&count)
+	// ORM migration site c722e5c178bc (wave 1).
+	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Count(&count)
 	return count > 0
 }
 
@@ -354,12 +360,14 @@ type PatchRequest struct {
 // event, or 0 if it is free to act on.
 func eventHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
 	var holder uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM communityevents WHERE id = ?", id).Scan(&holder)
+	// ORM migration site 960df0d64e88 (wave 1).
+	db.Table("communityevents").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
 	if holder == 0 || holder == myid {
 		return 0, ""
 	}
 	var name string
-	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&name)
+	// ORM migration site 20615e06821f (wave 1).
+	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
 	return holder, name
 }
 
@@ -391,7 +399,8 @@ func Update(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM communityevents WHERE id = ?", req.ID).Scan(&exists)
+	// ORM migration site 374932713da4 (wave 1).
+	db.Table("communityevents").Select("id").Where("id = ?", req.ID).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Community event not found")
 	}
@@ -455,7 +464,8 @@ func Update(c *fiber.Ctx) error {
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this community event.
 			var ownerID *uint64
-			db.Raw("SELECT userid FROM communityevents WHERE id = ?", req.ID).Scan(&ownerID)
+			// ORM migration site f47f012d1d3f (wave 1).
+			db.Table("communityevents").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 			if ownerID != nil && *ownerID > 0 {
 				eventID := req.ID
 				newsfeed.CreateNewsfeedEntry(newsfeed.TypeCommunityEvent, *ownerID, req.GroupID, &eventID, nil)
@@ -521,7 +531,8 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM communityevents WHERE id = ?", id).Scan(&exists)
+	// ORM migration site 376e4b3a5941 (wave 1).
+	db.Table("communityevents").Select("id").Where("id = ?", id).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Community event not found")
 	}

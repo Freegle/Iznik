@@ -27,11 +27,9 @@ type loginRow struct {
 
 func fetchLoginsForUser(userID uint64) []loginRow {
 	logins := make([]loginRow, 0)
-	database.DBConn.Raw(
-		"SELECT id, userid, type, CAST(uid AS CHAR) AS uid, added, lastaccess "+
-			"FROM users_logins WHERE userid = ? ORDER BY lastaccess DESC",
-		userID,
-	).Scan(&logins)
+	// ORM migration site d42efd0197f3 (wave 1).
+	database.DBConn.Table("users_logins").Select("id, userid, type, CAST(uid AS CHAR) AS uid, added, lastaccess").
+		Where("userid = ?", userID).Order("lastaccess DESC").Scan(&logins)
 	return logins
 }
 
@@ -93,7 +91,8 @@ func GetMerge(c *fiber.Ctx) error {
 	}
 
 	var m MergeRow
-	db.Raw("SELECT id, user1, user2, uid, accepted, rejected FROM merges WHERE id = ? AND uid = ?", id, uid).Scan(&m)
+	// ORM migration site df35e6ee770d (wave 1).
+	db.Table("merges").Select("id, user1, user2, uid, accepted, rejected").Where("id = ? AND uid = ?", id, uid).Scan(&m)
 
 	if m.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -106,19 +105,23 @@ func GetMerge(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(fullname, 'A freegler') FROM users WHERE id = ?", m.User1).Scan(&name1)
+		// ORM migration site 7e64501cc8fd (wave 1).
+		db.Table("users").Select("COALESCE(fullname, 'A freegler')").Where("id = ?", m.User1).Scan(&name1)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", m.User1).Scan(&email1)
+		// ORM migration site 4655e85d1bb5 (wave 1).
+		db.Table("users_emails").Select("COALESCE(email, '')").Where("userid = ?", m.User1).Order("preferred DESC").Limit(1).Scan(&email1)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(fullname, 'A freegler') FROM users WHERE id = ?", m.User2).Scan(&name2)
+		// ORM migration site 1ba3ae16b6a7 (wave 1).
+		db.Table("users").Select("COALESCE(fullname, 'A freegler')").Where("id = ?", m.User2).Scan(&name2)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", m.User2).Scan(&email2)
+		// ORM migration site a3be2bf2b81f (wave 1).
+		db.Table("users_emails").Select("COALESCE(email, '')").Where("userid = ?", m.User2).Order("preferred DESC").Limit(1).Scan(&email2)
 	}()
 	go func() {
 		defer wg.Done()
@@ -287,7 +290,8 @@ func PostMerge(c *fiber.Ctx) error {
 	}
 
 	var m MergeRow
-	db.Raw("SELECT id, user1, user2, uid FROM merges WHERE id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
+	// ORM migration site 8d9acac47724 (wave 1).
+	db.Table("merges").Select("id, user1, user2, uid").Where("id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
 
 	if m.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")

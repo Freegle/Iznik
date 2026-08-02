@@ -54,7 +54,8 @@ func GetAdmin(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var admin Admin
-	db.Raw("SELECT id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, pending, essential, template, editprotected FROM admins WHERE id = ?", id).Scan(&admin)
+	// ORM migration site 0ddc492f685c (wave 1).
+	db.Table("admins").Select("id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, pending, essential, template, editprotected").Where("id = ?", id).Scan(&admin)
 
 	if admin.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Admin not found")
@@ -178,7 +179,8 @@ func PostAdmin(c *fiber.Ctx) error {
 
 		// Check mod of the admin's group.
 		var adminGroupID uint64
-		db.Raw("SELECT COALESCE(groupid, 0) FROM admins WHERE id = ?", req.ID).Scan(&adminGroupID)
+		// ORM migration site 6eb1be4ff453 (wave 1).
+		db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&adminGroupID)
 
 		if !user.IsModOfGroup(myid, adminGroupID) {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
@@ -198,7 +200,8 @@ func PostAdmin(c *fiber.Ctx) error {
 		}
 
 		var adminGroupID uint64
-		db.Raw("SELECT COALESCE(groupid, 0) FROM admins WHERE id = ?", req.ID).Scan(&adminGroupID)
+		// ORM migration site 0ebce3bdec81 (wave 1).
+		db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&adminGroupID)
 
 		if !user.IsModOfGroup(myid, adminGroupID) {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
@@ -296,12 +299,14 @@ type PatchAdminRequest struct {
 // admin message, or 0 if it is free to act on.
 func adminHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
 	var holder uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM admins WHERE id = ?", id).Scan(&holder)
+	// ORM migration site be61683f2a10 (wave 1).
+	db.Table("admins").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
 	if holder == 0 || holder == myid {
 		return 0, ""
 	}
 	var name string
-	db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&name)
+	// ORM migration site 619fb338bc20 (wave 1).
+	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
 	return holder, name
 }
 
@@ -334,7 +339,8 @@ func PatchAdmin(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var adminGroupID uint64
-	db.Raw("SELECT COALESCE(groupid, 0) FROM admins WHERE id = ?", req.ID).Scan(&adminGroupID)
+	// ORM migration site 8607a46d5c6f (wave 1).
+	db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&adminGroupID)
 
 	if !user.IsModOfGroup(myid, adminGroupID) {
 		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
@@ -420,7 +426,8 @@ func DeleteAdmin(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var adminGroupID uint64
-	db.Raw("SELECT COALESCE(groupid, 0) FROM admins WHERE id = ?", id).Scan(&adminGroupID)
+	// ORM migration site a1ff219a08d7 (wave 1).
+	db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", id).Scan(&adminGroupID)
 
 	if !user.IsModOfGroup(myid, adminGroupID) {
 		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")

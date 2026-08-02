@@ -58,7 +58,8 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 			}
 
 			var userids []Userid
-			db.Raw("SELECT userid FROM sessions WHERE id = ? AND token = ? LIMIT 1;", minPT.ID, minPT.Token).Scan(&userids)
+			// ORM migration site e57197b50601 (wave 1).
+			db.Table("sessions").Select("userid").Where("id = ? AND token = ?", minPT.ID, minPT.Token).Limit(1).Scan(&userids)
 
 			if len(userids) > 0 {
 				id = userids[0].Userid
@@ -135,7 +136,8 @@ func GetJWTFromRequest(c *fiber.Ctx) (uint64, uint64, float64) {
 func IsAdminOrSupport(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	result := db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+	// ORM migration site e449ae451594 (wave 1).
+	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
 		log.Printf("Failed to check admin/support role for user %d: %v", myid, result.Error)
 		return false
@@ -170,7 +172,8 @@ func IsChitChatMod(myid uint64) bool {
 func IsAdmin(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+	// ORM migration site 2c0bbedc0eb2 (wave 1).
+	db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	return systemrole == utils.SYSTEMROLE_ADMIN
 }
 
@@ -190,7 +193,8 @@ const (
 func HasPermission(userid uint64, perm string) bool {
 	db := database.DBConn
 	var permissions *string
-	db.Raw("SELECT permissions FROM users WHERE id = ?", userid).Scan(&permissions)
+	// ORM migration site 2f4a87c7cb53 (wave 1).
+	db.Table("users").Select("permissions").Where("id = ?", userid).Scan(&permissions)
 	if permissions == nil || *permissions == "" {
 		return false
 	}
@@ -206,7 +210,8 @@ func HasPermission(userid uint64, perm string) bool {
 func IsSystemMod(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	result := db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+	// ORM migration site 135b17140f36 (wave 1).
+	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
 		log.Printf("Failed to check system mod role for user %d: %v", myid, result.Error)
 		return false
@@ -226,7 +231,8 @@ func IsModOfGroup(myid uint64, groupid uint64) bool {
 
 	db := database.DBConn
 	var role string
-	result := db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&role)
+	// ORM migration site a8691b8ac0e6 (wave 1).
+	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?", myid, groupid).Scan(&role)
 	if result.Error != nil {
 		log.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
 		return false
@@ -242,7 +248,8 @@ func IsModOfAnyGroup(myid uint64) bool {
 
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site 401a7aa34330 (wave 1).
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&count)
 	return count > 0
 }
 
@@ -271,7 +278,8 @@ func VerifyPassword(userID uint64, password string) bool {
 		Credentials string
 		Salt        string
 	}
-	db.Raw("SELECT credentials, salt FROM users_logins WHERE userid = ? AND type = ? ORDER BY lastaccess DESC", userID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+	// ORM migration site 8d14c119b9c8 (wave 1).
+	db.Table("users_logins").Select("credentials, salt").Where("userid = ? AND type = ?", userID, utils.LOGIN_TYPE_NATIVE).Order("lastaccess DESC").Scan(&logins)
 
 	for _, login := range logins {
 		if login.Credentials == "" {

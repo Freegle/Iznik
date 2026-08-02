@@ -81,17 +81,20 @@ func getSingle(c *fiber.Ctx, idStr string) error {
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, name, lat, lng, added, addedby, description, active, lastcheckedat FROM noticeboards WHERE id = ?", id).Scan(&nb)
+		// ORM migration site 92d2a939593e (wave 1).
+		db.Table("noticeboards").Select("id, name, lat, lng, added, addedby, description, active, lastcheckedat").Where("id = ?", id).Scan(&nb)
 	}()
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, userid, askedat, checkedat, inactive, refreshed, declined, comments FROM noticeboards_checks WHERE noticeboardid = ? ORDER BY id DESC", id).Scan(&checks)
+		// ORM migration site 3bcf101e10b0 (wave 1).
+		db.Table("noticeboards_checks").Select("id, userid, askedat, checkedat, inactive, refreshed, declined, comments").Where("noticeboardid = ?", id).Order("id DESC").Scan(&checks)
 	}()
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id FROM noticeboards_images WHERE noticeboardid = ? LIMIT 1", id).Scan(&photoID)
+		// ORM migration site 49eee194e249 (wave 1).
+		db.Table("noticeboards_images").Select("id").Where("noticeboardid = ?", id).Limit(1).Scan(&photoID)
 	}()
 
 	wg.Wait()
@@ -133,7 +136,8 @@ func getList(c *fiber.Ctx) error {
 			"WHERE authorities.name IS NOT NULL AND active = 1 AND ST_CONTAINS(authorities.polygon, ST_SRID(POINT(noticeboards.lng, noticeboards.lat), ?))",
 			authorityID, utils.SRID).Scan(&noticeboards)
 	} else {
-		db.Raw("SELECT id, name, lat, lng FROM noticeboards WHERE name IS NOT NULL AND active = 1").Scan(&noticeboards)
+		// ORM migration site b62e9af236c5 (wave 1).
+		db.Table("noticeboards").Select("id, name, lat, lng").Where("name IS NOT NULL AND active = 1").Scan(&noticeboards)
 	}
 
 	if noticeboards == nil {
@@ -284,7 +288,8 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 	var currentName string
 	var addedby uint64
 	var count int64
-	db.Raw("SELECT COUNT(*), COALESCE(name, ''), COALESCE(addedby, 0) FROM noticeboards WHERE id = ?", req.ID).Row().Scan(&count, &currentName, &addedby)
+	// ORM migration site 17992b4893d5 (wave 1).
+	db.Table("noticeboards").Select("COUNT(*), COALESCE(name, ''), COALESCE(addedby, 0)").Where("id = ?", req.ID).Row().Scan(&count, &currentName, &addedby)
 	if count == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
 	}
@@ -330,7 +335,8 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 			// Get the noticeboard data for the newsfeed entry
 			var addedby uint64
 			var lat, lng float64
-			db.Raw("SELECT COALESCE(addedby, 0), COALESCE(lat, 0), COALESCE(lng, 0) FROM noticeboards WHERE id = ?", req.ID).Row().Scan(&addedby, &lat, &lng)
+			// ORM migration site 2719baff5f09 (wave 1).
+			db.Table("noticeboards").Select("COALESCE(addedby, 0), COALESCE(lat, 0), COALESCE(lng, 0)").Where("id = ?", req.ID).Row().Scan(&addedby, &lat, &lng)
 
 			if addedby > 0 {
 				// Create newsfeed entry with type 'Noticeboard'.
@@ -382,7 +388,8 @@ func DeleteNoticeboard(c *fiber.Ctx) error {
 
 	// Check noticeboard exists
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM noticeboards WHERE id = ?", id).Scan(&count)
+	// ORM migration site 6f1e9fffdf7e (wave 1).
+	db.Table("noticeboards").Where("id = ?", id).Count(&count)
 	if count == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
 	}
