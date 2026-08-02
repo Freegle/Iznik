@@ -57,6 +57,22 @@
       manual
     >
       <div v-if="otheruser && otheruser.info" class="profile-card-content">
+        <!-- Until this was here the card could only be dismissed by tapping the
+             avatar again, taking one of the actions, or scrolling the thread -
+             none of which look like a way out, so it read as stuck open.
+             Hidden while the first-visit hint is up: "Got it" already closes the
+             whole card (dismissHint), so a second control there would only
+             overlap it. -->
+        <button
+          v-if="!showProfileHint"
+          class="profile-card-close"
+          type="button"
+          aria-label="Close profile info"
+          title="Close"
+          @click="profileCardExpanded = false"
+        >
+          <v-icon icon="times" />
+        </button>
         <!-- Hint tip for first-time visitors -->
         <div v-if="showProfileHint" class="profile-hint-tip">
           <span>Tap here to show profile info.</span>
@@ -612,12 +628,44 @@ onBeforeUnmount(() => {
 }
 
 .profile-card-content {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid $color-gray--lighter;
   margin-bottom: 10px;
+}
+
+/* Top-right of the card. 44px is the minimum comfortable touch target, which
+   matters more here than on desktop - this popover only exists below md. Given
+   a solid background and a border so it reads as a control rather than as a
+   stray glyph, and stacked above the first-visit hint tip, which it would
+   otherwise sit on top of unnoticed. */
+.profile-card-close {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid $color-gray--light;
+  border-radius: 50%;
+  background-color: white;
+  color: $color-gray--darker;
+  font-size: 1.1rem;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.profile-card-close:hover,
+.profile-card-close:focus {
+  background-color: $color-gray--lighter;
+  color: black;
 }
 
 .profile-card-main {

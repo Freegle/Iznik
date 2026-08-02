@@ -30,6 +30,43 @@ describe('profile popover hidden for User2Mod (Discourse 9918)', () => {
   })
 })
 
+// The profile card could only be dismissed by tapping the avatar again, taking
+// one of its actions, or scrolling the thread. None of those look like a way
+// out, so the card read as stuck open on a phone - and this navbar is the only
+// chat header below md, so there was no other affordance.
+describe('profile card close button', () => {
+  it('has a close control that collapses the card', () => {
+    expect(navbarSource).toMatch(/class="profile-card-close"/)
+    expect(navbarSource).toMatch(
+      /class="profile-card-close"[\s\S]*?@click="profileCardExpanded = false"/
+    )
+  })
+
+  it('gives the close control an accessible name', () => {
+    expect(navbarSource).toMatch(
+      /class="profile-card-close"[\s\S]*?aria-label="Close profile info"/
+    )
+  })
+
+  it('hides the close control while the first-visit hint is showing', () => {
+    // dismissHint() already sets profileCardExpanded = false, so "Got it"
+    // closes the whole card; a second control there would only overlap it.
+    expect(navbarSource).toMatch(
+      /<button\s+v-if="!showProfileHint"\s+class="profile-card-close"/
+    )
+    expect(navbarSource).toMatch(
+      /function dismissHint\(\)[\s\S]*?profileCardExpanded\.value = false/
+    )
+  })
+
+  it('sizes the close control as a comfortable touch target', () => {
+    // This popover only exists below md, so it is always touched, never clicked.
+    expect(navbarSource).toMatch(
+      /\.profile-card-close\s*\{[\s\S]*?width:\s*44px[\s\S]*?height:\s*44px/
+    )
+  })
+})
+
 describe('ChatMobileNavbar', () => {
   describe('component structure', () => {
     it('is a mobile navbar for chat pages', () => {

@@ -167,8 +167,23 @@ class EmailTracking extends Model
     {
         // Email tracking routes are at /e/d/... (not /apiv2/e/d/...)
         $baseUrl = config('freegle.api.base_url', 'https://api.ilovefreegle.org');
-        $encodedUrl = base64_encode($destinationUrl);
+        // rawurlencode: base64 output can contain '+' and '/', which survive a
+        // query string only when percent-encoded ('+' would decode as a space
+        // and break the redirect).
+        $encodedUrl = rawurlencode(base64_encode($destinationUrl));
         $url = "{$baseUrl}/e/d/r/{$this->tracking_id}?url={$encodedUrl}";
+
+        // Sign the destination so the redirector can honour links beyond its
+        // own-domain allowlist: Community News items link to arbitrary
+        // external sites (parkrun, council pages...), and without a signature
+        // the Go handler must bounce those to "/" to avoid being an open
+        // redirect. The signature proves we minted the link at send time.
+        // Reuses the AMP secret, which batch and apiv2 already share, with a
+        // purpose prefix so signatures aren't interchangeable between uses.
+        $secret = (string) config('freegle.amp.secret', '');
+        if ($secret !== '') {
+            $url .= '&sig=' . hash_hmac('sha256', 'redirect:' . $destinationUrl, $secret);
+        }
 
         if ($position) {
             $url .= "&p=" . urlencode($position);

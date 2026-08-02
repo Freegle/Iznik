@@ -396,6 +396,63 @@ class WhatJobsServiceTest extends TestCase
     }
 
     // =========================================================================
+    // titleCaseLocation — display casing for all-lowercase feed locations
+    // =========================================================================
+
+    public static function titleCaseLocationProvider(): array
+    {
+        return [
+            'simple town'            => ['preston', 'Preston'],
+            'town, county'           => ['poole, dorset', 'Poole, Dorset'],
+            'connector words'        => ['stockton on tees', 'Stockton on Tees'],
+            'upon stays lowercase'   => ['newcastle upon tyne', 'Newcastle upon Tyne'],
+            'hyphenated connectors'  => ['weston-super-mare', 'Weston-super-Mare'],
+            'de la chain'            => ['ashby-de-la-zouch', 'Ashby-de-la-Zouch'],
+            'dotted abbreviation'    => ['st. columb', 'St. Columb'],
+            'apostrophe intact'      => ["bishop's stortford", "Bishop's Stortford"],
+            'leading connector caps' => ['the wirral', 'The Wirral'],
+            'already cased kept'     => ['Dunham on the Hill', 'Dunham on the Hill'],
+            'mixed case kept'        => ['London SE1', 'London SE1'],
+            'empty string'           => ['', ''],
+            'null'                   => [null, null],
+        ];
+    }
+
+    #[DataProvider('titleCaseLocationProvider')]
+    public function test_title_case_location(?string $input, ?string $expected): void
+    {
+        $svc = $this->makeServiceWithFixedGeocode(null);
+        $this->assertSame($expected, $svc->titleCaseLocation($input));
+    }
+
+    public function test_parse_feed_title_cases_lowercase_location(): void
+    {
+        $geo = [51.3, -0.5, 51.7, 0.3, WhatJobsService::boxPoly(51.3, -0.5, 51.7, 0.3)];
+        $svc = $this->makeServiceWithFixedGeocode($geo);
+
+        $xml  = $this->makeFeedXml([[
+            'job_reference' => 'LOC1',
+            'title'         => 'Chef',
+            'city'          => 'preston',
+            'state'         => 'england',
+            'country'       => 'UK',
+            'cpc'           => '0.50',
+            'posted_at'     => date('Y-m-d'),
+            'location'      => 'preston, lancashire',
+        ]]);
+        $path  = $this->makeFeedFile($xml);
+        $cache = [];
+
+        try {
+            $jobs = iterator_to_array($svc->parseFeed($path, 2, $cache));
+            $this->assertCount(1, $jobs);
+            $this->assertSame('Preston, Lancashire', $jobs[0]['location']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    // =========================================================================
     // parseFeed — filter: low CPC
     // =========================================================================
 

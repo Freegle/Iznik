@@ -235,6 +235,34 @@ class EmailTrackingModelTest extends TestCase
         $this->assertStringContainsString('a=unsubscribe', $url);
     }
 
+    public function test_get_tracked_link_url_signs_destination(): void
+    {
+        config(['freegle.amp.secret' => 'test-link-signing-secret']);
+        $tracking = EmailTracking::createForEmail('Test', $this->uniqueEmail('tracking'));
+
+        $destination = 'https://www.parkrun.org.uk/sunnyhill/';
+        $url = $tracking->getTrackedLinkUrl($destination, 'item_1', 'item');
+
+        // Signature over "redirect:" + destination, verified by the Go
+        // Click handler (hasValidLinkSignature) to allow external sites.
+        $expected = hash_hmac('sha256', 'redirect:' . $destination, 'test-link-signing-secret');
+        $this->assertStringContainsString('sig=' . $expected, $url);
+
+        // The base64 url param must be percent-encoded so '+' and '/'
+        // survive the query string.
+        $this->assertStringContainsString('url=' . rawurlencode(base64_encode($destination)), $url);
+    }
+
+    public function test_get_tracked_link_url_no_signature_without_secret(): void
+    {
+        config(['freegle.amp.secret' => '']);
+        $tracking = EmailTracking::createForEmail('Test', $this->uniqueEmail('tracking'));
+
+        $url = $tracking->getTrackedLinkUrl('https://example.com/page');
+
+        $this->assertStringNotContainsString('sig=', $url);
+    }
+
     public function test_get_tracked_image_url_returns_correct_format(): void
     {
         $tracking = EmailTracking::createForEmail('Test', $this->uniqueEmail('tracking'));
