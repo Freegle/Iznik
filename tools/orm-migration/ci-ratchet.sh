@@ -590,15 +590,21 @@ fi
 #   - No services/laravel/manifest.json committed: skip. Same reasoning as
 #     gate (p) and this file's own top-level self-guard in the orb step - an
 #     unpublished manifest is not a gate, it is a comment.
-#   - No `php` on PATH: skip, rather than fail. Go and jq are HARD required
-#     at the top of this script (the whole ratchet cannot run without them),
-#     but making php equally hard would break every OTHER gate here -
-#     including the Go-only ones - on any machine that legitimately has no
-#     PHP installed, which is backwards for one optional gate. CI needs to
-#     install php before this step the same way the orb installs Go on
-#     demand for this one (see that step's own comment); that wiring is NOT
-#     done here, and is a known, reported gap rather than something silently
-#     assumed to already exist - see README.md.
+#   - No `php`/`composer` on PATH: skip LOCALLY, but FAIL when
+#     ORM_RATCHET_REQUIRE_PHP=1. Go and jq are HARD required at the top of
+#     this script (the whole ratchet cannot run without them), and making php
+#     equally hard would break every OTHER gate here - including the Go-only
+#     ones - on any developer machine that legitimately has no PHP. So the
+#     skip stays for local runs, and CI opts into strictness instead: the
+#     orb's ratchet step provisions php + composer and exports
+#     ORM_RATCHET_REQUIRE_PHP=1, so a gate that cannot run THERE is a build
+#     failure rather than a quiet pass.
+#
+#     This distinction is the whole point. A gate that silently skips in CI
+#     reads green while checking nothing, which is precisely the "we quietly
+#     deferred a bit" failure mode section 7.1 of the plan exists to make
+#     structurally impossible. Skipping is acceptable only where the person
+#     reading the output knows why; in CI nobody is reading it.
 #
 # THE EXPLICIT-BASELINE FIX: gate (d) above falls back to the COMMITTED
 # manifest's own raw+in-progress count when "ratchet.baseline" is absent - a
@@ -618,10 +624,17 @@ LARAVEL_RULES="$SCRIPT_DIR/services/laravel/keep-raw.json"
 LARAVEL_EXTRACTOR_DIR="$SCRIPT_DIR/php-extractor"
 LARAVEL_SOURCE_ROOT="$REPO_ROOT/iznik-batch"
 
+laravel_missing_tools=""
+command -v php >/dev/null 2>&1 || laravel_missing_tools="php"
+command -v composer >/dev/null 2>&1 || laravel_missing_tools="${laravel_missing_tools:+$laravel_missing_tools }composer"
+
 if [ ! -f "$LARAVEL_MANIFEST" ]; then
   note "gate (q) SKIP: no $LARAVEL_MANIFEST - Laravel ORM migration tooling not present on this branch"
-elif ! command -v php >/dev/null 2>&1; then
-  note "gate (q) SKIP: no php on PATH - cannot regenerate the Laravel inventory to check it (README.md: CI needs to install php for this step, the same way it installs Go above; that wiring is not yet done)"
+elif [ -n "$laravel_missing_tools" ] && [ "${ORM_RATCHET_REQUIRE_PHP:-0}" = "1" ]; then
+  fail "gate (q): ORM_RATCHET_REQUIRE_PHP=1 but not on PATH: $laravel_missing_tools - the Laravel inventory could not be regenerated, so this gate would otherwise report nothing while checking nothing"
+  note "fix: this is CI (the orb's ratchet step provisions php + composer before running this script). If that provisioning has broken, fix it there - do not unset ORM_RATCHET_REQUIRE_PHP, which would turn the gate back into a silent no-op"
+elif [ -n "$laravel_missing_tools" ]; then
+  note "gate (q) SKIP: not on PATH: $laravel_missing_tools - cannot regenerate the Laravel inventory to check it. This is a local-run convenience only; CI sets ORM_RATCHET_REQUIRE_PHP=1 so the same condition is a hard failure there"
 elif ! jq -e . "$LARAVEL_MANIFEST" >/dev/null 2>&1; then
   fail "services/laravel/manifest.json is not valid JSON"
 else

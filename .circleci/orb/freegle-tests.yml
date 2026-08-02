@@ -2389,6 +2389,36 @@ jobs:
             fi
             go version
 
+            # Gate (q) - the Laravel (iznik-batch) half of the inventory - needs
+            # php and composer for the same reason the gates above need Go: it
+            # regenerates the inventory from source, using an AST walk
+            # (tools/orm-migration/php-extractor). Without them ci-ratchet.sh
+            # SKIPS that gate, which in CI means it reports green while checking
+            # nothing - the exact "quietly deferred a bit" failure mode the
+            # ratchet exists to make impossible. So provision them, and set
+            # ORM_RATCHET_REQUIRE_PHP=1 so that a provisioning failure FAILS the
+            # build instead of silently downgrading to a skip.
+            #
+            # Guarded on the Laravel manifest existing, mirroring the Go block
+            # above: a branch without the Laravel inventory (master today) pays
+            # nothing and is unaffected, so this orb version stays safe to
+            # publish before that branch merges.
+            if [ -f tools/orm-migration/services/laravel/manifest.json ]; then
+              if ! command -v php >/dev/null 2>&1; then
+                echo "Installing php-cli for the Laravel half of the ratchet..."
+                sudo apt-get update -qq
+                sudo apt-get install -y --no-install-recommends php-cli php-mbstring php-xml
+              fi
+              if ! command -v composer >/dev/null 2>&1; then
+                echo "Installing composer..."
+                curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
+                sudo php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
+              fi
+              php --version
+              composer --version
+              export ORM_RATCHET_REQUIRE_PHP=1
+            fi
+
             tools/orm-migration/ci-ratchet.sh
 
       - run:

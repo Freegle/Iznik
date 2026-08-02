@@ -169,12 +169,21 @@ the same files as the excluded SQLite reads.
 raw+in-progress ceiling, keep-raw/excluded sites needing a reason, and
 manifest staleness - but not (f)/(h)-(o), which all guard the conversion/
 parity-test lifecycle that does not exist here yet. It self-guards on two
-things: the manifest being absent (same as gate (p)), and `php` not being on
-`PATH` - Go and jq are hard requirements for this whole script, but `php`
-being equally hard would break every unrelated gate on a machine without it.
-**CI does not yet install `php` for this step** the way the orb installs Go
-on demand for Gate 1 itself; until that orb change lands, gate (q) will
-SKIP in CI, not enforce - a known, reported gap, not a silent one.
+things: the manifest being absent (same as gate (p)), and `php`/`composer` not
+being on `PATH` - Go and jq are hard requirements for this whole script, but
+`php` being equally hard would break every unrelated gate on a machine
+without it.
+
+That second self-guard is a **local-run convenience only**. In CI the orb's
+ratchet step installs `php-cli` and `composer` on demand (the same pattern it
+uses for Go, and guarded on `services/laravel/manifest.json` existing so a
+branch without the Laravel inventory pays nothing), and exports
+`ORM_RATCHET_REQUIRE_PHP=1`. With that set, a missing `php` or `composer` is a
+hard **FAIL**, never a skip: a gate that skips in CI reads green while checking
+nothing, which is exactly the "we quietly deferred a bit" failure mode section
+7.1 of the plan exists to make structurally impossible. If CI ever reports gate
+(q) as skipped, the provisioning has broken and that is the bug to fix - do not
+unset the variable.
 
 One more thing gate (q) does NOT do, unlike gate (d) for the main manifest:
 fall back to a self-initialising baseline when `ratchet.baseline` is absent.
