@@ -624,6 +624,22 @@ LARAVEL_RULES="$SCRIPT_DIR/services/laravel/keep-raw.json"
 LARAVEL_EXTRACTOR_DIR="$SCRIPT_DIR/php-extractor"
 LARAVEL_SOURCE_ROOT="$REPO_ROOT/iznik-batch"
 
+# Cross-language canonicaliser corpus sync check (plan 7.2, Layer 1). Needs
+# neither php nor composer - it is a plain diff between three committed
+# files - so it runs whenever the Laravel manifest exists, even on a
+# machine with no PHP, unlike the rest of this gate. See
+# check-canonical-corpus-sync.sh's own header for why three copies exist at
+# all (both test runners' containers are isolated to their own service
+# subtree and cannot read tools/orm-migration/ directly).
+if [ -f "$LARAVEL_MANIFEST" ]; then
+  if bash "$SCRIPT_DIR/check-canonical-corpus-sync.sh" >"$WORKDIR/corpus-sync.txt" 2>&1; then
+    note "gate (q) OK (corpus sync): $(tail -1 "$WORKDIR/corpus-sync.txt")"
+  else
+    fail "the cross-language canonicaliser pinning corpus has drifted between its three copies:"
+    cat "$WORKDIR/corpus-sync.txt"
+  fi
+fi
+
 laravel_missing_tools=""
 command -v php >/dev/null 2>&1 || laravel_missing_tools="php"
 command -v composer >/dev/null 2>&1 || laravel_missing_tools="${laravel_missing_tools:+$laravel_missing_tools }composer"
