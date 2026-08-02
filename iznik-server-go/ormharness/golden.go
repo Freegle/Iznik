@@ -617,12 +617,14 @@ func dryRunDB() (*gorm.DB, error) {
 // main package, not something iznik-server-go can import; json.Unmarshal
 // only needs field tags to line up, which this keeps in sync with by hand.
 type manifestSite struct {
-	GoldenSQL    string `json:"goldenSql"`
-	ApprovedDiff string `json:"approvedDiff,omitempty"`
-	Status       string `json:"status"`
-	File         string `json:"file"`
-	Line         int    `json:"line"`
-	Function     string `json:"function"`
+	GoldenSQL    string   `json:"goldenSql"`
+	ApprovedDiff string   `json:"approvedDiff,omitempty"`
+	Status       string   `json:"status"`
+	File         string   `json:"file"`
+	Line         int      `json:"line"`
+	Function     string   `json:"function"`
+	Kind         string   `json:"kind"`
+	Tables       []string `json:"tables"`
 }
 
 // ConvertedSite is one entry from the manifest, exported for the executed-SQL
@@ -637,6 +639,8 @@ type ConvertedSite struct {
 	File      string
 	Line      int
 	Function  string
+	Kind      string
+	Tables    []string
 }
 
 // NormaliseForComparison applies the same shape-only normalisations Layer 1
@@ -646,6 +650,27 @@ type ConvertedSite struct {
 // second, subtly different notion of equality.
 func NormaliseForComparison(canonical string) string {
 	return normaliseColumnOrder(collapseInLists(canonical))
+}
+
+// AllGoldens returns the normalised golden of every site in the manifest,
+// whatever its status, mapped to that status. The executed-SQL check uses it to
+// separate two very different reasons a converted site's golden might not be
+// observed running: the code path was never exercised, or it is now executing
+// something else. A statement that matches no golden at all is the second kind
+// of evidence.
+func AllGoldens() (map[string]string, error) {
+	sites, err := loadManifest()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(sites))
+	for _, s := range sites {
+		if s.GoldenSQL == "" {
+			continue
+		}
+		out[NormaliseForComparison(Canonical(s.GoldenSQL))] = s.Status
+	}
+	return out, nil
 }
 
 // ConvertedSites returns every site the manifest records as converted.
@@ -659,7 +684,8 @@ func ConvertedSites() ([]ConvertedSite, error) {
 		if s.Status != "converted" || s.GoldenSQL == "" {
 			continue
 		}
-		out = append(out, ConvertedSite{ID: id, GoldenSQL: s.GoldenSQL, File: s.File, Line: s.Line, Function: s.Function})
+		out = append(out, ConvertedSite{ID: id, GoldenSQL: s.GoldenSQL, File: s.File, Line: s.Line,
+			Function: s.Function, Kind: s.Kind, Tables: s.Tables})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

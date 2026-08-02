@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1305,
+    "converted": 1308,
     "keep-raw": 101,
-    "raw": 230,
+    "raw": 227,
     "retired": 8,
     "test-fixture": 4223
   },
@@ -1879,7 +1879,7 @@
       "args": 5,
       "goldenSql": "SELECT (SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.arrival \u003e= ? AND mg.arrival \u003c= ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0 GROUP BY mg.msgid ORDER BY views DESC LIMIT 5",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "0446fe6c9a07": {
@@ -4308,7 +4308,7 @@
       "args": 1,
       "goldenSql": "SELECT bi.id, bi.photourl FROM messages_bulk_items bi WHERE bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' AND NOT EXISTS (SELECT 1 FROM messages_bulk_item_attachments x WHERE x.bulkitemid = bi.id)",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "086b82dd360d": {
@@ -4647,9 +4647,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "SELECT COUNT(*) FROM (SELECT ur.user1 FROM users_related ur INNER JOIN memberships m ON m.userid = ur.user1 INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? WHERE ur.user1 \u003c ur.user2 AND ur.notified = 0 AND m.groupid IN ? AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) \u003e 0 AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) \u003e 0 UNION SELECT ur.user1 FROM users_related ur INNER JOIN memberships m ON m.userid = ur.user2 INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? WHERE ur.user1 \u003c ur.user2 AND ur.notified = 0 AND m.groupid IN ? AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) \u003e 0 AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) \u003e 0 ) t",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "095fcdb26b8b": {
       "id": "095fcdb26b8b",
@@ -5182,9 +5182,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "SELECT (CASE WHEN ((users.systemrole != ? OR EXISTS(SELECT id FROM users_donations WHERE userid = ? AND users_donations.timestamp \u003e= ?) OR EXISTS(SELECT id FROM microactions WHERE userid = ? AND microactions.timestamp \u003e= ?)) AND (CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) THEN 1 ELSE 0 END) AS supporter, (SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, (SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype FROM users WHERE users.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0a874cdbfabf": {
       "id": "0a874cdbfabf",
@@ -20717,7 +20717,7 @@
       "args": 3,
       "goldenSql": "SELECT userid, (SELECT messages_groups.approvedat FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid ORDER BY messages_groups.approvedat DESC LIMIT 1) AS lastactive FROM memberships WHERE groupid IN (?) AND role IN (?, ?) HAVING lastactive IS NOT NULL",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "286f80414bd5": {
@@ -21295,7 +21295,7 @@
       "args": 5,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN locations ON messages.locationid = locations.id INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ? WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id) GROUP BY PartialPostcode ORDER BY locations.name",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "297606bd818a": {
@@ -24499,7 +24499,7 @@
       "args": 2,
       "goldenSql": "SELECT groupid, COUNT(*) as count FROM (SELECT ur.user1, m.groupid FROM users_related ur INNER JOIN memberships m ON m.userid = ur.user1 INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' WHERE ur.user1 \u003c ur.user2 AND ur.notified = 0 AND m.groupid IN ? AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) \u003e 0 AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) \u003e 0 UNION SELECT ur.user1, m.groupid FROM users_related ur INNER JOIN memberships m ON m.userid = ur.user2 INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' WHERE ur.user1 \u003c ur.user2 AND ur.notified = 0 AND m.groupid IN ? AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) \u003e 0 AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) \u003e 0 ) t GROUP BY groupid",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "2fb353882afe": {
@@ -29208,7 +29208,7 @@
       "args": 0,
       "goldenSql": "SELECT DISTINCT id, name AS term FROM (SELECT id, name FROM items WHERE LENGTH(name) \u003e 2 ORDER BY popularity DESC LIMIT 300) t ORDER BY RAND() LIMIT 10",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "3924993e4743": {
@@ -30837,7 +30837,7 @@
       "args": 3,
       "goldenSql": "DELETE FROM users_notifications WHERE touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "3c5c38342a1c": {
@@ -32064,7 +32064,7 @@
     "3f3696f3bba4": {
       "id": "3f3696f3bba4",
       "file": "iznik-server-go/session/session.go",
-      "line": 1434,
+      "line": 1436,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -43720,7 +43720,7 @@
     "56c15677ea5b": {
       "id": "56c15677ea5b",
       "file": "iznik-server-go/session/session.go",
-      "line": 1986,
+      "line": 1993,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -43782,7 +43782,7 @@
       "args": 2,
       "goldenSql": "UPDATE messages SET availablenow = (SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items WHERE msgid = ? AND available = 1) WHERE id = ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "56ead4a7a812": {
@@ -44138,7 +44138,7 @@
       "args": 5,
       "goldenSql": "SELECT COUNT(*) AS count, messages.fromuser FROM messages WHERE id IN (SELECT msgid FROM messages_groups WHERE messages_groups.arrival \u003e= ? AND messages_groups.arrival \u003c= ? AND groupid IN (?)) AND messages.arrival \u003e= ? AND messages.arrival \u003c= ? GROUP BY messages.fromuser ORDER BY count DESC LIMIT 5",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "579bb57ad8d9": {
@@ -56963,7 +56963,7 @@
       "args": 3,
       "goldenSql": "SELECT DISTINCT id, user1, user2 FROM (SELECT users_related.id, user1, user2 FROM users_related INNER JOIN memberships ON users_related.user1 = memberships.userid INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL WHERE user1 \u003c user2 AND notified = 0 AND memberships.groupid IN ? UNION SELECT users_related.id, user1, user2 FROM users_related INNER JOIN memberships ON users_related.user2 = memberships.userid INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' WHERE user1 \u003c user2 AND notified = 0 AND memberships.groupid IN ? ) t ORDER BY id DESC LIMIT ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "700b9ad6511a": {
@@ -57190,7 +57190,7 @@
       "args": 0,
       "goldenSql": "SELECT status, COUNT(*) AS count, COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours FROM rippling_held_replies GROUP BY status ORDER BY status",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "7063565e8d95": {
@@ -58077,7 +58077,7 @@
       "args": 0,
       "goldenSql": "SELECT DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size FROM rippling_live_metrics WHERE stratum_type = 'overall' AND period_type = 'weekly' AND period_start \u003e= CURDATE() - INTERVAL 14 DAY ORDER BY period_start DESC, metric",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "721c27468383": {
@@ -59376,7 +59376,7 @@
       "args": 3,
       "goldenSql": "SELECT u.systemrole, IF(EXISTS(SELECT 1 FROM memberships m WHERE m.userid = u.id AND m.role IN (?, ?)), 1, 0) AS is_mod FROM users u WHERE u.id = ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "745c0a9ca82e": {
@@ -60637,7 +60637,7 @@
     "76555fe088e5": {
       "id": "76555fe088e5",
       "file": "iznik-server-go/session/session.go",
-      "line": 1436,
+      "line": 1438,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -64194,7 +64194,7 @@
       "args": 5,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id) GROUP BY PartialPostcode ORDER BY locations.name",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "7ca53f13d0bf": {
@@ -66976,7 +66976,7 @@
       "args": 0,
       "goldenSql": "SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') FROM rippling_reply_attribution WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL OR client_source IS NOT NULL",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "82476157b2d0": {
@@ -71317,7 +71317,7 @@
       "args": 0,
       "goldenSql": "SELECT DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, area_type, area_id, COALESCE(area_name, '') AS area_name, metric, value, baseline, deviation, direction, severity FROM rippling_hotspots WHERE detected_at \u003e= NOW() - INTERVAL 30 DAY ORDER BY (severity = 'alert') DESC, ABS(deviation) DESC LIMIT 100",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "8ad8c1589208": {
@@ -71914,7 +71914,7 @@
       "args": 4,
       "goldenSql": "SELECT ai.id, ai.name, ai.externaluid, ai.usage_count FROM ai_images ai LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ? WHERE ai.externaluid IS NOT NULL AND ai.externaluid != '' AND ai.status = 'active' AND ma.id IS NULL AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) \u003c ? ORDER BY ai.usage_count DESC LIMIT 1",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "8c344e3158bf": {
@@ -75727,7 +75727,7 @@
       "args": 5,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN locations ON messages.locationid = locations.id INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ? WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id) AND NOT EXISTS ( SELECT 1 FROM messages_bulk_items_interest WHERE msgid = messages.id AND userid = cm.userid ) GROUP BY PartialPostcode ORDER BY locations.name",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "938446f003fd": {
@@ -75820,7 +75820,7 @@
       "args": 3,
       "goldenSql": "SELECT SUM(GrossAmount) AS count, DATE(timestamp) AS date FROM users_donations WHERE userid IN (SELECT DISTINCT userid FROM memberships WHERE groupid IN (?)) AND timestamp \u003e= ? AND timestamp \u003c= ? GROUP BY date ORDER BY date ASC",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "939fde07a522": {
@@ -75845,7 +75845,7 @@
       "args": 0,
       "goldenSql": "SELECT DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, pairs_total, pairs_in_time, pairs_late, COALESCE(reply_p50_hours, 0) AS reply_p50_hours, COALESCE(reply_p75_hours, 0) AS reply_p75_hours FROM rippling_algorithm_metrics WHERE `group` = 'all' ORDER BY week_start DESC LIMIT 1",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "93a1565d8106": {
@@ -76901,7 +76901,7 @@
       "args": 1,
       "goldenSql": "SELECT a.msgid FROM messages_bulk_access a INNER JOIN messages m ON m.id = a.msgid AND m.deleted IS NULL WHERE a.edittoken = ? AND a.edittoken \u003c\u003e '' AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = a.msgid) LIMIT 1",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "95aa0ae55307": {
@@ -81158,7 +81158,7 @@
       "args": 4,
       "goldenSql": "SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject FROM eee_classified_attachments ec INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid INNER JOIN messages m ON m.id = ec.messageid WHERE m.deleted IS NULL AND ma_att.externaluid IS NOT NULL AND ma_att.externaluid != '' AND NOT EXISTS ( SELECT 1 FROM microactions ma WHERE ma.eee_attachment_id = ma_att.id AND ma.userid = ? AND ma.actiontype = ? ) AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) \u003c ? ORDER BY ec.classified_at DESC LIMIT 1",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "9f0c252974c7": {
@@ -87025,7 +87025,7 @@
       "args": 3,
       "goldenSql": "UPDATE users_notifications SET seen = 1 WHERE touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "aa1ac539ac81": {
@@ -94246,7 +94246,7 @@
     "b8835ff0deff": {
       "id": "b8835ff0deff",
       "file": "iznik-server-go/test/main_test.go",
-      "line": 196,
+      "line": 207,
       "function": "cleanupTestGroups",
       "receiver": "db",
       "method": "Exec",
@@ -96764,7 +96764,7 @@
       "args": 0,
       "goldenSql": "SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count FROM rippling_event_metrics WHERE day \u003e= CURDATE() - INTERVAL 30 DAY ORDER BY day DESC, event",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "bd98e8db3817": {
@@ -104654,7 +104654,7 @@
       "args": 3,
       "goldenSql": "SELECT COUNT(*) AS expectedreply FROM users_expected INNER JOIN users ON users.id = users_expected.expectee INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid WHERE expectee = ? AND chat_messages.date \u003e= ? AND replyexpected = 1 AND replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) \u003e= ?",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "cd3e53cfadea": {
@@ -106569,7 +106569,7 @@
       "args": 0,
       "goldenSql": "SELECT ons_category, max_minutes, COALESCE(rationale, '') AS rationale, DATE_FORMAT(proposed_at, '%Y-%m-%d %H:%i') AS proposed_at FROM rippling_params WHERE status = 'proposed' ORDER BY ons_category",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "d0b3ffa72211": {
@@ -111286,7 +111286,7 @@
       "args": 3,
       "goldenSql": "SELECT (SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject FROM messages m WHERE m.arrival \u003e= ? AND m.arrival \u003c= ? AND m.deleted IS NULL ORDER BY views DESC LIMIT 5",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "d9ee371b9e9a": {
@@ -113159,7 +113159,7 @@
       "args": 3,
       "goldenSql": "SELECT memberships.userid AS id, ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod, users.lastaccess, memberships.added, memberships.role, memberships.settings, (SELECT ue.email FROM users_emails ue WHERE ue.userid = memberships.userid AND ue.preferred = 1 LIMIT 1) AS email FROM memberships LEFT JOIN users_images ui ON ui.id = ( SELECT MAX(ui2.id) minid FROM users_images ui2 WHERE ui2.userid = memberships.userid ) INNER JOIN users ON users.id = memberships.userid WHERE groupid = ? AND role IN (?, ?)",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "ddc9310cf597": {
@@ -119262,7 +119262,7 @@
       "args": 5,
       "goldenSql": "SELECT groupid, COUNT(*) as count, held FROM (SELECT DISTINCT cm.id, COALESCE( (SELECT m1.groupid FROM memberships m1 INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle' WHERE m1.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m1.groupid IN ? LIMIT 1), (SELECT m2.groupid FROM memberships m2 INNER JOIN `groups` g2 ON m2.groupid = g2.id AND g2.type = 'Freegle' WHERE m2.userid = cm.userid AND m2.groupid IN ? LIMIT 1)) as groupid, (cmh.userid IS NOT NULL) as held FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date \u003e= ? AND ( EXISTS (SELECT 1 FROM memberships m3 INNER JOIN `groups` g3 ON m3.groupid = g3.id AND g3.type = 'Freegle' WHERE m3.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m3.groupid IN ?) OR (NOT EXISTS (SELECT 1 FROM memberships m4 INNER JOIN `groups` g4 ON m4.groupid = g4.id AND g4.type = 'Freegle' WHERE m4.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) AND EXISTS (SELECT 1 FROM memberships m5 INNER JOIN `groups` g5 ON m5.groupid = g5.id AND g5.type = 'Freegle' WHERE m5.userid = cm.userid AND m5.groupid IN ?)))) sub WHERE groupid IS NOT NULL GROUP BY groupid, held",
       "presentInCode": true,
-      "hasParityTest": false,
+      "hasParityTest": true,
       "status": "raw"
     },
     "e9d2bc6e96e2": {
@@ -124504,7 +124504,7 @@
     "f43d5f680ef9": {
       "id": "f43d5f680ef9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1369,
+      "line": 1371,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -126843,7 +126843,7 @@
     "f85b0b8ed693": {
       "id": "f85b0b8ed693",
       "file": "iznik-server-go/session/session.go",
-      "line": 2003,
+      "line": 2010,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -128845,9 +128845,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fc070851caba": {
       "id": "fc070851caba",

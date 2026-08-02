@@ -131,6 +131,41 @@ func reportExecutedSQLParity() int {
 	fmt.Printf("  goldens seen executed verbatim:   %d\n", matched)
 	fmt.Printf("  not observed during this suite:   %d\n", unexercised)
 
+	// Narrow the "not observed" bucket. A statement the code executed that
+	// matches NO golden in the manifest - of any status - is not fixture setup
+	// and not an unexercised path: it is something the code is sending now that
+	// it did not send before. That is the shape a bad conversion makes.
+	if goldens, gerr := ormharness.AllGoldens(); gerr == nil {
+		var novel []string
+		for stmt := range seen {
+			if _, known := goldens[stmt]; !known {
+				novel = append(novel, stmt)
+			}
+		}
+		sort.Strings(novel)
+		fmt.Printf("  executed but matching no golden:  %d\n", len(novel))
+
+		// Those are dominated by noise rather than by divergence: the suite
+		// builds its fixtures through GORM models, which emit statements no
+		// golden describes (the fixture SQL in the manifest is the raw kind
+		// found in _test.go files), and the replay layer's own EXPLAIN calls
+		// land here too.
+		//
+		// I tried pairing each unobserved site with a novel statement of the
+		// same kind against the same table, to separate "never exercised" from
+		// "now executes something different". It does not work: several sites
+		// touch the same table, so it confidently paired a site's golden with
+		// a statement belonging to a different site entirely. A check that
+		// cries wolf gets ignored, so it is not shipped.
+		//
+		// Distinguishing the two needs the executed statement to be
+		// ATTRIBUTABLE to a site, which needs each converted query behind a
+		// named builder that production and the test both call - the same
+		// refactor that would close Layer 1's re-implementation gap. Until then
+		// the honest report is the two numbers above, and this third one as
+		// context rather than as a verdict.
+	}
+
 	if os.Getenv("ORM_EXECUTED_SQL_LIST") != "" {
 		sort.Slice(missing, func(i, j int) bool { return missing[i].File < missing[j].File })
 		for _, s := range missing {

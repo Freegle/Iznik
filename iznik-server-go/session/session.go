@@ -714,7 +714,13 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 			"htmlbody":     gorm.Expr("NULL"),
 			"deleted":      gorm.Expr("NOW()"),
 		})
-		db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID)
+		// ORM migration site fc02dfb79aa4 (wave 5). gorm.Expr("1") rather than a
+		// bare 1: the original writes the literal into the statement, and a
+		// plain Go value binds as a placeholder instead, which is a different
+		// statement text even though it sets the same value.
+		db.Table("messages_groups").
+			Where("msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID).
+			Update("deleted", gorm.Expr("1"))
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -1051,16 +1057,12 @@ func GetSession(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		start := time.Now().AddDate(0, 0, -utils.SUPPORTER_PERIOD).Format("2006-01-02")
-		db.Raw("SELECT (CASE WHEN "+
-			"((users.systemrole != ? OR "+
-			"EXISTS(SELECT id FROM users_donations WHERE userid = ? AND users_donations.timestamp >= ?) OR "+
-			"EXISTS(SELECT id FROM microactions WHERE userid = ? AND microactions.timestamp >= ?)) AND "+
-			"(CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) "+
-			"THEN 1 ELSE 0 END) AS supporter, "+
-			"(SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, "+
-			"(SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype "+
-			"FROM users WHERE users.id = ?",
-			utils.SYSTEMROLE_USER, myid, start, myid, start, myid, myid, myid).Scan(&supporterInfo)
+		// ORM migration site 0a6ca0656195 (wave 5).
+		db.Table("users").
+			Select("(CASE WHEN ((users.systemrole != ? OR EXISTS(SELECT id FROM users_donations WHERE userid = ? AND users_donations.timestamp >= ?) OR EXISTS(SELECT id FROM microactions WHERE userid = ? AND microactions.timestamp >= ?)) AND (CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) THEN 1 ELSE 0 END) AS supporter, (SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, (SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype",
+				utils.SYSTEMROLE_USER, myid, start, myid, start, myid, myid).
+			Where("users.id = ?", myid).
+			Scan(&supporterInfo)
 	}()
 	wg.Wait()
 
@@ -1509,8 +1511,11 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				db.Raw("SELECT COUNT(*) FROM ("+
-					"SELECT ur.user1 FROM users_related ur "+
+				// ORM migration site 09515916c939 (wave 5). Derived-table trick: GORM's
+				// Table() passes its name argument through verbatim (no quoting) once it
+				// contains a space, so a parenthesized UNION subquery can be given as the
+				// "table name" with its own bind args in Table()'s variadic args.
+				db.Table("(SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user1 "+
 					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
 					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
@@ -1524,8 +1529,10 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
 					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
 					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
-					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
-					") t", utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs, utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs).Scan(&relatedmembers)
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0) t",
+					utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs, utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs).
+					Select("COUNT(*)").
+					Scan(&relatedmembers)
 			}
 		}()
 
