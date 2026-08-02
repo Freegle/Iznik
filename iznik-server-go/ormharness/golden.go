@@ -619,6 +619,50 @@ func dryRunDB() (*gorm.DB, error) {
 type manifestSite struct {
 	GoldenSQL    string `json:"goldenSql"`
 	ApprovedDiff string `json:"approvedDiff,omitempty"`
+	Status       string `json:"status"`
+	File         string `json:"file"`
+	Line         int    `json:"line"`
+	Function     string `json:"function"`
+}
+
+// ConvertedSite is one entry from the manifest, exported for the executed-SQL
+// check in the test package. That check is the answer to a question Layer 1
+// cannot address: Layer 1 renders a chain written in a TEST and compares it to
+// the golden, so it proves "a chain of this shape renders the old SQL", not
+// "the chain in production does". If a conversion and its test drift apart,
+// Layer 1 still passes.
+type ConvertedSite struct {
+	ID        string
+	GoldenSQL string
+	File      string
+	Line      int
+	Function  string
+}
+
+// NormaliseForComparison applies the same shape-only normalisations Layer 1
+// uses when deciding whether two statements are the same statement: IN-list
+// expansion and column ordering. Exported so the executed-SQL check compares
+// on exactly the same terms as the golden check, rather than inventing a
+// second, subtly different notion of equality.
+func NormaliseForComparison(canonical string) string {
+	return normaliseColumnOrder(collapseInLists(canonical))
+}
+
+// ConvertedSites returns every site the manifest records as converted.
+func ConvertedSites() ([]ConvertedSite, error) {
+	sites, err := loadManifest()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ConvertedSite, 0, len(sites))
+	for id, s := range sites {
+		if s.Status != "converted" || s.GoldenSQL == "" {
+			continue
+		}
+		out = append(out, ConvertedSite{ID: id, GoldenSQL: s.GoldenSQL, File: s.File, Line: s.Line, Function: s.Function})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 type manifestFile struct {
