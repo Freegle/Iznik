@@ -6,6 +6,7 @@ use App\Models\ChatRoom;
 use App\Models\User;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
+use App\Support\EmojiUtils;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
@@ -1116,7 +1117,14 @@ class PushNotificationService
 
         $title = $this->resolveChatPushTitle($row);
 
-        $message = $row->message ?? '';
+        // Emoji are stored in the twem encoding the front end writes - a smile is
+        // the literal text \\u1f642\\u - so an undecoded body reaches the phone as
+        // "I'll delete it for you \\u1f642\\u". The email path for this very same
+        // column already decodes (ChatNotification), push did not. Decode BEFORE
+        // truncating: cutting at 256 could otherwise slice an escape in half and
+        // leave a fragment like \\u1f6 on screen, and the decoded text is what the
+        // member actually sees, so it is what the limit should apply to.
+        $message = EmojiUtils::decodeEmojis($row->message ?? '');
         if (mb_strlen($message) > 256) {
             $message = mb_substr($message, 0, 253) . '...';
         }
