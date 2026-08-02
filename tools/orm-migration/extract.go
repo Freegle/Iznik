@@ -79,6 +79,16 @@ type Site struct {
 	Status string `json:"status"`
 	// Reason is required when Status is keep-raw, and explains why.
 	Reason string `json:"reason,omitempty"`
+	// Porting is plan 7.4's per-dialect porting note. The keep-raw list is the
+	// explicit hard-site input to migration Phase 4, and a list that says only
+	// "this one is hard" is not much of an input: what Phase 4 needs is what
+	// the statement becomes on the target dialect.
+	Porting string `json:"porting,omitempty"`
+	// Category is the short label the completion report groups by. Derived
+	// headings read badly (splitting a porting note on its first full stop
+	// produced "PostgreSQL: INSERT"), and the grouping axis is what Phase 4
+	// plans against, so it is stated rather than inferred.
+	Category string `json:"category,omitempty"`
 	// ApprovedDiff records a reviewer-justified divergence between the golden
 	// SQL and what the ORM emits (plan 7.2, Layer 1).
 	ApprovedDiff string `json:"approvedDiff,omitempty"`
@@ -796,6 +806,8 @@ type keepRawRules struct {
 		File     string `json:"file"`
 		Function string `json:"function"`
 		Reason   string `json:"reason"`
+		Porting  string `json:"porting"`
+		Category string `json:"category"`
 	} `json:"rules"`
 }
 
@@ -818,6 +830,13 @@ func applyKeepRaw(sites []*Site, path string) (int, error) {
 	for i, r := range rules.Rules {
 		if strings.TrimSpace(r.Reason) == "" {
 			return 0, fmt.Errorf("%s: rule %d (%s) has no reason; deferral must always carry a justification", path, i, r.File)
+		}
+		// Plan 7.4 requires a per-dialect porting note as well as a reason,
+		// because this list is the explicit input to migration Phase 4. A
+		// hard-site list that records only that something is hard tells the
+		// port nothing it did not already know.
+		if strings.TrimSpace(r.Porting) == "" {
+			return 0, fmt.Errorf("%s: rule %d (%s) has no porting note; plan 7.4 requires one on every keep-raw entry", path, i, r.File)
 		}
 	}
 
@@ -848,6 +867,8 @@ func applyKeepRaw(sites []*Site, path string) (int, error) {
 			}
 			s.Status = StatusKeepRaw
 			s.Reason = r.Reason
+			s.Porting = r.Porting
+			s.Category = r.Category
 			applied++
 			hits[ri]++
 			break

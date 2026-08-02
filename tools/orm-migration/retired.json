@@ -44,6 +44,62 @@
     {
       "id": "f86f6230fb8c",
       "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "3cb627925298",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at systemlogs/systemlogs.go:291. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "5756847cafa5",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:1182. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "61a476e2053c",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at rippling/analytics.go:424. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "707229c569eb",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:1694. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "7ee9b04b5de1",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at microvolunteering/microvolunteering.go:1118. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "95aa0ae55307",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at authority/authority.go:94. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "a1b57a3babc2",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:1450. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "a408b196636c",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at dashboard/dashboard.go:68. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "c12345448a79",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at systemlogs/systemlogs.go:150. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "c59f697fe0cb",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at rippling/metrics.go:299. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "f68298f3c261",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at browse/scroll.go:129. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "f707d71a7c84",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:1039. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "fe86fef06fca",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:894. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
+    },
+    {
+      "id": "ff270803c454",
+      "reason": "Never a SQL call site. This is Fiber's c.Query(\"start\", \"\") reading a URL parameter at emailtracking/emailtracking.go:378. The extractor matched it because \"start\" is the first word of START TRANSACTION and the generic method name Query is not unique to GORM. It was inventoried with a goldenSql of \"start\" and recorded as a keep-raw decision by two agents independently, which made it a deliberate-looking decision about a statement that does not exist. The extractor now requires a database receiver when the leading verb is also an ordinary word; see ambiguousLeadingKeyword in extract.go."
     }
   ]
 }
