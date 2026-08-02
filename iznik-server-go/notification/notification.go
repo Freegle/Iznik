@@ -38,9 +38,13 @@ func Count(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
 	var count []int64
-	db.Raw("SELECT COUNT(*) AS count FROM users_notifications "+
-		"LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) "+
-		"WHERE touser = ? AND timestamp >= ? AND seen = 0 AND spam_users.id IS NULL;", utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER, myid, start).Pluck("count", &count)
+	// ORM migration site 6fc15cf6168f (wave 4).
+	db.Table("users_notifications").
+		Select("COUNT(*) AS count").
+		Joins("LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?)",
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER).
+		Where("touser = ? AND timestamp >= ? AND seen = 0 AND spam_users.id IS NULL", myid, start).
+		Pluck("count", &count)
 
 	if len(count) > 0 {
 		return c.JSON(fiber.Map{
@@ -79,9 +83,14 @@ func List(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
 	var notifications []Notification
-	db.Raw("SELECT * FROM users_notifications "+
-		"LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) "+
-		"WHERE touser = ? AND timestamp >= ? AND spam_users.id IS NULL ORDER BY users_notifications.id DESC", utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER, myid, start).Scan(&notifications)
+	// ORM migration site 56662fe97c21 (wave 4).
+	db.Table("users_notifications").
+		Select("*").
+		Joins("LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?)",
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER).
+		Where("touser = ? AND timestamp >= ? AND spam_users.id IS NULL", myid, start).
+		Order("users_notifications.id DESC").
+		Scan(&notifications)
 
 	if notifications == nil {
 		notifications = make([]Notification, 0)

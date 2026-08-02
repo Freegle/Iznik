@@ -769,14 +769,17 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 	go func() {
 		defer wg.Done()
 
-		db.Raw("SELECT newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, "+
-			"(CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, "+
-			"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+
-			"CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod "+
-			"FROM newsfeed "+
-			"LEFT JOIN users ON users.id = newsfeed.userid "+
-			"LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id WHERE newsfeed.id = ?;",
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, id).Scan(&newsfeed)
+		// ORM migration site 6cdce430c158 (wave 4).
+		db.Table("newsfeed").
+			Select("newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, "+
+				"(CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, "+
+				"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+
+				"CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod",
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
+			Joins("LEFT JOIN users ON users.id = newsfeed.userid").
+			Joins("LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id").
+			Where("newsfeed.id = ?", id).
+			Scan(&newsfeed)
 
 		if newsfeed.Imageid > 0 {
 			if newsfeed.Imageuid != "" {
@@ -894,7 +897,13 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 
 		// Use area name for privacy instead of postcode. Look up from user's location.
 		var areaname string
-		db.Raw("SELECT COALESCE(l2.name, '') FROM users LEFT JOIN locations l1 ON users.lastlocation = l1.id LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE users.id = ?", newsfeed.Userid).Scan(&areaname)
+		// ORM migration site 68ee4370bd9a (wave 4).
+		db.Table("users").
+			Select("COALESCE(l2.name, '')").
+			Joins("LEFT JOIN locations l1 ON users.lastlocation = l1.id").
+			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+			Where("users.id = ?", newsfeed.Userid).
+			Scan(&areaname)
 		if areaname != "" {
 			newsfeed.Location = areaname
 		} else if len(newsfeed.Location) > 2 {
@@ -1190,7 +1199,14 @@ func Post(c *fiber.Ctx) error {
 				Email    string
 			}
 			var reporter ReporterInfo
-			db.Raw("SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ue.preferred DESC, ue.id ASC LIMIT 1", myid).Scan(&reporter)
+			// ORM migration site 28acafc7c5a8 (wave 4).
+			db.Table("users u").
+				Select("u.fullname, ue.email").
+				Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+				Where("u.id = ?", myid).
+				Order("ue.preferred DESC, ue.id ASC").
+				Limit(1).
+				Scan(&reporter)
 
 			if err := queue.QueueTask(queue.TaskEmailChitchatReport, map[string]interface{}{
 				"user_id":     myid,
@@ -1411,7 +1427,13 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 
 	// Get user's display location - use area name (e.g. "Kirkcaldy") for privacy instead of postcode.
 	var location *string
-	db.Raw("SELECT l2.name FROM users LEFT JOIN locations l1 ON users.lastlocation = l1.id LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE users.id = ?", myid).Scan(&location)
+	// ORM migration site 9f3a14137203 (wave 4).
+	db.Table("users").
+		Select("l2.name").
+		Joins("LEFT JOIN locations l1 ON users.lastlocation = l1.id").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("users.id = ?", myid).
+		Scan(&location)
 
 	// Build position point
 	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", lng, lat, utils.SRID)

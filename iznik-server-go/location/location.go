@@ -65,11 +65,12 @@ func ClosestPostcode(lat float32, lng float32) Location {
 
 	id := results[0].ID
 	var loc Location
-	database.DBConn.Raw(
-		"SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname "+
-			"FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
-		id,
-	).Scan(&loc)
+	// ORM migration site c7c4b8699bcc (wave 4).
+	database.DBConn.Table("locations l1").
+		Select("l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("l1.id = ?", id).
+		Scan(&loc)
 	return loc
 }
 
@@ -257,13 +258,13 @@ func FetchSingle(id uint64) *Location {
 
 	var location Location
 
-	db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname "+
-		"FROM locations l1 "+
-		"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-		"WHERE l1.id = ? "+
-		"LIMIT 1;",
-		id,
-	).Scan(&location)
+	// ORM migration site 3acefabd6672 (wave 4).
+	db.Table("locations l1").
+		Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("l1.id = ?", id).
+		Limit(1).
+		Scan(&location)
 
 	// Return nil when location doesn't exist.
 	if location.ID == 0 {
@@ -513,15 +514,15 @@ func SearchLocations(c *fiber.Ctx) error {
 		if dodgyFlag {
 			db := database.DBConn
 			var dodgyLocs []DodgyLocation
-			db.Raw("SELECT ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, "+
-				"l0.name AS name, l1.name AS oldname, l2.name AS newname "+
-				"FROM locations_dodgy ld "+
-				"INNER JOIN locations l0 ON l0.id = ld.locationid "+
-				"INNER JOIN locations l1 ON l1.id = ld.oldlocationid "+
-				"INNER JOIN locations l2 ON l2.id = ld.newlocationid "+
-				"WHERE ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?;",
-				swlat, nelat, swlng, nelng,
-			).Scan(&dodgyLocs)
+			// ORM migration site fdebc3317226 (wave 4).
+			db.Table("locations_dodgy ld").
+				Select("ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, "+
+					"l0.name AS name, l1.name AS oldname, l2.name AS newname").
+				Joins("INNER JOIN locations l0 ON l0.id = ld.locationid").
+				Joins("INNER JOIN locations l1 ON l1.id = ld.oldlocationid").
+				Joins("INNER JOIN locations l2 ON l2.id = ld.newlocationid").
+				Where("ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?", swlat, nelat, swlng, nelng).
+				Scan(&dodgyLocs)
 
 			if dodgyLocs == nil {
 				dodgyLocs = []DodgyLocation{}
@@ -632,37 +633,39 @@ func GetLocationAddresses(c *fiber.Ctx) error {
 			var addresses []Address
 			db := database.DBConn
 
-			db.Raw("SELECT paf_addresses.id,"+
-				"locations.name as postcode, "+
-				"buildingname, "+
-				"buildingnumber, "+
-				"p.subbuildingname, "+
-				"departmentname, "+
-				"dependentlocality, "+
-				"doubledependentlocality, "+
-				"dependentthoroughfaredescriptor, "+
-				"organisationname, "+
-				"suorganisationindicator, "+
-				"deliverypointsuffix, "+
-				"udprn, "+
-				"posttown, "+
-				"postcodetype, "+
-				"pobox, "+
-				"thoroughfaredescriptor "+
-				"FROM paf_addresses "+
-				"INNER JOIN locations ON locations.id = paf_addresses.postcodeid "+
-				"LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id "+
-				"LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id "+
-				"LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id "+
-				"LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id "+
-				"LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id "+
-				"LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id "+
-				"LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id "+
-				"LEFT JOIN paf_pobox ON poboxid = paf_pobox.id "+
-				"LEFT JOIN paf_posttown ON posttownid = paf_posttown.id "+
-				"LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id "+
-				"LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id "+
-				"WHERE paf_addresses.postcodeid = ?;", id).Scan(&addresses)
+			// ORM migration site 8344ba8f9aa5 (wave 4).
+			db.Table("paf_addresses").
+				Select("paf_addresses.id,"+
+					"locations.name as postcode, "+
+					"buildingname, "+
+					"buildingnumber, "+
+					"p.subbuildingname, "+
+					"departmentname, "+
+					"dependentlocality, "+
+					"doubledependentlocality, "+
+					"dependentthoroughfaredescriptor, "+
+					"organisationname, "+
+					"suorganisationindicator, "+
+					"deliverypointsuffix, "+
+					"udprn, "+
+					"posttown, "+
+					"postcodetype, "+
+					"pobox, "+
+					"thoroughfaredescriptor").
+				Joins("INNER JOIN locations ON locations.id = paf_addresses.postcodeid").
+				Joins("LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id").
+				Joins("LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id").
+				Joins("LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id").
+				Joins("LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id").
+				Joins("LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id").
+				Joins("LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id").
+				Joins("LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id").
+				Joins("LEFT JOIN paf_pobox ON poboxid = paf_pobox.id").
+				Joins("LEFT JOIN paf_posttown ON posttownid = paf_posttown.id").
+				Joins("LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id").
+				Joins("LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id").
+				Where("paf_addresses.postcodeid = ?", id).
+				Scan(&addresses)
 
 			// If buildingnumber is the same as buildingname, remove buildingnumber - this happens and causes dups.
 			for i, address := range addresses {

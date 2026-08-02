@@ -354,8 +354,11 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 
 	// Resolve the owning message and check permission.
 	var msgid, fromuser uint64
-	db.Raw("SELECT bi.msgid, m.fromuser FROM messages_bulk_items bi "+
-		"INNER JOIN messages m ON m.id = bi.msgid WHERE bi.id = ?", *req.Bulkitemid).
+	// ORM migration site 2fb353882afe (wave 4).
+	db.Table("messages_bulk_items bi").
+		Select("bi.msgid, m.fromuser").
+		Joins("INNER JOIN messages m ON m.id = bi.msgid").
+		Where("bi.id = ?", *req.Bulkitemid).
 		Row().Scan(&msgid, &fromuser)
 	if msgid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Item not found")

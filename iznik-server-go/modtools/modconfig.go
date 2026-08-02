@@ -92,10 +92,13 @@ func GetModConfig(c *fiber.Ctx) error {
 	// - default configs
 	// - configs used in their memberships
 	var configs []ModConfig
-	db.Raw("SELECT DISTINCT mc.* FROM mod_configs mc "+
-		"LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ? "+
-		"WHERE mc.createdby = ? OR mc.`default` = 1 OR m.id IS NOT NULL "+
-		"ORDER BY mc.name", myid, myid).Scan(&configs)
+	// ORM migration site 67206ab9f1ab (wave 4).
+	db.Table("mod_configs mc").
+		Select("DISTINCT mc.*").
+		Joins("LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ?", myid).
+		Where("mc.createdby = ? OR mc.`default` = 1 OR m.id IS NOT NULL", myid).
+		Order("mc.name").
+		Scan(&configs)
 
 	return c.JSON(configs)
 }

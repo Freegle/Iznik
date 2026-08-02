@@ -373,10 +373,12 @@ func EditIsochrone(c *fiber.Ctx) error {
 		Userid     uint64
 		Transport  string
 	}
-	db.Raw("SELECT isochrones.locationid, isochrones_users.userid, isochrones.transport "+
-		"FROM isochrones_users "+
-		"INNER JOIN isochrones ON isochrones.id = isochrones_users.isochroneid "+
-		"WHERE isochrones_users.id = ?", req.ID).Scan(&current)
+	// ORM migration site 96a263f84449 (wave 4).
+	db.Table("isochrones_users").
+		Select("isochrones.locationid, isochrones_users.userid, isochrones.transport").
+		Joins("INNER JOIN isochrones ON isochrones.id = isochrones_users.isochroneid").
+		Where("isochrones_users.id = ?", req.ID).
+		Scan(&current)
 
 	if current.Locationid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")

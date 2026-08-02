@@ -389,9 +389,12 @@ func ExportSpammers(c *fiber.Ctx) error {
 	}
 
 	var rows []ExportRow
-	db.Raw("SELECT spam_users.id, spam_users.added, reason, email FROM spam_users "+
-		"INNER JOIN users_emails ON spam_users.userid = users_emails.userid "+
-		"WHERE collection = ?", utils.SPAM_COLLECTION_SPAMMER).Scan(&rows)
+	// ORM migration site b524187a3675 (wave 4).
+	db.Table("spam_users").
+		Select("spam_users.id, spam_users.added, reason, email").
+		Joins("INNER JOIN users_emails ON spam_users.userid = users_emails.userid").
+		Where("collection = ?", utils.SPAM_COLLECTION_SPAMMER).
+		Scan(&rows)
 
 	if rows == nil {
 		rows = make([]ExportRow, 0)

@@ -67,24 +67,28 @@ func List(c *fiber.Ctx) error {
 
 		if len(modGroupIDs) > 0 {
 			start := time.Now().Format("2006-01-02")
-			db.Raw("SELECT DISTINCT communityevents.id FROM communityevents "+
-				"INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid "+
-				"INNER JOIN communityevents_dates ON communityevents_dates.eventid = communityevents.id "+
-				"WHERE groupid IN (?) AND communityevents.deleted = 0 AND pending = 1 "+
-				"AND communityevents_dates.end >= ? "+
-				"ORDER BY communityevents_dates.end ASC", modGroupIDs, start).Pluck("id", &ids)
+			// ORM migration site 3ce758530901 (wave 4).
+			db.Table("communityevents").
+				Select("DISTINCT communityevents.id").
+				Joins("INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
+				Joins("INNER JOIN communityevents_dates ON communityevents_dates.eventid = communityevents.id").
+				Where("groupid IN (?) AND communityevents.deleted = 0 AND pending = 1 AND communityevents_dates.end >= ?", modGroupIDs, start).
+				Order("communityevents_dates.end ASC").
+				Pluck("id", &ids)
 		}
 	} else if len(groupids) > 0 {
 		start := time.Now().Format("2006-01-02")
 
-		db.Raw("SELECT DISTINCT communityevents.id FROM communityevents "+
-			"INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid "+
-			"LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid "+
-			"LEFT JOIN users ON communityevents.userid = users.id "+
-			"WHERE groupid IN (?) AND "+
-			"end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) "+
-			"AND users.deleted IS NULL "+
-			"ORDER BY end ASC", groupids, start, myid).Pluck("eventid", &ids)
+		// ORM migration site 29edc144f5c9 (wave 4).
+		db.Table("communityevents").
+			Select("DISTINCT communityevents.id").
+			Joins("INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
+			Joins("LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid").
+			Joins("LEFT JOIN users ON communityevents.userid = users.id").
+			Where("groupid IN (?) AND end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) AND users.deleted IS NULL",
+				groupids, start, myid).
+			Order("end ASC").
+			Pluck("id", &ids)
 	}
 
 	if len(ids) > 0 {
@@ -107,14 +111,16 @@ func ListGroup(c *fiber.Ctx) error {
 
 	start := time.Now().Format("2006-01-02")
 
-	db.Raw("SELECT DISTINCT communityevents.id FROM communityevents "+
-		"LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid "+
-		"LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid "+
-		"LEFT JOIN users ON communityevents.userid = users.id "+
-		"WHERE groupid = ? AND "+
-		"end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND pending = 0 "+
-		"AND users.deleted IS NULL "+
-		"ORDER BY end ASC", id, start).Pluck("eventid", &ids)
+	// ORM migration site a0cd1607e066 (wave 4).
+	db.Table("communityevents").
+		Select("DISTINCT communityevents.id").
+		Joins("LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
+		Joins("LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid").
+		Joins("LEFT JOIN users ON communityevents.userid = users.id").
+		Where("groupid = ? AND end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND pending = 0 AND users.deleted IS NULL",
+			id, start).
+		Order("end ASC").
+		Pluck("id", &ids)
 
 	if len(ids) > 0 {
 		return c.JSON(ids)
@@ -244,10 +250,12 @@ func isModerator(myid uint64, eventID uint64) bool {
 	// Single query to check if user is moderator/owner of any linked group.
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships m "+
-		"INNER JOIN communityevents_groups ceg ON ceg.groupid = m.groupid "+
-		"WHERE ceg.eventid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
-		eventID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site f8e861bf3fa6 (wave 4).
+	db.Table("memberships m").
+		Joins("INNER JOIN communityevents_groups ceg ON ceg.groupid = m.groupid").
+		Where("ceg.eventid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
+			eventID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&count)
 
 	return count > 0
 }

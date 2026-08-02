@@ -94,11 +94,13 @@ func canSee(myid uint64, cfg *ModConfig) bool {
 	}
 	// Used by mods on groups they moderate.
 	var count int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM memberships m1 "+
-		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-		"WHERE m1.userid = ? AND m1.role IN (?, ?) "+
-		"AND m2.configid = ? AND m2.role IN (?, ?)",
-		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site 37e5bdcc1ee6 (wave 4).
+	database.DBConn.Table("memberships m1").
+		Select("COUNT(*)").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?)",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&count)
 	return count > 0
 }
 
@@ -170,13 +172,14 @@ func GetModConfig(c *fiber.Ctx) error {
 			Groupid uint64
 		}
 		var shared SharedInfo
-		db.Raw("SELECT m2.userid, m2.groupid "+
-			"FROM memberships m1 "+
-			"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-			"WHERE m1.userid = ? AND m1.role IN (?, ?) "+
-			"AND m2.configid = ? AND m2.role IN (?, ?) "+
-			"AND m2.userid != ? "+
-			"LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid).Scan(&shared)
+		// ORM migration site 4f2e91887c4f (wave 4).
+		db.Table("memberships m1").
+			Select("m2.userid, m2.groupid").
+			Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+			Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?) AND m2.userid != ?",
+				myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid).
+			Limit(1).
+			Scan(&shared)
 
 		if shared.Userid > 0 {
 			cansee = "Shared"

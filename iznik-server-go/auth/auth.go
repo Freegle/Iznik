@@ -163,7 +163,11 @@ func IsChitChatMod(myid uint64) bool {
 
 	db := database.DBConn
 	var teamMemberCount int64
-	db.Raw("SELECT COUNT(*) FROM teams_members tm INNER JOIN teams t ON tm.teamid = t.id WHERE t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).Scan(&teamMemberCount)
+	// ORM migration site 204fbc700672 (wave 4).
+	db.Table("teams_members tm").
+		Joins("INNER JOIN teams t ON tm.teamid = t.id").
+		Where("t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).
+		Count(&teamMemberCount)
 
 	return teamMemberCount > 0
 }

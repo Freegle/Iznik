@@ -1711,50 +1711,36 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// NULL, since no mail was sent) still count towards "sent" - they just
 	// never contribute to opened/clicked.
 	var funnel ReengageFunnel
-	db.Raw(`
-		SELECT
-			COUNT(*) AS sent,
-			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
-			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
-			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
-		FROM reengage r
-		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
-		WHERE r.sentat BETWEEN ? AND ?
-	`, startDate, endDateTime).Scan(&funnel)
+	// ORM migration site db84f5bddc5b (wave 4).
+	db.Table("reengage r").
+		Select("COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ?", startDate, endDateTime).
+		Scan(&funnel)
 
 	// Funnel broken down by stage (day 1-5).
 	byStage := make([]ReengageStageStat, 0)
-	db.Raw(`
-		SELECT
-			r.stage AS stage,
-			COUNT(*) AS sent,
-			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
-			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
-			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
-		FROM reengage r
-		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
-		WHERE r.sentat BETWEEN ? AND ?
-		GROUP BY r.stage
-		ORDER BY r.stage ASC
-	`, startDate, endDateTime).Scan(&byStage)
+	// ORM migration site b8401fd16dd1 (wave 4).
+	db.Table("reengage r").
+		Select("r.stage AS stage, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ?", startDate, endDateTime).
+		Group("r.stage").
+		Order("r.stage ASC").
+		Scan(&byStage)
 
 	// Funnel broken down by experiment arm. Rows predating the experiment
 	// (or sent outside of one) have arm = NULL and are excluded here - they
 	// are still reflected in the overall funnel above.
 	byArm := make([]ReengageArmStat, 0)
-	db.Raw(`
-		SELECT
-			r.arm AS arm,
-			COUNT(*) AS sent,
-			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
-			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
-			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
-		FROM reengage r
-		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
-		WHERE r.sentat BETWEEN ? AND ? AND r.arm IS NOT NULL
-		GROUP BY r.arm
-		ORDER BY r.arm ASC
-	`, startDate, endDateTime).Scan(&byArm)
+	// ORM migration site 37d4ff3aedb7 (wave 4).
+	db.Table("reengage r").
+		Select("r.arm AS arm, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ? AND r.arm IS NOT NULL", startDate, endDateTime).
+		Group("r.arm").
+		Order("r.arm ASC").
+		Scan(&byArm)
 
 	// Sent/reengaged broken down by the user-journey segment captured at
 	// send time. Segment has no bearing on opens/clicks so it isn't joined
@@ -1774,19 +1760,14 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// joined so a genuine home-group sign-off can be compared against nearest
 	// or no sign-off.
 	bySource := make([]ReengageSourceStat, 0)
-	db.Raw(`
-		SELECT
-			r.volunteer_source AS source,
-			COUNT(*) AS sent,
-			SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
-			SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
-			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
-		FROM reengage r
-		LEFT JOIN email_tracking et ON r.email_tracking_id = et.id
-		WHERE r.sentat BETWEEN ? AND ? AND r.volunteer_source IS NOT NULL
-		GROUP BY r.volunteer_source
-		ORDER BY r.volunteer_source ASC
-	`, startDate, endDateTime).Scan(&bySource)
+	// ORM migration site 639cf671aa39 (wave 4).
+	db.Table("reengage r").
+		Select("r.volunteer_source AS source, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ? AND r.volunteer_source IS NOT NULL", startDate, endDateTime).
+		Group("r.volunteer_source").
+		Order("r.volunteer_source ASC").
+		Scan(&bySource)
 
 	return c.JSON(fiber.Map{
 		"funnel":    funnel,

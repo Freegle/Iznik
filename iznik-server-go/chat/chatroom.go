@@ -679,12 +679,13 @@ func GetCommonGroups(c *fiber.Ctx) error {
 	}
 
 	groups := []CommonGroup{}
-	db.Raw("SELECT g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay "+
-		"FROM `groups` g "+
-		"INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ? "+
-		"INNER JOIN memberships m2 ON m2.groupid = g.id AND m2.userid = ? "+
-		"ORDER BY namedisplay",
-		room.User1, room.User2).Scan(&groups)
+	// ORM migration site 22b6e811aaa9 (wave 4).
+	db.Table("`groups` g").
+		Select("g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay").
+		Joins("INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ?", room.User1).
+		Joins("INNER JOIN memberships m2 ON m2.groupid = g.id AND m2.userid = ?", room.User2).
+		Order("namedisplay").
+		Scan(&groups)
 
 	return c.JSON(groups)
 }
@@ -1673,10 +1674,12 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	// Re-check that there really is no group in common; if there is, the client
 	// should have used the normal group-routed report flow.
 	var common int64
-	db.Raw("SELECT COUNT(*) FROM memberships m1 "+
-		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-		"WHERE m1.userid = ? AND m2.userid = ?",
-		room.User1, room.User2).Scan(&common)
+	// ORM migration site 8f117eb67b75 (wave 4).
+	db.Table("memberships m1").
+		Select("COUNT(*)").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m2.userid = ?", room.User1, room.User2).
+		Scan(&common)
 	if common > 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Groups in common exist; use the normal report flow")
 	}

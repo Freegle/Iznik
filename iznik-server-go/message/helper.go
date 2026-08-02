@@ -148,13 +148,23 @@ func msgidForBatch(db *gorm.DB, batchid uint64) uint64 {
 
 func msgidForReplier(db *gorm.DB, replierid uint64) uint64 {
 	var msgid uint64
-	db.Raw("SELECT b.msgid FROM helper_repliers r INNER JOIN helper_batches b ON b.id = r.batchid WHERE r.id = ?", replierid).Scan(&msgid)
+	// ORM migration site e6d298a3c77e (wave 4).
+	db.Table("helper_repliers r").
+		Select("b.msgid").
+		Joins("INNER JOIN helper_batches b ON b.id = r.batchid").
+		Where("r.id = ?", replierid).
+		Scan(&msgid)
 	return msgid
 }
 
 func msgidForProposal(db *gorm.DB, proposalid uint64) uint64 {
 	var msgid uint64
-	db.Raw("SELECT b.msgid FROM helper_proposals p INNER JOIN helper_batches b ON b.id = p.batchid WHERE p.id = ?", proposalid).Scan(&msgid)
+	// ORM migration site 5ccbc340f539 (wave 4).
+	db.Table("helper_proposals p").
+		Select("b.msgid").
+		Joins("INNER JOIN helper_batches b ON b.id = p.batchid").
+		Where("p.id = ?", proposalid).
+		Scan(&msgid)
 	return msgid
 }
 
@@ -205,8 +215,12 @@ func GetHelper(c *fiber.Ctx) error {
 		Scan(&repliers)
 
 	var itemStates []HelperItemState
-	db.Raw("SELECT s.id, s.replierid, s.bulkitemid, s.state, s.qty_wanted, s.qty_allocated, s.score, s.score_breakdown "+
-		"FROM helper_item_states s INNER JOIN helper_repliers r ON r.id = s.replierid WHERE r.batchid = ?", b.ID).Scan(&itemStates)
+	// ORM migration site 3ad68615e84c (wave 4).
+	db.Table("helper_item_states s").
+		Select("s.id, s.replierid, s.bulkitemid, s.state, s.qty_wanted, s.qty_allocated, s.score, s.score_breakdown").
+		Joins("INNER JOIN helper_repliers r ON r.id = s.replierid").
+		Where("r.batchid = ?", b.ID).
+		Scan(&itemStates)
 	byReplier := map[uint64][]HelperItemState{}
 	for _, s := range itemStates {
 		byReplier[s.Replierid] = append(byReplier[s.Replierid], s)
@@ -261,10 +275,14 @@ func GetHelperEscalated(c *fiber.Ctx) error {
 	}
 	db := database.DBConn
 	var rows []HelperEscalatedRow
-	db.Raw("SELECT r.id, r.batchid, b.msgid, b.offereruserid, r.userid, r.chatid, r.escalation_reason, m.subject "+
-		"FROM helper_repliers r INNER JOIN helper_batches b ON b.id = r.batchid "+
-		"INNER JOIN messages m ON m.id = b.msgid "+
-		"WHERE r.state = 'ESCALATED' ORDER BY r.id DESC").Scan(&rows)
+	// ORM migration site b7f56ac149be (wave 4).
+	db.Table("helper_repliers r").
+		Select("r.id, r.batchid, b.msgid, b.offereruserid, r.userid, r.chatid, r.escalation_reason, m.subject").
+		Joins("INNER JOIN helper_batches b ON b.id = r.batchid").
+		Joins("INNER JOIN messages m ON m.id = b.msgid").
+		Where("r.state = 'ESCALATED'").
+		Order("r.id DESC").
+		Scan(&rows)
 	if rows == nil {
 		rows = []HelperEscalatedRow{}
 	}

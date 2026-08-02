@@ -167,26 +167,27 @@ func ListForUser(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Raw("SELECT "+
-		"users_addresses.id, users_addresses.userid, instructions,"+
-		"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
-		"COALESCE(users_addresses.lng, locations.lng) AS lng, "+
-		"locations.name AS postcode, "+
-		"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname "+
-		"FROM users_addresses "+
-		"INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid "+
-		"INNER JOIN locations ON locations.id = paf_addresses.postcodeid "+
-		"LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid "+
-		"LEFT JOIN paf_dependentlocality ON paf_dependentlocality.id = paf_addresses.dependentlocalityid "+
-		"LEFT JOIN paf_doubledependentlocality ON paf_doubledependentlocality.id = paf_addresses.doubledependentlocalityid "+
-		"LEFT JOIN paf_thoroughfaredescriptor ON paf_thoroughfaredescriptor.id = paf_addresses.thoroughfaredescriptorid "+
-		"LEFT JOIN paf_dependentthoroughfaredescriptor ON paf_dependentthoroughfaredescriptor.id = paf_addresses.dependentthoroughfaredescriptorid "+
-		"LEFT JOIN paf_buildingname ON paf_buildingname.id = paf_addresses.buildingnameid "+
-		"LEFT JOIN paf_subbuildingname ON paf_subbuildingname.id = paf_addresses.subbuildingnameid "+
-		"LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid "+
-		"LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid "+
-		"LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid "+
-		"WHERE users_addresses.userid = ?", myid).Scan(&r)
+	// ORM migration site b9b602714ff9 (wave 4).
+	db.Table("users_addresses").
+		Select("users_addresses.id, users_addresses.userid, instructions,"+
+			"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
+			"COALESCE(users_addresses.lng, locations.lng) AS lng, "+
+			"locations.name AS postcode, "+
+			"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname").
+		Joins("INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid").
+		Joins("INNER JOIN locations ON locations.id = paf_addresses.postcodeid").
+		Joins("LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid").
+		Joins("LEFT JOIN paf_dependentlocality ON paf_dependentlocality.id = paf_addresses.dependentlocalityid").
+		Joins("LEFT JOIN paf_doubledependentlocality ON paf_doubledependentlocality.id = paf_addresses.doubledependentlocalityid").
+		Joins("LEFT JOIN paf_thoroughfaredescriptor ON paf_thoroughfaredescriptor.id = paf_addresses.thoroughfaredescriptorid").
+		Joins("LEFT JOIN paf_dependentthoroughfaredescriptor ON paf_dependentthoroughfaredescriptor.id = paf_addresses.dependentthoroughfaredescriptorid").
+		Joins("LEFT JOIN paf_buildingname ON paf_buildingname.id = paf_addresses.buildingnameid").
+		Joins("LEFT JOIN paf_subbuildingname ON paf_subbuildingname.id = paf_addresses.subbuildingnameid").
+		Joins("LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid").
+		Joins("LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid").
+		Joins("LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid").
+		Where("users_addresses.userid = ?", myid).
+		Scan(&r)
 
 	if len(r) == 0 {
 		// Force [] rather than null to be returned.
@@ -206,34 +207,36 @@ func GetAddress(c *fiber.Ctx) error {
 		// We have to check that the address is referenced by a chat message in a chat to which we have access, or
 		// which we own, or where we are a moderator of the group associated with the chat, or if we have Support/Admin rights.
 		db := database.DBConn
-		db.Raw("SELECT "+
-			"users_addresses.id, users_addresses.userid, instructions,"+
-			"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
-			"COALESCE(users_addresses.lng, locations.lng) AS lng, "+
-			"locations.name AS postcode, "+
-			"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname "+
-			"FROM users_addresses "+
-			"LEFT JOIN chat_rooms ON chat_rooms.user1 = ? OR chat_rooms.user2 = ? "+
-			"LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id "+
-			"LEFT JOIN users ON users.id = ? "+
-			"INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid "+
-			"INNER JOIN locations ON locations.id = paf_addresses.postcodeid "+
-			"LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid "+
-			"LEFT JOIN paf_dependentlocality ON paf_dependentlocality.id = paf_addresses.dependentlocalityid "+
-			"LEFT JOIN paf_doubledependentlocality ON paf_doubledependentlocality.id = paf_addresses.doubledependentlocalityid "+
-			"LEFT JOIN paf_thoroughfaredescriptor ON paf_thoroughfaredescriptor.id = paf_addresses.thoroughfaredescriptorid "+
-			"LEFT JOIN paf_dependentthoroughfaredescriptor ON paf_dependentthoroughfaredescriptor.id = paf_addresses.dependentthoroughfaredescriptorid "+
-			"LEFT JOIN paf_buildingname ON paf_buildingname.id = paf_addresses.buildingnameid "+
-			"LEFT JOIN paf_subbuildingname ON paf_subbuildingname.id = paf_addresses.subbuildingnameid "+
-			"LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid "+
-			"LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid "+
-			"LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid "+
+		// ORM migration site 608507c3053f (wave 4).
+		db.Table("users_addresses").
+			Select("users_addresses.id, users_addresses.userid, instructions,"+
+				"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
+				"COALESCE(users_addresses.lng, locations.lng) AS lng, "+
+				"locations.name AS postcode, "+
+				"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname").
+			Joins("LEFT JOIN chat_rooms ON chat_rooms.user1 = ? OR chat_rooms.user2 = ?", myid, myid).
+			Joins("LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id").
+			Joins("LEFT JOIN users ON users.id = ?", myid).
+			Joins("INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid").
+			Joins("INNER JOIN locations ON locations.id = paf_addresses.postcodeid").
+			Joins("LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid").
+			Joins("LEFT JOIN paf_dependentlocality ON paf_dependentlocality.id = paf_addresses.dependentlocalityid").
+			Joins("LEFT JOIN paf_doubledependentlocality ON paf_doubledependentlocality.id = paf_addresses.doubledependentlocalityid").
+			Joins("LEFT JOIN paf_thoroughfaredescriptor ON paf_thoroughfaredescriptor.id = paf_addresses.thoroughfaredescriptorid").
+			Joins("LEFT JOIN paf_dependentthoroughfaredescriptor ON paf_dependentthoroughfaredescriptor.id = paf_addresses.dependentthoroughfaredescriptorid").
+			Joins("LEFT JOIN paf_buildingname ON paf_buildingname.id = paf_addresses.buildingnameid").
+			Joins("LEFT JOIN paf_subbuildingname ON paf_subbuildingname.id = paf_addresses.subbuildingnameid").
+			Joins("LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid").
+			Joins("LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid").
+			Joins("LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid").
 			// SECURITY: access is granted to the address owner, to a party the address was
 			// shared with in a chat, or to a platform (system-role) moderator/support/admin.
 			// The previous per-group membership join was gameable (create a User2Mod chat to a
 			// group you moderate to unlock any address) and is replaced by the system-role test.
-			"WHERE users_addresses.id = ? AND (users_addresses.userid = ? OR (chat_messages.type = ? AND chat_messages.message = ?) OR users.systemrole IN (?, ?, ?)) LIMIT 1",
-			myid, myid, myid, id, myid, utils.CHAT_MESSAGE_ADDRESS, id, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT).Scan(&r)
+			Where("users_addresses.id = ? AND (users_addresses.userid = ? OR (chat_messages.type = ? AND chat_messages.message = ?) OR users.systemrole IN (?, ?, ?))",
+				id, myid, utils.CHAT_MESSAGE_ADDRESS, id, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT).
+			Limit(1).
+			Scan(&r)
 	}
 
 	if len(r) == 0 {

@@ -77,10 +77,13 @@ func List(c *fiber.Ctx) error {
 
 		if len(modGroupIDs) > 0 {
 			var groupIds []uint64
-			db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-				"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-				"WHERE groupid IN (?) AND volunteering.deleted = 0 AND pending = 1 "+
-				"ORDER BY id DESC", modGroupIDs).Pluck("id", &groupIds)
+			// ORM migration site ae3b224706e7 (wave 4).
+			db.Table("volunteering").
+				Select("DISTINCT volunteering.id").
+				Joins("INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+				Where("groupid IN (?) AND volunteering.deleted = 0 AND pending = 1", modGroupIDs).
+				Order("id DESC").
+				Pluck("id", &groupIds)
 			for _, id := range groupIds {
 				if !seen[id] {
 					seen[id] = true
@@ -94,10 +97,13 @@ func List(c *fiber.Ctx) error {
 		// row, i.e. groupid IS NULL) in addition to their per-group ones.
 		if auth.HasPermission(myid, auth.PERM_NATIONAL_VOLUNTEERS) {
 			var nationalIds []uint64
-			db.Raw("SELECT volunteering.id FROM volunteering "+
-				"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-				"WHERE volunteering_groups.groupid IS NULL AND volunteering.deleted = 0 AND pending = 1 "+
-				"ORDER BY volunteering.id DESC").Pluck("id", &nationalIds)
+			// ORM migration site b8a2b5386625 (wave 4).
+			db.Table("volunteering").
+				Select("volunteering.id").
+				Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+				Where("volunteering_groups.groupid IS NULL AND volunteering.deleted = 0 AND pending = 1").
+				Order("volunteering.id DESC").
+				Pluck("id", &nationalIds)
 			for _, id := range nationalIds {
 				if !seen[id] {
 					seen[id] = true
@@ -115,14 +121,17 @@ func List(c *fiber.Ctx) error {
 		// whoever is looking, whereas ordering everything by id DESC would bury them under
 		// whatever local ops happen to be newer.
 		var nationalIds []uint64
-		db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-			"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-			"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
-			"LEFT JOIN users ON volunteering.userid = users.id "+
-			"WHERE volunteering_groups.groupid IS NULL AND "+
-			"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) "+
-			"AND users.deleted IS NULL "+
-			"ORDER BY volunteering.id DESC LIMIT ?", start, start, myid, listLimit).Pluck("id", &nationalIds)
+		// ORM migration site d0bfb252647d (wave 4).
+		db.Table("volunteering").
+			Select("DISTINCT volunteering.id").
+			Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+			Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
+			Joins("LEFT JOIN users ON volunteering.userid = users.id").
+			Where("volunteering_groups.groupid IS NULL AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL",
+				start, start, myid).
+			Order("volunteering.id DESC").
+			Limit(listLimit).
+			Pluck("id", &nationalIds)
 
 		for _, id := range nationalIds {
 			if !seen[id] {
@@ -133,14 +142,17 @@ func List(c *fiber.Ctx) error {
 
 		if len(groupids) > 0 && len(ids) < listLimit {
 			var groupOpIds []uint64
-			db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-				"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-				"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
-				"LEFT JOIN users ON volunteering.userid = users.id "+
-				"WHERE groupid IN (?) AND "+
-				"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) "+
-				"AND users.deleted IS NULL "+
-				"ORDER BY id DESC LIMIT ?", groupids, start, start, myid, listLimit).Pluck("id", &groupOpIds)
+			// ORM migration site 2b14fe1be4fe (wave 4).
+			db.Table("volunteering").
+				Select("DISTINCT volunteering.id").
+				Joins("INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+				Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
+				Joins("LEFT JOIN users ON volunteering.userid = users.id").
+				Where("groupid IN (?) AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL",
+					groupids, start, start, myid).
+				Order("id DESC").
+				Limit(listLimit).
+				Pluck("id", &groupOpIds)
 
 			for _, id := range groupOpIds {
 				if len(ids) >= listLimit {
@@ -174,14 +186,16 @@ func ListGroup(c *fiber.Ctx) error {
 
 	start := time.Now().Format("2006-01-02")
 
-	db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-		"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-		"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
-		"LEFT JOIN users ON volunteering.userid = users.id "+
-		"WHERE groupid = ? AND "+
-		"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND pending = 0 "+
-		"AND users.deleted IS NULL "+
-		"ORDER BY id DESC", id, start, start).Pluck("volunteeringid", &ids)
+	// ORM migration site 3890b30e46d9 (wave 4).
+	db.Table("volunteering").
+		Select("DISTINCT volunteering.id").
+		Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+		Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
+		Joins("LEFT JOIN users ON volunteering.userid = users.id").
+		Where("groupid = ? AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND pending = 0 AND users.deleted IS NULL",
+			id, start, start).
+		Order("id DESC").
+		Pluck("volunteeringid", &ids)
 
 	if len(ids) > 0 {
 		return c.JSON(ids)
@@ -322,10 +336,13 @@ func isModerator(myid uint64, volunteeringID uint64) bool {
 	// Single query to check if user is moderator/owner of any linked group.
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships m "+
-		"INNER JOIN volunteering_groups vg ON vg.groupid = m.groupid "+
-		"WHERE vg.volunteeringid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
-		volunteeringID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site f02d5f03bfc1 (wave 4).
+	db.Table("memberships m").
+		Select("COUNT(*)").
+		Joins("INNER JOIN volunteering_groups vg ON vg.groupid = m.groupid").
+		Where("vg.volunteeringid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
+			volunteeringID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&count)
 
 	return count > 0
 }

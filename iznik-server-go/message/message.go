@@ -547,14 +547,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
 				// that is no longer active, return an empty externaluid so the frontend shows
 				// a placeholder instead of the rejected illustration.
-				db.Raw(`SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived,
-				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
-				ma.externalmods
-				FROM messages_attachments ma
-				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')
-				LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id
-				WHERE ma.msgid = ?
-				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
+				// ORM migration site 625141fb1180 (wave 4).
+				db.Table("messages_attachments ma").
+					Select("ma.id, ma.msgid, bia.bulkitemid, ma.archived, "+
+						"CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, "+
+						"ma.externalmods").
+					Joins("LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')").
+					Joins("LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id").
+					Where("ma.msgid = ?", id).
+					Order("ma.`primary` DESC, ma.id ASC").
+					Scan(&messageAttachments)
 			}()
 
 			var messageReply []MessageReply
@@ -651,11 +653,13 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			// Postings (history of which groups this message was on) are public information,
 			// returned to all callers — matching V1 behaviour.
 			var messagePostings []MessagePosting
-			db.Raw("SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, "+
-				"COALESCE(g.namefull, g.nameshort) AS namedisplay "+
-				"FROM messages_postings mp "+
-				"INNER JOIN `groups` g ON mp.groupid = g.id "+
-				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
+			// ORM migration site d99fe717309f (wave 4).
+			db.Table("messages_postings mp").
+				Select("mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, COALESCE(g.namefull, g.nameshort) AS namedisplay").
+				Joins("INNER JOIN `groups` g ON mp.groupid = g.id").
+				Where("mp.msgid = ?", id).
+				Order("mp.date ASC").
+				Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
 
@@ -851,7 +855,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						Reposts string
 					}
 					var rows []repostRow
-					db.Raw("SELECT messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Scan(&rows)
+					// ORM migration site 490e45f9be50 (wave 4).
+					db.Table("`groups`").
+						Select("messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts").
+						Joins("INNER JOIN messages_groups ON messages_groups.groupid = groups.id").
+						Where("msgid = ?", message.ID).
+						Scan(&rows)
 
 					settingsByGroup := make(map[uint64]group.RepostSettings, len(rows))
 					for _, r := range rows {
@@ -1020,11 +1029,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			var bannedBlocked []struct {
 				Msgid uint64 `gorm:"column:msgid"`
 			}
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
-				"LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ? "+
-				"WHERE mg.msgid IN (?) AND mg.deleted = 0 "+
-				"GROUP BY mg.msgid HAVING COUNT(mg.groupid) = COUNT(ub.groupid)",
-				myid, ids).Scan(&bannedBlocked)
+			// ORM migration site b8d33139d873 (wave 4).
+			db.Table("messages_groups mg").
+				Select("mg.msgid").
+				Joins("LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ?", myid).
+				Where("mg.msgid IN (?) AND mg.deleted = 0", ids).
+				Group("mg.msgid").
+				Having("COUNT(mg.groupid) = COUNT(ub.groupid)").
+				Scan(&bannedBlocked)
 			for _, b := range bannedBlocked {
 				blockedSet[b.Msgid] = true
 			}
@@ -1853,16 +1865,17 @@ func GetRecentActivity(c *fiber.Ctx) error {
 
 	start := time.Now().Add(-time.Hour * 24).Format("2006-01-02 15:04:05")
 
-	db.Raw("SELECT messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
-		"groups.nameshort, groups.namefull, groups.lat, groups.lng "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages.id = messages_groups.msgid "+
-		"INNER JOIN `groups` ON messages_groups.groupid = groups.id "+
-		"INNER JOIN users ON messages.fromuser = users.id "+
-		"WHERE messages_groups.arrival > ? AND collection = ? "+
-		"ORDER BY messages_groups.arrival ASC LIMIT 100;",
-		start,
-		utils.COLLECTION_APPROVED).Scan(&activity)
+	// ORM migration site 627297867656 (wave 4).
+	db.Table("messages").
+		Select("messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
+			"groups.nameshort, groups.namefull, groups.lat, groups.lng").
+		Joins("INNER JOIN messages_groups ON messages.id = messages_groups.msgid").
+		Joins("INNER JOIN `groups` ON messages_groups.groupid = groups.id").
+		Joins("INNER JOIN users ON messages.fromuser = users.id").
+		Where("messages_groups.arrival > ? AND collection = ?", start, utils.COLLECTION_APPROVED).
+		Order("messages_groups.arrival ASC").
+		Limit(100).
+		Scan(&activity)
 
 	last := int64(0)
 
@@ -1983,8 +1996,12 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 		Areaid uint64
 	}
 	var loc locInfo
-	db.Raw("SELECT l.name, l.type, COALESCE(l.areaid, 0) as areaid FROM locations l "+
-		"INNER JOIN messages m ON m.locationid = l.id WHERE m.id = ?", msgid).Scan(&loc)
+	// ORM migration site e0be009ca12b (wave 4).
+	db.Table("locations l").
+		Select("l.name, l.type, COALESCE(l.areaid, 0) as areaid").
+		Joins("INNER JOIN messages m ON m.locationid = l.id").
+		Where("m.id = ?", msgid).
+		Scan(&loc)
 
 	if loc.Name == "" {
 		return ""
@@ -2044,9 +2061,11 @@ func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	// Check if mod of any group the message is on.
 	// Don't filter on mg.deleted = 0 so mods can still moderate after poster deletes.
 	var count int64
-	result := db.Raw(`SELECT COUNT(*) FROM messages_groups mg
-		JOIN memberships m ON m.groupid = mg.groupid
-		WHERE mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)`, msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site 509cbeda4fad (wave 4).
+	result := db.Table("messages_groups mg").
+		Joins("JOIN memberships m ON m.groupid = mg.groupid").
+		Where("mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&count)
 	if result.Error != nil {
 		log.Printf("Failed to check mod permission for user %d message %d: %v", myid, msgid, result.Error)
 		return false
@@ -2359,13 +2378,14 @@ func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
 		Groupid  uint64
 		IsOrigin bool
 	}
-	db.Raw(`SELECT mg.groupid AS groupid,
-	               (mg.arrival <= m.arrival + INTERVAL 10 MINUTE) AS is_origin
-	        FROM messages_groups mg
-	        JOIN messages m ON m.id = mg.msgid
-	        WHERE mg.msgid = ?
-	        ORDER BY mg.arrival ASC, mg.groupid ASC
-	        LIMIT 1`, msgid).Scan(&res)
+	// ORM migration site 3843c361ded2 (wave 4).
+	db.Table("messages_groups mg").
+		Select("mg.groupid AS groupid, (mg.arrival <= m.arrival + INTERVAL 10 MINUTE) AS is_origin").
+		Joins("JOIN messages m ON m.id = mg.msgid").
+		Where("mg.msgid = ?", msgid).
+		Order("mg.arrival ASC, mg.groupid ASC").
+		Limit(1).
+		Scan(&res)
 	if !res.IsOrigin {
 		return 0
 	}
@@ -3223,7 +3243,13 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	locStr := constructLocationString(db, req.ID)
 	if locStr != "" {
 		var itemName *string
-		db.Raw("SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1", req.ID).Scan(&itemName)
+		// ORM migration site d4724f1cfc67 (wave 4).
+		db.Table("items i").
+			Select("i.name").
+			Joins("INNER JOIN messages_items mi ON mi.itemid = i.id").
+			Where("mi.msgid = ?", req.ID).
+			Limit(1).
+			Scan(&itemName)
 		if itemName != nil {
 			keyword := getGroupKeyword(db, groupid, msg.Type)
 			newSubject := keyword + ": " + *itemName + " (" + locStr + ")"
@@ -3665,7 +3691,13 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			// preserved in the subject without altering the shared items dictionary.
 			itemName = req.Item
 		} else {
-			db.Raw("SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1", req.ID).Scan(&itemName)
+			// ORM migration site 0f2ef8ae0f11 (wave 4).
+			db.Table("items i").
+				Select("i.name").
+				Joins("INNER JOIN messages_items mi ON mi.itemid = i.id").
+				Where("mi.msgid = ?", req.ID).
+				Limit(1).
+				Scan(&itemName)
 		}
 
 		// Build the location string using area + vague postcode.
@@ -5319,8 +5351,11 @@ func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 
 	// Check if user is a moderator/owner of any group the message is on.
 	var modCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups mg JOIN memberships m ON mg.groupid = m.groupid WHERE mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)",
-		msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	// ORM migration site 29da9bf8d686 (wave 4).
+	db.Table("messages_groups mg").
+		Joins("JOIN memberships m ON mg.groupid = m.groupid").
+		Where("mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&modCount)
 	return modCount > 0
 }
 

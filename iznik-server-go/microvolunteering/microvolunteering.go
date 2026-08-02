@@ -187,11 +187,12 @@ func GetChallenge(c *fiber.Ctx) error {
 		groupIDs = []uint64{uint64(groupID)}
 	} else {
 		// Get all user's Freegle groups
-		db.Raw(`
-			SELECT groupid FROM memberships
-			INNER JOIN `+"`groups`"+` ON memberships.groupid = `+"`groups`"+`.id
-			WHERE userid = ? AND type = ?
-		`, userID, utils.GROUP_TYPE_FREEGLE).Scan(&groupIDs)
+		// ORM migration site 41b78139b026 (wave 4).
+		db.Table("memberships").
+			Select("groupid").
+			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
+			Where("userid = ? AND type = ?", userID, utils.GROUP_TYPE_FREEGLE).
+			Scan(&groupIDs)
 	}
 
 	// Try Invite challenge first
@@ -706,12 +707,13 @@ func PostResponse(c *fiber.Ctx) error {
 			// (a platform-wide content-takedown). Mirrors GetChallenge's own
 			// group-membership scoping on the read side.
 			var eligible int64
-			db.Raw(`SELECT COUNT(*) FROM messages_groups
-				INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?
-				INNER JOIN messages ON messages.id = messages_groups.msgid
-				WHERE messages_groups.msgid = ? AND messages_groups.deleted = 0
-					AND COALESCE(messages.fromuser, 0) != ? AND messages.deleted IS NULL`,
-				myid, req.Msgid, myid).Scan(&eligible)
+			// ORM migration site f272e5ec73c0 (wave 4).
+			db.Table("messages_groups").
+				Select("COUNT(*)").
+				Joins("INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?", myid).
+				Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
+				Where("messages_groups.msgid = ? AND messages_groups.deleted = 0 AND COALESCE(messages.fromuser, 0) != ? AND messages.deleted IS NULL", req.Msgid, myid).
+				Scan(&eligible)
 			if eligible == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this message")
 			}
@@ -804,12 +806,14 @@ func PostResponse(c *fiber.Ctx) error {
 		// CheckMessage there is deliberately no author exclusion: getPhotoRotateChallenge
 		// can legitimately serve a user their own freshly-posted photo to review.
 		var eligible int64
-		db.Raw(`SELECT COUNT(*) FROM messages_attachments
-			INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0
-			INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?
-			INNER JOIN messages ON messages.id = messages_attachments.msgid
-			WHERE messages_attachments.id = ? AND messages.deleted IS NULL`,
-			myid, req.Photoid).Scan(&eligible)
+		// ORM migration site ec2405eade43 (wave 4).
+		db.Table("messages_attachments").
+			Select("COUNT(*)").
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0").
+			Joins("INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?", myid).
+			Joins("INNER JOIN messages ON messages.id = messages_attachments.msgid").
+			Where("messages_attachments.id = ? AND messages.deleted IS NULL", req.Photoid).
+			Scan(&eligible)
 		if eligible == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this photo")
 		}

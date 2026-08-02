@@ -790,10 +790,13 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	var m msgInfo
 
-	db.Raw("SELECT fromuser, groupid FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"INNER JOIN users ON users.id = messages.fromuser "+
-		"WHERE messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).Scan(&m)
+	// ORM migration site 1f5fe9f4e306 (wave 4).
+	db.Table("messages").
+		Select("fromuser, groupid").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Joins("INNER JOIN users ON users.id = messages.fromuser").
+		Where("messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).
+		Scan(&m)
 
 	if m.Fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid message id "+strconv.FormatUint(*payload.Refmsgid, 10))
@@ -1079,11 +1082,12 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 
 	// Fallback: check if mod of any group where either participant is a member.
 	var modCount int64
-	result := db.Raw("SELECT COUNT(*) FROM memberships m1 "+
-		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-		"WHERE m1.userid = ? AND m1.role IN (?, ?) "+
-		"AND m2.userid IN (?, ?)",
-		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, user1, user2).Scan(&modCount)
+	// ORM migration site c49605990641 (wave 4).
+	result := db.Table("memberships m1").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid IN (?, ?)",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, user1, user2).
+		Count(&modCount)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check chat room fallback mod permission user %d: %v", myid, result.Error)
 		return false
@@ -1469,13 +1473,14 @@ type reviewMessage struct {
 
 func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 	var msg reviewMessage
-	result := db.Raw("SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.message, "+
-		"COALESCE(chat_messages_held.userid, 0) AS heldbyuser "+
-		"FROM chat_messages "+
-		"LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id "+
-		"INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid "+
-		"WHERE chat_messages.id = ? AND chat_messages.reviewrequired = 1",
-		msgID).Scan(&msg)
+	// ORM migration site f3911b4339db (wave 4).
+	result := db.Table("chat_messages").
+		Select("chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.message, "+
+			"COALESCE(chat_messages_held.userid, 0) AS heldbyuser").
+		Joins("LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id").
+		Joins("INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid").
+		Where("chat_messages.id = ? AND chat_messages.reviewrequired = 1", msgID).
+		Scan(&msg)
 	if result.Error != nil {
 		stdlog.Printf("Failed to fetch review message %d: %v", msgID, result.Error)
 	}

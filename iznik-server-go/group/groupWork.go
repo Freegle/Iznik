@@ -145,13 +145,15 @@ func GetGroupWork(c *fiber.Ctx) error {
 		// the ModTools badge - without it the two disagreed about the same queue.
 		// A HELD post is exempt: a moderator has claimed it, so it will never
 		// auto-approve and is already in their list (Discourse 9481/635).
-		db.Raw("SELECT mg.groupid, COUNT(*) as count, (mg.heldby IS NOT NULL) as held "+
-			"FROM messages_groups mg "+
-			"INNER JOIN messages m ON m.id = mg.msgid "+
-			"INNER JOIN users u ON u.id = m.fromuser "+
-			"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
-			"AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL) "+
-			"GROUP BY mg.groupid, held", allGroupIDs, utils.COLLECTION_PENDING).Scan(&rows)
+		// ORM migration site 31e336f98156 (wave 4).
+		db.Table("messages_groups mg").
+			Select("mg.groupid, COUNT(*) as count, (mg.heldby IS NOT NULL) as held").
+			Joins("INNER JOIN messages m ON m.id = mg.msgid").
+			Joins("INNER JOIN users u ON u.id = m.fromuser").
+			Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
+				allGroupIDs, utils.COLLECTION_PENDING).
+			Group("mg.groupid, held").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			w := workMap[r.Groupid]
@@ -179,11 +181,15 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		db.Raw("SELECT mg.groupid, COUNT(*) as count FROM messages_groups mg "+
-			"INNER JOIN messages m ON m.id = mg.msgid "+
-			"INNER JOIN users u ON u.id = m.fromuser "+
-			"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
-			"GROUP BY mg.groupid", activeGroupIDs, utils.COLLECTION_SPAM).Scan(&rows)
+		// ORM migration site f749b5bc26ed (wave 4).
+		db.Table("messages_groups mg").
+			Select("mg.groupid, COUNT(*) as count").
+			Joins("INNER JOIN messages m ON m.id = mg.msgid").
+			Joins("INNER JOIN users u ON u.id = m.fromuser").
+			Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL",
+				activeGroupIDs, utils.COLLECTION_SPAM).
+			Group("mg.groupid").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -216,11 +222,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []heldCountRow
-		db.Raw("SELECT m.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held FROM memberships m "+
-			"INNER JOIN users u ON u.id = m.userid "+
-			"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
-			"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
-			"GROUP BY m.groupid, held", allGroupIDs).Scan(&rows)
+		// ORM migration site 45bb8a4c8133 (wave 4).
+		db.Table("memberships m").
+			Select("m.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held").
+			Joins("INNER JOIN users u ON u.id = m.userid").
+			Where("m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat)", allGroupIDs).
+			Group("m.groupid, held").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			w := workMap[r.Groupid]
@@ -248,11 +256,14 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		db.Raw("SELECT ceg.groupid, COUNT(DISTINCT ce.id) as count FROM communityevents ce "+
-			"INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id "+
-			"INNER JOIN communityevents_dates ced ON ced.eventid = ce.id "+
-			"WHERE ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW() "+
-			"GROUP BY ceg.groupid", activeGroupIDs).Scan(&rows)
+		// ORM migration site 083af5c9e0a1 (wave 4).
+		db.Table("communityevents ce").
+			Select("ceg.groupid, COUNT(DISTINCT ce.id) as count").
+			Joins("INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id").
+			Joins("INNER JOIN communityevents_dates ced ON ced.eventid = ce.id").
+			Where("ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW()", activeGroupIDs).
+			Group("ceg.groupid").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -270,12 +281,14 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		db.Raw("SELECT vg.groupid, COUNT(DISTINCT v.id) as count FROM volunteering v "+
-			"INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id "+
-			"LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id "+
-			"WHERE vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 "+
-			"AND (vd.end IS NULL OR vd.end >= NOW()) "+
-			"GROUP BY vg.groupid", activeGroupIDs).Scan(&rows)
+		// ORM migration site 1f888c4d9a0a (wave 4).
+		db.Table("volunteering v").
+			Select("vg.groupid, COUNT(DISTINCT v.id) as count").
+			Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
+			Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
+			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
+			Group("vg.groupid").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -299,11 +312,14 @@ func GetGroupWork(c *fiber.Ctx) error {
 		// group's Edit badge while the Edit list (which filters rippled_in=0) shows
 		// nothing — a "ghost" count (Discourse 9839). Matches the ListMessagesMT
 		// Edit query and the session editreview count.
-		db.Raw("SELECT mg.groupid, COUNT(DISTINCT me.msgid) as count FROM messages_edits me "+
-			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid "+
-			"WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
-			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 AND mg.rippled_in = 0 "+
-			"GROUP BY mg.groupid", activeGroupIDs).Scan(&rows)
+		// ORM migration site 7233641f67ad (wave 4).
+		db.Table("messages_edits me").
+			Select("mg.groupid, COUNT(DISTINCT me.msgid) as count").
+			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid").
+			Where("mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 AND mg.rippled_in = 0",
+				activeGroupIDs).
+			Group("mg.groupid").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -343,28 +359,29 @@ func GetGroupWork(c *fiber.Ctx) error {
 		}
 		hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 		var rows []countRow
-		db.Raw("SELECT mg.groupid, COUNT(DISTINCT mo.id) as count FROM messages_outcomes mo "+
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
-			"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
-			"AND mg.groupid IN ? "+
-			// rippled_in = 0: count Feedback only for posts that originated on the
-			// group, not rippled-in copies, so the badge matches the Feedback list
-			// (getHappinessMembers) and the Edit badge above. Discourse 9808/633.
-			"AND mg.rippled_in = 0 "+
-			"AND mo.comments IS NOT NULL AND mo.comments != '' "+
-			"AND mo.comments != 'Sorry, this is no longer available.' "+
-			"AND mo.comments != 'Thanks, this has now been taken.' "+
-			"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
-			"AND mo.comments != 'Sorry, this has now been taken.' "+
-			"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
-			"AND mo.comments != 'Thanks, these have now been taken.' "+
-			"AND mo.comments != 'Thanks, this has now been received.' "+
-			"AND mo.comments != 'Withdrawn on user unsubscribe' "+
-			"AND mo.comments != 'Auto-Expired' "+
-			"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
-			"AND mo.reviewed = 0 "+
-			"GROUP BY mg.groupid",
-			hapCutoff, hapCutoff, activeGroupIDs).Scan(&rows)
+		// ORM migration site 1f1e8962edcb (wave 4).
+		// rippled_in = 0: count Feedback only for posts that originated on the
+		// group, not rippled-in copies, so the badge matches the Feedback list
+		// (getHappinessMembers) and the Edit badge above. Discourse 9808/633.
+		db.Table("messages_outcomes mo").
+			Select("mg.groupid, COUNT(DISTINCT mo.id) as count").
+			Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid").
+			Where("mo.timestamp >= ? AND mg.arrival >= ? AND mg.groupid IN ? AND mg.rippled_in = 0 "+
+				"AND mo.comments IS NOT NULL AND mo.comments != '' "+
+				"AND mo.comments != 'Sorry, this is no longer available.' "+
+				"AND mo.comments != 'Thanks, this has now been taken.' "+
+				"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
+				"AND mo.comments != 'Sorry, this has now been taken.' "+
+				"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
+				"AND mo.comments != 'Thanks, these have now been taken.' "+
+				"AND mo.comments != 'Thanks, this has now been received.' "+
+				"AND mo.comments != 'Withdrawn on user unsubscribe' "+
+				"AND mo.comments != 'Auto-Expired' "+
+				"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
+				"AND mo.reviewed = 0",
+				hapCutoff, hapCutoff, activeGroupIDs).
+			Group("mg.groupid").
+			Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -485,18 +502,17 @@ func GetGroupWork(c *fiber.Ctx) error {
 				Count   int64
 			}
 			var widerRows []widerCountRow
-			db.Raw("SELECT m1.groupid, COUNT(DISTINCT cm.id) as count "+
-				"FROM chat_messages cm "+
-				"INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
-				"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id "+
-				"INNER JOIN memberships m1 ON m1.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) "+
-				"INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle' "+
-				"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? "+
-				"AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 "+
-				"AND cmh.id IS NULL "+
-				"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') "+
-				"GROUP BY m1.groupid",
-				chatCutoff).Scan(&widerRows)
+			// ORM migration site a9a8c24df5e0 (wave 4).
+			db.Table("chat_messages cm").
+				Select("m1.groupid, COUNT(DISTINCT cm.id) as count").
+				Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
+				Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
+				Joins("INNER JOIN memberships m1 ON m1.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)").
+				Joins("INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle'").
+				Where("cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND cmh.id IS NULL AND (cm.reportreason IS NULL OR cm.reportreason != 'User')",
+					chatCutoff).
+				Group("m1.groupid").
+				Scan(&widerRows)
 
 			mapMutex.Lock()
 			for _, r := range widerRows {

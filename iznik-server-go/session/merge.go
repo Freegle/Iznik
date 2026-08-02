@@ -80,15 +80,14 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 		LoserID    uint64
 		SurvivorID uint64
 	}
-	if err := tx.Raw(`SELECT lr.id AS loser_id, MIN(sr.id) AS survivor_id
-		FROM chat_rooms lr
-		JOIN chat_rooms sr
-		  ON sr.chattype = lr.chattype
-		 AND (   (sr.user1 = ? AND sr.user2 = IF(lr.user1 = ?, lr.user2, lr.user1))
-		      OR (sr.user2 = ? AND sr.user1 = IF(lr.user1 = ?, lr.user2, lr.user1)))
-		WHERE lr.user1 = ? OR lr.user2 = ?
-		GROUP BY lr.id`,
-		survivor, loser, survivor, loser, loser, loser).Scan(&pairs).Error; err != nil {
+	// ORM migration site 721c27468383 (wave 4).
+	if err := tx.Table("chat_rooms lr").
+		Select("lr.id AS loser_id, MIN(sr.id) AS survivor_id").
+		Joins(`JOIN chat_rooms sr ON sr.chattype = lr.chattype AND ( (sr.user1 = ? AND sr.user2 = IF(lr.user1 = ?, lr.user2, lr.user1)) OR (sr.user2 = ? AND sr.user1 = IF(lr.user1 = ?, lr.user2, lr.user1)))`,
+			survivor, loser, survivor, loser).
+		Where("lr.user1 = ? OR lr.user2 = ?", loser, loser).
+		Group("lr.id").
+		Scan(&pairs).Error; err != nil {
 		return err
 	}
 

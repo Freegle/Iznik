@@ -130,53 +130,55 @@ func ListMessages(c *fiber.Ctx) error {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.fromuser IS NOT NULL "+
-				"AND m.id = ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchID, limit).Pluck("msgid", &msgIDs)
+			// ORM migration site 7a97721b36a2 (wave 4).
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.id = ?",
+					groupIDs, collection, searchID).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.fromuser IS NOT NULL "+
-				"AND m.subject LIKE ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchTerm, limit).Pluck("msgid", &msgIDs)
+			// ORM migration site ab19aed302c7 (wave 4).
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.subject LIKE ?",
+					groupIDs, collection, searchTerm).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 	} else if subaction == "searchmemb" && search != "" {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.fromuser = ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchUID, limit).Pluck("msgid", &msgIDs)
+			// ORM migration site b2c399283fd5 (wave 4).
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser = ?",
+					groupIDs, collection, searchUID).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"LEFT JOIN users_emails ue ON ue.userid = u.id "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND (u.fullname LIKE ? OR ue.email LIKE ?) "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchTerm, searchTerm, limit).Pluck("msgid", &msgIDs)
+			// ORM migration site f22d282e4e7e (wave 4).
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND (u.fullname LIKE ? OR ue.email LIKE ?)",
+					groupIDs, collection, searchTerm, searchTerm).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 	} else {
 		// Standard listing with optional pagination and fromuser filter.
@@ -485,12 +487,15 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// rippled-in post surfaces in every receiving group's Edit queue (and to active mods
 		// there via the all-groups path), but an edit belongs to the post's origin group(s)
 		// only. Same bug class as the IP-abuse fix (WHERE rippled_in=0).
-		db.Raw("SELECT DISTINCT me.msgid FROM messages_edits me "+
-			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 "+
-			"WHERE mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
-			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) "+
-			"ORDER BY me.timestamp DESC LIMIT ?",
-			groupIDs, limit).Pluck("msgid", &msgIDs)
+		// ORM migration site 8a73414000b6 (wave 4).
+		db.Table("messages_edits me").
+			Select("DISTINCT me.msgid").
+			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
+			Where("mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
+				groupIDs).
+			Order("me.timestamp DESC").
+			Limit(limit).
+			Pluck("msgid", &msgIDs)
 	} else if subaction == "searchall" && search != "" {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)

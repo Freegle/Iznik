@@ -379,10 +379,13 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 		ID    uint64 `gorm:"column:id"`
 		Email string `gorm:"column:email"`
 	}
-	db.Raw("SELECT users.id, users_emails.email FROM users "+
-		"INNER JOIN users_emails ON users_emails.userid = users.id "+
-		"WHERE users_emails.email = ? "+
-		"LIMIT 1", email).Scan(&match)
+	// ORM migration site 78b08f1a877d (wave 4).
+	db.Table("users").
+		Select("users.id, users_emails.email").
+		Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
+		Where("users_emails.email = ?", email).
+		Limit(1).
+		Scan(&match)
 	userID := match.ID
 
 	if userID == 0 {
@@ -459,10 +462,13 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 
 	// Find user by email. Deleted users can still unsubscribe.
 	var userID uint64
-	db.Raw("SELECT users.id FROM users "+
-		"INNER JOIN users_emails ON users_emails.userid = users.id "+
-		"WHERE users_emails.email = ? "+
-		"LIMIT 1", email).Scan(&userID)
+	// ORM migration site c6167c3afc65 (wave 4).
+	db.Table("users").
+		Select("users.id").
+		Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
+		Where("users_emails.email = ?", email).
+		Limit(1).
+		Scan(&userID)
 
 	if userID == 0 {
 		// Return unknown:true so the frontend can branch to a "Contact support" fallback
@@ -556,10 +562,13 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 	// Find user by email. Deleted users can still log in so they see the
 	// "restore your account" banner.
 	var userID uint64
-	db.Raw("SELECT u.id FROM users u "+
-		"JOIN users_emails ue ON ue.userid = u.id "+
-		"WHERE ue.email = ? "+
-		"LIMIT 1", email).Scan(&userID)
+	// ORM migration site d3280ea8d71b (wave 4).
+	db.Table("users u").
+		Select("u.id").
+		Joins("JOIN users_emails ue ON ue.userid = u.id").
+		Where("ue.email = ?", email).
+		Limit(1).
+		Scan(&userID)
 
 	if userID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -1013,9 +1022,13 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed "+
-			"FROM memberships m JOIN `groups` g ON g.id = m.groupid "+
-			"WHERE m.userid = ? AND m.collection = ? ORDER BY LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)", myid, utils.COLLECTION_APPROVED).Scan(&memberships)
+		// ORM migration site ca92bd0ba27d (wave 4).
+		db.Table("memberships m").
+			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
+			Joins("JOIN `groups` g ON g.id = m.groupid").
+			Where("m.userid = ? AND m.collection = ?", myid, utils.COLLECTION_APPROVED).
+			Order("LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)").
+			Scan(&memberships)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1129,13 +1142,13 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				// Unheld pending in active groups → pending (red).
-				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
-					"INNER JOIN messages m ON m.id = mg.msgid "+
-					"INNER JOIN users u ON u.id = m.fromuser "+
-					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL "+
-					"AND mg.contentcheck_checked_at IS NOT NULL",
-					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&pending)
+				// ORM migration site 2045fb2e0152 (wave 4).
+				db.Table("messages_groups mg").
+					Joins("INNER JOIN messages m ON m.id = mg.msgid").
+					Joins("INNER JOIN users u ON u.id = m.fromuser").
+					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL AND mg.contentcheck_checked_at IS NOT NULL",
+						activeGroupIDs, utils.COLLECTION_PENDING).
+					Count(&pending)
 				// Held pending in active groups → pendingother (blue). No
 				// contentcheck_checked_at filter here: that filter exists so a post which
 				// might still auto-approve does not raise a phantom badge, which only
@@ -1144,12 +1157,13 @@ func GetSession(c *fiber.Ctx) error {
 				// as "Held by ..." — dropping it left mods with a badge lower than the
 				// number of held posts in front of them (Discourse 9481/635).
 				var heldActive int64
-				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
-					"INNER JOIN messages m ON m.id = mg.msgid "+
-					"INNER JOIN users u ON u.id = m.fromuser "+
-					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL",
-					activeGroupIDs, utils.COLLECTION_PENDING).Scan(&heldActive)
+				// ORM migration site 4b310a4913e0 (wave 4).
+				db.Table("messages_groups mg").
+					Joins("INNER JOIN messages m ON m.id = mg.msgid").
+					Joins("INNER JOIN users u ON u.id = m.fromuser").
+					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL",
+						activeGroupIDs, utils.COLLECTION_PENDING).
+					Count(&heldActive)
 				pendingother += heldActive
 			}
 			if len(inactiveGroupIDs) > 0 {
@@ -1157,13 +1171,13 @@ func GetSession(c *fiber.Ctx) error {
 				// above: an unchecked post might still auto-approve so it waits for the
 				// content check, but a held one is claimed work and always counts.
 				var inact int64
-				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
-					"INNER JOIN messages m ON m.id = mg.msgid "+
-					"INNER JOIN users u ON u.id = m.fromuser "+
-					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
-					"AND m.deleted IS NULL AND u.deleted IS NULL "+
-					"AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
-					inactiveGroupIDs, utils.COLLECTION_PENDING).Scan(&inact)
+				// ORM migration site 0ae47e468828 (wave 4).
+				db.Table("messages_groups mg").
+					Joins("INNER JOIN messages m ON m.id = mg.msgid").
+					Joins("INNER JOIN users u ON u.id = m.fromuser").
+					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
+						inactiveGroupIDs, utils.COLLECTION_PENDING).
+					Count(&inact)
 				pendingother += inact
 			}
 		}()
@@ -1178,12 +1192,13 @@ func GetSession(c *fiber.Ctx) error {
 				// must not be counted in the badge either — otherwise the badge
 				// shows a total with no visible, clickable home (an inflated
 				// hamburger count and no red left-menu count).
-				db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
-					"INNER JOIN messages m ON m.id = mg.msgid "+
-					"INNER JOIN users u ON u.id = m.fromuser "+
-					"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
-					"AND mg.arrival >= (NOW() - INTERVAL 30 DAY)",
-					activeGroupIDs, utils.COLLECTION_SPAM).Scan(&spam)
+				// ORM migration site d8fa348393fe (wave 4).
+				db.Table("messages_groups mg").
+					Joins("INNER JOIN messages m ON m.id = mg.msgid").
+					Joins("INNER JOIN users u ON u.id = m.fromuser").
+					Where("mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.arrival >= (NOW() - INTERVAL 30 DAY)",
+						activeGroupIDs, utils.COLLECTION_SPAM).
+					Count(&spam)
 			}
 		}()
 
@@ -1237,11 +1252,14 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				db.Raw("SELECT COUNT(DISTINCT ce.id) FROM communityevents ce "+
-					"INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id "+
-					"INNER JOIN communityevents_dates ced ON ced.eventid = ce.id "+
-					"WHERE ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW()",
-					activeGroupIDs).Scan(&pendingevents)
+				// ORM migration site 9f50349c1378 (wave 4).
+				db.Table("communityevents ce").
+					Select("COUNT(DISTINCT ce.id)").
+					Joins("INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id").
+					Joins("INNER JOIN communityevents_dates ced ON ced.eventid = ce.id").
+					Where("ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW()",
+						activeGroupIDs).
+					Scan(&pendingevents)
 			}
 		}()
 
@@ -1265,10 +1283,13 @@ func GetSession(c *fiber.Ctx) error {
 				// without this the Edit badge counts rippled-in copies that the Edit
 				// list (filtered rippled_in=0) never shows — a ghost count (Discourse
 				// 9839). Matches ListMessagesMT and groupWork's per-group Editreview.
-				db.Raw("SELECT COUNT(DISTINCT me.msgid) FROM messages_edits me "+
-					"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 "+
-					"WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
-					activeGroupIDs).Scan(&editreview)
+				// ORM migration site 2edb182648ba (wave 4).
+				db.Table("messages_edits me").
+					Select("COUNT(DISTINCT me.msgid)").
+					Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
+					Where("mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
+						activeGroupIDs).
+					Scan(&editreview)
 			}
 		}()
 
@@ -1277,11 +1298,14 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				db.Raw("SELECT COUNT(DISTINCT v.id) FROM volunteering v "+
-					"INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id "+
-					"LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id "+
-					"WHERE vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())",
-					activeGroupIDs).Scan(&pendingvolunteering)
+				// ORM migration site 076c5c70eb8e (wave 4).
+				db.Table("volunteering v").
+					Select("COUNT(DISTINCT v.id)").
+					Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
+					Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
+					Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())",
+						activeGroupIDs).
+					Scan(&pendingvolunteering)
 			}
 		}()
 
@@ -1291,13 +1315,14 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
-				db.Raw("SELECT COUNT(DISTINCT us.id) FROM users_stories us "+
-					"INNER JOIN memberships m ON m.userid = us.userid "+
-					"INNER JOIN users ON users.id = us.userid "+
-					"WHERE m.groupid IN ? AND m.collection = ? "+
-					"AND us.date > ? AND us.reviewed = 0 "+
-					"AND users.deleted IS NULL",
-					activeGroupIDs, utils.COLLECTION_APPROVED, storyCutoff).Scan(&stories)
+				// ORM migration site 93161dacd118 (wave 4).
+				db.Table("users_stories us").
+					Select("COUNT(DISTINCT us.id)").
+					Joins("INNER JOIN memberships m ON m.userid = us.userid").
+					Joins("INNER JOIN users ON users.id = us.userid").
+					Where("m.groupid IN ? AND m.collection = ? AND us.date > ? AND us.reviewed = 0 AND users.deleted IS NULL",
+						activeGroupIDs, utils.COLLECTION_APPROVED, storyCutoff).
+					Scan(&stories)
 			}
 		}()
 
@@ -1421,9 +1446,11 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if auth.HasPermission(myid, auth.PERM_NEWSLETTER) {
-				db.Raw("SELECT COUNT(*) FROM users_stories "+
-					"INNER JOIN users ON users.id = users_stories.userid AND users.deleted IS NULL "+
-					"WHERE reviewed = 1 AND public = 1 AND newsletterreviewed = 0").Scan(&newsletterstories)
+				// ORM migration site 6b1f5e2ded05 (wave 4).
+				db.Table("users_stories").
+					Joins("INNER JOIN users ON users.id = users_stories.userid AND users.deleted IS NULL").
+					Where("reviewed = 1 AND public = 1 AND newsletterreviewed = 0").
+					Count(&newsletterstories)
 			}
 		}()
 
@@ -1451,27 +1478,29 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-				db.Raw("SELECT COUNT(DISTINCT mo.id) FROM messages_outcomes mo "+
-					"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid "+
-					"WHERE mo.timestamp >= ? AND mg.arrival >= ? "+
-					"AND mg.groupid IN ? "+
-					// rippled_in = 0: the aggregate Feedback work count must match
-					// the per-group badge (groupWork.go) and the list — only posts
-					// that originated on the group, not rippled-in copies. 9808/633.
-					"AND mg.rippled_in = 0 "+
-					"AND mo.comments IS NOT NULL "+
-					"AND mo.comments != 'Sorry, this is no longer available.' "+
-					"AND mo.comments != 'Thanks, this has now been taken.' "+
-					"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
-					"AND mo.comments != 'Sorry, this has now been taken.' "+
-					"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
-					"AND mo.comments != 'Thanks, these have now been taken.' "+
-					"AND mo.comments != 'Thanks, this has now been received.' "+
-					"AND mo.comments != 'Withdrawn on user unsubscribe' "+
-					"AND mo.comments != 'Auto-Expired' "+
-					"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
-					"AND mo.reviewed = 0",
-					hapCutoff, hapCutoff, activeGroupIDs).Scan(&happiness)
+				// ORM migration site 31e0b23915a9 (wave 4).
+				// rippled_in = 0: the aggregate Feedback work count must match
+				// the per-group badge (groupWork.go) and the list — only posts
+				// that originated on the group, not rippled-in copies. 9808/633.
+				db.Table("messages_outcomes mo").
+					Select("COUNT(DISTINCT mo.id)").
+					Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid").
+					Where("mo.timestamp >= ? AND mg.arrival >= ? AND mg.groupid IN ? "+
+						"AND mg.rippled_in = 0 "+
+						"AND mo.comments IS NOT NULL "+
+						"AND mo.comments != 'Sorry, this is no longer available.' "+
+						"AND mo.comments != 'Thanks, this has now been taken.' "+
+						"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
+						"AND mo.comments != 'Sorry, this has now been taken.' "+
+						"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
+						"AND mo.comments != 'Thanks, these have now been taken.' "+
+						"AND mo.comments != 'Thanks, this has now been received.' "+
+						"AND mo.comments != 'Withdrawn on user unsubscribe' "+
+						"AND mo.comments != 'Auto-Expired' "+
+						"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
+						"AND mo.reviewed = 0",
+						hapCutoff, hapCutoff, activeGroupIDs).
+					Scan(&happiness)
 			}
 		}()
 

@@ -62,7 +62,13 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 			Systemrole string `json:"systemrole"`
 		}
 
-		db.Raw("SELECT users.id, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1", sessionID, userID).Scan(&userInfo)
+		// ORM migration site a2a6a74e67d6 (wave 4).
+		db.Table("sessions").
+			Select("users.id, users.systemrole").
+			Joins("INNER JOIN users ON users.id = sessions.userid").
+			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
+			Limit(1).
+			Scan(&userInfo)
 
 		if userInfo.ID == 0 {
 			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")

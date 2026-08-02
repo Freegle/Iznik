@@ -485,12 +485,14 @@ func Metrics(c *fiber.Ctx) error {
 	// so groups that did not ripple in the window have nothing to filter to. Defensive: empty
 	// while rippling is dark.
 	section("groups", func() error {
-		return db.Raw("SELECT DISTINCT g.id AS id, g.nameshort AS name "+
-			"FROM rippling_reach rr "+
-			"JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0 "+
-			"JOIN `groups` g ON g.id = mg.groupid "+
-			"WHERE rr.created_at >= ? AND rr.created_at < ? "+
-			"ORDER BY g.nameshort", start, end).Scan(&groupOpts).Error
+		// ORM migration site a046c8fa9413 (wave 4).
+		return db.Table("rippling_reach rr").
+			Select("DISTINCT g.id AS id, g.nameshort AS name").
+			Joins("JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0").
+			Joins("JOIN `groups` g ON g.id = mg.groupid").
+			Where("rr.created_at >= ? AND rr.created_at < ?", start, end).
+			Order("g.nameshort").
+			Scan(&groupOpts).Error
 	})
 
 	wg.Wait()

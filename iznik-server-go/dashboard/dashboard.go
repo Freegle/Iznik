@@ -125,9 +125,12 @@ func GetDashboard(c *fiber.Ctx) error {
 
 	if len(groupIDs) > 0 {
 		var msgCount int64
-		db.Raw("SELECT COUNT(DISTINCT messages.id) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-			"WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)",
-			startQ, endQ, groupIDs).Scan(&msgCount)
+		// ORM migration site 11558c0c6cd0 (wave 4).
+		db.Table("messages").
+			Select("COUNT(DISTINCT messages.id)").
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+			Where("messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)", startQ, endQ, groupIDs).
+			Scan(&msgCount)
 		dashboard["newmessages"] = msgCount
 
 		var memCount int64
@@ -206,10 +209,13 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	}
 
 	var newmessages, newmembers int64
-	db.Raw("SELECT COUNT(DISTINCT messages.id) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) "+
-		"AND messages.arrival >= ? AND messages.arrival <= ?",
-		startQ, endQ, groupIDs, startQ, endQ).Scan(&newmessages)
+	// ORM migration site bce3018a21d7 (wave 4).
+	db.Table("messages").
+		Select("COUNT(DISTINCT messages.id)").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Where("messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) AND messages.arrival >= ? AND messages.arrival <= ?",
+			startQ, endQ, groupIDs, startQ, endQ).
+		Scan(&newmessages)
 
 	// ORM migration site 382a6666f320 (wave 1). Identical sibling of
 	// 770ce1ca6e09 above in GetDashboard; converted together (ratchet gate h).
@@ -350,13 +356,16 @@ func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]inter
 	}
 
 	var users []UserCount
-	db.Raw("SELECT COUNT(*) AS count, chat_messages.userid "+
-		"FROM chat_messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = chat_messages.refmsgid "+
-		"WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) "+
-		"AND chat_messages.type = ? "+
-		"GROUP BY chat_messages.userid ORDER BY count DESC LIMIT 5",
-		startQ, endQ, groupIDs, utils.CHAT_MESSAGE_INTERESTED).Scan(&users)
+	// ORM migration site 4a0837c4271f (wave 4).
+	db.Table("chat_messages").
+		Select("COUNT(*) AS count, chat_messages.userid").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = chat_messages.refmsgid").
+		Where("messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) AND chat_messages.type = ?",
+			startQ, endQ, groupIDs, utils.CHAT_MESSAGE_INTERESTED).
+		Group("chat_messages.userid").
+		Order("count DESC").
+		Limit(5).
+		Scan(&users)
 
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
@@ -546,12 +555,15 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 			Order("count DESC").
 			Scan(&rows)
 	} else if len(groupIDs) > 0 {
-		db.Raw("SELECT COUNT(*) AS count, happiness FROM messages_outcomes "+
-			"INNER JOIN messages ON messages.id = messages_outcomes.msgid "+
-			"INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid "+
-			"WHERE timestamp >= ? AND timestamp <= ? AND messages_groups.groupid IN (?) "+
-			"AND happiness IS NOT NULL GROUP BY happiness ORDER BY count DESC",
-			startQ, endQ, groupIDs).Scan(&rows)
+		// ORM migration site d313fe02593e (wave 4).
+		db.Table("messages_outcomes").
+			Select("COUNT(*) AS count, happiness").
+			Joins("INNER JOIN messages ON messages.id = messages_outcomes.msgid").
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid").
+			Where("timestamp >= ? AND timestamp <= ? AND messages_groups.groupid IN (?) AND happiness IS NOT NULL", startQ, endQ, groupIDs).
+			Group("happiness").
+			Order("count DESC").
+			Scan(&rows)
 	}
 
 	result := make([]map[string]interface{}, len(rows))

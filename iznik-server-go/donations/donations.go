@@ -106,10 +106,14 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 	}
 
 	// 2. Prior donation from the same Payer, linked to a still-valid user.
-	gdb.Raw("SELECT ud.userid FROM users_donations ud "+
-		"JOIN users u ON u.id = ud.userid "+
-		"WHERE ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL "+
-		"ORDER BY ud.timestamp DESC LIMIT 1", email).Scan(&userID)
+	// ORM migration site 36a30e931616 (wave 4).
+	gdb.Table("users_donations ud").
+		Select("ud.userid").
+		Joins("JOIN users u ON u.id = ud.userid").
+		Where("ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL", email).
+		Order("ud.timestamp DESC").
+		Limit(1).
+		Scan(&userID)
 	return userID
 }
 

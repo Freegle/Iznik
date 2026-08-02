@@ -46,9 +46,12 @@ func Single(c *fiber.Ctx) error {
 	var s Story
 
 	db := database.DBConn
-	db.Raw("SELECT users_stories.*, users_stories_images.id AS imageid, users_stories_images.archived AS imagearchived, users_stories_images.externaluid AS imageuid, users_stories_images.externalmods AS imagemods FROM users_stories "+
-		"LEFT JOIN users_stories_images ON users_stories_images.storyid = users_stories.id "+
-		"WHERE users_stories.id = ?", c.Params("id")).Scan(&s)
+	// ORM migration site 34430e199ad1 (wave 4).
+	db.Table("users_stories").
+		Select("users_stories.*, users_stories_images.id AS imageid, users_stories_images.archived AS imagearchived, users_stories_images.externaluid AS imageuid, users_stories_images.externalmods AS imagemods").
+		Joins("LEFT JOIN users_stories_images ON users_stories_images.storyid = users_stories.id").
+		Where("users_stories.id = ?", c.Params("id")).
+		Scan(&s)
 
 	if s.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -170,15 +173,16 @@ func Group(c *fiber.Ctx) error {
 
 	var ids []uint64
 
-	db.Raw("SELECT DISTINCT users_stories.id FROM users_stories "+
-		"INNER JOIN memberships ON memberships.userid = users_stories.userid "+
-		"INNER JOIN users ON users.id = users_stories.userid "+
-		"WHERE memberships.groupid = ? "+
-		"AND reviewed = ? "+
-		"AND public = ? "+
-		"AND users_stories.userid IS NOT NULL "+
-		"AND users.deleted IS NULL "+
-		"ORDER BY date DESC LIMIT ?;", groupid64, reviewed, public, limit64).Pluck("id", &ids)
+	// ORM migration site a77da0b559f8 (wave 4).
+	db.Table("users_stories").
+		Select("DISTINCT users_stories.id").
+		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
+		Joins("INNER JOIN users ON users.id = users_stories.userid").
+		Where("memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
+			groupid64, reviewed, public).
+		Order("date DESC").
+		Limit(int(limit64)).
+		Pluck("id", &ids)
 
 	if ids == nil {
 		ids = make([]uint64, 0)
@@ -211,12 +215,12 @@ func canModStory(myid uint64, storyID uint64) bool {
 
 	// Check if moderator/owner on a group the story author is a member of.
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships m1 "+
-		"INNER JOIN memberships m2 ON m2.groupid = m1.groupid "+
-		"WHERE m1.userid = ? AND m2.userid = ? "+
-		"AND m1.role IN (?, ?) "+
-		"AND m1.collection = ? AND m2.collection = ?",
-		myid, authorID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED, utils.COLLECTION_APPROVED).Scan(&count)
+	// ORM migration site 27f1e940eddd (wave 4).
+	db.Table("memberships m1").
+		Joins("INNER JOIN memberships m2 ON m2.groupid = m1.groupid").
+		Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?) AND m1.collection = ? AND m2.collection = ?",
+			myid, authorID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED, utils.COLLECTION_APPROVED).
+		Count(&count)
 
 	return count > 0
 }
@@ -233,7 +237,12 @@ func createStoryNewsfeedEntry(userid uint64, storyID uint64) {
 			Lng *float64
 		}
 		var ul UserLoc
-		db.Raw("SELECT l.lat, l.lng FROM users u LEFT JOIN locations l ON l.id = u.lastlocation WHERE u.id = ?", userid).Scan(&ul)
+		// ORM migration site 4186ffeeb13b (wave 4).
+		db.Table("users u").
+			Select("l.lat, l.lng").
+			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
+			Where("u.id = ?", userid).
+			Scan(&ul)
 		lat = ul.Lat
 		lng = ul.Lng
 	}

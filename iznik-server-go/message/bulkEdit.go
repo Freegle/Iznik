@@ -129,11 +129,13 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 		Externalmods string
 	}
 	var atts []att
-	db.Raw("SELECT bia.bulkitemid, ma.id, ma.archived, "+
-		"COALESCE(ma.externaluid, '') AS externaluid, COALESCE(ma.externalmods, '') AS externalmods "+
-		"FROM messages_bulk_item_attachments bia "+
-		"INNER JOIN messages_attachments ma ON ma.id = bia.attachmentid "+
-		"WHERE ma.msgid = ? ORDER BY ma.`primary` DESC, ma.id ASC", msgid).Scan(&atts)
+	// ORM migration site 7f1d565c4908 (wave 4).
+	db.Table("messages_bulk_item_attachments bia").
+		Select("bia.bulkitemid, ma.id, ma.archived, COALESCE(ma.externaluid, '') AS externaluid, COALESCE(ma.externalmods, '') AS externalmods").
+		Joins("INNER JOIN messages_attachments ma ON ma.id = bia.attachmentid").
+		Where("ma.msgid = ?", msgid).
+		Order("ma.`primary` DESC, ma.id ASC").
+		Scan(&atts)
 	firstAtt := map[uint64]att{}
 	for _, a := range atts {
 		if _, ok := firstAtt[a.Bulkitemid]; !ok {

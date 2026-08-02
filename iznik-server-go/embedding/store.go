@@ -146,10 +146,11 @@ func (s *Store) Refresh() error {
 	}
 
 	var openIds []uint64
-	if err := db.Raw(`
-		SELECT me.msgid FROM messages_embeddings me
-		INNER JOIN messages_spatial ms ON ms.msgid = me.msgid
-		WHERE ms.successful = 0 AND ms.promised = 0`).Pluck("msgid", &openIds).Error; err != nil {
+	// ORM migration site 80d6f1951971 (wave 4).
+	if err := db.Table("messages_embeddings me").
+		Joins("INNER JOIN messages_spatial ms ON ms.msgid = me.msgid").
+		Where("ms.successful = 0 AND ms.promised = 0").
+		Pluck("me.msgid", &openIds).Error; err != nil {
 		return fmt.Errorf("refresh id query: %w", err)
 	}
 

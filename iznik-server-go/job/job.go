@@ -208,12 +208,12 @@ func GetJob(c *fiber.Ctx) error {
 		if err == nil {
 			db := database.DBConn
 
-			db.Raw("SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid "+
-				"FROM `jobs` "+
-				"LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
-				"WHERE jobs.id = ? "+
-				"AND visible = 1;",
-				id).Row().Scan(&job.ID, &job.Url, &job.Title, &job.Location, &job.Body, &job.Reference, &job.Category, &job.CPC, &job.Clickability, &externaluid)
+			// ORM migration site 6535a765873b (wave 4).
+			db.Table("`jobs`").
+				Select("jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid").
+				Joins("LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title").
+				Where("jobs.id = ? AND visible = 1", id).
+				Row().Scan(&job.ID, &job.Url, &job.Title, &job.Location, &job.Body, &job.Reference, &job.Category, &job.CPC, &job.Clickability, &externaluid)
 
 			if job.ID != 0 {
 				if externaluid.Valid && len(externaluid.String) > 0 {

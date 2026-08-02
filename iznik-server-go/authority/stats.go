@@ -96,18 +96,16 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			if err := writer().Raw(`
-			SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-				   COUNT(*) as count
-			FROM pc
-			INNER JOIN messages ON messages.locationid = pc.locationid
-			INNER JOIN locations ON messages.locationid = locations.id
-			WHERE locations.type = ?
-				AND LOCATE(' ', locations.name) > 0
-				AND messages.type = ?
-				AND messages.arrival BETWEEN ? AND ?
-			GROUP BY PartialPostcode
-			ORDER BY locations.name`, utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).Scan(&stats).Error; err != nil {
+			// ORM migration site f3d569f16f75 (wave 4).
+			if err := writer().Table("pc").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+				Joins("INNER JOIN locations ON messages.locationid = locations.id").
+				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ?",
+					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
+				Group("PartialPostcode").
+				Order("locations.name").
+				Scan(&stats).Error; err != nil {
 				return err
 			}
 
@@ -161,19 +159,17 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			if err := writer().Raw(`
-			SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-				   COUNT(*) as count
-			FROM pc
-			INNER JOIN messages ON messages.locationid = pc.locationid
-			INNER JOIN locations ON messages.locationid = locations.id
-			INNER JOIN messages_bulk_items_interest mbi ON mbi.msgid = messages.id
-			WHERE locations.type = ?
-				AND LOCATE(' ', locations.name) > 0
-				AND messages.type = ?
-				AND messages.arrival BETWEEN ? AND ?
-			GROUP BY PartialPostcode
-			ORDER BY locations.name`, utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).Scan(&stats).Error; err != nil {
+			// ORM migration site 5a510c1a72cd (wave 4).
+			if err := writer().Table("pc").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+				Joins("INNER JOIN locations ON messages.locationid = locations.id").
+				Joins("INNER JOIN messages_bulk_items_interest mbi ON mbi.msgid = messages.id").
+				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ?",
+					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
+				Group("PartialPostcode").
+				Order("locations.name").
+				Scan(&stats).Error; err != nil {
 				return err
 			}
 
@@ -257,18 +253,17 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		if err := writer().Raw(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   CAST(SUM(bi.quantity) AS SIGNED) AS count
-		FROM pc
-		INNER JOIN messages ON messages.locationid = pc.locationid
-		INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0
-		INNER JOIN locations ON messages.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND messages.arrival BETWEEN ? AND ?
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, utils.LOCATION_TYPE_POSTCODE, startStr, endStr).Scan(&bulkOutcomeStats).Error; err != nil {
+		// ORM migration site 02b7865c1d55 (wave 4).
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(bi.quantity) AS SIGNED) AS count").
+			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+			Joins("INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0").
+			Joins("INNER JOIN locations ON messages.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&bulkOutcomeStats).Error; err != nil {
 			return err
 		}
 
@@ -288,18 +283,17 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		if err := writer().Raw(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   CAST(SUM(mbii.quantity) AS SIGNED) AS count
-		FROM pc
-		INNER JOIN messages ON messages.locationid = pc.locationid
-		INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected'
-		INNER JOIN locations ON messages.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND messages.arrival BETWEEN ? AND ?
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, utils.LOCATION_TYPE_POSTCODE, startStr, endStr).Scan(&bulkInterestOutcomeStats).Error; err != nil {
+		// ORM migration site e37b20384491 (wave 4).
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(mbii.quantity) AS SIGNED) AS count").
+			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
+			Joins("INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected'").
+			Joins("INNER JOIN locations ON messages.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&bulkInterestOutcomeStats).Error; err != nil {
 			return err
 		}
 
@@ -422,17 +416,16 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		if err := writer().Raw(`
-		SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode,
-			   COUNT(*) AS count
-		FROM pc
-		INNER JOIN search_history ON search_history.locationid = pc.locationid
-		INNER JOIN locations ON search_history.locationid = locations.id
-		WHERE locations.type = ?
-			AND LOCATE(' ', locations.name) > 0
-			AND search_history.date BETWEEN ? AND ?
-		GROUP BY PartialPostcode
-		ORDER BY locations.name`, utils.LOCATION_TYPE_POSTCODE, startStr, endStr).Scan(&searchStats).Error; err != nil {
+		// ORM migration site 077cd04df2db (wave 4).
+		if err := writer().Table("pc").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count").
+			Joins("INNER JOIN search_history ON search_history.locationid = pc.locationid").
+			Joins("INNER JOIN locations ON search_history.locationid = locations.id").
+			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND search_history.date BETWEEN ? AND ?",
+				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
+			Group("PartialPostcode").
+			Order("locations.name").
+			Scan(&searchStats).Error; err != nil {
 			return err
 		}
 

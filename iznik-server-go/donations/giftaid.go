@@ -162,12 +162,14 @@ func ListGiftAid(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var giftaids []GiftAidListItem
-	db.Raw(`SELECT giftaid.*, SUM(users_donations.GrossAmount) AS donations
-		FROM giftaid
-		LEFT JOIN users_donations ON users_donations.userid = giftaid.userid
-		WHERE giftaid.reviewed IS NULL AND giftaid.deleted IS NULL AND giftaid.period != 'Declined'
-		GROUP BY giftaid.userid
-		ORDER BY giftaid.timestamp DESC`).Scan(&giftaids)
+	// ORM migration site 380a2b8e3fbc (wave 4).
+	db.Table("giftaid").
+		Select("giftaid.*, SUM(users_donations.GrossAmount) AS donations").
+		Joins("LEFT JOIN users_donations ON users_donations.userid = giftaid.userid").
+		Where("giftaid.reviewed IS NULL AND giftaid.deleted IS NULL AND giftaid.period != 'Declined'").
+		Group("giftaid.userid").
+		Order("giftaid.timestamp DESC").
+		Scan(&giftaids)
 
 	if giftaids == nil {
 		giftaids = make([]GiftAidListItem, 0)

@@ -225,10 +225,13 @@ func GetUserByEmail(c *fiber.Ctx) error {
 	var userId uint64
 
 	// Join with users table to ensure the user exists and isn't deleted
-	err := db.Raw("SELECT users.id FROM users "+
-		"INNER JOIN users_emails ON users_emails.userid = users.id "+
-		"WHERE users_emails.email = ? AND users.deleted IS NULL "+
-		"LIMIT 1", email).Scan(&userId).Error
+	// ORM migration site eebe799ec26b (wave 4).
+	err := db.Table("users").
+		Select("users.id").
+		Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
+		Where("users_emails.email = ? AND users.deleted IS NULL", email).
+		Limit(1).
+		Scan(&userId).Error
 
 	if err != nil || userId == 0 {
 		return c.JSON(fiber.Map{
@@ -828,13 +831,14 @@ func GetUserById(id uint64, myid uint64) User {
 			Date   string `gorm:"column:date"`
 		}
 		var bi BounceInfo
-		db.Raw(`
-			SELECT be.reason, be.date
-			FROM bounces_emails be
-			INNER JOIN users_emails ue ON ue.id = be.emailid
-			WHERE ue.userid = ?
-			ORDER BY be.id DESC LIMIT 1
-		`, id).Scan(&bi)
+		// ORM migration site 13b31d721901 (wave 4).
+		db.Table("bounces_emails be").
+			Select("be.reason, be.date").
+			Joins("INNER JOIN users_emails ue ON ue.id = be.emailid").
+			Where("ue.userid = ?", id).
+			Order("be.id DESC").
+			Limit(1).
+			Scan(&bi)
 		if bi.Date != "" {
 			user.Bouncereason = &bi.Reason
 			user.Bounceat = &bi.Date
@@ -900,10 +904,14 @@ func GetProfileRecord(id uint64) UserProfileRecord {
 	db := database.DBConn
 	var profile UserProfileRecord
 
-	db.Raw("SELECT ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, "+
-		"CASE WHEN JSON_EXTRACT(settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(settings, '$.useprofile') END AS useprofile "+
-		"FROM users_images ui INNER JOIN users ON users.id = ui.userid "+
-		"WHERE userid = ? ORDER BY ui.id DESC LIMIT 1", id).Scan(&profile)
+	// ORM migration site 540382023ce6 (wave 4).
+	db.Table("users_images ui").
+		Select("ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, CASE WHEN JSON_EXTRACT(settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(settings, '$.useprofile') END AS useprofile").
+		Joins("INNER JOIN users ON users.id = ui.userid").
+		Where("userid = ?", id).
+		Order("ui.id DESC").
+		Limit(1).
+		Scan(&profile)
 
 	return profile
 }
@@ -935,13 +943,15 @@ func GetLatLng(id uint64) utils.LatLng {
 	// Tests show that the first query is fast to fetch, whereas the others are less so.  The first will handle
 	// a user with a known location, so it's a good mainline case to keep fast.
 	// If it doesn't give us what we need them , then fetch the others in parallel.
-	db.Raw("SELECT users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
-		"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
-		"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng "+
-		"FROM users "+
-		"LEFT JOIN locations ON locations.id = users.lastlocation "+
-		"LEFT JOIN spam_users ON spam_users.userid = users.id "+
-		"WHERE users.id = ?", id).Scan(&ul)
+	// ORM migration site 783eedfa7e23 (wave 4).
+	db.Table("users").
+		Select("users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
+			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
+			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng").
+		Joins("LEFT JOIN locations ON locations.id = users.lastlocation").
+		Joins("LEFT JOIN spam_users ON spam_users.userid = users.id").
+		Where("users.id = ?", id).
+		Scan(&ul)
 
 	if ul.Mylng != 0 || ul.Mylat != 0 {
 		ret.Lat = ul.Mylat
@@ -957,19 +967,27 @@ func GetLatLng(id uint64) utils.LatLng {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT messages.fromuser AS id, locations.lat AS lastlat, locations.lng AS lastlng FROM "+
-				"locations INNER JOIN messages ON messages.locationid = locations.id "+
-				"WHERE messages.fromuser = ? "+
-				"ORDER BY arrival DESC LIMIT 1", id).Scan(&ulmsg)
+			// ORM migration site 1a851f316859 (wave 4).
+			db.Table("locations").
+				Select("messages.fromuser AS id, locations.lat AS lastlat, locations.lng AS lastlng").
+				Joins("INNER JOIN messages ON messages.locationid = locations.id").
+				Where("messages.fromuser = ?", id).
+				Order("arrival DESC").
+				Limit(1).
+				Scan(&ulmsg)
 		}()
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT groups.id, groups.lat AS lastlat, groups.lng AS lastlng FROM  "+
-				"`groups` INNER JOIN memberships ON groups.id = memberships.groupid "+
-				"WHERE memberships.userid = ? "+
-				"ORDER BY added DESC LIMIT 1", id).Scan(&ulgroups)
+			// ORM migration site 532b0ba4ba45 (wave 4).
+			db.Table("`groups`").
+				Select("groups.id, groups.lat AS lastlat, groups.lng AS lastlng").
+				Joins("INNER JOIN memberships ON groups.id = memberships.groupid").
+				Where("memberships.userid = ?", id).
+				Order("added DESC").
+				Limit(1).
+				Scan(&ulgroups)
 		}()
 
 		wg.Wait()
@@ -1318,11 +1336,12 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 				Lng float64
 			}
 			var locs []groupLatLng
-			db.Raw("SELECT DISTINCT g.lat, g.lng FROM memberships_history mh "+
-				"INNER JOIN `groups` g ON mh.groupid = g.id "+
-				"WHERE mh.userid = ? AND DATEDIFF(NOW(), mh.added) <= 31 "+
-				"AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0",
-				id).Scan(&locs)
+			// ORM migration site cc0b627a2955 (wave 4).
+			db.Table("memberships_history mh").
+				Select("DISTINCT g.lat, g.lng").
+				Joins("INNER JOIN `groups` g ON mh.groupid = g.id").
+				Where("mh.userid = ? AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0", id).
+				Scan(&locs)
 			if len(locs) >= 2 {
 				var swlat, swlng, nelat, nelng float64
 				swlat, swlng = locs[0].Lat, locs[0].Lng
@@ -1720,10 +1739,13 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 	// Verify the caller is admin/support or a mod of a group the ratee belongs to.
 	if !auth.IsAdminOrSupport(myid) {
 		var count int64
-		db.Raw(`SELECT COUNT(*) FROM ratings r
-			JOIN memberships m1 ON m1.userid = r.ratee
-			JOIN memberships m2 ON m2.groupid = m1.groupid AND m2.userid = ?
-			WHERE r.id = ? AND m2.role IN (?, ?)`, myid, req.Ratingid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+		// ORM migration site 3ff417c41f7c (wave 4).
+		db.Table("ratings r").
+			Select("COUNT(*)").
+			Joins("JOIN memberships m1 ON m1.userid = r.ratee").
+			Joins("JOIN memberships m2 ON m2.groupid = m1.groupid AND m2.userid = ?", myid).
+			Where("r.id = ? AND m2.role IN (?, ?)", req.Ratingid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+			Scan(&count)
 		if count == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorized to review this rating")
 		}
@@ -2308,10 +2330,14 @@ func PatchUser(c *fiber.Ctx) error {
 		if !auth.IsAdminOrSupport(myid) {
 			// Check if they share a group where the caller is a mod.
 			var sharedModGroup int64
-			db.Raw("SELECT COUNT(*) FROM memberships m1 "+
-				"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-				"WHERE m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)",
-				myid, req.ID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&sharedModGroup)
+			// ORM migration site 4ccf389828b7 (wave 4). Converted together with its
+			// identical twin below (18a18b50e638): a half-converted pair renumbers
+			// the survivor's site ID, so gate (h) refuses the split state.
+			db.Table("memberships m1").
+				Select("COUNT(*)").
+				Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+				Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)", myid, req.ID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
+				Scan(&sharedModGroup)
 
 			if sharedModGroup == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Not authorized to moderate this user")
@@ -2332,10 +2358,12 @@ func PatchUser(c *fiber.Ctx) error {
 			targetID = req.ID
 		} else {
 			var sharedModGroup int64
-			db.Raw("SELECT COUNT(*) FROM memberships m1 "+
-				"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-				"WHERE m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)",
-				myid, req.ID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&sharedModGroup)
+			// ORM migration site 18a18b50e638 (wave 4). Twin of 4ccf389828b7 above.
+			db.Table("memberships m1").
+				Select("COUNT(*)").
+				Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+				Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)", myid, req.ID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
+				Scan(&sharedModGroup)
 
 			if sharedModGroup > 0 {
 				targetID = req.ID
@@ -2736,9 +2764,15 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// If email addresses were provided instead of user IDs, resolve them first.
 	// Join to users to exclude deleted accounts (same pattern as GetUserByEmail).
 	if req.ID1 == 0 && req.Email1 != "" {
-		result := db.Raw("SELECT users.id FROM users "+
-			"INNER JOIN users_emails ON users_emails.userid = users.id "+
-			"WHERE users_emails.email = ? AND users.deleted IS NULL LIMIT 1", req.Email1).Scan((*uint64)(&req.ID1))
+		// ORM migration site cfcce3676000 (wave 4). Converted together with its
+		// identical twin below (15c4586ac31e): a half-converted pair renumbers
+		// the survivor's site ID, so gate (h) refuses the split state.
+		result := db.Table("users").
+			Select("users.id").
+			Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
+			Where("users_emails.email = ? AND users.deleted IS NULL", req.Email1).
+			Limit(1).
+			Scan((*uint64)(&req.ID1))
 		if result.Error != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Database error looking up email1")
 		}
@@ -2747,9 +2781,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 	}
 	if req.ID2 == 0 && req.Email2 != "" {
-		result := db.Raw("SELECT users.id FROM users "+
-			"INNER JOIN users_emails ON users_emails.userid = users.id "+
-			"WHERE users_emails.email = ? AND users.deleted IS NULL LIMIT 1", req.Email2).Scan((*uint64)(&req.ID2))
+		// ORM migration site 15c4586ac31e (wave 4). Twin of cfcce3676000 above.
+		result := db.Table("users").
+			Select("users.id").
+			Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
+			Where("users_emails.email = ? AND users.deleted IS NULL", req.Email2).
+			Limit(1).
+			Scan((*uint64)(&req.ID2))
 		if result.Error != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Database error looking up email2")
 		}
@@ -3350,13 +3388,13 @@ func GetUserApplied(c *fiber.Ctx) error {
 	}
 
 	var applied []AppliedRow
-	db.Raw("SELECT mh.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, mh.added "+
-		"FROM memberships_history mh "+
-		"INNER JOIN `groups` g ON g.id = mh.groupid "+
-		"WHERE mh.userid = ? AND DATEDIFF(NOW(), mh.added) <= 31 "+
-		"AND g.publish = 1 AND g.onmap = 1 "+
-		"ORDER BY mh.added DESC",
-		targetid).Scan(&applied)
+	// ORM migration site 96b1fd8dbd45 (wave 4).
+	db.Table("memberships_history mh").
+		Select("mh.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, mh.added").
+		Joins("INNER JOIN `groups` g ON g.id = mh.groupid").
+		Where("mh.userid = ? AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1", targetid).
+		Order("mh.added DESC").
+		Scan(&applied)
 
 	if applied == nil {
 		applied = []AppliedRow{}
@@ -3439,15 +3477,13 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 	}
 
 	var history []MembershipHistoryRow
-	db.Raw("SELECT l.timestamp, l.subtype AS type, l.groupid, "+
-		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, "+
-		"COALESCE(l.text,'') AS text "+
-		"FROM logs l "+
-		"INNER JOIN `groups` g ON g.id = l.groupid "+
-		"WHERE l.user = ? AND l.type = 'Group' "+
-		"AND l.subtype IN ('Joined','Approved','Rejected','Applied','Left') "+
-		"ORDER BY l.id DESC",
-		targetid).Scan(&history)
+	// ORM migration site 0c7fcde60aa8 (wave 4).
+	db.Table("logs l").
+		Select("l.timestamp, l.subtype AS type, l.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, COALESCE(l.text,'') AS text").
+		Joins("INNER JOIN `groups` g ON g.id = l.groupid").
+		Where("l.user = ? AND l.type = 'Group' AND l.subtype IN ('Joined','Approved','Rejected','Applied','Left')", targetid).
+		Order("l.id DESC").
+		Scan(&history)
 
 	if history == nil {
 		history = []MembershipHistoryRow{}

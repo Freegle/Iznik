@@ -225,17 +225,15 @@ func getUserInfo(userID uint64) userInfo {
 
 	// Query user info with image and preferred email for Gravatar fallback.
 	// Email is in users_emails table, not users table.
-	db.Raw(`
-		SELECT u.id, u.fullname, u.firstname, u.lastname,
-		       ui.id AS imageid, ui.url AS imageurl,
-		       ue.email AS email
-		FROM users u
-		LEFT JOIN users_images ui ON ui.userid = u.id
-		LEFT JOIN users_emails ue ON ue.userid = u.id
-		WHERE u.id = ?
-		ORDER BY ui.default DESC, ui.id ASC, ue.preferred DESC
-		LIMIT 1
-	`, userID).Scan(&result)
+	// ORM migration site f98509337e6d (wave 4).
+	db.Table("users u").
+		Select("u.id, u.fullname, u.firstname, u.lastname, ui.id AS imageid, ui.url AS imageurl, ue.email AS email").
+		Joins("LEFT JOIN users_images ui ON ui.userid = u.id").
+		Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+		Where("u.id = ?", userID).
+		Order("ui.default DESC, ui.id ASC, ue.preferred DESC").
+		Limit(1).
+		Scan(&result)
 
 	// Build display name - same logic as chat/chatroom.go
 	var name string

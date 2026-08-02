@@ -577,13 +577,15 @@ func ListReview(c *fiber.Ctx) error {
 	}
 
 	var votes []voteRow
-	db.Raw(`SELECT ma.aiimageid, ma.userid,
-		CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname,
-		ma.result, ma.containspeople, ma.timestamp
-		FROM microactions ma
-		INNER JOIN users u ON u.id = ma.userid
-		WHERE ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview'
-		ORDER BY ma.timestamp ASC`, ids).Scan(&votes)
+	// ORM migration site 7940b0e0d9ff (wave 4).
+	db.Table("microactions ma").
+		Select("ma.aiimageid, ma.userid, "+
+			"CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname, "+
+			"ma.result, ma.containspeople, ma.timestamp").
+		Joins("INNER JOIN users u ON u.id = ma.userid").
+		Where("ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview'", ids).
+		Order("ma.timestamp ASC").
+		Scan(&votes)
 
 	// Group votes by image ID.
 	votesByID := make(map[uint64][]AIImageVote)

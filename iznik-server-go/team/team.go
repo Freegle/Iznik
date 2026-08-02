@@ -148,13 +148,13 @@ func getVolunteers(c *fiber.Ctx) error {
 	}
 
 	var vols []VolRow
-	db.Raw("SELECT DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, "+
-		"users.added, users.settings "+
-		"FROM memberships "+
-		"INNER JOIN `groups` ON `groups`.id = memberships.groupid "+
-		"AND memberships.role IN (?, ?) "+
-		"INNER JOIN users ON users.id = memberships.userid "+
-		"WHERE `groups`.type = ?", utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.GROUP_TYPE_FREEGLE).Scan(&vols)
+	// ORM migration site 2937feaa1317 (wave 4).
+	db.Table("memberships").
+		Select("DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, users.added, users.settings").
+		Joins("INNER JOIN `groups` ON `groups`.id = memberships.groupid AND memberships.role IN (?, ?)", utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Joins("INNER JOIN users ON users.id = memberships.userid").
+		Where("`groups`.type = ?", utils.GROUP_TYPE_FREEGLE).
+		Scan(&vols)
 
 	members := []map[string]interface{}{}
 	for _, v := range vols {

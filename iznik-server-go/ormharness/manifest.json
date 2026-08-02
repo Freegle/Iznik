@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1165,
+    "converted": 1305,
     "keep-raw": 101,
-    "raw": 370,
+    "raw": 230,
     "test-fixture": 4223
   },
   "sites": {
@@ -284,7 +284,7 @@
     "0075741e6c44": {
       "id": "0075741e6c44",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 273,
+      "line": 276,
       "function": "listModConfigs",
       "receiver": "db",
       "method": "Raw",
@@ -592,9 +592,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT me.subject_embedding, m.fromuser, m.type, m.lat, m.lng FROM messages_embeddings me INNER JOIN messages m ON m.id = me.msgid WHERE me.msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0120c081168c": {
       "id": "0120c081168c",
@@ -1275,9 +1275,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(bi.quantity) AS SIGNED) AS count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0 INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.arrival BETWEEN ? AND ? GROUP BY PartialPostcode ORDER BY locations.name",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "02c76fcca927": {
       "id": "02c76fcca927",
@@ -1504,7 +1504,7 @@
     "033affad7d5a": {
       "id": "033affad7d5a",
       "file": "iznik-server-go/message/message.go",
-      "line": 4226,
+      "line": 4258,
       "function": "findOrCreateUserForDraft",
       "receiver": "db",
       "method": "Exec",
@@ -1859,7 +1859,7 @@
     "041e44afbfe5": {
       "id": "041e44afbfe5",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 273,
+      "line": 279,
       "function": "getPopularPosts",
       "receiver": "db",
       "method": "Raw",
@@ -2059,7 +2059,7 @@
     "049bc3f964cd": {
       "id": "049bc3f964cd",
       "file": "iznik-server-go/message/message.go",
-      "line": 2649,
+      "line": 2669,
       "function": "handleSpam",
       "receiver": "db",
       "method": "Exec",
@@ -2325,7 +2325,7 @@
     "050e3574aa6f": {
       "id": "050e3574aa6f",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 501,
+      "line": 504,
       "function": "findOrCreateUser2UserRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -3399,7 +3399,7 @@
     "06d02e94fa4a": {
       "id": "06d02e94fa4a",
       "file": "iznik-server-go/user/user.go",
-      "line": 1003,
+      "line": 1021,
       "function": "GetSearchesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -3465,7 +3465,7 @@
     "07113a2db28b": {
       "id": "07113a2db28b",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1164,
+      "line": 1168,
       "function": "getChatMessagesForRoom",
       "receiver": "db",
       "method": "Raw",
@@ -3659,9 +3659,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(DISTINCT v.id) FROM volunteering v INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id WHERE vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end \u003e= NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "07738314315a": {
       "id": "07738314315a",
@@ -3749,9 +3749,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count FROM pc INNER JOIN search_history ON search_history.locationid = pc.locationid INNER JOIN locations ON search_history.locationid = locations.id WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND search_history.date BETWEEN ? AND ? GROUP BY PartialPostcode ORDER BY locations.name",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "078a92b0f7b1": {
       "id": "078a92b0f7b1",
@@ -4125,9 +4125,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ceg.groupid, COUNT(DISTINCT ce.id) as count FROM communityevents ce INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id INNER JOIN communityevents_dates ced ON ced.eventid = ce.id WHERE ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end \u003e= NOW() GROUP BY ceg.groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "083b1dc50ed3": {
       "id": "083b1dc50ed3",
@@ -4289,7 +4289,7 @@
     "086a07072de1": {
       "id": "086a07072de1",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 785,
+      "line": 788,
       "function": "ingestBulkItemPhotos",
       "receiver": "db",
       "method": "Raw",
@@ -4512,7 +4512,7 @@
     "08d12a748d01": {
       "id": "08d12a748d01",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1261,
+      "line": 1277,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -4627,7 +4627,7 @@
     "09515916c939": {
       "id": "09515916c939",
       "file": "iznik-server-go/session/session.go",
-      "line": 1483,
+      "line": 1512,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -4674,7 +4674,7 @@
     "09730933af57": {
       "id": "09730933af57",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1153,
+      "line": 1162,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -5163,7 +5163,7 @@
     "0a6ca0656195": {
       "id": "0a6ca0656195",
       "file": "iznik-server-go/session/session.go",
-      "line": 1041,
+      "line": 1054,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5429,7 +5429,7 @@
     "0adadbabde5b": {
       "id": "0adadbabde5b",
       "file": "iznik-server-go/volunteering/volunteering.go",
-      "line": 394,
+      "line": 411,
       "function": "Create",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -5491,9 +5491,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0aebc47da6fd": {
       "id": "0aebc47da6fd",
@@ -6156,9 +6156,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l.timestamp, l.subtype AS type, l.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, COALESCE(l.text,'') AS text FROM logs l INNER JOIN `groups` g ON g.id = l.groupid WHERE l.user = ? AND l.type = 'Group' AND l.subtype IN ('Joined','Approved','Rejected','Applied','Left') ORDER BY l.id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0c82398c0cab": {
       "id": "0c82398c0cab",
@@ -6297,7 +6297,7 @@
     "0c9e859752d0": {
       "id": "0c9e859752d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 1167,
+      "line": 1185,
       "function": "SearchUsers",
       "receiver": "db",
       "method": "Raw",
@@ -6343,7 +6343,7 @@
     "0ca4810292dc": {
       "id": "0ca4810292dc",
       "file": "iznik-server-go/story/story.go",
-      "line": 151,
+      "line": 154,
       "function": "List",
       "receiver": "db",
       "method": "Raw",
@@ -7660,9 +7660,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0f5e5f7495f1": {
       "id": "0f5e5f7495f1",
@@ -8213,9 +8213,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT m.groupid, COALESCE(g.namefull, g.nameshort) AS groupname FROM memberships m INNER JOIN `groups` g ON g.id = m.groupid WHERE m.userid = ? AND m.collection = ? ORDER BY m.added DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "105912e3dab7": {
       "id": "105912e3dab7",
@@ -8418,7 +8418,7 @@
     "10bcbd6a6404": {
       "id": "10bcbd6a6404",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1571,
+      "line": 1593,
       "function": "createRefer",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -8723,9 +8723,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT messages.id) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id WHERE messages_groups.arrival \u003e= ? AND messages_groups.arrival \u003c= ? AND groupid IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "116269b786f6": {
       "id": "116269b786f6",
@@ -9153,7 +9153,7 @@
     "123512413259": {
       "id": "123512413259",
       "file": "iznik-server-go/message/helper.go",
-      "line": 678,
+      "line": 696,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -9793,9 +9793,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT be.reason, be.date FROM bounces_emails be INNER JOIN users_emails ue ON ue.id = be.emailid WHERE ue.userid = ? ORDER BY be.id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "13c70937febc": {
       "id": "13c70937febc",
@@ -9844,7 +9844,7 @@
     "13cbb1ba0653": {
       "id": "13cbb1ba0653",
       "file": "iznik-server-go/location/location.go",
-      "line": 749,
+      "line": 752,
       "function": "CreateLocation",
       "receiver": "db",
       "method": "Exec",
@@ -10517,7 +10517,7 @@
     "1590b130f529": {
       "id": "1590b130f529",
       "file": "iznik-server-go/message/message.go",
-      "line": 4542,
+      "line": 4574,
       "function": "PutMessageAs",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -10622,9 +10622,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users.id FROM users INNER JOIN users_emails ON users_emails.userid = users.id WHERE users_emails.email = ? AND users.deleted IS NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "15cd58cacd64": {
       "id": "15cd58cacd64",
@@ -11870,7 +11870,7 @@
     "181d8342ea4a": {
       "id": "181d8342ea4a",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 425,
+      "line": 428,
       "function": "PostModConfig",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -12130,9 +12130,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "18c8d1605d2e": {
       "id": "18c8d1605d2e",
@@ -12898,7 +12898,7 @@
     "1a000d04649b": {
       "id": "1a000d04649b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1125,
+      "line": 1127,
       "function": "getVisibleRatings",
       "receiver": "db",
       "method": "Raw",
@@ -13267,9 +13267,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT messages.fromuser AS id, locations.lat AS lastlat, locations.lng AS lastlng FROM locations INNER JOIN messages ON messages.locationid = locations.id WHERE messages.fromuser = ? ORDER BY arrival DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1a8540a76b5b": {
       "id": "1a8540a76b5b",
@@ -14640,7 +14640,7 @@
     "1d98111ea90d": {
       "id": "1d98111ea90d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1714,
+      "line": 1717,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -15658,9 +15658,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT mg.groupid, COUNT(DISTINCT mo.id) as count FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid WHERE mo.timestamp \u003e= ? AND mg.arrival \u003e= ? AND mg.groupid IN ? AND mg.rippled_in = 0 AND mo.comments IS NOT NULL AND mo.comments != '' AND mo.comments != 'Sorry, this is no longer available.' AND mo.comments != 'Thanks, this has now been taken.' AND mo.comments != 'Thanks, I''m no longer looking for this.' AND mo.comments != 'Sorry, this has now been taken.' AND mo.comments != 'Thanks for the interest, but this has now been taken.' AND mo.comments != 'Thanks, these have now been taken.' AND mo.comments != 'Thanks, this has now been received.' AND mo.comments != 'Withdrawn on user unsubscribe' AND mo.comments != 'Auto-Expired' AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) AND mo.reviewed = 0 GROUP BY mg.groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1f4246021fa2": {
       "id": "1f4246021fa2",
@@ -15687,7 +15687,7 @@
     "1f5798e8214d": {
       "id": "1f5798e8214d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1448,
+      "line": 1449,
       "function": "handleNudge",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -15749,9 +15749,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT fromuser, groupid FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = messages.fromuser WHERE messages.id = ? AND users.deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1f66757df455": {
       "id": "1f66757df455",
@@ -15951,9 +15951,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT vg.groupid, COUNT(DISTINCT v.id) as count FROM volunteering v INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id WHERE vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end \u003e= NOW()) GROUP BY vg.groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1f944b16398a": {
       "id": "1f944b16398a",
@@ -16134,7 +16134,7 @@
     "1ff179ae0e2c": {
       "id": "1ff179ae0e2c",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1166,
+      "line": 1175,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -16158,7 +16158,7 @@
     "1ff296c8656c": {
       "id": "1ff296c8656c",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1322,
+      "line": 1326,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -16310,9 +16310,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NULL AND mg.contentcheck_checked_at IS NOT NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "204b2c4fc697": {
       "id": "204b2c4fc697",
@@ -16403,9 +16403,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM teams_members tm INNER JOIN teams t ON tm.teamid = t.id WHERE t.name = 'ChitChat Moderation' AND tm.userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2059f2fd9de6": {
       "id": "2059f2fd9de6",
@@ -17701,9 +17701,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay FROM `groups` g INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ? INNER JOIN memberships m2 ON m2.groupid = g.id AND m2.userid = ? ORDER BY namedisplay",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "22dae99e96dc": {
       "id": "22dae99e96dc",
@@ -18782,7 +18782,7 @@
     "24704432f4d4": {
       "id": "24704432f4d4",
       "file": "iznik-server-go/user/user.go",
-      "line": 1999,
+      "line": 2021,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -19115,7 +19115,7 @@
     "251541e122a3": {
       "id": "251541e122a3",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 138,
+      "line": 140,
       "function": "GetModConfig",
       "receiver": "db",
       "method": "Raw",
@@ -19403,7 +19403,7 @@
     "258437a60f5d": {
       "id": "258437a60f5d",
       "file": "iznik-server-go/donations/giftaid.go",
-      "line": 280,
+      "line": 282,
       "function": "SetGiftAid",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -19562,7 +19562,7 @@
     "25b7b92e33fd": {
       "id": "25b7b92e33fd",
       "file": "iznik-server-go/location/location.go",
-      "line": 742,
+      "line": 745,
       "function": "CreateLocation",
       "receiver": "db",
       "method": "Exec",
@@ -20029,7 +20029,7 @@
     "26c94565517d": {
       "id": "26c94565517d",
       "file": "iznik-server-go/message/message.go",
-      "line": 5493,
+      "line": 5528,
       "function": "createSystemChatMessage",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -20557,9 +20557,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m2.groupid = m1.groupid WHERE m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?) AND m1.collection = ? AND m2.collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2811b4d3acf7": {
       "id": "2811b4d3acf7",
@@ -20697,7 +20697,7 @@
     "285861d7b37c": {
       "id": "285861d7b37c",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 387,
+      "line": 396,
       "function": "getModeratorsActive",
       "receiver": "db",
       "method": "Raw",
@@ -20720,7 +20720,7 @@
     "286f80414bd5": {
       "id": "286f80414bd5",
       "file": "iznik-server-go/user/user.go",
-      "line": 738,
+      "line": 741,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -20826,9 +20826,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ue.preferred DESC, ue.id ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "28b14fbb1b29": {
       "id": "28b14fbb1b29",
@@ -21199,9 +21199,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, users.added, users.settings FROM memberships INNER JOIN `groups` ON `groups`.id = memberships.groupid AND memberships.role IN (?, ?) INNER JOIN users ON users.id = memberships.userid WHERE `groups`.type = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "293e498f5ca3": {
       "id": "293e498f5ca3",
@@ -21272,7 +21272,7 @@
     "296f97f33779": {
       "id": "296f97f33779",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 133,
+      "line": 131,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Raw",
@@ -21342,7 +21342,7 @@
     "2984f464c081": {
       "id": "2984f464c081",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1604,
+      "line": 1605,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -21492,9 +21492,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups mg JOIN memberships m ON mg.groupid = m.groupid WHERE mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "29e35a404d4d": {
       "id": "29e35a404d4d",
@@ -21515,9 +21515,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ui.id AS profileid, ui.url, ui.externaluid, ui.externalmods, ui.archived FROM users_images ui INNER JOIN users ON users.id = ui.userid WHERE ui.userid = ? ORDER BY ui.id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "29edc144f5c9": {
       "id": "29edc144f5c9",
@@ -21540,9 +21540,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT DISTINCT communityevents.id FROM communityevents INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid LEFT JOIN users ON communityevents.userid = users.id WHERE groupid IN (?) AND end IS NOT NULL AND end \u003e= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) AND users.deleted IS NULL ORDER BY end ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "29ee05628284": {
       "id": "29ee05628284",
@@ -22005,9 +22005,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT DISTINCT volunteering.id FROM volunteering INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid LEFT JOIN users ON volunteering.userid = users.id WHERE groupid IN (?) AND (applyby IS NULL OR applyby \u003e= ?) AND (end IS NULL OR end \u003e= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL ORDER BY id DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2b29ca6dbce1": {
       "id": "2b29ca6dbce1",
@@ -23253,7 +23253,7 @@
     "2de07c2af78b": {
       "id": "2de07c2af78b",
       "file": "iznik-server-go/message/message.go",
-      "line": 1265,
+      "line": 1277,
       "function": "GetMessagesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -23785,7 +23785,7 @@
     "2ec5308a64bf": {
       "id": "2ec5308a64bf",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 261,
+      "line": 264,
       "function": "listModConfigs",
       "receiver": "db",
       "method": "Raw",
@@ -23845,9 +23845,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(DISTINCT me.msgid) FROM messages_edits me INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp \u003e DATE_SUB(NOW(), INTERVAL 7 DAY)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2edbbcc133b4": {
       "id": "2edbbcc133b4",
@@ -24428,7 +24428,7 @@
     "2fb19be4ef0b": {
       "id": "2fb19be4ef0b",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 385,
+      "line": 402,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -24469,9 +24469,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT bi.msgid, m.fromuser FROM messages_bulk_items bi INNER JOIN messages m ON m.id = bi.msgid WHERE bi.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2fb69933af1b": {
       "id": "2fb69933af1b",
@@ -24833,7 +24833,7 @@
     "309561e40e15": {
       "id": "309561e40e15",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 383,
+      "line": 384,
       "function": "getPendingMessageChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -25041,7 +25041,7 @@
     "3119115f3abe": {
       "id": "3119115f3abe",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 986,
+      "line": 988,
       "function": "getHappinessMembers",
       "receiver": "db",
       "method": "Raw",
@@ -25521,9 +25521,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT mo.id) FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid WHERE mo.timestamp \u003e= ? AND mg.arrival \u003e= ? AND mg.groupid IN ? AND mg.rippled_in = 0 AND mo.comments IS NOT NULL AND mo.comments != 'Sorry, this is no longer available.' AND mo.comments != 'Thanks, this has now been taken.' AND mo.comments != 'Thanks, I''m no longer looking for this.' AND mo.comments != 'Sorry, this has now been taken.' AND mo.comments != 'Thanks for the interest, but this has now been taken.' AND mo.comments != 'Thanks, these have now been taken.' AND mo.comments != 'Thanks, this has now been received.' AND mo.comments != 'Withdrawn on user unsubscribe' AND mo.comments != 'Auto-Expired' AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) AND mo.reviewed = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "31e336f98156": {
       "id": "31e336f98156",
@@ -25545,9 +25545,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT mg.groupid, COUNT(*) as count, (mg.heldby IS NOT NULL) as held FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND (mg.contentcheck_checked_at IS NOT NULL OR mg.heldby IS NOT NULL) GROUP BY mg.groupid, held",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "31e571c99356": {
       "id": "31e571c99356",
@@ -25574,7 +25574,7 @@
     "31fea9e6f321": {
       "id": "31fea9e6f321",
       "file": "iznik-server-go/donations/donations.go",
-      "line": 177,
+      "line": 181,
       "function": "GetDonations",
       "receiver": "db",
       "method": "Raw",
@@ -26189,7 +26189,7 @@
     "33201edc2a80": {
       "id": "33201edc2a80",
       "file": "iznik-server-go/user/user.go",
-      "line": 1705,
+      "line": 1724,
       "function": "handleRate",
       "receiver": "db",
       "method": "Exec",
@@ -26874,9 +26874,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users_stories.*, users_stories_images.id AS imageid, users_stories_images.archived AS imagearchived, users_stories_images.externaluid AS imageuid, users_stories_images.externalmods AS imagemods FROM users_stories LEFT JOIN users_stories_images ON users_stories_images.storyid = users_stories.id WHERE users_stories.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "345156507896": {
       "id": "345156507896",
@@ -27240,7 +27240,7 @@
     "35023816be21": {
       "id": "35023816be21",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1807,
+      "line": 1810,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -27352,7 +27352,7 @@
     "3519e352775b": {
       "id": "3519e352775b",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1708,
+      "line": 1711,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -27682,9 +27682,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT users.id, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "35c66adf8f75": {
       "id": "35c66adf8f75",
@@ -27981,7 +27981,7 @@
     "366c64b4d972": {
       "id": "366c64b4d972",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1228,
+      "line": 1229,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -28109,14 +28109,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ud.userid FROM users_donations ud JOIN users u ON u.id = ud.userid WHERE ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL ORDER BY ud.timestamp DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "36b33902c122": {
       "id": "36b33902c122",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1587,
+      "line": 1588,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -28227,7 +28227,7 @@
     "3736547cd88a": {
       "id": "3736547cd88a",
       "file": "iznik-server-go/location/location.go",
-      "line": 126,
+      "line": 127,
       "function": "ClosestGroups",
       "receiver": "db",
       "method": "Raw",
@@ -28340,7 +28340,7 @@
     "3762cb36efcf": {
       "id": "3762cb36efcf",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1165,
+      "line": 1169,
       "function": "listMicroActions",
       "receiver": "db",
       "method": "Raw",
@@ -28553,9 +28553,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT r.arm AS arm, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged FROM reengage r LEFT JOIN email_tracking et ON r.email_tracking_id = et.id WHERE r.sentat BETWEEN ? AND ? AND r.arm IS NOT NULL GROUP BY r.arm ORDER BY r.arm ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "37d6a244ee60": {
       "id": "37d6a244ee60",
@@ -28619,9 +28619,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "380a2b8e3fbc": {
       "id": "380a2b8e3fbc",
@@ -28642,9 +28642,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT giftaid.*, SUM(users_donations.GrossAmount) AS donations FROM giftaid LEFT JOIN users_donations ON users_donations.userid = giftaid.userid WHERE giftaid.reviewed IS NULL AND giftaid.deleted IS NULL AND giftaid.period != 'Declined' GROUP BY giftaid.userid ORDER BY giftaid.timestamp DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "381746b9dc55": {
       "id": "381746b9dc55",
@@ -28775,9 +28775,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT mg.groupid AS groupid, (mg.arrival \u003c= m.arrival + INTERVAL 10 MINUTE) AS is_origin FROM messages_groups mg JOIN messages m ON m.id = mg.msgid WHERE mg.msgid = ? ORDER BY mg.arrival ASC, mg.groupid ASC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "384c866f614a": {
       "id": "384c866f614a",
@@ -28933,9 +28933,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT DISTINCT volunteering.id FROM volunteering LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid LEFT JOIN users ON volunteering.userid = users.id WHERE groupid = ? AND (applyby IS NULL OR applyby \u003e= ?) AND (end IS NULL OR end \u003e= ?) AND volunteering.deleted = 0 AND expired = 0 AND pending = 0 AND users.deleted IS NULL ORDER BY id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3896862ff4fd": {
       "id": "3896862ff4fd",
@@ -29140,7 +29140,7 @@
     "39233a746ed4": {
       "id": "39233a746ed4",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 300,
+      "line": 301,
       "function": "GetChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -29228,7 +29228,7 @@
     "395499023142": {
       "id": "395499023142",
       "file": "iznik-server-go/user/user.go",
-      "line": 3409,
+      "line": 3447,
       "function": "GetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -29873,9 +29873,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ad4178cb293": {
       "id": "3ad4178cb293",
@@ -29940,9 +29940,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT s.id, s.replierid, s.bulkitemid, s.state, s.qty_wanted, s.qty_allocated, s.score, s.score_breakdown FROM helper_item_states s INNER JOIN helper_repliers r ON r.id = s.replierid WHERE r.batchid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3ae0e2e69ab8": {
       "id": "3ae0e2e69ab8",
@@ -30768,7 +30768,7 @@
     "3c4828e01db8": {
       "id": "3c4828e01db8",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1167,
+      "line": 1176,
       "function": "Post",
       "receiver": "db",
       "method": "Exec",
@@ -30924,7 +30924,7 @@
     "3cb627925298": {
       "id": "3cb627925298",
       "file": "iznik-server-go/systemlogs/systemlogs.go",
-      "line": 285,
+      "line": 291,
       "function": "GetLogCounts",
       "receiver": "c",
       "method": "Query",
@@ -31027,9 +31027,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT DISTINCT communityevents.id FROM communityevents INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid INNER JOIN communityevents_dates ON communityevents_dates.eventid = communityevents.id WHERE groupid IN (?) AND communityevents.deleted = 0 AND pending = 1 AND communityevents_dates.end \u003e= ? ORDER BY communityevents_dates.end ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3cea42b66db8": {
       "id": "3cea42b66db8",
@@ -31672,7 +31672,7 @@
     "3ecb2fba572f": {
       "id": "3ecb2fba572f",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 396,
+      "line": 390,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Raw",
@@ -32012,7 +32012,7 @@
     "3f3696f3bba4": {
       "id": "3f3696f3bba4",
       "file": "iznik-server-go/session/session.go",
-      "line": 1409,
+      "line": 1434,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -32334,9 +32334,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM ratings r JOIN memberships m1 ON m1.userid = r.ratee JOIN memberships m2 ON m2.groupid = m1.groupid AND m2.userid = ? WHERE r.id = ? AND m2.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4001ce90a313": {
       "id": "4001ce90a313",
@@ -33238,9 +33238,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l.lat, l.lng FROM users u LEFT JOIN locations l ON l.id = u.lastlocation WHERE u.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4193c0cd3102": {
       "id": "4193c0cd3102",
@@ -33375,9 +33375,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT groupid FROM memberships INNER JOIN `groups` ON memberships.groupid = `groups`.id WHERE userid = ? AND type = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "41cdb6ef60e3": {
       "id": "41cdb6ef60e3",
@@ -33923,7 +33923,7 @@
     "42f88b0d5032": {
       "id": "42f88b0d5032",
       "file": "iznik-server-go/location/location.go",
-      "line": 819,
+      "line": 822,
       "function": "UpdateLocation",
       "receiver": "db",
       "method": "Raw",
@@ -35276,7 +35276,7 @@
     "45b8b0bc2060": {
       "id": "45b8b0bc2060",
       "file": "iznik-server-go/communityevent/communityEvent.go",
-      "line": 314,
+      "line": 322,
       "function": "Create",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -35315,9 +35315,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT m.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held FROM memberships m INNER JOIN users u ON u.id = m.userid WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat \u003e m.reviewedat) GROUP BY m.groupid, held",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "45c27757f0be": {
       "id": "45c27757f0be",
@@ -35344,7 +35344,7 @@
     "45c97c1f1f58": {
       "id": "45c97c1f1f58",
       "file": "iznik-server-go/auth/auth.go",
-      "line": 321,
+      "line": 325,
       "function": "CreateSessionAndJWT",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -35946,7 +35946,7 @@
     "47417e0f74d7": {
       "id": "47417e0f74d7",
       "file": "iznik-server-go/location/location.go",
-      "line": 725,
+      "line": 728,
       "function": "CreateLocation",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -36847,9 +36847,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT cm.refmsgid) AS count, m.type AS msgtype FROM chat_messages cm INNER JOIN messages m ON m.id = cm.refmsgid WHERE cm.userid = ? AND cm.date \u003e ? AND cm.refmsgid IS NOT NULL AND cm.type = ? GROUP BY m.type",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "48b871841908": {
       "id": "48b871841908",
@@ -37053,9 +37053,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' =\u003e 3, ''wanted'' =\u003e 7, ''max'' =\u003e 5, ''chaseups'' =\u003e 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4914b378dccb": {
       "id": "4914b378dccb",
@@ -37104,7 +37104,7 @@
     "491a9ebdf3f8": {
       "id": "491a9ebdf3f8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1725,
+      "line": 1728,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -37614,9 +37614,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) AS count, chat_messages.userid FROM chat_messages INNER JOIN messages_groups ON messages_groups.msgid = chat_messages.refmsgid WHERE messages_groups.arrival \u003e= ? AND messages_groups.arrival \u003c= ? AND groupid IN (?) AND chat_messages.type = ? GROUP BY chat_messages.userid ORDER BY count DESC LIMIT 5",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4a0fdff8aae0": {
       "id": "4a0fdff8aae0",
@@ -37771,9 +37771,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, MAX(l.timestamp) AS lastmodmail FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid AND ((l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Replied')) OR (l.type = 'User' AND l.subtype IN ('Mailed', 'Rejected', 'Deleted'))) AND l.byuser != l.user WHERE m.groupid = ? AND m.collection = ? GROUP BY m.userid ORDER BY m.added DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4a56a34e8312": {
       "id": "4a56a34e8312",
@@ -38244,7 +38244,7 @@
     "4aef5392a01f": {
       "id": "4aef5392a01f",
       "file": "iznik-server-go/message/helper.go",
-      "line": 465,
+      "line": 483,
       "function": "helperUpsertReplier",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -38353,9 +38353,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN users_banned b ON b.groupid = m1.groupid WHERE m1.userid = ? AND b.userid = ? AND m1.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4b1972acb465": {
       "id": "4b1972acb465",
@@ -38399,9 +38399,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.heldby IS NOT NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4b3a0a1e7713": {
       "id": "4b3a0a1e7713",
@@ -39073,9 +39073,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4cd87a951f5d": {
       "id": "4cd87a951f5d",
@@ -40136,9 +40136,9 @@
       "dynamic": false,
       "args": 7,
       "goldenSql": "SELECT m2.userid, m2.groupid FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?) AND m2.userid != ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4f54f0a3998a": {
       "id": "4f54f0a3998a",
@@ -40275,7 +40275,7 @@
     "4f9d823a53a7": {
       "id": "4f9d823a53a7",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1735,
+      "line": 1738,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -40720,9 +40720,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups mg JOIN memberships m ON m.groupid = mg.groupid WHERE mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "50a8daac882c": {
       "id": "50a8daac882c",
@@ -41880,9 +41880,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groups.id, groups.lat AS lastlat, groups.lng AS lastlng FROM `groups` INNER JOIN memberships ON groups.id = memberships.groupid WHERE memberships.userid = ? ORDER BY added DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5335567292aa": {
       "id": "5335567292aa",
@@ -42041,7 +42041,7 @@
     "537a2764efde": {
       "id": "537a2764efde",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1048,
+      "line": 1049,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -42168,9 +42168,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, CASE WHEN JSON_EXTRACT(settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(settings, '$.useprofile') END AS useprofile FROM users_images ui INNER JOIN users ON users.id = ui.userid WHERE userid = ? ORDER BY ui.id DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5406bca9fa45": {
       "id": "5406bca9fa45",
@@ -43507,9 +43507,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT * FROM users_notifications LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) WHERE touser = ? AND timestamp \u003e= ? AND spam_users.id IS NULL ORDER BY users_notifications.id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "566906b76131": {
       "id": "566906b76131",
@@ -43644,7 +43644,7 @@
     "56c15677ea5b": {
       "id": "56c15677ea5b",
       "file": "iznik-server-go/session/session.go",
-      "line": 1957,
+      "line": 1986,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -43689,7 +43689,7 @@
     "56dfb1008d60": {
       "id": "56dfb1008d60",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 178,
+      "line": 180,
       "function": "recomputeBulkAvailableNow",
       "receiver": "db",
       "method": "Exec",
@@ -44045,7 +44045,7 @@
     "57978ae039a2": {
       "id": "57978ae039a2",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 320,
+      "line": 326,
       "function": "getUsersPosting",
       "receiver": "db",
       "method": "Raw",
@@ -44807,7 +44807,7 @@
     "58cb0a225ebe": {
       "id": "58cb0a225ebe",
       "file": "iznik-server-go/amp/amp.go",
-      "line": 472,
+      "line": 470,
       "function": "PostChatReply",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -45450,9 +45450,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN locations ON messages.locationid = locations.id INNER JOIN messages_bulk_items_interest mbi ON mbi.msgid = messages.id WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? GROUP BY PartialPostcode ORDER BY locations.name",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5a5b3d96dcf8": {
       "id": "5a5b3d96dcf8",
@@ -46067,7 +46067,7 @@
     "5b72a0acad8e": {
       "id": "5b72a0acad8e",
       "file": "iznik-server-go/user/user.go",
-      "line": 3010,
+      "line": 3048,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -46745,9 +46745,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT b.msgid FROM helper_proposals p INNER JOIN helper_batches b ON b.id = p.batchid WHERE p.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5cd782bdb883": {
       "id": "5cd782bdb883",
@@ -47126,7 +47126,7 @@
     "5da587b4234d": {
       "id": "5da587b4234d",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1328,
+      "line": 1332,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -47588,7 +47588,7 @@
     "5e7eab0bd83d": {
       "id": "5e7eab0bd83d",
       "file": "iznik-server-go/location/location.go",
-      "line": 960,
+      "line": 963,
       "function": "queueExcludeRemap",
       "receiver": "database.DBConn",
       "method": "Raw",
@@ -48062,7 +48062,7 @@
     "5f6ca1b9022f": {
       "id": "5f6ca1b9022f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 607,
+      "line": 609,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -48082,7 +48082,7 @@
     "5f742c0fcf1f": {
       "id": "5f742c0fcf1f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 540,
+      "line": 542,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -48644,9 +48644,9 @@
       "dynamic": false,
       "args": 10,
       "goldenSql": "SELECT users_addresses.id, users_addresses.userid, instructions,COALESCE(users_addresses.lat, locations.lat) AS lat, COALESCE(users_addresses.lng, locations.lng) AS lng, locations.name AS postcode, posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname FROM users_addresses LEFT JOIN chat_rooms ON chat_rooms.user1 = ? OR chat_rooms.user2 = ? LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id LEFT JOIN users ON users.id = ? INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid INNER JOIN locations ON locations.id = paf_addresses.postcodeid LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid LEFT JOIN paf_dependentlocality ON paf_dependentlocality.id = paf_addresses.dependentlocalityid LEFT JOIN paf_doubledependentlocality ON paf_doubledependentlocality.id = paf_addresses.doubledependentlocalityid LEFT JOIN paf_thoroughfaredescriptor ON paf_thoroughfaredescriptor.id = paf_addresses.thoroughfaredescriptorid LEFT JOIN paf_dependentthoroughfaredescriptor ON paf_dependentthoroughfaredescriptor.id = paf_addresses.dependentthoroughfaredescriptorid LEFT JOIN paf_buildingname ON paf_buildingname.id = paf_addresses.buildingnameid LEFT JOIN paf_subbuildingname ON paf_subbuildingname.id = paf_addresses.subbuildingnameid LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid WHERE users_addresses.id = ? AND (users_addresses.userid = ? OR (chat_messages.type = ? AND chat_messages.message = ?) OR users.systemrole IN (?, ?, ?)) LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6085c4318fd0": {
       "id": "6085c4318fd0",
@@ -48914,9 +48914,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l2.name FROM users u INNER JOIN locations l1 ON l1.id = u.lastlocation INNER JOIN locations l2 ON l2.id = l1.areaid WHERE u.id = ? AND u.lastlocation IS NOT NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "610cda0eb0aa": {
       "id": "610cda0eb0aa",
@@ -49545,9 +49545,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ma.id, ma.msgid, bia.bulkitemid, ma.archived, CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, ma.externalmods FROM messages_attachments ma LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed') LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id WHERE ma.msgid = ? ORDER BY ma.`primary` DESC, ma.id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "625f4505742d": {
       "id": "625f4505742d",
@@ -49594,9 +49594,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, groups.nameshort, groups.namefull, groups.lat, groups.lng FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN `groups` ON messages_groups.groupid = groups.id INNER JOIN users ON messages.fromuser = users.id WHERE messages_groups.arrival \u003e ? AND collection = ? ORDER BY messages_groups.arrival ASC LIMIT 100",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6286776028c4": {
       "id": "6286776028c4",
@@ -49717,7 +49717,7 @@
     "62a2f6fa4bdb": {
       "id": "62a2f6fa4bdb",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1360,
+      "line": 1364,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -50076,7 +50076,7 @@
     "6358402174f8": {
       "id": "6358402174f8",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 590,
+      "line": 595,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -50222,9 +50222,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT r.volunteer_source AS source, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged FROM reengage r LEFT JOIN email_tracking et ON r.email_tracking_id = et.id WHERE r.sentat BETWEEN ? AND ? AND r.volunteer_source IS NOT NULL GROUP BY r.volunteer_source ORDER BY r.volunteer_source ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "63ab9521cba4": {
       "id": "63ab9521cba4",
@@ -51063,9 +51063,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id = ? AND visible = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "65478f281afd": {
       "id": "65478f281afd",
@@ -51634,9 +51634,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m2.groupid = m1.groupid WHERE m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "664828a08676": {
       "id": "664828a08676",
@@ -52126,9 +52126,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT DISTINCT mc.* FROM mod_configs mc LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ? WHERE mc.createdby = ? OR mc.`default` = 1 OR m.id IS NOT NULL ORDER BY mc.name",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "67235c8863df": {
       "id": "67235c8863df",
@@ -52223,7 +52223,7 @@
     "67871ee12b8f": {
       "id": "67871ee12b8f",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1716,
+      "line": 1721,
       "function": "holdChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -53104,9 +53104,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(l2.name, '') FROM users LEFT JOIN locations l1 ON users.lastlocation = l1.id LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE users.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "68f472205846": {
       "id": "68f472205846",
@@ -53353,7 +53353,7 @@
     "698ab1090087": {
       "id": "698ab1090087",
       "file": "iznik-server-go/message/message.go",
-      "line": 4213,
+      "line": 4245,
       "function": "findOrCreateUserForDraft",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -53709,7 +53709,7 @@
     "6a225df4a259": {
       "id": "6a225df4a259",
       "file": "iznik-server-go/user/user.go",
-      "line": 3280,
+      "line": 3318,
       "function": "GetUserBans",
       "receiver": "db",
       "method": "Raw",
@@ -54328,9 +54328,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT COUNT(*) FROM users_stories INNER JOIN users ON users.id = users_stories.userid AND users.deleted IS NULL WHERE reviewed = 1 AND public = 1 AND newsletterreviewed = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6b2732992d76": {
       "id": "6b2732992d76",
@@ -54535,7 +54535,7 @@
     "6b9a23982cc9": {
       "id": "6b9a23982cc9",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 353,
+      "line": 356,
       "function": "PostModConfig",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -55136,9 +55136,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod FROM newsfeed LEFT JOIN users ON users.id = newsfeed.userid LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id WHERE newsfeed.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6cdf309715ad": {
       "id": "6cdf309715ad",
@@ -55455,7 +55455,7 @@
     "6d50d3895aa7": {
       "id": "6d50d3895aa7",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 334,
+      "line": 328,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Raw",
@@ -56333,7 +56333,7 @@
     "6f1d6543e5c0": {
       "id": "6f1d6543e5c0",
       "file": "iznik-server-go/location/location.go",
-      "line": 843,
+      "line": 846,
       "function": "UpdateLocation",
       "receiver": "db",
       "method": "Exec",
@@ -56706,9 +56706,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) AS count FROM users_notifications LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) WHERE touser = ? AND timestamp \u003e= ? AND seen = 0 AND spam_users.id IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6fcab3054ee0": {
       "id": "6fcab3054ee0",
@@ -56869,7 +56869,7 @@
     "70059ac9a4bb": {
       "id": "70059ac9a4bb",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 747,
+      "line": 749,
       "function": "getRelatedMembers",
       "receiver": "db",
       "method": "Raw",
@@ -57939,7 +57939,7 @@
     "71f1772f4a99": {
       "id": "71f1772f4a99",
       "file": "iznik-server-go/location/location.go",
-      "line": 570,
+      "line": 571,
       "function": "Typeahead",
       "receiver": "db",
       "method": "Raw",
@@ -58022,9 +58022,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "SELECT lr.id AS loser_id, MIN(sr.id) AS survivor_id FROM chat_rooms lr JOIN chat_rooms sr ON sr.chattype = lr.chattype AND ( (sr.user1 = ? AND sr.user2 = IF(lr.user1 = ?, lr.user2, lr.user1)) OR (sr.user2 = ? AND sr.user1 = IF(lr.user1 = ?, lr.user2, lr.user1))) WHERE lr.user1 = ? OR lr.user2 = ? GROUP BY lr.id",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7233641f67ad": {
       "id": "7233641f67ad",
@@ -58045,9 +58045,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT mg.groupid, COUNT(DISTINCT me.msgid) as count FROM messages_edits me INNER JOIN messages_groups mg ON mg.msgid = me.msgid WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp \u003e DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 AND mg.rippled_in = 0 GROUP BY mg.groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "72387b616242": {
       "id": "72387b616242",
@@ -58880,7 +58880,7 @@
     "7394291c903d": {
       "id": "7394291c903d",
       "file": "iznik-server-go/message/helper.go",
-      "line": 593,
+      "line": 611,
       "function": "helperCreateProposal",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -59306,7 +59306,7 @@
     "745c0a9ca82e": {
       "id": "745c0a9ca82e",
       "file": "iznik-server-go/location/location.go",
-      "line": 798,
+      "line": 801,
       "function": "UpdateLocation",
       "receiver": "db",
       "method": "Raw",
@@ -60535,7 +60535,7 @@
     "7653c7a2e4ed": {
       "id": "7653c7a2e4ed",
       "file": "iznik-server-go/message/message.go",
-      "line": 2524,
+      "line": 2544,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -60561,7 +60561,7 @@
     "76555fe088e5": {
       "id": "76555fe088e5",
       "file": "iznik-server-go/session/session.go",
-      "line": 1411,
+      "line": 1436,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -61781,9 +61781,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users.id, locations.lat AS lastlat, locations.lng as lastlng, CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng FROM users LEFT JOIN locations ON locations.id = users.lastlocation LEFT JOIN spam_users ON spam_users.userid = users.id WHERE users.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7841a4655468": {
       "id": "7841a4655468",
@@ -62049,9 +62049,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users.id, users_emails.email FROM users INNER JOIN users_emails ON users_emails.userid = users.id WHERE users_emails.email = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "78beea159385": {
       "id": "78beea159385",
@@ -62298,9 +62298,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ma.aiimageid, ma.userid, CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname, ma.result, ma.containspeople, ma.timestamp FROM microactions ma INNER JOIN users u ON u.id = ma.userid WHERE ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview' ORDER BY ma.timestamp ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "79439b175c19": {
       "id": "79439b175c19",
@@ -63025,9 +63025,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.id = ? ORDER BY mg.arrival DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7a9d0e7548d7": {
       "id": "7a9d0e7548d7",
@@ -63519,7 +63519,7 @@
     "7b739452734d": {
       "id": "7b739452734d",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 553,
+      "line": 558,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -63607,7 +63607,7 @@
     "7ba4875e8aec": {
       "id": "7ba4875e8aec",
       "file": "iznik-server-go/message/helper.go",
-      "line": 476,
+      "line": 494,
       "function": "helperUpsertReplier",
       "receiver": "db",
       "method": "Exec",
@@ -64098,7 +64098,7 @@
     "7c9ca3ba712a": {
       "id": "7c9ca3ba712a",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 230,
+      "line": 226,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Raw",
@@ -64460,7 +64460,7 @@
     "7d5f2f96661e": {
       "id": "7d5f2f96661e",
       "file": "iznik-server-go/location/location.go",
-      "line": 849,
+      "line": 852,
       "function": "UpdateLocation",
       "receiver": "db",
       "method": "Exec",
@@ -64709,7 +64709,7 @@
     "7e3e5f4d0b36": {
       "id": "7e3e5f4d0b36",
       "file": "iznik-server-go/message/helper.go",
-      "line": 381,
+      "line": 399,
       "function": "ensureBatchRow",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -65238,7 +65238,7 @@
     "7ec60cde5d39": {
       "id": "7ec60cde5d39",
       "file": "iznik-server-go/message/helper.go",
-      "line": 714,
+      "line": 732,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -65327,7 +65327,7 @@
     "7ee9b04b5de1": {
       "id": "7ee9b04b5de1",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 1114,
+      "line": 1118,
       "function": "listMicroActions",
       "receiver": "c",
       "method": "Query",
@@ -65375,7 +65375,7 @@
     "7efd04588fb2": {
       "id": "7efd04588fb2",
       "file": "iznik-server-go/message/message.go",
-      "line": 5007,
+      "line": 5039,
       "function": "handlePromise",
       "receiver": "db",
       "method": "Exec",
@@ -65461,9 +65461,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT bia.bulkitemid, ma.id, ma.archived, COALESCE(ma.externaluid, '') AS externaluid, COALESCE(ma.externalmods, '') AS externalmods FROM messages_bulk_item_attachments bia INNER JOIN messages_attachments ma ON ma.id = bia.attachmentid WHERE ma.msgid = ? ORDER BY ma.`primary` DESC, ma.id ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7f37e65ab870": {
       "id": "7f37e65ab870",
@@ -66196,7 +66196,7 @@
     "80c36f2da91e": {
       "id": "80c36f2da91e",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 290,
+      "line": 291,
       "function": "GetChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -66254,9 +66254,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT me.msgid FROM messages_embeddings me INNER JOIN messages_spatial ms ON ms.msgid = me.msgid WHERE ms.successful = 0 AND ms.promised = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8100bb42e54d": {
       "id": "8100bb42e54d",
@@ -66994,7 +66994,7 @@
     "826841109881": {
       "id": "826841109881",
       "file": "iznik-server-go/message/message.go",
-      "line": 581,
+      "line": 583,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -67472,9 +67472,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT paf_addresses.id,locations.name as postcode, buildingname, buildingnumber, p.subbuildingname, departmentname, dependentlocality, doubledependentlocality, dependentthoroughfaredescriptor, organisationname, suorganisationindicator, deliverypointsuffix, udprn, posttown, postcodetype, pobox, thoroughfaredescriptor FROM paf_addresses INNER JOIN locations ON locations.id = paf_addresses.postcodeid LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id LEFT JOIN paf_pobox ON poboxid = paf_pobox.id LEFT JOIN paf_posttown ON posttownid = paf_posttown.id LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id WHERE paf_addresses.postcodeid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8357e448c65a": {
       "id": "8357e448c65a",
@@ -67567,7 +67567,7 @@
     "836dc8807739": {
       "id": "836dc8807739",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 528,
+      "line": 530,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -67998,9 +67998,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m1.role IN (?, ?) AND m2.userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "843ffd0c4450": {
       "id": "843ffd0c4450",
@@ -68785,7 +68785,7 @@
     "85f3246d11af": {
       "id": "85f3246d11af",
       "file": "iznik-server-go/message/bulkEdit.go",
-      "line": 195,
+      "line": 197,
       "function": "recordBulkOutcomeIfComplete",
       "receiver": "db",
       "method": "Exec",
@@ -68959,9 +68959,9 @@
       "dynamic": false,
       "args": 7,
       "goldenSql": "SELECT messages_groups.msgid FROM messages_groups LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid INNER JOIN messages ON messages.id = messages_groups.msgid INNER JOIN users ON users.id = messages.fromuser WHERE groupid = ? AND messages_groups.arrival \u003e= ? AND (collection = ? OR (messages.fromuser = ? AND collection != ?)) AND messages_groups.deleted = 0 AND users.deleted IS NULL AND (messages_outcomes.id IS NULL OR messages_outcomes.outcome IN (?, ?)) ORDER BY messages_groups.arrival DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "86196b50cac6": {
       "id": "86196b50cac6",
@@ -71012,9 +71012,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT DISTINCT me.msgid FROM messages_edits me INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0 WHERE mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp \u003e DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY me.timestamp DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8a7699cbf491": {
       "id": "8a7699cbf491",
@@ -71751,7 +71751,7 @@
     "8c15ce918aa2": {
       "id": "8c15ce918aa2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4658,
+      "line": 4690,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -71797,7 +71797,7 @@
     "8c2181ff22ae": {
       "id": "8c2181ff22ae",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 542,
+      "line": 543,
       "function": "getAIImageReviewChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -72533,7 +72533,7 @@
     "8d359d691beb": {
       "id": "8d359d691beb",
       "file": "iznik-server-go/message/helper.go",
-      "line": 811,
+      "line": 829,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -73520,9 +73520,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m2.userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8f2515f8e92d": {
       "id": "8f2515f8e92d",
@@ -75533,9 +75533,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT us.id) FROM users_stories us INNER JOIN memberships m ON m.userid = us.userid INNER JOIN users ON users.id = us.userid WHERE m.groupid IN ? AND m.collection = ? AND us.date \u003e ? AND us.reviewed = 0 AND users.deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9330b7d3045a": {
       "id": "9330b7d3045a",
@@ -75606,7 +75606,7 @@
     "9381e335515c": {
       "id": "9381e335515c",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 195,
+      "line": 191,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Raw",
@@ -75703,7 +75703,7 @@
     "93937ea4340f": {
       "id": "93937ea4340f",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 515,
+      "line": 524,
       "function": "getDonations",
       "receiver": "db",
       "method": "Raw",
@@ -76086,7 +76086,7 @@
     "941509171a6e": {
       "id": "941509171a6e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2376,
+      "line": 2404,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -77113,7 +77113,7 @@
     "961c4c5a214a": {
       "id": "961c4c5a214a",
       "file": "iznik-server-go/location/location.go",
-      "line": 178,
+      "line": 179,
       "function": "ClosestGroups",
       "receiver": "db",
       "method": "Raw",
@@ -77330,9 +77330,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT isochrones.locationid, isochrones_users.userid, isochrones.transport FROM isochrones_users INNER JOIN isochrones ON isochrones.id = isochrones_users.isochroneid WHERE isochrones_users.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "96a681846eb5": {
       "id": "96a681846eb5",
@@ -77399,9 +77399,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT mh.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, mh.added FROM memberships_history mh INNER JOIN `groups` g ON g.id = mh.groupid WHERE mh.userid = ? AND DATEDIFF(NOW(), mh.added) \u003c= 31 AND g.publish = 1 AND g.onmap = 1 ORDER BY mh.added DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "96ba65236609": {
       "id": "96ba65236609",
@@ -77778,9 +77778,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT items.id, items.name FROM items INNER JOIN messages_items ON items.id = messages_items.itemid WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "977f9505dd10": {
       "id": "977f9505dd10",
@@ -78451,7 +78451,7 @@
     "99713f48c505": {
       "id": "99713f48c505",
       "file": "iznik-server-go/message/message.go",
-      "line": 2877,
+      "line": 2897,
       "function": "handleRevertEdits",
       "receiver": "db",
       "method": "Exec",
@@ -81039,7 +81039,7 @@
     "9f06198e9799": {
       "id": "9f06198e9799",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 598,
+      "line": 599,
       "function": "getEEELabelChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -81192,9 +81192,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l2.name FROM users LEFT JOIN locations l1 ON users.lastlocation = l1.id LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE users.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9f436b497c23": {
       "id": "9f436b497c23",
@@ -81260,9 +81260,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(DISTINCT ce.id) FROM communityevents ce INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id INNER JOIN communityevents_dates ced ON ced.eventid = ce.id WHERE ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end \u003e= NOW()",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9f5d25a4d991": {
       "id": "9f5d25a4d991",
@@ -81768,9 +81768,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT DISTINCT g.id AS id, g.nameshort AS name FROM rippling_reach rr JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0 JOIN `groups` g ON g.id = mg.groupid WHERE rr.created_at \u003e= ? AND rr.created_at \u003c ? ORDER BY g.nameshort",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a0492a057e53": {
       "id": "a0492a057e53",
@@ -82057,9 +82057,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT DISTINCT communityevents.id FROM communityevents LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid LEFT JOIN users ON communityevents.userid = users.id WHERE groupid = ? AND end IS NOT NULL AND end \u003e= ? AND communityevents.deleted = 0 AND pending = 0 AND users.deleted IS NULL ORDER BY end ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a0e311646f19": {
       "id": "a0e311646f19",
@@ -82948,9 +82948,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT users.id, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a2ab9aecba3e": {
       "id": "a2ab9aecba3e",
@@ -84369,7 +84369,7 @@
     "a4f70f50bdc1": {
       "id": "a4f70f50bdc1",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 378,
+      "line": 381,
       "function": "PostModConfig",
       "receiver": "db",
       "method": "Raw",
@@ -85384,7 +85384,7 @@
     "a716e6f7dc57": {
       "id": "a716e6f7dc57",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 506,
+      "line": 511,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -85665,14 +85665,14 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT DISTINCT users_stories.id FROM users_stories INNER JOIN memberships ON memberships.userid = users_stories.userid INNER JOIN users ON users.id = users_stories.userid WHERE memberships.groupid = ? AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL ORDER BY date DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a79f147726d0": {
       "id": "a79f147726d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2845,
+      "line": 2883,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -85716,7 +85716,7 @@
     "a7b00c5503b7": {
       "id": "a7b00c5503b7",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 592,
+      "line": 595,
       "function": "PatchModConfig",
       "receiver": "db",
       "method": "Exec",
@@ -86602,9 +86602,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT m1.groupid, COUNT(DISTINCT cm.id) as count FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id INNER JOIN memberships m1 ON m1.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle' WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date \u003e= ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND cmh.id IS NULL AND (cm.reportreason IS NULL OR cm.reportreason != 'User') GROUP BY m1.groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a9acb20bf048": {
       "id": "a9acb20bf048",
@@ -86783,9 +86783,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COALESCE(namefull, nameshort) AS namedisplay FROM `groups` INNER JOIN memberships ON memberships.groupid = `groups`.id WHERE memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a9eab1a26268": {
       "id": "a9eab1a26268",
@@ -86859,7 +86859,7 @@
     "aa142f16e0e0": {
       "id": "aa142f16e0e0",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1461,
+      "line": 1483,
       "function": "createPost",
       "receiver": "db",
       "method": "Exec",
@@ -87107,7 +87107,7 @@
     "aa63c688e6b1": {
       "id": "aa63c688e6b1",
       "file": "iznik-server-go/location/location.go",
-      "line": 833,
+      "line": 836,
       "function": "UpdateLocation",
       "receiver": "db",
       "method": "Exec",
@@ -87526,9 +87526,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.subject LIKE ? ORDER BY mg.arrival DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ab1b0dadf88a": {
       "id": "ab1b0dadf88a",
@@ -88991,9 +88991,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT DISTINCT volunteering.id FROM volunteering INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid WHERE groupid IN (?) AND volunteering.deleted = 0 AND pending = 1 ORDER BY id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ae3b27f5bcde": {
       "id": "ae3b27f5bcde",
@@ -89062,9 +89062,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(DISTINCT messages.id) AS count, messages.type, messages_outcomes.outcome FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id WHERE fromuser = ? AND messages.arrival \u003e ? AND collection = ? AND messages_groups.deleted = 0 GROUP BY messages.type, messages_outcomes.outcome",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ae4f64b8a15d": {
       "id": "ae4f64b8a15d",
@@ -89513,7 +89513,7 @@
     "af4f68fe3489": {
       "id": "af4f68fe3489",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 632,
+      "line": 635,
       "function": "DeleteModConfig",
       "receiver": "db",
       "method": "Raw",
@@ -90104,7 +90104,7 @@
     "b06cd1b62344": {
       "id": "b06cd1b62344",
       "file": "iznik-server-go/user/user.go",
-      "line": 403,
+      "line": 406,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -90642,7 +90642,7 @@
     "b184ef8e3ad2": {
       "id": "b184ef8e3ad2",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1194,
+      "line": 1195,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -91110,7 +91110,7 @@
     "b262bf75df3c": {
       "id": "b262bf75df3c",
       "file": "iznik-server-go/location/location.go",
-      "line": 422,
+      "line": 423,
       "function": "SearchLocations",
       "receiver": "db",
       "method": "Raw",
@@ -91282,9 +91282,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser = ? ORDER BY mg.arrival DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b2c528df6243": {
       "id": "b2c528df6243",
@@ -92115,7 +92115,7 @@
     "b48b319835d0": {
       "id": "b48b319835d0",
       "file": "iznik-server-go/message/helper.go",
-      "line": 554,
+      "line": 572,
       "function": "helperSetItemState",
       "receiver": "db",
       "method": "Exec",
@@ -92573,9 +92573,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT spam_users.id, spam_users.added, reason, email FROM spam_users INNER JOIN users_emails ON spam_users.userid = users_emails.userid WHERE collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b528277cdc9b": {
       "id": "b528277cdc9b",
@@ -93821,9 +93821,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT r.id, r.batchid, b.msgid, b.offereruserid, r.userid, r.chatid, r.escalation_reason, m.subject FROM helper_repliers r INNER JOIN helper_batches b ON b.id = r.batchid INNER JOIN messages m ON m.id = b.msgid WHERE r.state = 'ESCALATED' ORDER BY r.id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b7f676bd5df8": {
       "id": "b7f676bd5df8",
@@ -94023,9 +94023,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT r.stage AS stage, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged FROM reengage r LEFT JOIN email_tracking et ON r.email_tracking_id = et.id WHERE r.sentat BETWEEN ? AND ? GROUP BY r.stage ORDER BY r.stage ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b854b9d2aed8": {
       "id": "b854b9d2aed8",
@@ -94204,9 +94204,9 @@
       "dynamic": false,
       "args": 0,
       "goldenSql": "SELECT volunteering.id FROM volunteering LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid WHERE volunteering_groups.groupid IS NULL AND volunteering.deleted = 0 AND pending = 1 ORDER BY volunteering.id DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b8c45eacd1d6": {
       "id": "b8c45eacd1d6",
@@ -94271,9 +94271,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT mg.msgid FROM messages_groups mg LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ? WHERE mg.msgid IN (?) AND mg.deleted = 0 GROUP BY mg.msgid HAVING COUNT(mg.groupid) = COUNT(ub.groupid)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b8da745e0e42": {
       "id": "b8da745e0e42",
@@ -94835,9 +94835,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users_addresses.id, users_addresses.userid, instructions,COALESCE(users_addresses.lat, locations.lat) AS lat, COALESCE(users_addresses.lng, locations.lng) AS lng, locations.name AS postcode, posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname FROM users_addresses INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid INNER JOIN locations ON locations.id = paf_addresses.postcodeid LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid LEFT JOIN paf_dependentlocality ON paf_dependentlocality.id = paf_addresses.dependentlocalityid LEFT JOIN paf_doubledependentlocality ON paf_doubledependentlocality.id = paf_addresses.doubledependentlocalityid LEFT JOIN paf_thoroughfaredescriptor ON paf_thoroughfaredescriptor.id = paf_addresses.thoroughfaredescriptorid LEFT JOIN paf_dependentthoroughfaredescriptor ON paf_dependentthoroughfaredescriptor.id = paf_addresses.dependentthoroughfaredescriptorid LEFT JOIN paf_buildingname ON paf_buildingname.id = paf_addresses.buildingnameid LEFT JOIN paf_subbuildingname ON paf_subbuildingname.id = paf_addresses.subbuildingnameid LEFT JOIN paf_pobox ON paf_pobox.id = paf_addresses.poboxid LEFT JOIN paf_departmentname ON paf_departmentname.id = paf_addresses.departmentnameid LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid WHERE users_addresses.userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b9b7f6680639": {
       "id": "b9b7f6680639",
@@ -95132,7 +95132,7 @@
     "ba4ff665bb3c": {
       "id": "ba4ff665bb3c",
       "file": "iznik-server-go/user/user.go",
-      "line": 387,
+      "line": 390,
       "function": "GetExpectedReplies",
       "receiver": "db",
       "method": "Raw",
@@ -95765,7 +95765,7 @@
     "bbc55cf96110": {
       "id": "bbc55cf96110",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 571,
+      "line": 573,
       "function": "GetMemberships",
       "receiver": "db",
       "method": "Raw",
@@ -96282,7 +96282,7 @@
     "bca1186d1ea4": {
       "id": "bca1186d1ea4",
       "file": "iznik-server-go/message/message.go",
-      "line": 1267,
+      "line": 1279,
       "function": "GetMessagesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -96406,9 +96406,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT COUNT(DISTINCT messages.id) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id WHERE messages_groups.arrival \u003e= ? AND messages_groups.arrival \u003c= ? AND groupid IN (?) AND messages.arrival \u003e= ? AND messages.arrival \u003c= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bd004f4104bd": {
       "id": "bd004f4104bd",
@@ -96757,7 +96757,7 @@
     "bde82a974f05": {
       "id": "bde82a974f05",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 431,
+      "line": 432,
       "function": "getApprovedMessageChallenge",
       "receiver": "db",
       "method": "Raw",
@@ -97363,7 +97363,7 @@
     "bf1cd8bf4627": {
       "id": "bf1cd8bf4627",
       "file": "iznik-server-go/session/merge.go",
-      "line": 115,
+      "line": 114,
       "function": "mergeChatRooms",
       "receiver": "tx",
       "method": "Exec",
@@ -97739,7 +97739,7 @@
     "bfe25b4914e8": {
       "id": "bfe25b4914e8",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 206,
+      "line": 208,
       "function": "ListMessages",
       "receiver": "db",
       "method": "Raw",
@@ -98360,7 +98360,7 @@
     "c12345448a79": {
       "id": "c12345448a79",
       "file": "iznik-server-go/systemlogs/systemlogs.go",
-      "line": 144,
+      "line": 150,
       "function": "GetLogs",
       "receiver": "c",
       "method": "Query",
@@ -100288,9 +100288,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT COUNT(*) FROM memberships m1 INNER JOIN memberships m2 ON m1.groupid = m2.groupid WHERE m1.userid = ? AND m1.role IN (?, ?) AND m2.userid IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c4994f38f58e": {
       "id": "c4994f38f58e",
@@ -100882,7 +100882,7 @@
     "c5c08e284c66": {
       "id": "c5c08e284c66",
       "file": "iznik-server-go/message/message.go",
-      "line": 3593,
+      "line": 3619,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -101012,9 +101012,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users.id FROM users INNER JOIN users_emails ON users_emails.userid = users.id WHERE users_emails.email = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c62fbb94a8ff": {
       "id": "c62fbb94a8ff",
@@ -101637,7 +101637,7 @@
     "c79c0e036697": {
       "id": "c79c0e036697",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 337,
+      "line": 340,
       "function": "PostModConfig",
       "receiver": "db",
       "method": "Raw",
@@ -101784,9 +101784,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c7c7a06851cc": {
       "id": "c7c7a06851cc",
@@ -102857,7 +102857,7 @@
     "c9c7922e5379": {
       "id": "c9c7922e5379",
       "file": "iznik-server-go/user/user.go",
-      "line": 2095,
+      "line": 2117,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -102970,7 +102970,7 @@
     "c9ff161437b9": {
       "id": "c9ff161437b9",
       "file": "iznik-server-go/message/message.go",
-      "line": 977,
+      "line": 986,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -103192,9 +103192,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed FROM memberships m JOIN `groups` g ON g.id = m.groupid WHERE m.userid = ? AND m.collection = ? ORDER BY LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ca9c6af05cb6": {
       "id": "ca9c6af05cb6",
@@ -104002,9 +104002,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT DISTINCT g.lat, g.lng FROM memberships_history mh INNER JOIN `groups` g ON mh.groupid = g.id WHERE mh.userid = ? AND DATEDIFF(NOW(), mh.added) \u003c= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cc1f21bf05ba": {
       "id": "cc1f21bf05ba",
@@ -104181,9 +104181,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships INNER JOIN `groups` ON memberships.groupid = `groups`.id WHERE memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cc958edcb442": {
       "id": "cc958edcb442",
@@ -104459,7 +104459,7 @@
     "cd31abc88595": {
       "id": "cd31abc88595",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 197,
+      "line": 199,
       "function": "GetUserInfo",
       "receiver": "db",
       "method": "Raw",
@@ -105876,9 +105876,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users.id FROM users INNER JOIN users_emails ON users_emails.userid = users.id WHERE users_emails.email = ? AND users.deleted IS NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cfcd2f885279": {
       "id": "cfcd2f885279",
@@ -106484,9 +106484,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT DISTINCT volunteering.id FROM volunteering LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid LEFT JOIN users ON volunteering.userid = users.id WHERE volunteering_groups.groupid IS NULL AND (applyby IS NULL OR applyby \u003e= ?) AND (end IS NULL OR end \u003e= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL ORDER BY volunteering.id DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d0d1f7685e10": {
       "id": "d0d1f7685e10",
@@ -107815,9 +107815,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) AS count, happiness FROM messages_outcomes INNER JOIN messages ON messages.id = messages_outcomes.msgid INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid WHERE timestamp \u003e= ? AND timestamp \u003c= ? AND messages_groups.groupid IN (?) AND happiness IS NOT NULL GROUP BY happiness ORDER BY count DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d3280ea8d71b": {
       "id": "d3280ea8d71b",
@@ -107838,9 +107838,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT u.id FROM users u JOIN users_emails ue ON ue.userid = u.id WHERE ue.email = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d334352c7913": {
       "id": "d334352c7913",
@@ -107999,7 +107999,7 @@
     "d3790f53ec52": {
       "id": "d3790f53ec52",
       "file": "iznik-server-go/message/helper.go",
-      "line": 611,
+      "line": 629,
       "function": "insertHelperChat",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -108242,7 +108242,7 @@
     "d44b753b35c8": {
       "id": "d44b753b35c8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1840,
+      "line": 1843,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -108417,9 +108417,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d4740da7d7a8": {
       "id": "d4740da7d7a8",
@@ -108670,7 +108670,7 @@
     "d4f71ea17664": {
       "id": "d4f71ea17664",
       "file": "iznik-server-go/message/message.go",
-      "line": 2532,
+      "line": 2552,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -109007,7 +109007,7 @@
     "d5ecca066b1b": {
       "id": "d5ecca066b1b",
       "file": "iznik-server-go/user/user.go",
-      "line": 3076,
+      "line": 3114,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -109311,7 +109311,7 @@
     "d6518a523f9c": {
       "id": "d6518a523f9c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1492,
+      "line": 1493,
       "function": "handleTyping",
       "receiver": "db",
       "method": "Exec",
@@ -109601,7 +109601,7 @@
     "d6cc20019a01": {
       "id": "d6cc20019a01",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 535,
+      "line": 540,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -110044,7 +110044,7 @@
     "d7c9963bd974": {
       "id": "d7c9963bd974",
       "file": "iznik-server-go/user/user.go",
-      "line": 492,
+      "line": 495,
       "function": "GetUserMessageHistory",
       "receiver": "db",
       "method": "Raw",
@@ -110622,9 +110622,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL AND mg.arrival \u003e= (NOW() - INTERVAL 30 DAY)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d906cf58ea6c": {
       "id": "d906cf58ea6c",
@@ -111021,9 +111021,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, COALESCE(g.namefull, g.nameshort) AS namedisplay FROM messages_postings mp INNER JOIN `groups` g ON mp.groupid = g.id WHERE mp.msgid = ? ORDER BY mp.date ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d9b91091da61": {
       "id": "d9b91091da61",
@@ -111094,7 +111094,7 @@
     "d9ea74465694": {
       "id": "d9ea74465694",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 254,
+      "line": 260,
       "function": "getPopularPosts",
       "receiver": "db",
       "method": "Raw",
@@ -111785,7 +111785,7 @@
     "db4ec8586401": {
       "id": "db4ec8586401",
       "file": "iznik-server-go/message/message.go",
-      "line": 2290,
+      "line": 2309,
       "function": "handleApprove",
       "receiver": "db",
       "method": "Exec",
@@ -111913,9 +111913,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged FROM reengage r LEFT JOIN email_tracking et ON r.email_tracking_id = et.id WHERE r.sentat BETWEEN ? AND ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "db8b0607dabc": {
       "id": "db8b0607dabc",
@@ -112303,7 +112303,7 @@
     "dc731a47a66a": {
       "id": "dc731a47a66a",
       "file": "iznik-server-go/location/location.go",
-      "line": 478,
+      "line": 479,
       "function": "SearchLocations",
       "receiver": "db",
       "method": "Raw",
@@ -112679,7 +112679,7 @@
     "dd475ec31446": {
       "id": "dd475ec31446",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 446,
+      "line": 439,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Exec",
@@ -113359,9 +113359,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ui.id AS image_id, ui.url AS image_url, ue.email AS email FROM users u LEFT JOIN users_images ui ON ui.userid = u.id LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ui.default DESC, ui.id ASC, ue.preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dedd988530de": {
       "id": "dedd988530de",
@@ -113878,7 +113878,7 @@
     "dfc3d2fdb2ba": {
       "id": "dfc3d2fdb2ba",
       "file": "iznik-server-go/message/helper.go",
-      "line": 545,
+      "line": 563,
       "function": "helperSetItemState",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -114260,7 +114260,7 @@
     "e0558c2c039d": {
       "id": "e0558c2c039d",
       "file": "iznik-server-go/user/user.go",
-      "line": 637,
+      "line": 640,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -114433,9 +114433,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT l.name, l.type, COALESCE(l.areaid, 0) as areaid FROM locations l INNER JOIN messages m ON m.locationid = l.id WHERE m.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e0c033ce3d69": {
       "id": "e0c033ce3d69",
@@ -114686,7 +114686,7 @@
     "e1228c35e4d2": {
       "id": "e1228c35e4d2",
       "file": "iznik-server-go/message/message_list.go",
-      "line": 518,
+      "line": 523,
       "function": "ListMessagesMT",
       "receiver": "db",
       "method": "Raw",
@@ -114750,7 +114750,7 @@
     "e137c396bd13": {
       "id": "e137c396bd13",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 400,
+      "line": 403,
       "function": "PostModConfig",
       "receiver": "db",
       "method": "Exec",
@@ -115794,9 +115794,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(mbii.quantity) AS SIGNED) AS count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected' INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.arrival BETWEEN ? AND ? GROUP BY PartialPostcode ORDER BY locations.name",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e387f7b510d4": {
       "id": "e387f7b510d4",
@@ -115893,7 +115893,7 @@
     "e3b25042ecfe": {
       "id": "e3b25042ecfe",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 152,
+      "line": 154,
       "function": "GetModConfig",
       "receiver": "db",
       "method": "Raw",
@@ -116818,9 +116818,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "SELECT messages.id, messages.subject, messages_groups.arrival FROM messages_groups LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid INNER JOIN messages ON messages.id = messages_groups.msgid INNER JOIN users ON users.id = messages.fromuser WHERE groupid = ? AND messages_groups.arrival \u003e= ? AND collection = ? AND messages_groups.deleted = 0 AND users.deleted IS NULL AND messages.deleted IS NULL AND messages_outcomes.id IS NULL AND messages.type IN (?, ?) ORDER BY messages_groups.arrival DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e5a847eea452": {
       "id": "e5a847eea452",
@@ -117354,9 +117354,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT b.msgid FROM helper_repliers r INNER JOIN helper_batches b ON b.id = r.batchid WHERE r.id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e6d3316c800c": {
       "id": "e6d3316c800c",
@@ -118883,7 +118883,7 @@
     "e99680f74b2e": {
       "id": "e99680f74b2e",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1820,
+      "line": 1823,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -119064,7 +119064,7 @@
     "e9cc5186c0a5": {
       "id": "e9cc5186c0a5",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 430,
+      "line": 447,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -119158,7 +119158,7 @@
     "e9f2c662be69": {
       "id": "e9f2c662be69",
       "file": "iznik-server-go/message/message.go",
-      "line": 3585,
+      "line": 3611,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -120362,9 +120362,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM messages_attachments INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0 INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ? INNER JOIN messages ON messages.id = messages_attachments.msgid WHERE messages_attachments.id = ? AND messages.deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ec3016261442": {
       "id": "ec3016261442",
@@ -120591,7 +120591,7 @@
     "ecaf3f90bee2": {
       "id": "ecaf3f90bee2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4341,
+      "line": 4373,
       "function": "ResolveOnBehalfPosting",
       "receiver": "db",
       "method": "Raw",
@@ -121408,9 +121408,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT users.id FROM users INNER JOIN users_emails ON users_emails.userid = users.id WHERE users_emails.email = ? AND users.deleted IS NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "eec12845888e": {
       "id": "eec12845888e",
@@ -122316,9 +122316,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT COUNT(*) FROM memberships m INNER JOIN volunteering_groups vg ON vg.groupid = m.groupid WHERE vg.volunteeringid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f02d92bd5452": {
       "id": "f02d92bd5452",
@@ -123035,7 +123035,7 @@
     "f1d697db5654": {
       "id": "f1d697db5654",
       "file": "iznik-server-go/message/message.go",
-      "line": 5548,
+      "line": 5583,
       "function": "handleMove",
       "receiver": "tx",
       "method": "Exec",
@@ -123116,9 +123116,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT sessions.userid FROM sessions INNER JOIN users ON sessions.userid = users.id WHERE users.systemrole IN ('Admin', 'Support', 'Moderator') AND sessions.id = ? AND sessions.token = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f1f6486a5856": {
       "id": "f1f6486a5856",
@@ -123229,9 +123229,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser LEFT JOIN users_emails ue ON ue.userid = u.id WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND (u.fullname LIKE ? OR ue.email LIKE ?) ORDER BY mg.arrival DESC LIMIT ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f25084a523c6": {
       "id": "f25084a523c6",
@@ -123275,9 +123275,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ? INNER JOIN messages ON messages.id = messages_groups.msgid WHERE messages_groups.msgid = ? AND messages_groups.deleted = 0 AND COALESCE(messages.fromuser, 0) != ? AND messages.deleted IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f27493e52730": {
       "id": "f27493e52730",
@@ -123326,7 +123326,7 @@
     "f281cfe83025": {
       "id": "f281cfe83025",
       "file": "iznik-server-go/authority/stats.go",
-      "line": 367,
+      "line": 361,
       "function": "GetStatsByAuthority",
       "receiver": "writer()",
       "method": "Raw",
@@ -123957,9 +123957,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.message, COALESCE(chat_messages_held.userid, 0) AS heldbyuser FROM chat_messages LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid WHERE chat_messages.id = ? AND chat_messages.reviewrequired = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f3a12804ff45": {
       "id": "f3a12804ff45",
@@ -124049,9 +124049,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = ? AND LOCATE(' ', locations.name) \u003e 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? GROUP BY PartialPostcode ORDER BY locations.name",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f3da91eb2561": {
       "id": "f3da91eb2561",
@@ -124303,7 +124303,7 @@
     "f43d5f680ef9": {
       "id": "f43d5f680ef9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1344,
+      "line": 1369,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -125385,7 +125385,7 @@
     "f6190b74d8d5": {
       "id": "f6190b74d8d5",
       "file": "iznik-server-go/story/story.go",
-      "line": 291,
+      "line": 300,
       "function": "CreateStory",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -125925,9 +125925,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT mg.groupid, COUNT(*) as count FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN users u ON u.id = m.fromuser WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL GROUP BY mg.groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f74d2d1abfd8": {
       "id": "f74d2d1abfd8",
@@ -126242,7 +126242,7 @@
     "f7deed72f131": {
       "id": "f7deed72f131",
       "file": "iznik-server-go/message/message.go",
-      "line": 2165,
+      "line": 2184,
       "function": "addApprovedMessageToSpatialIndex",
       "receiver": "db.Clauses()",
       "method": "Raw",
@@ -126642,7 +126642,7 @@
     "f85b0b8ed693": {
       "id": "f85b0b8ed693",
       "file": "iznik-server-go/session/session.go",
-      "line": 1974,
+      "line": 2003,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -126708,7 +126708,7 @@
     "f86f6230fb8c": {
       "id": "f86f6230fb8c",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 504,
+      "line": 507,
       "function": "PatchModConfig",
       "receiver": "db",
       "method": "Raw",
@@ -126920,9 +126920,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT COUNT(*) FROM memberships m INNER JOIN communityevents_groups ceg ON ceg.groupid = m.groupid WHERE ceg.eventid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f8f095bdfbeb": {
       "id": "f8f095bdfbeb",
@@ -127125,7 +127125,7 @@
     "f961504c334d": {
       "id": "f961504c334d",
       "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1441,
+      "line": 1463,
       "function": "createPost",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -127187,9 +127187,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT u.id, u.fullname, u.firstname, u.lastname, ui.id AS imageid, ui.url AS imageurl, ue.email AS email FROM users u LEFT JOIN users_images ui ON ui.userid = u.id LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ui.default DESC, ui.id ASC, ue.preferred DESC LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f987324c1334": {
       "id": "f987324c1334",
@@ -127882,7 +127882,7 @@
     "faa9018435a3": {
       "id": "faa9018435a3",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 588,
+      "line": 591,
       "function": "upsertBulkItems",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128064,7 +128064,7 @@
     "faf666d9cb13": {
       "id": "faf666d9cb13",
       "file": "iznik-server-go/amp/amp.go",
-      "line": 640,
+      "line": 638,
       "function": "validateBodyToken",
       "receiver": "db",
       "method": "Raw",
@@ -128399,7 +128399,7 @@
     "fb88302d28cb": {
       "id": "fb88302d28cb",
       "file": "iznik-server-go/message/bulkItem.go",
-      "line": 804,
+      "line": 807,
       "function": "ingestBulkItemPhotos",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -128627,7 +128627,7 @@
     "fc02dfb79aa4": {
       "id": "fc02dfb79aa4",
       "file": "iznik-server-go/session/session.go",
-      "line": 708,
+      "line": 717,
       "function": "handleForget",
       "receiver": "db",
       "method": "Exec",
@@ -129498,7 +129498,7 @@
     "fdd14a1656c7": {
       "id": "fdd14a1656c7",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 699,
+      "line": 701,
       "function": "getSpamMembers",
       "receiver": "db",
       "method": "Raw",
@@ -129565,7 +129565,7 @@
     "fdeb2007824a": {
       "id": "fdeb2007824a",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1766,
+      "line": 1769,
       "function": "countUnseenMT",
       "receiver": "db",
       "method": "Raw",
@@ -129605,9 +129605,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, l0.name AS name, l1.name AS oldname, l2.name AS newname FROM locations_dodgy ld INNER JOIN locations l0 ON l0.id = ld.locationid INNER JOIN locations l1 ON l1.id = ld.oldlocationid INNER JOIN locations l2 ON l2.id = ld.newlocationid WHERE ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fdf186215b5f": {
       "id": "fdf186215b5f",
@@ -130117,9 +130117,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "SELECT COUNT(DISTINCT messages_by.msgid) AS collected FROM messages_by INNER JOIN messages ON messages.id = messages_by.msgid INNER JOIN chat_messages ON chat_messages.refmsgid = messages.id AND messages.type = ? AND chat_messages.type = ? INNER JOIN messages_groups ON messages_groups.msgid = messages.id WHERE chat_messages.userid = ? AND messages_by.userid = ? AND messages_by.userid != messages.fromuser AND messages_groups.arrival \u003e= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fe9b1bee4f2b": {
       "id": "fe9b1bee4f2b",
@@ -130564,7 +130564,7 @@
     "ff5193d35cf8": {
       "id": "ff5193d35cf8",
       "file": "iznik-server-go/microvolunteering/microvolunteering.go",
-      "line": 485,
+      "line": 486,
       "function": "getPhotoRotateChallenge",
       "receiver": "db",
       "method": "Raw",
