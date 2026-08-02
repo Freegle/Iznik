@@ -238,7 +238,7 @@
               @handle="whitelist"
             />
             <SpinButton
-              v-if="!message.held || me.id === message.held.id"
+              v-if="!message.held"
               icon-name="pause"
               label="Hold"
               variant="warning"
@@ -476,8 +476,13 @@ async function release() {
 }
 
 async function hold(callback) {
+  // Unlike approve/reject/release/whitelist, holding doesn't remove the message
+  // from the review queue - it should stay in place with its Hold button
+  // replaced by Release, exactly like a held pending post. So this doesn't
+  // emit('reload'): chatStore.holdChat() already updates the held message in
+  // the store directly, and reloading the whole list here would reset scroll
+  // to the top (Discourse #9879/1).
   await chatStore.holdChat(props.messageid)
-  emit('reload')
   checkWork(true)
   callback()
 }
