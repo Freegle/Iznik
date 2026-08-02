@@ -1135,8 +1135,9 @@ func GetSession(c *fiber.Ctx) error {
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			db.Raw("SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND collection = ?",
-				modGroupIDs, utils.COLLECTION_PENDING).Scan(&pendingmembers)
+			// ORM migration site d947b0e5819b (wave 1).
+			db.Table("memberships").Where("groupid IN ? AND collection = ?",
+				modGroupIDs, utils.COLLECTION_PENDING).Count(&pendingmembers)
 		}()
 
 		// --- Spam members: active split by held, inactive all → spammembersother ---
@@ -1147,27 +1148,30 @@ func GetSession(c *fiber.Ctx) error {
 				// Unheld spam members in active groups → spammembers (red).
 				// Condition matches getSpamMembers list: flag set and either never reviewed
 				// or re-flagged after the last review action.
-				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
-					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
-					"AND heldby IS NULL",
-					activeGroupIDs).Scan(&spammembers)
+				// ORM migration site 719d174ca4a7 (wave 1).
+				db.Table("memberships").
+					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
+						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
+						"AND heldby IS NULL",
+						activeGroupIDs).Count(&spammembers)
 				// Held spam members in active groups → spammembersother (blue).
 				var heldActive int64
-				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
-					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
-					"AND heldby IS NOT NULL",
-					activeGroupIDs).Scan(&heldActive)
+				// ORM migration site ef15aa1e20c6 (wave 1).
+				db.Table("memberships").
+					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
+						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
+						"AND heldby IS NOT NULL",
+						activeGroupIDs).Count(&heldActive)
 				spammembersother += heldActive
 			}
 			if len(inactiveGroupIDs) > 0 {
 				// All spam members in inactive groups → spammembersother (blue).
 				var inact int64
-				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
-					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat)",
-					inactiveGroupIDs).Scan(&inact)
+				// ORM migration site 3a6e42ab9746 (wave 1).
+				db.Table("memberships").
+					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
+						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat)",
+						inactiveGroupIDs).Count(&inact)
 				spammembersother += inact
 			}
 		}()
@@ -1190,8 +1194,9 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				db.Raw("SELECT COUNT(*) FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
-					activeGroupIDs).Scan(&pendingadmins)
+				// ORM migration site 1d7035c837c8 (wave 1).
+				db.Table("admins").Where("groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
+					activeGroupIDs).Count(&pendingadmins)
 			}
 		}()
 

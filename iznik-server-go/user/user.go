@@ -472,8 +472,9 @@ func HasWiderReview(userid uint64) bool {
 		return false
 	}
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id IN ? AND JSON_EXTRACT(settings, '$.widerchatreview') = 1",
-		activeGroupIDs).Scan(&count)
+	// ORM migration site 889877ad8183 (wave 1).
+	db.Table("groups").Where("id IN ? AND JSON_EXTRACT(settings, '$.widerchatreview') = 1",
+		activeGroupIDs).Count(&count)
 	return count > 0
 }
 
@@ -1271,7 +1272,11 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			defer wg.Done()
 			modGroupIDs := GetActiveModGroupIDs(myid)
 			if len(modGroupIDs) > 0 {
-				db.Raw("SELECT COUNT(*) FROM users_modmails WHERE userid = ? AND groupid IN (?)", id, modGroupIDs).Scan(&modmails)
+				// ORM migration site a25ca71cf6cc (wave 1). modmails is uint64
+				// (not int64), so this stays Select+Scan rather than Count,
+				// which only accepts *int64.
+				db.Table("users_modmails").Select("COUNT(*)").
+					Where("userid = ? AND groupid IN ?", id, modGroupIDs).Scan(&modmails)
 			}
 		}()
 	}

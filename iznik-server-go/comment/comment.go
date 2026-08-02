@@ -151,10 +151,8 @@ func getSingle(c *fiber.Ctx, myid uint64, id uint64) error {
 		// ORM migration site 55738aa5637a (wave 1).
 		db.Table("users_comments").Where("id = ?", id).Scan(&row)
 	} else if len(modGroupIDs) > 0 {
-		// Site fb45e5ba61ec: skipped (see wave1 tail-a report) - modGroupIDs is a
-		// variable-length Go slice bound to IN (?), which GORM/the harness cannot
-		// render deterministically; left on db.Raw.
-		db.Raw("SELECT * FROM users_comments WHERE id = ? AND groupid IN (?)", id, modGroupIDs).Scan(&row)
+		// ORM migration site fb45e5ba61ec (wave 1).
+		db.Table("users_comments").Where("id = ? AND groupid IN ?", id, modGroupIDs).Scan(&row)
 	}
 
 	if row.ID == 0 {

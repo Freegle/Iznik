@@ -480,7 +480,8 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		}
 
 		var polyRows []PolyRow
-		db.Raw("SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?", polyIDs).Scan(&polyRows)
+		// ORM migration site 9494e3480fa0 (wave 1).
+		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", polyIDs).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
 		for i := range polyRows {
@@ -647,7 +648,10 @@ func ListGroups(c *fiber.Ctx) error {
 		}
 
 		var polyRows []PolyRow
-		db.Raw("SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?", ids).Scan(&polyRows)
+		// ORM migration site a7496f46878c (wave 1). Converted together with its
+		// identical sibling above: leaving one of two textually identical
+		// statements raw is the configuration that renumbers site IDs.
+		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", ids).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
 		for i := range polyRows {

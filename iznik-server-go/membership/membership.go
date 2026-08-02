@@ -734,7 +734,9 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		Count  int    `gorm:"column:count"`
 	}
 	var loginCounts []loginCount
-	db.Raw("SELECT userid, COUNT(*) as count FROM users_logins WHERE userid IN ? GROUP BY userid", uidList).Scan(&loginCounts)
+	// ORM migration site 193930b7821a (wave 1).
+	db.Table("users_logins").Select("userid, COUNT(*) as count").Where("userid IN ?", uidList).
+		Group("userid").Scan(&loginCounts)
 	hasLogins := make(map[uint64]bool)
 	for _, lc := range loginCounts {
 		if lc.Count > 0 {
@@ -958,7 +960,8 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	}
 	var users []userInfo
 	if len(userIDs) > 0 {
-		db.Raw("SELECT id, fullname FROM users WHERE id IN ?", userIDs).Scan(&users)
+		// ORM migration site 4d11adfa11a8 (wave 1).
+		db.Table("users").Select("id, fullname").Where("id IN ?", userIDs).Scan(&users)
 	}
 	userMap := make(map[uint64]*userInfo)
 	for i := range users {
@@ -973,8 +976,9 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	}
 	var emails []emailInfo
 	if len(userIDs) > 0 {
-		db.Raw("SELECT userid, email, preferred FROM users_emails WHERE userid IN ? ORDER BY preferred DESC",
-			userIDs).Scan(&emails)
+		// ORM migration site 6110f539c46b (wave 1).
+		db.Table("users_emails").Select("userid, email, preferred").Where("userid IN ?", userIDs).
+			Order("preferred DESC").Scan(&emails)
 	}
 	emailMap := make(map[uint64]string)
 	for _, e := range emails {

@@ -83,8 +83,9 @@ func GetDashboard(c *fiber.Ctx) error {
 	isMod := false
 	if myid > 0 && len(groupIDs) > 0 {
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND groupid IN (?)",
-			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, groupIDs).Scan(&modCount)
+		// ORM migration site db58dba433f8 (wave 1).
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND groupid IN ?",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, groupIDs).Count(&modCount)
 		isMod = modCount > 0
 	}
 
@@ -130,8 +131,12 @@ func GetDashboard(c *fiber.Ctx) error {
 		dashboard["newmessages"] = msgCount
 
 		var memCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added >= ? AND added <= ?",
-			groupIDs, startQ, endQ).Scan(&memCount)
+		// ORM migration site 770ce1ca6e09 (wave 1). Converted together with its
+		// identical sibling in getRecentCounts below: leaving one of two
+		// textually identical statements raw is the configuration that
+		// renumbers the survivor's site ID (ratchet gate h).
+		db.Table("memberships").Where("groupid IN ? AND added >= ? AND added <= ?",
+			groupIDs, startQ, endQ).Count(&memCount)
 		dashboard["newmembers"] = memCount
 	}
 
@@ -206,8 +211,10 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 		"AND messages.arrival >= ? AND messages.arrival <= ?",
 		startQ, endQ, groupIDs, startQ, endQ).Scan(&newmessages)
 
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added >= ? AND added <= ?",
-		groupIDs, startQ, endQ).Scan(&newmembers)
+	// ORM migration site 382a6666f320 (wave 1). Identical sibling of
+	// 770ce1ca6e09 above in GetDashboard; converted together (ratchet gate h).
+	db.Table("memberships").Where("groupid IN ? AND added >= ? AND added <= ?",
+		groupIDs, startQ, endQ).Count(&newmembers)
 
 	result["newmessages"] = newmessages
 	result["newmembers"] = newmembers
@@ -415,9 +422,10 @@ func getMessageBreakdown(groupIDs []uint64, startQ, endQ string) map[string]int6
 	}
 
 	var rows []BreakdownRow
-	db.Raw("SELECT breakdown FROM stats "+
-		"WHERE type = 'MessageBreakdown' AND groupid IN (?) AND date >= ? AND date <= ?",
-		groupIDs, startQ, endQ).Scan(&rows)
+	// ORM migration site 42a6b16c1a09 (wave 1).
+	db.Table("stats").Select("breakdown").
+		Where("type = 'MessageBreakdown' AND groupid IN ? AND date >= ? AND date <= ?",
+			groupIDs, startQ, endQ).Scan(&rows)
 
 	result := map[string]int64{"Offer": 0, "Wanted": 0}
 	for _, r := range rows {
@@ -466,10 +474,10 @@ func getStatsTimeSeries(component string, groupIDs []uint64, startQ, endQ string
 	}
 
 	var rows []StatsRow
-	db.Raw("SELECT date, SUM(count) AS count FROM stats "+
-		"WHERE type = ? AND groupid IN (?) AND date >= ? AND date <= ? "+
-		"GROUP BY date ORDER BY date ASC",
-		statsType, groupIDs, startQ, endQ).Scan(&rows)
+	// ORM migration site 114e3d2c526c (wave 1).
+	db.Table("stats").Select("date, SUM(count) AS count").
+		Where("type = ? AND groupid IN ? AND date >= ? AND date <= ?", statsType, groupIDs, startQ, endQ).
+		Group("date").Order("date ASC").Scan(&rows)
 
 	result := make([]map[string]interface{}, len(rows))
 	for i, r := range rows {

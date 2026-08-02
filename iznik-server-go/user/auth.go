@@ -75,7 +75,10 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 					// We have an approximate location.  This should be the first part of the postcode.
 					// Update the user's location if needed.
 					var locations []location.Location
-					db.Raw("SELECT id FROM locations WHERE name LIKE ? AND type = ? LIMIT 1;", *postcodeprefix+"%", location.TYPE_POSTCODE).Scan(&locations)
+					// ORM migration site 22a2af60d1b3 (wave 1).
+					db.Table("locations").Select("id").
+						Where("name LIKE ? AND type = ?", *postcodeprefix+"%", location.TYPE_POSTCODE).
+						Limit(1).Scan(&locations)
 
 					if len(locations) > 0 && locations[0].ID > 0 && (ljuser.Lastlocation == nil || locations[0].ID != *ljuser.Lastlocation) {
 						// We have a location.

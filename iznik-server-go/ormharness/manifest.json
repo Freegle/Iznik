@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 524,
-    "keep-raw": 40,
-    "raw": 1072,
+    "converted": 556,
+    "keep-raw": 49,
+    "raw": 1031,
     "test-fixture": 4223
   },
   "sites": {
@@ -864,7 +864,7 @@
     "01bedb9d631d": {
       "id": "01bedb9d631d",
       "file": "iznik-server-go/message/message.go",
-      "line": 3735,
+      "line": 3750,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -1191,7 +1191,7 @@
     "028c42d610f7": {
       "id": "028c42d610f7",
       "file": "iznik-server-go/message/message.go",
-      "line": 4415,
+      "line": 4430,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -1213,7 +1213,7 @@
     "02963d1e570a": {
       "id": "02963d1e570a",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1518,
+      "line": 1522,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -1235,7 +1235,7 @@
     "02b3821ea3b9": {
       "id": "02b3821ea3b9",
       "file": "iznik-server-go/message/message.go",
-      "line": 2427,
+      "line": 2440,
       "function": "handleReject",
       "receiver": "db",
       "method": "Exec",
@@ -1503,7 +1503,7 @@
     "033affad7d5a": {
       "id": "033affad7d5a",
       "file": "iznik-server-go/message/message.go",
-      "line": 4013,
+      "line": 4028,
       "function": "findOrCreateUserForDraft",
       "receiver": "db",
       "method": "Exec",
@@ -1857,7 +1857,7 @@
     "041e44afbfe5": {
       "id": "041e44afbfe5",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 266,
+      "line": 273,
       "function": "getPopularPosts",
       "receiver": "db",
       "method": "Raw",
@@ -1991,7 +1991,7 @@
     "0477a681ffd6": {
       "id": "0477a681ffd6",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 749,
+      "line": 751,
       "function": "getRelatedMembers",
       "receiver": "db",
       "method": "Exec",
@@ -2013,7 +2013,7 @@
     "0486830f6eda": {
       "id": "0486830f6eda",
       "file": "iznik-server-go/message/message.go",
-      "line": 2949,
+      "line": 2962,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -2050,14 +2050,14 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, COALESCE(externalmods, '') AS externalmods FROM messages_attachments WHERE id IN (?) AND msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "049bc3f964cd": {
       "id": "049bc3f964cd",
       "file": "iznik-server-go/message/message.go",
-      "line": 2569,
+      "line": 2582,
       "function": "handleSpam",
       "receiver": "db",
       "method": "Exec",
@@ -2349,7 +2349,7 @@
     "0510fa1a8a85": {
       "id": "0510fa1a8a85",
       "file": "iznik-server-go/group/group.go",
-      "line": 805,
+      "line": 809,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -3301,9 +3301,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, arrival FROM messages WHERE id IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "069ea726e527": {
       "id": "069ea726e527",
@@ -3352,7 +3352,7 @@
     "06b3d2e46af9": {
       "id": "06b3d2e46af9",
       "file": "iznik-server-go/message/message.go",
-      "line": 2711,
+      "line": 2724,
       "function": "handleApproveEdits",
       "receiver": "db",
       "method": "Exec",
@@ -3396,7 +3396,7 @@
     "06d02e94fa4a": {
       "id": "06d02e94fa4a",
       "file": "iznik-server-go/user/user.go",
-      "line": 1001,
+      "line": 1002,
       "function": "GetSearchesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -3639,7 +3639,7 @@
     "076c5c70eb8e": {
       "id": "076c5c70eb8e",
       "file": "iznik-server-go/session/session.go",
-      "line": 1219,
+      "line": 1224,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -3885,7 +3885,7 @@
     "07c4bef29c2f": {
       "id": "07c4bef29c2f",
       "file": "iznik-server-go/user/user.go",
-      "line": 1776,
+      "line": 1781,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -4105,7 +4105,7 @@
     "083af5c9e0a1": {
       "id": "083af5c9e0a1",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 250,
+      "line": 251,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -4239,7 +4239,7 @@
     "084f87f8787b": {
       "id": "084f87f8787b",
       "file": "iznik-server-go/message/message.go",
-      "line": 2378,
+      "line": 2391,
       "function": "handleReject",
       "receiver": "db",
       "method": "Exec",
@@ -4463,7 +4463,7 @@
     "08bb471351a0": {
       "id": "08bb471351a0",
       "file": "iznik-server-go/message/message.go",
-      "line": 479,
+      "line": 483,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -4623,7 +4623,7 @@
     "09515916c939": {
       "id": "09515916c939",
       "file": "iznik-server-go/session/session.go",
-      "line": 1422,
+      "line": 1427,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -5515,7 +5515,7 @@
     "0b0cfc4af179": {
       "id": "0b0cfc4af179",
       "file": "iznik-server-go/user/user.go",
-      "line": 2730,
+      "line": 2735,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -6133,7 +6133,7 @@
     "0c7fcde60aa8": {
       "id": "0c7fcde60aa8",
       "file": "iznik-server-go/user/user.go",
-      "line": 3265,
+      "line": 3270,
       "function": "GetUserMembershipHistory",
       "receiver": "db",
       "method": "Raw",
@@ -6224,7 +6224,7 @@
     "0c8e0836a74b": {
       "id": "0c8e0836a74b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2964,
+      "line": 2969,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -6292,7 +6292,7 @@
     "0c9e859752d0": {
       "id": "0c9e859752d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 1164,
+      "line": 1165,
       "function": "SearchUsers",
       "receiver": "db",
       "method": "Raw",
@@ -7345,7 +7345,7 @@
     "0e9905e6f0ce": {
       "id": "0e9905e6f0ce",
       "file": "iznik-server-go/group/group.go",
-      "line": 847,
+      "line": 851,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -7639,7 +7639,7 @@
     "0f2ef8ae0f11": {
       "id": "0f2ef8ae0f11",
       "file": "iznik-server-go/message/message.go",
-      "line": 3486,
+      "line": 3499,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Raw",
@@ -7834,7 +7834,7 @@
     "0f9c08165d29": {
       "id": "0f9c08165d29",
       "file": "iznik-server-go/message/message.go",
-      "line": 3622,
+      "line": 3637,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -8012,7 +8012,7 @@
     "0fe2da6629e8": {
       "id": "0fe2da6629e8",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1435,
+      "line": 1439,
       "function": "deleteMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -8146,7 +8146,7 @@
     "10216b47378d": {
       "id": "10216b47378d",
       "file": "iznik-server-go/user/user.go",
-      "line": 1662,
+      "line": 1667,
       "function": "handleEngaged",
       "receiver": "db",
       "method": "Exec",
@@ -8190,7 +8190,7 @@
     "1056062f1f8f": {
       "id": "1056062f1f8f",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 310,
+      "line": 312,
       "function": "GetPublicLocationForUser",
       "receiver": "db",
       "method": "Raw",
@@ -8694,14 +8694,14 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT date, SUM(count) AS count FROM stats WHERE type = ? AND groupid IN (?) AND date \u003e= ? AND date \u003c= ? GROUP BY date ORDER BY date ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "11558c0c6cd0": {
       "id": "11558c0c6cd0",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 127,
+      "line": 128,
       "function": "GetDashboard",
       "receiver": "db",
       "method": "Raw",
@@ -8967,7 +8967,7 @@
     "11cd46e11f5a": {
       "id": "11cd46e11f5a",
       "file": "iznik-server-go/group/group.go",
-      "line": 814,
+      "line": 818,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -9769,7 +9769,7 @@
     "13b31d721901": {
       "id": "13b31d721901",
       "file": "iznik-server-go/user/user.go",
-      "line": 829,
+      "line": 830,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -10508,7 +10508,7 @@
     "1590b130f529": {
       "id": "1590b130f529",
       "file": "iznik-server-go/message/message.go",
-      "line": 4329,
+      "line": 4344,
       "function": "PutMessageAs",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -10596,7 +10596,7 @@
     "15c4586ac31e": {
       "id": "15c4586ac31e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2627,
+      "line": 2632,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Raw",
@@ -10771,7 +10771,7 @@
     "160920e559dd": {
       "id": "160920e559dd",
       "file": "iznik-server-go/message/message.go",
-      "line": 1531,
+      "line": 1538,
       "function": "Search",
       "receiver": "db",
       "method": "Raw",
@@ -11450,7 +11450,8 @@
       "goldenSql": "{{built at runtime: q}}",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The dump pipeline threads a raw *sql.DB rather than a *gorm.DB through buildDump/buildPlan/scanIDs/runDBSpec, and two of its four query sites build dynamic SQL text that was never extracted. Converting the other two would split one pipeline's connection handling across two patterns and needs a signature change, which is a redesign rather than a conversion. Consistent with the existing userdump/sqlite.go entry."
     },
     "1729e9ae0465": {
       "id": "1729e9ae0465",
@@ -12103,7 +12104,7 @@
     "18a18b50e638": {
       "id": "18a18b50e638",
       "file": "iznik-server-go/user/user.go",
-      "line": 2266,
+      "line": 2271,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Raw",
@@ -12215,7 +12216,7 @@
     "18deff8279ec": {
       "id": "18deff8279ec",
       "file": "iznik-server-go/message/message.go",
-      "line": 3429,
+      "line": 3442,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -12428,9 +12429,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid, COUNT(*) as count FROM users_logins WHERE userid IN ? GROUP BY userid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "193c4b9e2e7d": {
       "id": "193c4b9e2e7d",
@@ -12457,7 +12458,7 @@
     "194062f24f48": {
       "id": "194062f24f48",
       "file": "iznik-server-go/group/group.go",
-      "line": 966,
+      "line": 970,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -12886,7 +12887,7 @@
     "1a000d04649b": {
       "id": "1a000d04649b",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1074,
+      "line": 1078,
       "function": "getVisibleRatings",
       "receiver": "db",
       "method": "Raw",
@@ -12928,7 +12929,7 @@
     "1a12de474647": {
       "id": "1a12de474647",
       "file": "iznik-server-go/message/message.go",
-      "line": 2643,
+      "line": 2656,
       "function": "handleBackToPending",
       "receiver": "db",
       "method": "Exec",
@@ -13239,7 +13240,7 @@
     "1a851f316859": {
       "id": "1a851f316859",
       "file": "iznik-server-go/user/user.go",
-      "line": 958,
+      "line": 959,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -13321,9 +13322,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT MAX(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1ab5c5de708d": {
       "id": "1ab5c5de708d",
@@ -13466,7 +13467,7 @@
     "1b2b2a30455e": {
       "id": "1b2b2a30455e",
       "file": "iznik-server-go/message/message.go",
-      "line": 3067,
+      "line": 3080,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -13617,9 +13618,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1b839be55347": {
       "id": "1b839be55347",
@@ -13778,7 +13779,7 @@
     "1bdbafed31fa": {
       "id": "1bdbafed31fa",
       "file": "iznik-server-go/message/message.go",
-      "line": 993,
+      "line": 997,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Exec",
@@ -14160,7 +14161,7 @@
     "1ca61377ab9d": {
       "id": "1ca61377ab9d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2716,
+      "line": 2721,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -14621,9 +14622,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1d98111ea90d": {
       "id": "1d98111ea90d",
@@ -14808,7 +14809,7 @@
     "1dc8cf0d9098": {
       "id": "1dc8cf0d9098",
       "file": "iznik-server-go/user/user.go",
-      "line": 2393,
+      "line": 2398,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -14845,9 +14846,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT groupid, COUNT(*) as count FROM memberships WHERE groupid IN ? AND collection = ? GROUP BY groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1de7e639029b": {
       "id": "1de7e639029b",
@@ -15166,7 +15167,7 @@
     "1e4d0a106c72": {
       "id": "1e4d0a106c72",
       "file": "iznik-server-go/group/group.go",
-      "line": 823,
+      "line": 827,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -15454,7 +15455,7 @@
     "1eb5dd8ca162": {
       "id": "1eb5dd8ca162",
       "file": "iznik-server-go/user/user.go",
-      "line": 1763,
+      "line": 1768,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -15630,7 +15631,7 @@
     "1f1e8962edcb": {
       "id": "1f1e8962edcb",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 344,
+      "line": 346,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -15921,7 +15922,7 @@
     "1f888c4d9a0a": {
       "id": "1f888c4d9a0a",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 272,
+      "line": 273,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -17307,7 +17308,8 @@
       "goldenSql": "SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(timestamp) d, source, COUNT(*) impressions, SUM(pageview = 1) clicks FROM messages_likes WHERE type = 'View' AND source IN ? AND timestamp \u003e= ? GROUP BY d, source",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Carries an optimiser hint, /*+ MAX_EXECUTION_TIME(10000) */, over messages_likes (~75M rows, and unindexed for this access pattern). The caller inspects .Error to set a degraded flag when the hint aborts a slow query, so the hint is load-bearing behaviour rather than a comment. It could probably be smuggled into the Select string, since GORM renders SELECT \u003cselect-clause\u003e FROM, but getting that subtly wrong on a table this size degrades a live endpoint rather than failing visibly, so it wants a deliberate decision and its own test rather than a wave conversion."
     },
     "2207d7826deb": {
       "id": "2207d7826deb",
@@ -17444,7 +17446,7 @@
     "22727b8ed343": {
       "id": "22727b8ed343",
       "file": "iznik-server-go/group/group.go",
-      "line": 850,
+      "line": 854,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -17490,7 +17492,7 @@
     "228b6b678e0c": {
       "id": "228b6b678e0c",
       "file": "iznik-server-go/message/message.go",
-      "line": 5141,
+      "line": 5158,
       "function": "handleRemoveBy",
       "receiver": "db",
       "method": "Exec",
@@ -17595,9 +17597,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT id FROM locations WHERE name LIKE ? AND type = ? LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "22a5895916fd": {
       "id": "22a5895916fd",
@@ -17693,7 +17695,7 @@
     "22dae99e96dc": {
       "id": "22dae99e96dc",
       "file": "iznik-server-go/message/message.go",
-      "line": 2728,
+      "line": 2741,
       "function": "handleApproveEdits",
       "receiver": "db",
       "method": "Exec",
@@ -17737,7 +17739,7 @@
     "22ed790e0691": {
       "id": "22ed790e0691",
       "file": "iznik-server-go/message/message.go",
-      "line": 4899,
+      "line": 4916,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -18340,7 +18342,7 @@
     "23cf0e34c542": {
       "id": "23cf0e34c542",
       "file": "iznik-server-go/group/group.go",
-      "line": 826,
+      "line": 830,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -18767,7 +18769,7 @@
     "24704432f4d4": {
       "id": "24704432f4d4",
       "file": "iznik-server-go/user/user.go",
-      "line": 1968,
+      "line": 1973,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -18835,7 +18837,7 @@
     "247abd84a59e": {
       "id": "247abd84a59e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2840,
+      "line": 2845,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -19792,7 +19794,7 @@
     "265058d37c74": {
       "id": "265058d37c74",
       "file": "iznik-server-go/user/user.go",
-      "line": 1798,
+      "line": 1803,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -20012,7 +20014,7 @@
     "26c94565517d": {
       "id": "26c94565517d",
       "file": "iznik-server-go/message/message.go",
-      "line": 5203,
+      "line": 5220,
       "function": "createSystemChatMessage",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -20436,7 +20438,7 @@
     "27aa0e237120": {
       "id": "27aa0e237120",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1281,
+      "line": 1285,
       "function": "addMemberToGroup",
       "receiver": "db",
       "method": "Exec",
@@ -20679,7 +20681,7 @@
     "285861d7b37c": {
       "id": "285861d7b37c",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 380,
+      "line": 387,
       "function": "getModeratorsActive",
       "receiver": "db",
       "method": "Raw",
@@ -20702,7 +20704,7 @@
     "286f80414bd5": {
       "id": "286f80414bd5",
       "file": "iznik-server-go/user/user.go",
-      "line": 736,
+      "line": 737,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -21436,7 +21438,7 @@
     "29d38c03b5c7": {
       "id": "29d38c03b5c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2286,
+      "line": 2291,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -21458,7 +21460,7 @@
     "29da9bf8d686": {
       "id": "29da9bf8d686",
       "file": "iznik-server-go/message/message.go",
-      "line": 5056,
+      "line": 5073,
       "function": "canModifyMessage",
       "receiver": "db",
       "method": "Raw",
@@ -21813,7 +21815,7 @@
     "2aaca5a913de": {
       "id": "2aaca5a913de",
       "file": "iznik-server-go/message/message.go",
-      "line": 3149,
+      "line": 3162,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -22905,7 +22907,7 @@
     "2d1aadd1887d": {
       "id": "2d1aadd1887d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2310,
+      "line": 2315,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -23213,7 +23215,7 @@
     "2dc99e82e230": {
       "id": "2dc99e82e230",
       "file": "iznik-server-go/message/message.go",
-      "line": 4803,
+      "line": 4820,
       "function": "handleRenege",
       "receiver": "db",
       "method": "Exec",
@@ -23235,7 +23237,7 @@
     "2de07c2af78b": {
       "id": "2de07c2af78b",
       "file": "iznik-server-go/message/message.go",
-      "line": 1248,
+      "line": 1252,
       "function": "GetMessagesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -23369,7 +23371,7 @@
     "2e011a3ca233": {
       "id": "2e011a3ca233",
       "file": "iznik-server-go/group/group.go",
-      "line": 811,
+      "line": 815,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -23811,7 +23813,7 @@
     "2edb182648ba": {
       "id": "2edb182648ba",
       "file": "iznik-server-go/session/session.go",
-      "line": 1207,
+      "line": 1212,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -23880,7 +23882,7 @@
     "2f0c55ec88d6": {
       "id": "2f0c55ec88d6",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1289,
+      "line": 1293,
       "function": "addMemberToGroup",
       "receiver": "db",
       "method": "Exec",
@@ -23968,7 +23970,7 @@
     "2f30762bf955": {
       "id": "2f30762bf955",
       "file": "iznik-server-go/message/message.go",
-      "line": 3506,
+      "line": 3519,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -24144,7 +24146,7 @@
     "2f4ae0de2f36": {
       "id": "2f4ae0de2f36",
       "file": "iznik-server-go/user/user.go",
-      "line": 2008,
+      "line": 2013,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -24166,7 +24168,7 @@
     "2f4fa5385a74": {
       "id": "2f4fa5385a74",
       "file": "iznik-server-go/message/message.go",
-      "line": 2973,
+      "line": 2986,
       "function": "handleRejectToDraft",
       "receiver": "db",
       "method": "Exec",
@@ -24410,7 +24412,7 @@
     "2fb19be4ef0b": {
       "id": "2fb19be4ef0b",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 383,
+      "line": 385,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -25023,7 +25025,7 @@
     "3119115f3abe": {
       "id": "3119115f3abe",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 937,
+      "line": 939,
       "function": "getHappinessMembers",
       "receiver": "db",
       "method": "Raw",
@@ -25087,7 +25089,7 @@
     "313bbe346bf7": {
       "id": "313bbe346bf7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2861,
+      "line": 2866,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -25487,7 +25489,7 @@
     "31e0b23915a9": {
       "id": "31e0b23915a9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1393,
+      "line": 1398,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -26016,7 +26018,7 @@
     "32d907621f09": {
       "id": "32d907621f09",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1238,
+      "line": 1242,
       "function": "putMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -26170,7 +26172,7 @@
     "33201edc2a80": {
       "id": "33201edc2a80",
       "file": "iznik-server-go/user/user.go",
-      "line": 1690,
+      "line": 1695,
       "function": "handleRate",
       "receiver": "db",
       "method": "Exec",
@@ -26216,7 +26218,7 @@
     "332e96fb2185": {
       "id": "332e96fb2185",
       "file": "iznik-server-go/message/message.go",
-      "line": 2789,
+      "line": 2802,
       "function": "handleRevertEdits",
       "receiver": "db",
       "method": "Exec",
@@ -26282,7 +26284,7 @@
     "3368171d089d": {
       "id": "3368171d089d",
       "file": "iznik-server-go/message/message.go",
-      "line": 3446,
+      "line": 3459,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -26526,7 +26528,7 @@
     "33a4f1de7366": {
       "id": "33a4f1de7366",
       "file": "iznik-server-go/message/message.go",
-      "line": 3513,
+      "line": 3526,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -26722,9 +26724,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, settings FROM `groups` WHERE id IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3410d8781b1b": {
       "id": "3410d8781b1b",
@@ -26862,7 +26864,7 @@
     "345156507896": {
       "id": "345156507896",
       "file": "iznik-server-go/message/message.go",
-      "line": 2192,
+      "line": 2200,
       "function": "invalidateMessageSearchIndexes",
       "receiver": "db",
       "method": "Exec",
@@ -27109,7 +27111,7 @@
     "34c2c6e9128b": {
       "id": "34c2c6e9128b",
       "file": "iznik-server-go/group/group.go",
-      "line": 890,
+      "line": 894,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -28381,7 +28383,7 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM users WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
     },
@@ -28689,9 +28691,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added \u003e= ? AND added \u003c= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "383011ca9c05": {
       "id": "383011ca9c05",
@@ -28740,7 +28742,7 @@
     "3843c361ded2": {
       "id": "3843c361ded2",
       "file": "iznik-server-go/message/message.go",
-      "line": 2313,
+      "line": 2324,
       "function": "MessageOriginGroup",
       "receiver": "db",
       "method": "Raw",
@@ -28800,7 +28802,8 @@
       "goldenSql": "{{built at runtime: oldSQL}}",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Layer 3 harness infrastructure. Reads the shadow batch flag from the config table by design and is not a migration target, in the same way the ormharness package is not."
     },
     "387b9fe04956": {
       "id": "387b9fe04956",
@@ -29208,7 +29211,7 @@
     "395499023142": {
       "id": "395499023142",
       "file": "iznik-server-go/user/user.go",
-      "line": 3232,
+      "line": 3237,
       "function": "GetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -29659,7 +29662,7 @@
     "3a50dbee0fa0": {
       "id": "3a50dbee0fa0",
       "file": "iznik-server-go/message/message.go",
-      "line": 2504,
+      "line": 2517,
       "function": "handleDeleteMessage",
       "receiver": "db",
       "method": "Exec",
@@ -29765,9 +29768,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3a717e9343ff": {
       "id": "3a717e9343ff",
@@ -30725,7 +30728,7 @@
     "3c462363aa82": {
       "id": "3c462363aa82",
       "file": "iznik-server-go/user/user.go",
-      "line": 2803,
+      "line": 2808,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -31235,7 +31238,7 @@
     "3d8f2d88b42d": {
       "id": "3d8f2d88b42d",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1547,
+      "line": 1551,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -31343,7 +31346,7 @@
     "3df9a32dc731": {
       "id": "3df9a32dc731",
       "file": "iznik-server-go/user/user.go",
-      "line": 2321,
+      "line": 2326,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -31563,7 +31566,7 @@
     "3e8f726f0ef8": {
       "id": "3e8f726f0ef8",
       "file": "iznik-server-go/session/session.go",
-      "line": 1926,
+      "line": 1931,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -31607,7 +31610,7 @@
     "3eab7820f52c": {
       "id": "3eab7820f52c",
       "file": "iznik-server-go/message/message.go",
-      "line": 2223,
+      "line": 2231,
       "function": "handleApprove",
       "receiver": "db",
       "method": "Exec",
@@ -31990,7 +31993,7 @@
     "3f3696f3bba4": {
       "id": "3f3696f3bba4",
       "file": "iznik-server-go/session/session.go",
-      "line": 1348,
+      "line": 1353,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -32230,7 +32233,7 @@
     "3fc481b1a1a6": {
       "id": "3fc481b1a1a6",
       "file": "iznik-server-go/session/session.go",
-      "line": 1812,
+      "line": 1817,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -32296,7 +32299,7 @@
     "3ff417c41f7c": {
       "id": "3ff417c41f7c",
       "file": "iznik-server-go/user/user.go",
-      "line": 1707,
+      "line": 1712,
       "function": "handleRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -32475,7 +32478,7 @@
     "4064113639bf": {
       "id": "4064113639bf",
       "file": "iznik-server-go/message/message.go",
-      "line": 4950,
+      "line": 4967,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -32642,14 +32645,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT refmsgid, MAX(date) AS latest FROM chat_messages WHERE refmsgid IN (?) GROUP BY refmsgid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "408704240109": {
       "id": "408704240109",
       "file": "iznik-server-go/comment/comment.go",
-      "line": 333,
+      "line": 331,
       "function": "Edit",
       "receiver": "db",
       "method": "Exec",
@@ -32825,7 +32828,7 @@
     "40de8b0d3f98": {
       "id": "40de8b0d3f98",
       "file": "iznik-server-go/comment/comment.go",
-      "line": 283,
+      "line": 281,
       "function": "Create",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -33244,7 +33247,7 @@
     "419abfa0cef3": {
       "id": "419abfa0cef3",
       "file": "iznik-server-go/message/message.go",
-      "line": 3062,
+      "line": 3075,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -33447,7 +33450,7 @@
     "420288c252f9": {
       "id": "420288c252f9",
       "file": "iznik-server-go/message/message.go",
-      "line": 1902,
+      "line": 1910,
       "function": "logModAction",
       "receiver": "db",
       "method": "Exec",
@@ -33756,9 +33759,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT breakdown FROM stats WHERE type = 'MessageBreakdown' AND groupid IN (?) AND date \u003e= ? AND date \u003c= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "42bb2fc5fe91": {
       "id": "42bb2fc5fe91",
@@ -34715,7 +34718,7 @@
     "44a89f7db2ae": {
       "id": "44a89f7db2ae",
       "file": "iznik-server-go/message/message.go",
-      "line": 5324,
+      "line": 5343,
       "function": "recordAIDeletions",
       "receiver": "db",
       "method": "Exec",
@@ -35030,7 +35033,7 @@
     "450c5b5fca94": {
       "id": "450c5b5fca94",
       "file": "iznik-server-go/group/group.go",
-      "line": 869,
+      "line": 873,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -35274,7 +35277,7 @@
     "45bb8a4c8133": {
       "id": "45bb8a4c8133",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 218,
+      "line": 219,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -35497,7 +35500,7 @@
     "463ec6508c13": {
       "id": "463ec6508c13",
       "file": "iznik-server-go/message/message.go",
-      "line": 4375,
+      "line": 4390,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -35876,7 +35879,7 @@
     "4718b42d0c88": {
       "id": "4718b42d0c88",
       "file": "iznik-server-go/user/user.go",
-      "line": 2746,
+      "line": 2751,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -35966,7 +35969,7 @@
     "4754a3558c44": {
       "id": "4754a3558c44",
       "file": "iznik-server-go/message/message.go",
-      "line": 3114,
+      "line": 3127,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -36430,7 +36433,7 @@
     "47daaacbf97d": {
       "id": "47daaacbf97d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2800,
+      "line": 2805,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -37008,7 +37011,7 @@
     "490e45f9be50": {
       "id": "490e45f9be50",
       "file": "iznik-server-go/message/message.go",
-      "line": 845,
+      "line": 849,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -37325,7 +37328,7 @@
     "499057e391e9": {
       "id": "499057e391e9",
       "file": "iznik-server-go/message/message.go",
-      "line": 3942,
+      "line": 3957,
       "function": "DeleteMessageEndpoint",
       "receiver": "db",
       "method": "Exec",
@@ -37571,7 +37574,7 @@
     "4a0837c4271f": {
       "id": "4a0837c4271f",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 346,
+      "line": 353,
       "function": "getUsersReplying",
       "receiver": "db",
       "method": "Raw",
@@ -38105,7 +38108,7 @@
     "4ad419f5c797": {
       "id": "4ad419f5c797",
       "file": "iznik-server-go/message/message.go",
-      "line": 5179,
+      "line": 5196,
       "function": "handleView",
       "receiver": "db",
       "method": "Exec",
@@ -38606,7 +38609,7 @@
     "4c001e1eeba2": {
       "id": "4c001e1eeba2",
       "file": "iznik-server-go/user/user.go",
-      "line": 2734,
+      "line": 2739,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -38964,7 +38967,7 @@
     "4cc44cc47cbe": {
       "id": "4cc44cc47cbe",
       "file": "iznik-server-go/user/user.go",
-      "line": 2404,
+      "line": 2409,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -39030,7 +39033,7 @@
     "4ccf389828b7": {
       "id": "4ccf389828b7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2243,
+      "line": 2248,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Raw",
@@ -39177,9 +39180,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, fullname FROM users WHERE id IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4d146079ce24": {
       "id": "4d146079ce24",
@@ -39960,7 +39963,7 @@
     "4ee5c6f34496": {
       "id": "4ee5c6f34496",
       "file": "iznik-server-go/message/message.go",
-      "line": 4966,
+      "line": 4983,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -40318,7 +40321,7 @@
     "4fd65f2418a6": {
       "id": "4fd65f2418a6",
       "file": "iznik-server-go/group/group.go",
-      "line": 791,
+      "line": 795,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -40675,7 +40678,7 @@
     "509cbeda4fad": {
       "id": "509cbeda4fad",
       "file": "iznik-server-go/message/message.go",
-      "line": 2025,
+      "line": 2033,
       "function": "isModForMessage",
       "receiver": "db",
       "method": "Raw",
@@ -41251,7 +41254,7 @@
     "51fa5d2c1016": {
       "id": "51fa5d2c1016",
       "file": "iznik-server-go/user/user.go",
-      "line": 2363,
+      "line": 2368,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -41300,7 +41303,7 @@
     "522c1e7c91cf": {
       "id": "522c1e7c91cf",
       "file": "iznik-server-go/message/message.go",
-      "line": 2391,
+      "line": 2404,
       "function": "handleReject",
       "receiver": "db",
       "method": "Exec",
@@ -41832,7 +41835,7 @@
     "532b0ba4ba45": {
       "id": "532b0ba4ba45",
       "file": "iznik-server-go/user/user.go",
-      "line": 967,
+      "line": 968,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -41901,7 +41904,7 @@
     "535641088fb3": {
       "id": "535641088fb3",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1385,
+      "line": 1389,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -42122,7 +42125,7 @@
     "540382023ce6": {
       "id": "540382023ce6",
       "file": "iznik-server-go/user/user.go",
-      "line": 901,
+      "line": 902,
       "function": "GetProfileRecord",
       "receiver": "db",
       "method": "Raw",
@@ -42257,7 +42260,7 @@
     "54535c67055f": {
       "id": "54535c67055f",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1523,
+      "line": 1527,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -42348,7 +42351,7 @@
     "547c9cac0b8d": {
       "id": "547c9cac0b8d",
       "file": "iznik-server-go/message/message.go",
-      "line": 4807,
+      "line": 4824,
       "function": "handleRenege",
       "receiver": "db",
       "method": "Exec",
@@ -42392,7 +42395,7 @@
     "548090e97d00": {
       "id": "548090e97d00",
       "file": "iznik-server-go/group/group.go",
-      "line": 887,
+      "line": 891,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -42617,7 +42620,7 @@
     "54fd76b4cc2c": {
       "id": "54fd76b4cc2c",
       "file": "iznik-server-go/session/session.go",
-      "line": 1811,
+      "line": 1816,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -43081,7 +43084,7 @@
     "55a57788c875": {
       "id": "55a57788c875",
       "file": "iznik-server-go/user/user.go",
-      "line": 2988,
+      "line": 2993,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Exec",
@@ -43416,7 +43419,7 @@
     "564e5329c133": {
       "id": "564e5329c133",
       "file": "iznik-server-go/user/user.go",
-      "line": 2552,
+      "line": 2557,
       "function": "LogGroupLeftForApprovedMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -43613,7 +43616,7 @@
     "56c15677ea5b": {
       "id": "56c15677ea5b",
       "file": "iznik-server-go/session/session.go",
-      "line": 1884,
+      "line": 1889,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -43990,7 +43993,7 @@
     "578ac6d80c06": {
       "id": "578ac6d80c06",
       "file": "iznik-server-go/message/message.go",
-      "line": 3118,
+      "line": 3131,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -44014,7 +44017,7 @@
     "57978ae039a2": {
       "id": "57978ae039a2",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 313,
+      "line": 320,
       "function": "getUsersPosting",
       "receiver": "db",
       "method": "Raw",
@@ -44508,7 +44511,7 @@
     "585a51354a68": {
       "id": "585a51354a68",
       "file": "iznik-server-go/group/group.go",
-      "line": 830,
+      "line": 834,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -44666,7 +44669,7 @@
     "58a93e92bdd0": {
       "id": "58a93e92bdd0",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1619,
+      "line": 1623,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -44754,7 +44757,7 @@
     "58c40f7a8589": {
       "id": "58c40f7a8589",
       "file": "iznik-server-go/message/message.go",
-      "line": 5006,
+      "line": 5023,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -45310,7 +45313,7 @@
     "5a1f3cd17397": {
       "id": "5a1f3cd17397",
       "file": "iznik-server-go/group/group.go",
-      "line": 820,
+      "line": 824,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -45356,7 +45359,7 @@
     "5a436bd174af": {
       "id": "5a436bd174af",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1575,
+      "line": 1579,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -46035,7 +46038,7 @@
     "5b72a0acad8e": {
       "id": "5b72a0acad8e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2854,
+      "line": 2859,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -48072,7 +48075,7 @@
     "5f7862e7e461": {
       "id": "5f7862e7e461",
       "file": "iznik-server-go/session/session.go",
-      "line": 2042,
+      "line": 2047,
       "function": "DeleteSession",
       "receiver": "db",
       "method": "Exec",
@@ -48249,7 +48252,7 @@
     "5fb6e8fa85fd": {
       "id": "5fb6e8fa85fd",
       "file": "iznik-server-go/session/session.go",
-      "line": 1951,
+      "line": 1956,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -48866,7 +48869,7 @@
     "60fa78a45347": {
       "id": "60fa78a45347",
       "file": "iznik-server-go/user/userInfo.go",
-      "line": 291,
+      "line": 293,
       "function": "GetPublicLocationForUser",
       "receiver": "db",
       "method": "Raw",
@@ -48926,9 +48929,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT userid, email, preferred FROM users_emails WHERE userid IN ? ORDER BY preferred DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "61322433b0a3": {
       "id": "61322433b0a3",
@@ -48996,9 +48999,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, fullname FROM users WHERE id IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "61567b8dcc08": {
       "id": "61567b8dcc08",
@@ -49139,7 +49142,7 @@
     "6180dc848f02": {
       "id": "6180dc848f02",
       "file": "iznik-server-go/message/message.go",
-      "line": 2229,
+      "line": 2237,
       "function": "handleApprove",
       "receiver": "db",
       "method": "Exec",
@@ -49494,7 +49497,7 @@
     "625141fb1180": {
       "id": "625141fb1180",
       "file": "iznik-server-go/message/message.go",
-      "line": 541,
+      "line": 545,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -49542,7 +49545,7 @@
     "627297867656": {
       "id": "627297867656",
       "file": "iznik-server-go/message/message.go",
-      "line": 1841,
+      "line": 1849,
       "function": "GetRecentActivity",
       "receiver": "db",
       "method": "Raw",
@@ -49777,7 +49780,7 @@
     "62d2f10ad97c": {
       "id": "62d2f10ad97c",
       "file": "iznik-server-go/message/message.go",
-      "line": 4836,
+      "line": 4853,
       "function": "handleOutcomeIntended",
       "receiver": "db",
       "method": "Exec",
@@ -50086,7 +50089,7 @@
     "637dfbef1ef4": {
       "id": "637dfbef1ef4",
       "file": "iznik-server-go/message/message.go",
-      "line": 5101,
+      "line": 5118,
       "function": "handleAddBy",
       "receiver": "db",
       "method": "Exec",
@@ -51338,7 +51341,7 @@
     "65bff989abbe": {
       "id": "65bff989abbe",
       "file": "iznik-server-go/message/message.go",
-      "line": 5216,
+      "line": 5233,
       "function": "createSystemChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -52700,7 +52703,7 @@
     "683e16a0d881": {
       "id": "683e16a0d881",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1564,
+      "line": 1568,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -53253,7 +53256,7 @@
     "69685398ad05": {
       "id": "69685398ad05",
       "file": "iznik-server-go/message/message.go",
-      "line": 3330,
+      "line": 3343,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -53319,7 +53322,7 @@
     "698ab1090087": {
       "id": "698ab1090087",
       "file": "iznik-server-go/message/message.go",
-      "line": 4000,
+      "line": 4015,
       "function": "findOrCreateUserForDraft",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -53432,7 +53435,7 @@
     "69e208d229bf": {
       "id": "69e208d229bf",
       "file": "iznik-server-go/user/user.go",
-      "line": 2721,
+      "line": 2726,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -53539,7 +53542,7 @@
     "69fb1ebb3a73": {
       "id": "69fb1ebb3a73",
       "file": "iznik-server-go/session/session.go",
-      "line": 1916,
+      "line": 1921,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -53674,7 +53677,7 @@
     "6a225df4a259": {
       "id": "6a225df4a259",
       "file": "iznik-server-go/user/user.go",
-      "line": 3103,
+      "line": 3108,
       "function": "GetUserBans",
       "receiver": "db",
       "method": "Raw",
@@ -53766,7 +53769,7 @@
     "6a4f5b776c87": {
       "id": "6a4f5b776c87",
       "file": "iznik-server-go/group/group.go",
-      "line": 844,
+      "line": 848,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -54277,7 +54280,7 @@
     "6b1f5e2ded05": {
       "id": "6b1f5e2ded05",
       "file": "iznik-server-go/session/session.go",
-      "line": 1363,
+      "line": 1368,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -54827,9 +54830,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT groupid FROM messages_groups WHERE msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6c859c5d2835": {
       "id": "6c859c5d2835",
@@ -54878,7 +54881,7 @@
     "6c9b19809e6c": {
       "id": "6c9b19809e6c",
       "file": "iznik-server-go/message/message.go",
-      "line": 2479,
+      "line": 2492,
       "function": "RecordRippleEvent",
       "receiver": "db",
       "method": "Exec",
@@ -54991,7 +54994,7 @@
     "6cb10f0daf5f": {
       "id": "6cb10f0daf5f",
       "file": "iznik-server-go/message/message.go",
-      "line": 4978,
+      "line": 4995,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -55215,7 +55218,7 @@
     "6d0982e798b5": {
       "id": "6d0982e798b5",
       "file": "iznik-server-go/group/group.go",
-      "line": 699,
+      "line": 703,
       "function": "validateGeometry",
       "receiver": "db",
       "method": "Raw",
@@ -55237,7 +55240,7 @@
     "6d0aed05d5eb": {
       "id": "6d0aed05d5eb",
       "file": "iznik-server-go/message/message.go",
-      "line": 1524,
+      "line": 1531,
       "function": "Search",
       "receiver": "db",
       "method": "Raw",
@@ -55714,7 +55717,7 @@
     "6de535f15717": {
       "id": "6de535f15717",
       "file": "iznik-server-go/group/group.go",
-      "line": 834,
+      "line": 838,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -56522,7 +56525,7 @@
     "6f9705358ae3": {
       "id": "6f9705358ae3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2976,
+      "line": 2981,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -56745,7 +56748,7 @@
     "6fda96dc660b": {
       "id": "6fda96dc660b",
       "file": "iznik-server-go/message/message.go",
-      "line": 2651,
+      "line": 2664,
       "function": "handleBackToPending",
       "receiver": "db",
       "method": "Exec",
@@ -57141,9 +57144,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) AS count, rating FROM ratings WHERE ratee = ? AND timestamp \u003e= ? AND (tn_rating_id IS NOT NULL OR rater = ? OR visible = 1) GROUP BY rating",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "706b0bb5092e": {
       "id": "706b0bb5092e",
@@ -57407,7 +57410,8 @@
       "goldenSql": "SELECT value FROM config WHERE `key` = ? LIMIT 1",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Layer 3 harness infrastructure. Reads the shadow batch flag from the config table by design and is not a migration target, in the same way the ormharness package is not."
     },
     "70e5449f355a": {
       "id": "70e5449f355a",
@@ -57478,7 +57482,7 @@
     "70eeb41b22a3": {
       "id": "70eeb41b22a3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2331,
+      "line": 2336,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -57807,9 +57811,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat) AND heldby IS NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "71b08063be7e": {
       "id": "71b08063be7e",
@@ -57992,7 +57996,7 @@
     "7233641f67ad": {
       "id": "7233641f67ad",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 301,
+      "line": 302,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -58477,7 +58481,7 @@
     "72d2bdb608e5": {
       "id": "72d2bdb608e5",
       "file": "iznik-server-go/message/message.go",
-      "line": 1920,
+      "line": 1928,
       "function": "logMessageReceived",
       "receiver": "db",
       "method": "Exec",
@@ -58731,7 +58735,7 @@
     "73672934d660": {
       "id": "73672934d660",
       "file": "iznik-server-go/message/message.go",
-      "line": 2581,
+      "line": 2594,
       "function": "handleSpam",
       "receiver": "db",
       "method": "Exec",
@@ -60079,7 +60083,7 @@
     "759766c83c01": {
       "id": "759766c83c01",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1231,
+      "line": 1235,
       "function": "putMembershipsPartner",
       "receiver": "db",
       "method": "Exec",
@@ -60343,7 +60347,7 @@
     "7603ee833330": {
       "id": "7603ee833330",
       "file": "iznik-server-go/message/message.go",
-      "line": 2543,
+      "line": 2556,
       "function": "handleDeleteMessage",
       "receiver": "db",
       "method": "Exec",
@@ -60497,7 +60501,7 @@
     "7653c7a2e4ed": {
       "id": "7653c7a2e4ed",
       "file": "iznik-server-go/message/message.go",
-      "line": 2461,
+      "line": 2474,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -60523,7 +60527,7 @@
     "76555fe088e5": {
       "id": "76555fe088e5",
       "file": "iznik-server-go/session/session.go",
-      "line": 1350,
+      "line": 1355,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -61090,9 +61094,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN (?) AND added \u003e= ? AND added \u003c= ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "771773c0e43b": {
       "id": "771773c0e43b",
@@ -61726,7 +61730,7 @@
     "783eedfa7e23": {
       "id": "783eedfa7e23",
       "file": "iznik-server-go/user/user.go",
-      "line": 936,
+      "line": 937,
       "function": "GetLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -62128,7 +62132,7 @@
     "78f1364c0347": {
       "id": "78f1364c0347",
       "file": "iznik-server-go/message/message.go",
-      "line": 5039,
+      "line": 5056,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -62553,7 +62557,7 @@
     "7993248ef4e6": {
       "id": "7993248ef4e6",
       "file": "iznik-server-go/group/group.go",
-      "line": 864,
+      "line": 868,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -62685,7 +62689,7 @@
     "79f72a928ca3": {
       "id": "79f72a928ca3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2572,
+      "line": 2577,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -63020,7 +63024,7 @@
     "7a9e12196036": {
       "id": "7a9e12196036",
       "file": "iznik-server-go/group/group.go",
-      "line": 785,
+      "line": 789,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -63285,7 +63289,7 @@
     "7b1efa32121d": {
       "id": "7b1efa32121d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2347,
+      "line": 2352,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -63725,7 +63729,7 @@
     "7bed34d0e1c8": {
       "id": "7bed34d0e1c8",
       "file": "iznik-server-go/message/message.go",
-      "line": 4366,
+      "line": 4381,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -64378,7 +64382,7 @@
     "7d3ed9c6a8df": {
       "id": "7d3ed9c6a8df",
       "file": "iznik-server-go/user/user.go",
-      "line": 2727,
+      "line": 2732,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -64766,7 +64770,7 @@
     "7e5d8a92a1e9": {
       "id": "7e5d8a92a1e9",
       "file": "iznik-server-go/message/message.go",
-      "line": 1905,
+      "line": 1913,
       "function": "logModAction",
       "receiver": "db",
       "method": "Exec",
@@ -65335,7 +65339,7 @@
     "7efd04588fb2": {
       "id": "7efd04588fb2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4772,
+      "line": 4789,
       "function": "handlePromise",
       "receiver": "db",
       "method": "Exec",
@@ -66112,7 +66116,7 @@
     "80bda541244b": {
       "id": "80bda541244b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2144,
+      "line": 2149,
       "function": "CheckLocationChangeVelocity",
       "receiver": "db",
       "method": "Exec",
@@ -66819,7 +66823,7 @@
     "823b16eb87c6": {
       "id": "823b16eb87c6",
       "file": "iznik-server-go/userdump/userdump.go",
-      "line": 164,
+      "line": 165,
       "function": "gatherEmails",
       "receiver": "sqlDB",
       "method": "Query",
@@ -66836,7 +66840,8 @@
       "goldenSql": "SELECT email FROM users_emails WHERE userid = ?",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The dump pipeline threads a raw *sql.DB rather than a *gorm.DB through buildDump/buildPlan/scanIDs/runDBSpec, and two of its four query sites build dynamic SQL text that was never extracted. Converting the other two would split one pipeline's connection handling across two patterns and needs a signature change, which is a redesign rather than a conversion. Consistent with the existing userdump/sqlite.go entry."
     },
     "8240fc74654f": {
       "id": "8240fc74654f",
@@ -66953,7 +66958,7 @@
     "826841109881": {
       "id": "826841109881",
       "file": "iznik-server-go/message/message.go",
-      "line": 572,
+      "line": 576,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -67001,7 +67006,7 @@
     "8278f05f07af": {
       "id": "8278f05f07af",
       "file": "iznik-server-go/user/user.go",
-      "line": 2972,
+      "line": 2977,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -67634,7 +67639,7 @@
     "83ab41e7c9ac": {
       "id": "83ab41e7c9ac",
       "file": "iznik-server-go/message/message.go",
-      "line": 2785,
+      "line": 2798,
       "function": "handleRevertEdits",
       "receiver": "db",
       "method": "Exec",
@@ -68098,7 +68103,7 @@
     "846ce190fcf8": {
       "id": "846ce190fcf8",
       "file": "iznik-server-go/user/user.go",
-      "line": 2253,
+      "line": 2258,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -68392,7 +68397,7 @@
     "854c7e93efe3": {
       "id": "854c7e93efe3",
       "file": "iznik-server-go/message/message.go",
-      "line": 2945,
+      "line": 2958,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -69035,7 +69040,7 @@
     "863ce73a0abc": {
       "id": "863ce73a0abc",
       "file": "iznik-server-go/user/user.go",
-      "line": 2312,
+      "line": 2317,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -69759,7 +69764,7 @@
     "8798aebadf32": {
       "id": "8798aebadf32",
       "file": "iznik-server-go/user/user.go",
-      "line": 2406,
+      "line": 2411,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -70126,9 +70131,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM `groups` WHERE id IN ? AND JSON_EXTRACT(settings, '$.widerchatreview') = 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "88a4adbb8cfe": {
       "id": "88a4adbb8cfe",
@@ -70467,7 +70472,7 @@
     "896940a53068": {
       "id": "896940a53068",
       "file": "iznik-server-go/user/user.go",
-      "line": 2326,
+      "line": 2331,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -71488,7 +71493,7 @@
     "8bb010b9529b": {
       "id": "8bb010b9529b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2574,
+      "line": 2579,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -71709,7 +71714,7 @@
     "8c15ce918aa2": {
       "id": "8c15ce918aa2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4429,
+      "line": 4444,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -71733,7 +71738,7 @@
     "8c1766162f86": {
       "id": "8c1766162f86",
       "file": "iznik-server-go/message/message.go",
-      "line": 2613,
+      "line": 2626,
       "function": "handleHold",
       "receiver": "db",
       "method": "Exec",
@@ -71886,7 +71891,7 @@
     "8c57c53511ec": {
       "id": "8c57c53511ec",
       "file": "iznik-server-go/message/message.go",
-      "line": 3111,
+      "line": 3124,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -72108,7 +72113,7 @@
     "8cbeeeb7e32f": {
       "id": "8cbeeeb7e32f",
       "file": "iznik-server-go/group/group.go",
-      "line": 951,
+      "line": 955,
       "function": "CreateGroup",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -72446,7 +72451,7 @@
     "8d21c566d0ae": {
       "id": "8d21c566d0ae",
       "file": "iznik-server-go/user/user.go",
-      "line": 2747,
+      "line": 2752,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -72822,7 +72827,7 @@
     "8dc9211fdcbe": {
       "id": "8dc9211fdcbe",
       "file": "iznik-server-go/user/user.go",
-      "line": 2799,
+      "line": 2804,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -72888,7 +72893,7 @@
     "8df7fad1ee3d": {
       "id": "8df7fad1ee3d",
       "file": "iznik-server-go/message/message.go",
-      "line": 5143,
+      "line": 5160,
       "function": "handleRemoveBy",
       "receiver": "db",
       "method": "Exec",
@@ -73286,7 +73291,7 @@
     "8ef16859487a": {
       "id": "8ef16859487a",
       "file": "iznik-server-go/message/message.go",
-      "line": 3563,
+      "line": 3578,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -74285,7 +74290,7 @@
     "90c56d7f4ab1": {
       "id": "90c56d7f4ab1",
       "file": "iznik-server-go/user/auth.go",
-      "line": 83,
+      "line": 86,
       "function": "GetLoveJunkUser",
       "receiver": "db",
       "method": "Exec",
@@ -75359,7 +75364,7 @@
     "92e739e16c30": {
       "id": "92e739e16c30",
       "file": "iznik-server-go/message/message.go",
-      "line": 3182,
+      "line": 3195,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -75472,7 +75477,7 @@
     "93161dacd118": {
       "id": "93161dacd118",
       "file": "iznik-server-go/session/session.go",
-      "line": 1233,
+      "line": 1238,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -75659,7 +75664,7 @@
     "93937ea4340f": {
       "id": "93937ea4340f",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 507,
+      "line": 515,
       "function": "getDonations",
       "receiver": "db",
       "method": "Raw",
@@ -75751,7 +75756,7 @@
     "93b72dfa783e": {
       "id": "93b72dfa783e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2849,
+      "line": 2854,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -75930,7 +75935,7 @@
     "93e40a364c53": {
       "id": "93e40a364c53",
       "file": "iznik-server-go/user/user.go",
-      "line": 2724,
+      "line": 2729,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -76042,7 +76047,7 @@
     "941509171a6e": {
       "id": "941509171a6e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2302,
+      "line": 2307,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -76242,7 +76247,7 @@
     "948119564065": {
       "id": "948119564065",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1601,
+      "line": 1605,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -76325,14 +76330,14 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
+      "presentInCode": false,
+      "hasParityTest": true,
       "status": "converted"
     },
     "94b0be1107e0": {
       "id": "94b0be1107e0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2786,
+      "line": 2791,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -77337,7 +77342,7 @@
     "96b1fd8dbd45": {
       "id": "96b1fd8dbd45",
       "file": "iznik-server-go/user/user.go",
-      "line": 3176,
+      "line": 3181,
       "function": "GetUserApplied",
       "receiver": "db",
       "method": "Raw",
@@ -77741,7 +77746,7 @@
     "977f9505dd10": {
       "id": "977f9505dd10",
       "file": "iznik-server-go/message/message.go",
-      "line": 4969,
+      "line": 4986,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -78028,7 +78033,7 @@
     "98534528cf3e": {
       "id": "98534528cf3e",
       "file": "iznik-server-go/message/message.go",
-      "line": 5099,
+      "line": 5116,
       "function": "handleAddBy",
       "receiver": "db",
       "method": "Exec",
@@ -78356,9 +78361,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, settings FROM `groups` WHERE id IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "994ffacdcb47": {
       "id": "994ffacdcb47",
@@ -78407,7 +78412,7 @@
     "99713f48c505": {
       "id": "99713f48c505",
       "file": "iznik-server-go/message/message.go",
-      "line": 2777,
+      "line": 2790,
       "function": "handleRevertEdits",
       "receiver": "db",
       "method": "Exec",
@@ -78498,7 +78503,7 @@
     "99835b243d85": {
       "id": "99835b243d85",
       "file": "iznik-server-go/message/message.go",
-      "line": 2195,
+      "line": 2203,
       "function": "invalidateMessageSearchIndexes",
       "receiver": "db",
       "method": "Exec",
@@ -78564,7 +78569,7 @@
     "99b2c17a8727": {
       "id": "99b2c17a8727",
       "file": "iznik-server-go/message/message.go",
-      "line": 2447,
+      "line": 2460,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -79565,7 +79570,7 @@
     "9bddeb538459": {
       "id": "9bddeb538459",
       "file": "iznik-server-go/user/user.go",
-      "line": 2795,
+      "line": 2800,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -79587,7 +79592,7 @@
     "9beaa0265ff1": {
       "id": "9beaa0265ff1",
       "file": "iznik-server-go/message/message.go",
-      "line": 4399,
+      "line": 4414,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -79770,7 +79775,7 @@
     "9c39bf7d978a": {
       "id": "9c39bf7d978a",
       "file": "iznik-server-go/user/user.go",
-      "line": 2528,
+      "line": 2533,
       "function": "handleUnbounce",
       "receiver": "db",
       "method": "Exec",
@@ -79836,7 +79841,7 @@
     "9c4b09b388ef": {
       "id": "9c4b09b388ef",
       "file": "iznik-server-go/user/user.go",
-      "line": 2000,
+      "line": 2005,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -80215,7 +80220,7 @@
     "9d1cfd7098bc": {
       "id": "9d1cfd7098bc",
       "file": "iznik-server-go/message/message.go",
-      "line": 4395,
+      "line": 4410,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -81020,7 +81025,7 @@
     "9f0c252974c7": {
       "id": "9f0c252974c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2744,
+      "line": 2749,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -81199,7 +81204,7 @@
     "9f50349c1378": {
       "id": "9f50349c1378",
       "file": "iznik-server-go/session/session.go",
-      "line": 1180,
+      "line": 1184,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -81885,7 +81890,7 @@
     "a08c7f4426c7": {
       "id": "a08c7f4426c7",
       "file": "iznik-server-go/message/message.go",
-      "line": 4953,
+      "line": 4970,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -82020,7 +82025,7 @@
     "a0e311646f19": {
       "id": "a0e311646f19",
       "file": "iznik-server-go/user/user.go",
-      "line": 2317,
+      "line": 2322,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -82602,7 +82607,7 @@
     "a218fb801dd5": {
       "id": "a218fb801dd5",
       "file": "iznik-server-go/message/message.go",
-      "line": 3092,
+      "line": 3105,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -82683,9 +82688,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM users_modmails WHERE userid = ? AND groupid IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a25d0416f755": {
       "id": "a25d0416f755",
@@ -82955,7 +82960,7 @@
     "a2ad9104af21": {
       "id": "a2ad9104af21",
       "file": "iznik-server-go/user/user.go",
-      "line": 2862,
+      "line": 2867,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -84435,7 +84440,7 @@
     "a54abf2c60c7": {
       "id": "a54abf2c60c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2832,
+      "line": 2837,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -84501,7 +84506,7 @@
     "a58569a3101e": {
       "id": "a58569a3101e",
       "file": "iznik-server-go/message/message.go",
-      "line": 4898,
+      "line": 4915,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -85318,7 +85323,7 @@
     "a716e0a18fb3": {
       "id": "a716e0a18fb3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2395,
+      "line": 2400,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -85487,8 +85492,8 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?",
-      "presentInCode": true,
-      "hasParityTest": false,
+      "presentInCode": false,
+      "hasParityTest": true,
       "status": "converted"
     },
     "a74bfa8a19c1": {
@@ -85628,7 +85633,7 @@
     "a79f147726d0": {
       "id": "a79f147726d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2718,
+      "line": 2723,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -85888,7 +85893,7 @@
     "a80f1b38c186": {
       "id": "a80f1b38c186",
       "file": "iznik-server-go/user/user.go",
-      "line": 1780,
+      "line": 1785,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -86022,7 +86027,7 @@
     "a853f24ea5b9": {
       "id": "a853f24ea5b9",
       "file": "iznik-server-go/message/message.go",
-      "line": 2955,
+      "line": 2968,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -86537,7 +86542,7 @@
     "a9a8c24df5e0": {
       "id": "a9a8c24df5e0",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 486,
+      "line": 488,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -87132,7 +87137,7 @@
     "aaa43b677e1f": {
       "id": "aaa43b677e1f",
       "file": "iznik-server-go/user/user.go",
-      "line": 1064,
+      "line": 1065,
       "function": "DeleteUserSearch",
       "receiver": "db",
       "method": "Exec",
@@ -87863,7 +87868,7 @@
     "abfaa5681f50": {
       "id": "abfaa5681f50",
       "file": "iznik-server-go/message/message.go",
-      "line": 5103,
+      "line": 5120,
       "function": "handleAddBy",
       "receiver": "db",
       "method": "Exec",
@@ -88064,7 +88069,7 @@
     "ac3cfe1aa429": {
       "id": "ac3cfe1aa429",
       "file": "iznik-server-go/user/user.go",
-      "line": 2929,
+      "line": 2934,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -88707,7 +88712,7 @@
     "adbbb9dadd0c": {
       "id": "adbbb9dadd0c",
       "file": "iznik-server-go/group/group.go",
-      "line": 969,
+      "line": 973,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -89357,7 +89362,7 @@
     "af0ff5e0f4de": {
       "id": "af0ff5e0f4de",
       "file": "iznik-server-go/user/user.go",
-      "line": 2921,
+      "line": 2926,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -89808,7 +89813,7 @@
     "b00f9d848435": {
       "id": "b00f9d848435",
       "file": "iznik-server-go/message/message.go",
-      "line": 2161,
+      "line": 2169,
       "function": "addApprovedMessageToSpatialIndex",
       "receiver": "db",
       "method": "Exec",
@@ -90729,7 +90734,7 @@
     "b1c25f5b67a9": {
       "id": "b1c25f5b67a9",
       "file": "iznik-server-go/group/group.go",
-      "line": 779,
+      "line": 783,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -91043,7 +91048,7 @@
     "b25ea3ba4ade": {
       "id": "b25ea3ba4ade",
       "file": "iznik-server-go/message/message.go",
-      "line": 2266,
+      "line": 2277,
       "function": "handleApprove",
       "receiver": "db",
       "method": "Exec",
@@ -91360,7 +91365,7 @@
     "b2e32c804c19": {
       "id": "b2e32c804c19",
       "file": "iznik-server-go/message/message.go",
-      "line": 3711,
+      "line": 3726,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -91782,7 +91787,7 @@
     "b3e27bdd694b": {
       "id": "b3e27bdd694b",
       "file": "iznik-server-go/message/message.go",
-      "line": 3557,
+      "line": 3572,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -92092,7 +92097,7 @@
     "b4968f94d154": {
       "id": "b4968f94d154",
       "file": "iznik-server-go/user/user.go",
-      "line": 1694,
+      "line": 1699,
       "function": "handleRate",
       "receiver": "db",
       "method": "Exec",
@@ -92579,7 +92584,7 @@
     "b53892a17f40": {
       "id": "b53892a17f40",
       "file": "iznik-server-go/message/message.go",
-      "line": 4451,
+      "line": 4466,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -92623,7 +92628,7 @@
     "b54105bda6de": {
       "id": "b54105bda6de",
       "file": "iznik-server-go/user/user.go",
-      "line": 2790,
+      "line": 2795,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -92755,7 +92760,7 @@
     "b560d268dc4e": {
       "id": "b560d268dc4e",
       "file": "iznik-server-go/message/message.go",
-      "line": 3738,
+      "line": 3753,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -92777,7 +92782,7 @@
     "b561dab1c2bd": {
       "id": "b561dab1c2bd",
       "file": "iznik-server-go/user/user.go",
-      "line": 2573,
+      "line": 2578,
       "function": "softLimboUser",
       "receiver": "db",
       "method": "Exec",
@@ -93669,7 +93674,7 @@
     "b7a7c29b7611": {
       "id": "b7a7c29b7611",
       "file": "iznik-server-go/group/group.go",
-      "line": 801,
+      "line": 805,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -94210,7 +94215,7 @@
     "b8d33139d873": {
       "id": "b8d33139d873",
       "file": "iznik-server-go/message/message.go",
-      "line": 1006,
+      "line": 1010,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -94607,7 +94612,7 @@
     "b986dc546bdb": {
       "id": "b986dc546bdb",
       "file": "iznik-server-go/user/user.go",
-      "line": 2788,
+      "line": 2793,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -94717,7 +94722,7 @@
     "b9a68fc74595": {
       "id": "b9a68fc74595",
       "file": "iznik-server-go/message/message.go",
-      "line": 2915,
+      "line": 2928,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -94995,7 +95000,7 @@
     "ba1bd193532a": {
       "id": "ba1bd193532a",
       "file": "iznik-server-go/user/userEmails.go",
-      "line": 68,
+      "line": 70,
       "function": "GetOrCreateInternalEmail",
       "receiver": "db",
       "method": "Exec",
@@ -95871,7 +95876,7 @@
     "bc1759cfd933": {
       "id": "bc1759cfd933",
       "file": "iznik-server-go/message/message.go",
-      "line": 5108,
+      "line": 5125,
       "function": "handleAddBy",
       "receiver": "db",
       "method": "Exec",
@@ -96168,7 +96173,7 @@
     "bc7de11031d3": {
       "id": "bc7de11031d3",
       "file": "iznik-server-go/group/group.go",
-      "line": 782,
+      "line": 786,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -96236,7 +96241,7 @@
     "bca1186d1ea4": {
       "id": "bca1186d1ea4",
       "file": "iznik-server-go/message/message.go",
-      "line": 1250,
+      "line": 1254,
       "function": "GetMessagesForUser",
       "receiver": "db",
       "method": "Raw",
@@ -96315,9 +96320,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT * FROM users_comments WHERE userid IN ? ORDER BY date DESC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bcddc2e5e477": {
       "id": "bcddc2e5e477",
@@ -96344,7 +96349,7 @@
     "bce3018a21d7": {
       "id": "bce3018a21d7",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 204,
+      "line": 209,
       "function": "getRecentCounts",
       "receiver": "db",
       "method": "Raw",
@@ -97918,7 +97923,7 @@
     "c04d965dfd0e": {
       "id": "c04d965dfd0e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2857,
+      "line": 2862,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -98028,7 +98033,7 @@
     "c0bdaf91d946": {
       "id": "c0bdaf91d946",
       "file": "iznik-server-go/user/user.go",
-      "line": 2677,
+      "line": 2682,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -99064,7 +99069,7 @@
     "c25d3f0cbd14": {
       "id": "c25d3f0cbd14",
       "file": "iznik-server-go/user/user.go",
-      "line": 1762,
+      "line": 1767,
       "function": "handleAddEmail",
       "receiver": "db",
       "method": "Exec",
@@ -99086,7 +99091,7 @@
     "c26ff21a50e2": {
       "id": "c26ff21a50e2",
       "file": "iznik-server-go/user/user.go",
-      "line": 2843,
+      "line": 2848,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -99331,7 +99336,7 @@
     "c2d76084bb4c": {
       "id": "c2d76084bb4c",
       "file": "iznik-server-go/message/message.go",
-      "line": 4344,
+      "line": 4359,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -99441,7 +99446,7 @@
     "c306c6bbc740": {
       "id": "c306c6bbc740",
       "file": "iznik-server-go/message/message.go",
-      "line": 2954,
+      "line": 2967,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -99729,7 +99734,7 @@
     "c3cff12ce730": {
       "id": "c3cff12ce730",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1511,
+      "line": 1515,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -100270,7 +100275,7 @@
     "c49c4a6dd162": {
       "id": "c49c4a6dd162",
       "file": "iznik-server-go/session/session.go",
-      "line": 2039,
+      "line": 2044,
       "function": "DeleteSession",
       "receiver": "db",
       "method": "Exec",
@@ -100768,7 +100773,7 @@
     "c5b11d58ae60": {
       "id": "c5b11d58ae60",
       "file": "iznik-server-go/user/user.go",
-      "line": 1982,
+      "line": 1987,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -100834,7 +100839,7 @@
     "c5c08e284c66": {
       "id": "c5c08e284c66",
       "file": "iznik-server-go/message/message.go",
-      "line": 3415,
+      "line": 3428,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -100971,7 +100976,7 @@
     "c62fbb94a8ff": {
       "id": "c62fbb94a8ff",
       "file": "iznik-server-go/user/user.go",
-      "line": 2529,
+      "line": 2534,
       "function": "handleUnbounce",
       "receiver": "db",
       "method": "Exec",
@@ -101235,7 +101240,7 @@
     "c6e83a7877cb": {
       "id": "c6e83a7877cb",
       "file": "iznik-server-go/message/message.go",
-      "line": 2572,
+      "line": 2585,
       "function": "handleSpam",
       "receiver": "db",
       "method": "Exec",
@@ -101499,7 +101504,7 @@
     "c76f7046abbd": {
       "id": "c76f7046abbd",
       "file": "iznik-server-go/user/user.go",
-      "line": 2793,
+      "line": 2798,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -101787,7 +101792,7 @@
     "c7d4d6e14e0d": {
       "id": "c7d4d6e14e0d",
       "file": "iznik-server-go/comment/comment.go",
-      "line": 373,
+      "line": 371,
       "function": "Delete",
       "receiver": "db",
       "method": "Exec",
@@ -102587,7 +102592,7 @@
     "c95c096df653": {
       "id": "c95c096df653",
       "file": "iznik-server-go/message/message.go",
-      "line": 3126,
+      "line": 3139,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -102809,7 +102814,7 @@
     "c9c7922e5379": {
       "id": "c9c7922e5379",
       "file": "iznik-server-go/user/user.go",
-      "line": 2033,
+      "line": 2038,
       "function": "PutUser",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -102871,7 +102876,8 @@
       "goldenSql": "SELECT /*+ MAX_EXECUTION_TIME(10000) */ u.holdout, COUNT(*) users, COALESCE(SUM(r.replies), 0) replies FROM (SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes WHERE source IN (?, ?) AND timestamp \u003e= ? GROUP BY userid) u LEFT JOIN (SELECT userid, COUNT(*) replies FROM chat_messages WHERE type = 'Interested' AND date \u003e= ? GROUP BY userid) r ON r.userid = u.userid GROUP BY u.holdout",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Carries an optimiser hint, /*+ MAX_EXECUTION_TIME(10000) */, over messages_likes (~75M rows, and unindexed for this access pattern). The caller inspects .Error to set a degraded flag when the hint aborts a slow query, so the hint is load-bearing behaviour rather than a comment. It could probably be smuggled into the Select string, since GORM renders SELECT \u003cselect-clause\u003e FROM, but getting that subtly wrong on a table this size degrades a live endpoint rather than failing visibly, so it wants a deliberate decision and its own test rather than a wave conversion."
     },
     "c9f11975ec38": {
       "id": "c9f11975ec38",
@@ -102920,7 +102926,7 @@
     "c9ff161437b9": {
       "id": "c9ff161437b9",
       "file": "iznik-server-go/message/message.go",
-      "line": 968,
+      "line": 972,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -103598,7 +103604,7 @@
     "cb477fe8b7d2": {
       "id": "cb477fe8b7d2",
       "file": "iznik-server-go/message/message.go",
-      "line": 3146,
+      "line": 3159,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -103846,7 +103852,7 @@
     "cbad92a90c0d": {
       "id": "cbad92a90c0d",
       "file": "iznik-server-go/group/group.go",
-      "line": 711,
+      "line": 715,
       "function": "logGroupEdit",
       "receiver": "db",
       "method": "Exec",
@@ -103934,7 +103940,7 @@
     "cc0b627a2955": {
       "id": "cc0b627a2955",
       "file": "iznik-server-go/user/user.go",
-      "line": 1314,
+      "line": 1319,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Raw",
@@ -103981,7 +103987,7 @@
     "cc381d7c669b": {
       "id": "cc381d7c669b",
       "file": "iznik-server-go/message/message.go",
-      "line": 2688,
+      "line": 2701,
       "function": "handleRelease",
       "receiver": "db",
       "method": "Exec",
@@ -104003,7 +104009,7 @@
     "cc3eec4538f6": {
       "id": "cc3eec4538f6",
       "file": "iznik-server-go/message/message.go",
-      "line": 2739,
+      "line": 2752,
       "function": "handleApproveEdits",
       "receiver": "db",
       "method": "Exec",
@@ -104435,7 +104441,7 @@
     "cd3e53cfadea": {
       "id": "cd3e53cfadea",
       "file": "iznik-server-go/user/user.go",
-      "line": 2739,
+      "line": 2744,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -104762,7 +104768,7 @@
     "ce1d968cff70": {
       "id": "ce1d968cff70",
       "file": "iznik-server-go/message/message.go",
-      "line": 3123,
+      "line": 3136,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -105224,7 +105230,7 @@
     "cebe07bfb873": {
       "id": "cebe07bfb873",
       "file": "iznik-server-go/message/message.go",
-      "line": 3892,
+      "line": 3907,
       "function": "PatchMessageByTN",
       "receiver": "db",
       "method": "Exec",
@@ -105496,7 +105502,7 @@
     "cf14153e46ac": {
       "id": "cf14153e46ac",
       "file": "iznik-server-go/group/group.go",
-      "line": 841,
+      "line": 845,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -105810,7 +105816,7 @@
     "cfcce3676000": {
       "id": "cfcce3676000",
       "file": "iznik-server-go/user/user.go",
-      "line": 2616,
+      "line": 2621,
       "function": "handleMerge",
       "receiver": "db",
       "method": "Raw",
@@ -105833,7 +105839,7 @@
     "cfcd2f885279": {
       "id": "cfcd2f885279",
       "file": "iznik-server-go/user/user.go",
-      "line": 2555,
+      "line": 2560,
       "function": "LogGroupLeftForApprovedMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -105921,7 +105927,7 @@
     "cff1d8adacf1": {
       "id": "cff1d8adacf1",
       "file": "iznik-server-go/group/group.go",
-      "line": 875,
+      "line": 879,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -106101,7 +106107,7 @@
     "d02deddf93b1": {
       "id": "d02deddf93b1",
       "file": "iznik-server-go/user/user.go",
-      "line": 2673,
+      "line": 2678,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -106551,7 +106557,7 @@
     "d0f1c6abfca1": {
       "id": "d0f1c6abfca1",
       "file": "iznik-server-go/user/user.go",
-      "line": 2707,
+      "line": 2712,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -106683,7 +106689,7 @@
     "d12584380a19": {
       "id": "d12584380a19",
       "file": "iznik-server-go/message/message.go",
-      "line": 3143,
+      "line": 3156,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -106808,9 +106814,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT spamtype FROM messages_groups WHERE msgid = ? AND groupid IN ? AND spamtype IS NOT NULL LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d1837cde9cb0": {
       "id": "d1837cde9cb0",
@@ -106925,7 +106931,7 @@
     "d19e540cf33b": {
       "id": "d19e540cf33b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2804,
+      "line": 2809,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -106947,7 +106953,7 @@
     "d1a1d099f7b1": {
       "id": "d1a1d099f7b1",
       "file": "iznik-server-go/message/message.go",
-      "line": 2731,
+      "line": 2744,
       "function": "handleApproveEdits",
       "receiver": "db",
       "method": "Exec",
@@ -107748,7 +107754,7 @@
     "d313fe02593e": {
       "id": "d313fe02593e",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 541,
+      "line": 549,
       "function": "getHappiness",
       "receiver": "db",
       "method": "Raw",
@@ -108282,7 +108288,7 @@
     "d45d5de0c8c3": {
       "id": "d45d5de0c8c3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2743,
+      "line": 2748,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -108350,7 +108356,7 @@
     "d4724f1cfc67": {
       "id": "d4724f1cfc67",
       "file": "iznik-server-go/message/message.go",
-      "line": 3088,
+      "line": 3101,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Raw",
@@ -108619,7 +108625,7 @@
     "d4f71ea17664": {
       "id": "d4f71ea17664",
       "file": "iznik-server-go/message/message.go",
-      "line": 2469,
+      "line": 2482,
       "function": "ClipReachForRejectedGroup",
       "receiver": "db",
       "method": "Exec",
@@ -108956,7 +108962,7 @@
     "d5ecca066b1b": {
       "id": "d5ecca066b1b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2917,
+      "line": 2922,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -109086,7 +109092,7 @@
     "d60d7b2e0f2a": {
       "id": "d60d7b2e0f2a",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1366,
+      "line": 1370,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -109946,7 +109952,7 @@
     "d788d299a578": {
       "id": "d788d299a578",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1367,
+      "line": 1371,
       "function": "DeleteMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -109993,7 +109999,7 @@
     "d7c9963bd974": {
       "id": "d7c9963bd974",
       "file": "iznik-server-go/user/user.go",
-      "line": 490,
+      "line": 491,
       "function": "GetUserMessageHistory",
       "receiver": "db",
       "method": "Raw",
@@ -110835,9 +110841,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND collection = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d9492e3aa52a": {
       "id": "d9492e3aa52a",
@@ -110952,7 +110958,7 @@
     "d99fe717309f": {
       "id": "d99fe717309f",
       "file": "iznik-server-go/message/message.go",
-      "line": 645,
+      "line": 649,
       "function": "GetMessagesByIds",
       "receiver": "db",
       "method": "Raw",
@@ -111043,7 +111049,7 @@
     "d9ea74465694": {
       "id": "d9ea74465694",
       "file": "iznik-server-go/dashboard/dashboard.go",
-      "line": 247,
+      "line": 254,
       "function": "getPopularPosts",
       "receiver": "db",
       "method": "Raw",
@@ -111066,7 +111072,7 @@
     "d9ee371b9e9a": {
       "id": "d9ee371b9e9a",
       "file": "iznik-server-go/message/message.go",
-      "line": 3469,
+      "line": 3482,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -111645,7 +111651,7 @@
     "db15655f044f": {
       "id": "db15655f044f",
       "file": "iznik-server-go/session/session.go",
-      "line": 1797,
+      "line": 1802,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -111733,7 +111739,7 @@
     "db4ec8586401": {
       "id": "db4ec8586401",
       "file": "iznik-server-go/message/message.go",
-      "line": 2246,
+      "line": 2257,
       "function": "handleApprove",
       "receiver": "db",
       "method": "Exec",
@@ -111772,9 +111778,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND groupid IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "db60834e67a2": {
       "id": "db60834e67a2",
@@ -111912,7 +111918,7 @@
     "dbaf7d925bf5": {
       "id": "dbaf7d925bf5",
       "file": "iznik-server-go/user/user.go",
-      "line": 1716,
+      "line": 1721,
       "function": "handleRatingReviewed",
       "receiver": "db",
       "method": "Exec",
@@ -112003,7 +112009,7 @@
     "dbd2165e28c7": {
       "id": "dbd2165e28c7",
       "file": "iznik-server-go/group/group.go",
-      "line": 817,
+      "line": 821,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -112027,7 +112033,7 @@
     "dbd744cc0e15": {
       "id": "dbd744cc0e15",
       "file": "iznik-server-go/message/message.go",
-      "line": 5243,
+      "line": 5260,
       "function": "handleMove",
       "receiver": "tx",
       "method": "Exec",
@@ -112161,7 +112167,7 @@
     "dc26aeceefa9": {
       "id": "dc26aeceefa9",
       "file": "iznik-server-go/message/message.go",
-      "line": 2817,
+      "line": 2830,
       "function": "handlePartnerConsent",
       "receiver": "db",
       "method": "Exec",
@@ -112277,7 +112283,7 @@
     "dc8914d8b9d5": {
       "id": "dc8914d8b9d5",
       "file": "iznik-server-go/message/message.go",
-      "line": 3122,
+      "line": 3135,
       "function": "JoinAndPostAs",
       "receiver": "db",
       "method": "Exec",
@@ -112713,7 +112719,7 @@
     "dd57ad0485df": {
       "id": "dd57ad0485df",
       "file": "iznik-server-go/group/group.go",
-      "line": 856,
+      "line": 860,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -113239,9 +113245,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT groupid, COUNT(DISTINCT id) as count FROM admins WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL GROUP BY groupid",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "de6e235aa5a0": {
       "id": "de6e235aa5a0",
@@ -114119,7 +114125,7 @@
     "e0386c3b3a9c": {
       "id": "e0386c3b3a9c",
       "file": "iznik-server-go/user/user.go",
-      "line": 2805,
+      "line": 2810,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -114207,7 +114213,7 @@
     "e0558c2c039d": {
       "id": "e0558c2c039d",
       "file": "iznik-server-go/user/user.go",
-      "line": 635,
+      "line": 636,
       "function": "GetUserById",
       "receiver": "db",
       "method": "Raw",
@@ -114363,7 +114369,7 @@
     "e0be009ca12b": {
       "id": "e0be009ca12b",
       "file": "iznik-server-go/message/message.go",
-      "line": 1964,
+      "line": 1972,
       "function": "constructLocationString",
       "receiver": "db",
       "method": "Raw",
@@ -114386,7 +114392,7 @@
     "e0c033ce3d69": {
       "id": "e0c033ce3d69",
       "file": "iznik-server-go/message/message.go",
-      "line": 1537,
+      "line": 1544,
       "function": "Search",
       "receiver": "db",
       "method": "Raw",
@@ -115074,7 +115080,7 @@
     "e1f780721381": {
       "id": "e1f780721381",
       "file": "iznik-server-go/message/message.go",
-      "line": 2857,
+      "line": 2870,
       "function": "handleReply",
       "receiver": "db",
       "method": "Exec",
@@ -115322,7 +115328,7 @@
     "e28d4a7241be": {
       "id": "e28d4a7241be",
       "file": "iznik-server-go/membership/membership.go",
-      "line": 1631,
+      "line": 1635,
       "function": "PatchMemberships",
       "receiver": "db",
       "method": "Exec",
@@ -116479,7 +116485,7 @@
     "e4f0bcf9f2eb": {
       "id": "e4f0bcf9f2eb",
       "file": "iznik-server-go/group/group.go",
-      "line": 880,
+      "line": 884,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -116880,7 +116886,7 @@
     "e5fa7f0e05bd": {
       "id": "e5fa7f0e05bd",
       "file": "iznik-server-go/group/group.go",
-      "line": 853,
+      "line": 857,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -117239,7 +117245,7 @@
     "e6c4a74e1ea8": {
       "id": "e6c4a74e1ea8",
       "file": "iznik-server-go/message/message.go",
-      "line": 2373,
+      "line": 2386,
       "function": "handleReject",
       "receiver": "db",
       "method": "Exec",
@@ -117668,7 +117674,7 @@
     "e7a34e3dea3b": {
       "id": "e7a34e3dea3b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2017,
+      "line": 2022,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",
@@ -117800,7 +117806,7 @@
     "e7c6bfbc5607": {
       "id": "e7c6bfbc5607",
       "file": "iznik-server-go/user/user.go",
-      "line": 1830,
+      "line": 1835,
       "function": "handleRemoveEmail",
       "receiver": "db",
       "method": "Exec",
@@ -117881,7 +117887,8 @@
       "goldenSql": "{{built at runtime: query}}",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The dump pipeline threads a raw *sql.DB rather than a *gorm.DB through buildDump/buildPlan/scanIDs/runDBSpec, and two of its four query sites build dynamic SQL text that was never extracted. Converting the other two would split one pipeline's connection handling across two patterns and needs a signature change, which is a redesign rather than a conversion. Consistent with the existing userdump/sqlite.go entry."
     },
     "e7dc4cec288b": {
       "id": "e7dc4cec288b",
@@ -117952,7 +117959,7 @@
     "e7f18e30931f": {
       "id": "e7f18e30931f",
       "file": "iznik-server-go/message/message.go",
-      "line": 4385,
+      "line": 4400,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -118350,7 +118357,7 @@
     "e8a9588d340c": {
       "id": "e8a9588d340c",
       "file": "iznik-server-go/message/message.go",
-      "line": 5172,
+      "line": 5189,
       "function": "handleView",
       "receiver": "db",
       "method": "Exec",
@@ -119007,7 +119014,7 @@
     "e9cc5186c0a5": {
       "id": "e9cc5186c0a5",
       "file": "iznik-server-go/group/groupWork.go",
-      "line": 428,
+      "line": 430,
       "function": "GetGroupWork",
       "receiver": "db",
       "method": "Raw",
@@ -119079,7 +119086,7 @@
     "e9e614befbc7": {
       "id": "e9e614befbc7",
       "file": "iznik-server-go/message/message.go",
-      "line": 3468,
+      "line": 3481,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -119101,7 +119108,7 @@
     "e9f2c662be69": {
       "id": "e9f2c662be69",
       "file": "iznik-server-go/message/message.go",
-      "line": 3407,
+      "line": 3420,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -119301,7 +119308,7 @@
     "ea603dbc3fe0": {
       "id": "ea603dbc3fe0",
       "file": "iznik-server-go/group/group.go",
-      "line": 974,
+      "line": 978,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -119992,7 +119999,8 @@
       "goldenSql": "SELECT /*+ MAX_EXECUTION_TIME(10000) */ DATE(ml.timestamp) d, ml.source, COUNT(DISTINCT cm.id) replies FROM messages_likes ml JOIN chat_messages cm ON cm.refmsgid = ml.msgid AND cm.userid = ml.userid AND cm.type = 'Interested' AND cm.date BETWEEN ml.timestamp AND ml.timestamp + INTERVAL 7 DAY WHERE ml.source IN ? AND ml.pageview = 1 AND ml.timestamp \u003e= ? GROUP BY d, ml.source",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "Carries an optimiser hint, /*+ MAX_EXECUTION_TIME(10000) */, over messages_likes (~75M rows, and unindexed for this access pattern). The caller inspects .Error to set a degraded flag when the hint aborts a slow query, so the hint is load-bearing behaviour rather than a comment. It could probably be smuggled into the Select string, since GORM renders SELECT \u003cselect-clause\u003e FROM, but getting that subtly wrong on a table this size degrades a live endpoint rather than failing visibly, so it wants a deliberate decision and its own test rather than a wave conversion."
     },
     "ebb018cbf06e": {
       "id": "ebb018cbf06e",
@@ -120399,7 +120407,7 @@
     "ec4948877cc2": {
       "id": "ec4948877cc2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4987,
+      "line": 5004,
       "function": "handleOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -120533,7 +120541,7 @@
     "ecaf3f90bee2": {
       "id": "ecaf3f90bee2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4128,
+      "line": 4143,
       "function": "ResolveOnBehalfPosting",
       "receiver": "db",
       "method": "Raw",
@@ -120958,7 +120966,7 @@
     "eda36bc0f75a": {
       "id": "eda36bc0f75a",
       "file": "iznik-server-go/comment/comment.go",
-      "line": 244,
+      "line": 242,
       "function": "flagOthers",
       "receiver": "db",
       "method": "Exec",
@@ -121572,9 +121580,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND reviewrequestedat IS NOT NULL AND (reviewedat IS NULL OR reviewrequestedat \u003e reviewedat) AND heldby IS NOT NULL",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef1680989d03": {
       "id": "ef1680989d03",
@@ -121670,7 +121678,7 @@
     "ef364ece98ef": {
       "id": "ef364ece98ef",
       "file": "iznik-server-go/message/message.go",
-      "line": 2515,
+      "line": 2528,
       "function": "handleDeleteMessage",
       "receiver": "db",
       "method": "Exec",
@@ -121883,9 +121891,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef762df5233d": {
       "id": "ef762df5233d",
@@ -122304,7 +122312,8 @@
       "goldenSql": "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "The dump pipeline threads a raw *sql.DB rather than a *gorm.DB through buildDump/buildPlan/scanIDs/runDBSpec, and two of its four query sites build dynamic SQL text that was never extracted. Converting the other two would split one pipeline's connection handling across two patterns and needs a signature change, which is a redesign rather than a conversion. Consistent with the existing userdump/sqlite.go entry."
     },
     "f057722c8e88": {
       "id": "f057722c8e88",
@@ -122976,7 +122985,7 @@
     "f1d697db5654": {
       "id": "f1d697db5654",
       "file": "iznik-server-go/message/message.go",
-      "line": 5251,
+      "line": 5268,
       "function": "handleMove",
       "receiver": "tx",
       "method": "Exec",
@@ -123537,7 +123546,7 @@
     "f30172c24e2d": {
       "id": "f30172c24e2d",
       "file": "iznik-server-go/message/message.go",
-      "line": 3560,
+      "line": 3575,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -123966,9 +123975,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT id, added, bounced, preferred, email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, email ASC",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f3d569f16f75": {
       "id": "f3d569f16f75",
@@ -124244,7 +124253,7 @@
     "f43d5f680ef9": {
       "id": "f43d5f680ef9",
       "file": "iznik-server-go/session/session.go",
-      "line": 1283,
+      "line": 1288,
       "function": "GetSession",
       "receiver": "db",
       "method": "Raw",
@@ -124497,7 +124506,7 @@
     "f4a8db8dd183": {
       "id": "f4a8db8dd183",
       "file": "iznik-server-go/user/user.go",
-      "line": 2922,
+      "line": 2927,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -125370,7 +125379,7 @@
     "f619bcea08df": {
       "id": "f619bcea08df",
       "file": "iznik-server-go/user/user.go",
-      "line": 1487,
+      "line": 1492,
       "function": "enrichUserForModtools",
       "receiver": "db",
       "method": "Exec",
@@ -126028,7 +126037,7 @@
     "f78aeb6435bd": {
       "id": "f78aeb6435bd",
       "file": "iznik-server-go/user/user.go",
-      "line": 1663,
+      "line": 1668,
       "function": "handleEngaged",
       "receiver": "db",
       "method": "Exec",
@@ -126182,7 +126191,7 @@
     "f7deed72f131": {
       "id": "f7deed72f131",
       "file": "iznik-server-go/message/message.go",
-      "line": 2143,
+      "line": 2151,
       "function": "addApprovedMessageToSpatialIndex",
       "receiver": "db.Clauses()",
       "method": "Raw",
@@ -126582,7 +126591,7 @@
     "f85b0b8ed693": {
       "id": "f85b0b8ed693",
       "file": "iznik-server-go/session/session.go",
-      "line": 1901,
+      "line": 1906,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -126911,7 +126920,7 @@
     "f90b6df0a3bb": {
       "id": "f90b6df0a3bb",
       "file": "iznik-server-go/message/message.go",
-      "line": 2925,
+      "line": 2938,
       "function": "handleRejectToDraft",
       "receiver": "tx",
       "method": "Exec",
@@ -126977,7 +126986,7 @@
     "f935f69bc2ce": {
       "id": "f935f69bc2ce",
       "file": "iznik-server-go/message/message.go",
-      "line": 3713,
+      "line": 3728,
       "function": "applyPatchMessageCore",
       "receiver": "db",
       "method": "Exec",
@@ -127708,7 +127717,7 @@
     "fa6c771b3c3a": {
       "id": "fa6c771b3c3a",
       "file": "iznik-server-go/user/user.go",
-      "line": 2837,
+      "line": 2842,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -128149,8 +128158,8 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT * FROM users_comments WHERE id = ? AND groupid IN (?)",
-      "presentInCode": true,
-      "hasParityTest": false,
+      "presentInCode": false,
+      "hasParityTest": true,
       "status": "converted"
     },
     "fb4e1fce2796": {
@@ -128178,7 +128187,7 @@
     "fb4e48c03bee": {
       "id": "fb4e48c03bee",
       "file": "iznik-server-go/group/group.go",
-      "line": 788,
+      "line": 792,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -128429,7 +128438,7 @@
     "fbbd963966cb": {
       "id": "fbbd963966cb",
       "file": "iznik-server-go/user/user.go",
-      "line": 2967,
+      "line": 2972,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -128498,7 +128507,7 @@
     "fbea0c27cf49": {
       "id": "fbea0c27cf49",
       "file": "iznik-server-go/user/user.go",
-      "line": 2181,
+      "line": 2186,
       "function": "ProcessSettingsUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -128811,7 +128820,7 @@
     "fc7cf4ff8b35": {
       "id": "fc7cf4ff8b35",
       "file": "iznik-server-go/session/session.go",
-      "line": 1796,
+      "line": 1801,
       "function": "PatchSession",
       "receiver": "db",
       "method": "Exec",
@@ -129035,7 +129044,7 @@
     "fd0917d06441": {
       "id": "fd0917d06441",
       "file": "iznik-server-go/group/group.go",
-      "line": 808,
+      "line": 812,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -130237,7 +130246,7 @@
     "fec927e74aaa": {
       "id": "fec927e74aaa",
       "file": "iznik-server-go/user/user.go",
-      "line": 2005,
+      "line": 2010,
       "function": "PutUser",
       "receiver": "db",
       "method": "Exec",

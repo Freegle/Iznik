@@ -25,7 +25,9 @@ func getEmails(id uint64) []UserEmail {
 
 	var emails []UserEmail
 
-	db.Raw("SELECT id, added, bounced, preferred, email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, email ASC;", id).Scan(&emails)
+	// ORM migration site f3bad72ed518 (wave 1).
+	db.Table("users_emails").Select("id, added, bounced, preferred, email").
+		Where("userid = ?", id).Order("preferred DESC, email ASC").Scan(&emails)
 
 	for ix, e := range emails {
 		emails[ix].Ourdomain = utils.OurDomain(e.Email)

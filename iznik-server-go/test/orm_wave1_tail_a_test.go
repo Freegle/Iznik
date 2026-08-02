@@ -380,3 +380,40 @@ func TestWave1TailA_817db6feee45(t *testing.T) {
 			Where("id = ?", 1).Find(&dest)
 	})
 }
+
+// The two sites below bind a Go slice to IN. GORM renders "IN (?,?,?)" for a
+// three-element slice while the golden records the source text ("IN ?" or
+// "IN (?)"). The old db.Raw call expanded the slice identically, so the
+// executed SQL always matched; only the recorded golden differs, being
+// captured before expansion. AssertGoldenSQL now collapses placeholder IN
+// lists on both sides, which is what makes these convertible.
+
+func TestWave1TailA_9494e3480fa0(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "9494e3480fa0", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("groups").Select("id, poly, polyofficial").
+			Where("id IN ?", []uint64{1, 2, 3}).Find(&dest)
+	})
+}
+
+func TestWave1TailA_fb45e5ba61ec(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "fb45e5ba61ec", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("users_comments").
+			Where("id = ? AND groupid IN ?", 1, []uint64{2, 3}).Find(&dest)
+	})
+}
+
+// a7496f46878c is textually identical to 9494e3480fa0 and sits in the same
+// file. Converting only one of a pair like that renumbers the survivor's site
+// ID, because the ID is hashed from (file, SQL, occurrence index): the second
+// statement becomes the first, inherits its ID, and quietly inherits its parity
+// test too. They are converted together for that reason, and ratchet gate (h)
+// now refuses the split state.
+func TestWave1TailA_a7496f46878c(t *testing.T) {
+	var dest []map[string]interface{}
+	ormharness.AssertGoldenSQL(t, "a7496f46878c", func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("groups").Select("id, poly, polyofficial").
+			Where("id IN ?", []uint64{1, 2, 3}).Find(&dest)
+	})
+}

@@ -198,9 +198,10 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []countRow
-		db.Raw("SELECT groupid, COUNT(*) as count FROM memberships "+
-			"WHERE groupid IN ? AND collection = ? "+
-			"GROUP BY groupid", allGroupIDs, utils.COLLECTION_PENDING).Scan(&rows)
+		// ORM migration site 1de7b48d433b (wave 1).
+		db.Table("memberships").Select("groupid, COUNT(*) as count").
+			Where("groupid IN ? AND collection = ?", allGroupIDs, utils.COLLECTION_PENDING).
+			Group("groupid").Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
@@ -320,9 +321,10 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		db.Raw("SELECT groupid, COUNT(DISTINCT id) as count FROM admins "+
-			"WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL "+
-			"GROUP BY groupid", activeGroupIDs).Scan(&rows)
+		// ORM migration site de52b33ad2c2 (wave 1).
+		db.Table("admins").Select("groupid, COUNT(DISTINCT id) as count").
+			Where("groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL", activeGroupIDs).
+			Group("groupid").Scan(&rows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {

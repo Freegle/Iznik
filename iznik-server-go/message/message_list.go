@@ -603,8 +603,10 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// message the next page's arrival boundary lands at the wrong time and can
 		// drop messages that sort between the two values.
 		var lastArrival time.Time
-		db.Raw("SELECT MAX(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
-			msgIDs[len(msgIDs)-1], groupIDs).Scan(&lastArrival)
+		// ORM migration site 1aa7cdd2a963 (wave 1).
+		db.Table("messages_groups").Select("MAX(arrival)").
+			Where("msgid = ? AND groupid IN ? AND deleted = 0", msgIDs[len(msgIDs)-1], groupIDs).
+			Scan(&lastArrival)
 		if !lastArrival.IsZero() {
 			respCtx = &PaginationContext{
 				Date: lastArrival.Unix(),

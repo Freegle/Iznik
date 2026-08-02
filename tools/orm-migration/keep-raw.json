@@ -37,6 +37,19 @@
       "reason": "Builds a SQLite export file, not a query against the Percona cluster. Out of scope for the MySQL-to-ORM work and unaffected by the engine migration."
     },
     {
+      "file": "iznik-server-go/recommendations/stats.go",
+      "function": "Stats",
+      "reason": "Carries an optimiser hint, /*+ MAX_EXECUTION_TIME(10000) */, over messages_likes (~75M rows, and unindexed for this access pattern). The caller inspects .Error to set a degraded flag when the hint aborts a slow query, so the hint is load-bearing behaviour rather than a comment. It could probably be smuggled into the Select string, since GORM renders SELECT <select-clause> FROM, but getting that subtly wrong on a table this size degrades a live endpoint rather than failing visibly, so it wants a deliberate decision and its own test rather than a wave conversion."
+    },
+    {
+      "file": "iznik-server-go/userdump/",
+      "reason": "The dump pipeline threads a raw *sql.DB rather than a *gorm.DB through buildDump/buildPlan/scanIDs/runDBSpec, and two of its four query sites build dynamic SQL text that was never extracted. Converting the other two would split one pipeline's connection handling across two patterns and needs a signature change, which is a redesign rather than a conversion. Consistent with the existing userdump/sqlite.go entry."
+    },
+    {
+      "file": "iznik-server-go/ormshadow/",
+      "reason": "Layer 3 harness infrastructure. Reads the shadow batch flag from the config table by design and is not a migration target, in the same way the ormharness package is not."
+    },
+    {
       "file": "iznik-server-go/chat/chatroom.go",
       "function": "GetOrCreateUser2ModChat",
       "reason": "The SELECT ... FOR UPDATE runs through tx.QueryRow on a raw *sql.Tx taken from db.DB().Begin(), and shares that transaction with a following raw INSERT that needs sql.Result.LastInsertId() on the same connection. Converting only the SELECT would either take it outside the transaction, defeating the row lock, or force the whole function onto db.Transaction(). Same shape as tryst.CreateTryst: a per-site redesign, not a mechanical conversion. Found during the Wave 1 chat batch."

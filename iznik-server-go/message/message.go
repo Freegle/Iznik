@@ -326,7 +326,11 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 		Settings string `gorm:"column:settings"`
 	}
 	var groups []groupSettings
-	db.Raw("SELECT id, settings FROM `groups` WHERE id IN (?)", groupIDs).Scan(&groups)
+	// ORM migration site 340a0eccf392 (wave 1). Converted together with its
+	// identical sibling in applyExpiry below: leaving one of two textually
+	// identical statements raw is the configuration that renumbers the
+	// survivor's site ID (ratchet gate h).
+	db.Table("groups").Select("id, settings").Where("id IN ?", groupIDs).Scan(&groups)
 
 	var latest *time.Time
 
@@ -1315,7 +1319,10 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 	settingsMap := map[uint64]groupSettings{}
 	if len(ids) > 0 {
 		var groups []groupRow
-		db.Raw("SELECT id, settings FROM `groups` WHERE id IN (?)", ids).Scan(&groups)
+		// ORM migration site 99480793d36b (wave 1). Identical sibling of
+		// 340a0eccf392 above in computeExpiresat; converted together
+		// (ratchet gate h).
+		db.Table("groups").Select("id, settings").Where("id IN ?", ids).Scan(&groups)
 
 		for _, g := range groups {
 			var s groupSettings
@@ -1400,9 +1407,9 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 		Latest   *time.Time `gorm:"column:latest"`
 	}
 	var chatResults []chatLatest
-	db.Raw("SELECT refmsgid, MAX(date) AS latest "+
-		"FROM chat_messages "+
-		"WHERE refmsgid IN (?) GROUP BY refmsgid", candidateIDs).Scan(&chatResults)
+	// ORM migration site 407bd1e3018a (wave 1).
+	db.Table("chat_messages").Select("refmsgid, MAX(date) AS latest").
+		Where("refmsgid IN ?", candidateIDs).Group("refmsgid").Scan(&chatResults)
 
 	recentChat := map[uint64]bool{}
 	for _, cr := range chatResults {
@@ -1658,7 +1665,8 @@ func Search(c *fiber.Ctx) error {
 					ID      uint64    `gorm:"column:id"`
 					Arrival time.Time `gorm:"column:arrival"`
 				}
-				db.Raw("SELECT id, arrival FROM messages WHERE id IN (?)", ids).Scan(&rows)
+				// ORM migration site 069e96c5c43e (wave 1).
+				db.Table("messages").Select("id, arrival").Where("id IN ?", ids).Scan(&rows)
 				posted := make(map[uint64]time.Time, len(rows))
 				for _, row := range rows {
 					posted[row.ID] = row.Arrival
@@ -2237,7 +2245,10 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Mark as ham if it was flagged as spam on any authorised group (fall back to messages table).
 	var spamtype *string
-	db.Raw("SELECT spamtype FROM messages_groups WHERE msgid = ? AND groupid IN ? AND spamtype IS NOT NULL LIMIT 1", req.ID, authorizedGroups).Scan(&spamtype)
+	// ORM migration site d17e1becbe03 (wave 1).
+	db.Table("messages_groups").Select("spamtype").
+		Where("msgid = ? AND groupid IN ? AND spamtype IS NOT NULL", req.ID, authorizedGroups).
+		Limit(1).Scan(&spamtype)
 	if spamtype == nil {
 		// ORM migration site 5fd102e62bbb (wave 1).
 		db.Table("messages").Select("spamtype").Where("id = ?", req.ID).Scan(&spamtype)
@@ -2360,8 +2371,10 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// explanation - must not log a phantom rejection or email the poster a "rejected"
 	// notice while the post stays live.
 	var pendingGroups []uint64
-	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0",
-		req.ID, authorizedGroups, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+	// ORM migration site 6c69b307a927 (wave 1).
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0",
+			req.ID, authorizedGroups, utils.COLLECTION_PENDING).Scan(&pendingGroups)
 
 	if subject != "" && len(pendingGroups) == 0 {
 		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
@@ -3530,7 +3543,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 				Externalmods string
 			}
 			var attRows []attachExtern
-			db.Raw("SELECT id, COALESCE(externalmods, '') AS externalmods FROM messages_attachments WHERE id IN (?) AND msgid = ?", req.Attachments, req.ID).Scan(&attRows)
+			// ORM migration site 048db12b9b08 (wave 1).
+			db.Table("messages_attachments").Select("id, COALESCE(externalmods, '') AS externalmods").
+				Where("id IN ? AND msgid = ?", req.Attachments, req.ID).Scan(&attRows)
 			externByID := make(map[uint64]string, len(attRows))
 			for _, r := range attRows {
 				externByID[r.ID] = r.Externalmods
@@ -4664,9 +4679,11 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 	// Holds are per-group: a message held on one group must not block moderation on
 	// another group it is also pending on.
 	var holder uint64
-	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? "+
-		"AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",
-		req.ID, authorizedGroups, myid).Scan(&holder)
+	// ORM migration site ef712c65234c (wave 1).
+	db.Table("messages_groups").Select("heldby").
+		Where("msgid = ? AND groupid IN ? AND heldby IS NOT NULL AND heldby != ? AND deleted = 0",
+			req.ID, authorizedGroups, myid).
+		Limit(1).Scan(&holder)
 	if holder == 0 {
 		return 0, ""
 	}
@@ -5295,7 +5312,9 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 
 	var candidates []aiCandidate
 	if len(keepList) > 0 {
-		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", msgID, keepList).Scan(&candidates)
+		// ORM migration site 1b80281ee67a (wave 1).
+		db.Table("messages_attachments").Select("id, COALESCE(externaluid, '') AS externaluid, externalmods").
+			Where("msgid = ? AND id NOT IN ?", msgID, keepList).Scan(&candidates)
 	} else {
 		// ORM migration site 87fd51e20996 (wave 1).
 		db.Table("messages_attachments").Select("id, COALESCE(externaluid, '') AS externaluid, externalmods").Where("msgid = ?", msgID).Scan(&candidates)
