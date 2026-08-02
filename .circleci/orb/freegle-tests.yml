@@ -2347,9 +2347,24 @@ jobs:
       # site's golden SQL drifted from what's committed, the raw+in-progress count regressed
       # past its ratchet baseline, or a keep-raw site has no written reason. See
       # tools/orm-migration/README.md.
+      # Self-guarding so this orb version is safe to publish BEFORE the ORM
+      # migration branch merges. Publishing is what makes an orb change take
+      # effect - CircleCI resolves freegle/tests from the registry, not from the
+      # copy in this repo - so an unpublished step is not a gate, it is a
+      # comment. But publishing a step that hard-fails would break master
+      # immediately, since master has neither the script nor the manifest yet.
+      #
+      # Skipping only when the whole migration is absent keeps that from being a
+      # loophole: once the script exists, a missing manifest is treated as
+      # someone having deleted it, and fails.
       - run:
           name: ORM migration inventory ratchet (Gate 1)
-          command: tools/orm-migration/ci-ratchet.sh
+          command: |
+            if [ ! -f tools/orm-migration/ci-ratchet.sh ]; then
+              echo "ORM migration tooling not present on this branch; nothing to ratchet."
+              exit 0
+            fi
+            tools/orm-migration/ci-ratchet.sh
 
       - run:
           name: Determine changed paths
