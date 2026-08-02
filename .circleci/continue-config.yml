@@ -35,7 +35,7 @@ orbs:
   # Safe to raise on master ahead of the migration merging: the step exits 0
   # when tools/orm-migration/ci-ratchet.sh is absent, so a branch without the
   # migration is unaffected.
-  freegle: freegle/tests@1.1.367
+  freegle: freegle/tests@1.1.368
 
 jobs:
   mark-ci-passed:

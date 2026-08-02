@@ -2407,7 +2407,16 @@ jobs:
               if ! command -v php >/dev/null 2>&1; then
                 echo "Installing php-cli for the Laravel half of the ratchet..."
                 sudo apt-get update -qq
-                sudo apt-get install -y --no-install-recommends php-cli php-mbstring php-xml
+                # php-zip AND unzip are both needed, and their absence is not
+                # obvious from the failure: composer does not error on a missing
+                # zip capability, it prints "The zip extension and unzip/7z
+                # commands are both missing, skipping." and then fails later on a
+                # vendor/autoload.php that was never written. Installing the
+                # extension and the binary covers both of composer's extraction
+                # paths. (Learned the hard way: orb 1.1.367 shipped without them
+                # and took PR #1230 red.)
+                sudo apt-get install -y --no-install-recommends \
+                  php-cli php-mbstring php-xml php-zip unzip
               fi
               if ! command -v composer >/dev/null 2>&1; then
                 echo "Installing composer..."
