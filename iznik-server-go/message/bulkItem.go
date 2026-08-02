@@ -586,14 +586,23 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 					"dimensions": in.Dimensions, "photourl": in.Photourl, "description": in.Description,
 				})
 		} else {
-			sqlDB, err := db.DB()
-			if err == nil {
-				res, err := sqlDB.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions, photourl, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-					msgid, pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description)
-				if err == nil {
-					if id, err := res.LastInsertId(); err == nil {
-						itemID = uint64(id)
-					}
+			// ORM migration site faa9018435a3 (insertid-conv). Table()+map
+			// Create reads the generated id back from the same sql.Result
+			// the INSERT returned, under the map key "@id" - see
+			// test/orm_insertid_test.go.
+			row := map[string]interface{}{
+				"msgid":       msgid,
+				"position":    pos,
+				"name":        name,
+				"quantity":    qty,
+				"condition":   condition,
+				"dimensions":  in.Dimensions,
+				"photourl":    in.Photourl,
+				"description": in.Description,
+			}
+			if err := db.Table("messages_bulk_items").Create(row).Error; err == nil {
+				if id, ok := row["@id"].(int64); ok {
+					itemID = uint64(id)
 				}
 			}
 		}
@@ -802,16 +811,13 @@ func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
 			log.Printf("bulk photo ingest: upload failed for %s: %v", r.Photourl, err)
 			continue
 		}
-		sqlDB, dberr := db.DB()
-		if dberr != nil {
+		// ORM migration site fb88302d28cb (insertid-conv).
+		row := map[string]interface{}{"msgid": msgid, "externaluid": uid}
+		if err := db.Table("messages_attachments").Create(row).Error; err != nil {
+			log.Printf("bulk photo ingest: attachment insert failed for %s: %v", r.Photourl, err)
 			continue
 		}
-		res, dberr := sqlDB.Exec("INSERT INTO messages_attachments (msgid, externaluid) VALUES (?, ?)", msgid, uid)
-		if dberr != nil {
-			log.Printf("bulk photo ingest: attachment insert failed for %s: %v", r.Photourl, dberr)
-			continue
-		}
-		if attID, idErr := res.LastInsertId(); idErr == nil {
+		if attID, ok := row["@id"].(int64); ok {
 			linkBulkItemAttachment(db, r.ID, uint64(attID))
 		}
 	}

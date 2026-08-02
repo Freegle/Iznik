@@ -422,23 +422,27 @@ func PostModConfig(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 	}
 
-	// Simple create.
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Simple create. Table()+map Create reads the generated id back from the
+	// same sql.Result the INSERT returned, under the map key "@id" - see
+	// test/orm_insertid_test.go.
+	// ORM migration site 181d8342ea4a (insertid-conv).
+	row := map[string]interface{}{
+		"name":           req.Name,
+		"createdby":      myid,
+		"ccrejectaddr":   gorm.Expr("''"),
+		"ccfollowupaddr": gorm.Expr("''"),
+		"ccrejmembaddr":  gorm.Expr("''"),
+		"ccfollmembaddr": gorm.Expr("''"),
+		"network":        gorm.Expr("''"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')", req.Name, myid)
-	if err != nil {
+	if err := db.Table("mod_configs").Create(row).Error; err != nil {
 		stdlog.Printf("Failed to create mod config: %v", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
+	lastID, _ := row["@id"].(int64)
+	if lastID > 0 {
 		newID = uint64(lastID)
 	}
 	if newID == 0 {

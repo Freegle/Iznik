@@ -252,23 +252,30 @@ func PostAdmin(c *fiber.Ctx) error {
 			}
 		}
 
-		// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-		// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-		// parallel load (GORM's connection pool may assign a different connection).
-		sqlDB, err := db.DB()
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+		// Table()+map Create reads the generated id back from the same
+		// sql.Result the INSERT returned, under the map key "@id" - see
+		// test/orm_insertid_test.go.
+		// ORM migration site 88399aa73e56 (insertid-conv).
+		row := map[string]interface{}{
+			"createdby":     myid,
+			"groupid":       utils.NilIfZero(req.GroupID),
+			"subject":       req.Subject,
+			"text":          req.Text,
+			"ctatext":       req.CTA_Text,
+			"ctalink":       req.CTA_Link,
+			"essential":     essential,
+			"template":      template,
+			"editprotected": req.Editprotected != nil && *req.Editprotected,
+			"sendafter":     sendAfter,
+			"created":       gorm.Expr("NOW()"),
 		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO admins (createdby, groupid, subject, text, ctatext, ctalink, essential, template, editprotected, sendafter, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-			myid, utils.NilIfZero(req.GroupID), req.Subject, req.Text, req.CTA_Text, req.CTA_Link, essential, template, req.Editprotected != nil && *req.Editprotected, sendAfter)
-
-		if err != nil {
+		if err := db.Table("admins").Create(row).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create admin")
 		}
 
 		var id uint64
-		lastID, err := sqlResult.LastInsertId()
-		if err == nil && lastID > 0 {
+		lastID, _ := row["@id"].(int64)
+		if lastID > 0 {
 			id = uint64(lastID)
 		}
 

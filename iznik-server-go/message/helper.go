@@ -604,17 +604,26 @@ func helperCreateProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequ
 	}
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
 
-	sqlDB, dberr := db.DB()
-	if dberr != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "DB error")
+	// ORM migration site 7394291c903d (insertid-conv). Table()+map Create
+	// reads the generated id back from the same sql.Result the INSERT
+	// returned (gorm.io/gorm/callbacks/create.go), writing it into the map
+	// under "@id" - proven against the real database in
+	// test/orm_insertid_test.go, not merely reasoned about.
+	row := map[string]interface{}{
+		"batchid":       batchid,
+		"type":          *req.Type,
+		"replierid":     req.Replierid,
+		"bulkitemid":    req.Bulkitemid,
+		"summary":       req.Summary,
+		"proposed_text": req.ProposedText,
+		"payload":       req.Payload,
+		"rationale":     req.Rationale,
+		"status":        gorm.Expr("'pending'"),
 	}
-	res, exerr := sqlDB.Exec("INSERT INTO helper_proposals (batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status) "+
-		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-		batchid, *req.Type, req.Replierid, req.Bulkitemid, req.Summary, req.ProposedText, req.Payload, req.Rationale)
-	if exerr != nil {
+	if err := db.Table("helper_proposals").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not create proposal")
 	}
-	pid, _ := res.LastInsertId()
+	pid, _ := row["@id"].(int64)
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "proposalid": uint64(pid)})
 }
 
@@ -622,19 +631,22 @@ func helperCreateProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequ
 // records it in helper_sent_messages (AI badge + outbound dedupe). Returns the new
 // chat message id.
 func insertHelperChat(db *gorm.DB, batchid, chatid, offerer, msgid, replierid uint64, body, kind string, auto bool, proposalid *uint64) uint64 {
-	sqlDB, err := db.DB()
-	if err != nil {
+	// ORM migration site d3790f53ec52 (insertid-conv). See 7394291c903d
+	// above for why Table()+map Create's "@id" writeback is a safe read of
+	// this same INSERT's generated id, not a second connection-scoped query.
+	row := map[string]interface{}{
+		"chatid":             chatid,
+		"userid":             offerer,
+		"type":               utils.CHAT_MESSAGE_DEFAULT,
+		"refmsgid":           msgid,
+		"date":               time.Now(),
+		"message":            body,
+		"processingrequired": gorm.Expr("1"),
+	}
+	if err := db.Table("chat_messages").Create(row).Error; err != nil {
 		return 0
 	}
-	res, err := sqlDB.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-		chatid, offerer, utils.CHAT_MESSAGE_DEFAULT, msgid, time.Now(), body)
-	if err != nil {
-		return 0
-	}
-	cmid, err := res.LastInsertId()
-	if err != nil {
-		return 0
-	}
+	cmid, _ := row["@id"].(int64)
 	// ORM migration site 1f1db38c17ab (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 	var rid interface{}
@@ -725,16 +737,19 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 		if replierid > 0 {
 			ridArg = replierid
 		}
-		sqlDB, dberr := db.DB()
-		if dberr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "DB error")
+		// ORM migration site 7ec60cde5d39 (insertid-conv).
+		row := map[string]interface{}{
+			"batchid":       batchid,
+			"type":          gorm.Expr("'message'"),
+			"replierid":     ridArg,
+			"summary":       "Message to send (" + kind + ")",
+			"proposed_text": body,
+			"status":        gorm.Expr("'pending'"),
 		}
-		res, exerr := sqlDB.Exec("INSERT INTO helper_proposals (batchid, type, replierid, summary, proposed_text, status) VALUES (?, 'message', ?, ?, ?, 'pending')",
-			batchid, ridArg, "Message to send ("+kind+")", body)
-		if exerr != nil {
+		if err := db.Table("helper_proposals").Create(row).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Could not create proposal")
 		}
-		pid, _ := res.LastInsertId()
+		pid, _ := row["@id"].(int64)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Proposed", "proposalid": uint64(pid)})
 	}
 	// On the FIRST message the Helper auto-sends to a replier, append a light-touch

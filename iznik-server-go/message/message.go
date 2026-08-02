@@ -4580,18 +4580,31 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	// the user's PREVIOUS message - causing the new post (and its photos) to be
 	// grafted onto an existing one (Discourse 9832 "mixed up offers"). Read the id
 	// back from the write connection via LastInsertId, as CreateGroup does.
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 1590b130f529 (insertid-conv). Table()+map Create
+	// reads the generated id back from the same sql.Result the INSERT
+	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	row := map[string]interface{}{
+		"fromuser":           myid,
+		"type":               req.Type,
+		"subject":            req.Subject,
+		"textbody":           req.Textbody,
+		"message":            req.Textbody,
+		"arrival":            gorm.Expr("NOW()"),
+		"date":               gorm.Expr("NOW()"),
+		"source":             gorm.Expr("'Platform'"),
+		"availableinitially": availInit,
+		"availablenow":       availNow,
+		"locationid":         req.Locationid,
+		"fromip":             fromip,
+		"fromcountry":        fromcountry,
+		"messageid":          messageid,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, fromcountry, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, fromcountry, messageid)
-	if err != nil {
+	if err := db.Table("messages").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}
 
-	lastID, err := sqlResult.LastInsertId()
-	if err != nil || lastID <= 0 {
+	lastID, _ := row["@id"].(int64)
+	if lastID <= 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
 	newMsgID := uint64(lastID)

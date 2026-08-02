@@ -1,0 +1,136 @@
+{
+  "_comment": [
+    "Per-site SQL shapes for AssertGoldenShapes (shapes.go), plan 7.2 Layer 1",
+    "extended for sites kept raw as \"runtime-varying: the statement has more",
+    "than one possible rendered form\" (tools/orm-migration/keep-raw.json). A",
+    "single goldenSql cannot describe such a site; this lists every SQL form",
+    "its ORIGINAL raw-SQL code could produce, derived from that code's own",
+    "branching (a switch case, a map key, an if/else arm), not from the",
+    "conversion. AssertGoldenShapes fails unless a site's conversion test",
+    "covers every shape declared here, and only those.",
+    "",
+    "Declarative, like keep-raw.json and approved-diffs.json: the expected SQL",
+    "for each shape is recorded here for review, not asserted by whoever wrote",
+    "the conversion - a test that supplies both the expected SQL and the code",
+    "producing it proves only that the two agree with each other.",
+    "",
+    "Lives in this package (ormharness), unlike keep-raw.json and",
+    "approved-diffs.json which live in tools/orm-migration: it is embedded the",
+    "same way manifest.json is (see embeddedManifest in golden.go) - the apiv2",
+    "container mounts iznik-server-go as /app, so nothing outside that",
+    "directory exists at runtime, and go:embed cannot reach outside its own",
+    "package directory regardless of where the file lived."
+  ],
+  "sites": {
+    "bc2f944bfbb7": [
+      {
+        "name": "Message",
+        "sql": "SELECT `fromuser` FROM `messages` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT `userid` FROM `chat_messages` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT `userid` FROM `communityevents` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT `userid` FROM `volunteering` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT `userid` FROM `users_stories` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT `userid` FROM `newsfeed` WHERE id = ?"
+      }
+    ],
+    "1be407fe0a15": [
+      {
+        "name": "Message",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived, COALESCE(externalurl, '') AS externalurl FROM `messages_attachments` WHERE id = ?"
+      },
+      {
+        "name": "Group",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `groups_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `newsletters_images` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `communityevents_images` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `volunteering_images` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `chat_images` WHERE id = ?"
+      },
+      {
+        "name": "User",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `users_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `newsfeed_images` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `users_stories_images` WHERE id = ?"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `noticeboards_images` WHERE id = ?"
+      }
+    ],
+    "1606033fd8f7": [
+      {
+        "name": "Message",
+        "sql": "SELECT data, 'image/jpeg' AS contenttype FROM `messages_attachments` WHERE id = ?"
+      },
+      {
+        "name": "Group",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `groups_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `newsletters_images` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `communityevents_images` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `volunteering_images` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `chat_images` WHERE id = ?"
+      },
+      {
+        "name": "User",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `users_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `newsfeed_images` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `users_stories_images` WHERE id = ?"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `noticeboards_images` WHERE id = ?"
+      }
+    ]
+  }
+}

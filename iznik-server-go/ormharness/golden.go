@@ -74,12 +74,24 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 		t.Fatalf("ormharness: manifest site %q has no goldenSql to compare against", siteID)
 	}
 
+	assertRenderedSQL(t, siteID, "", site.GoldenSQL, site.ApprovedDiff, build)
+}
+
+// assertRenderedSQL is the comparison core shared by AssertGoldenSQL and
+// AssertGoldenShapes (shapes.go): render build in dry-run mode and check it
+// against wantSQL, allowing the same acceptable divergences either caller
+// tolerates. label is folded into every message this produces, so a shaped
+// site's failure names which shape diverged; AssertGoldenSQL passes "" and
+// gets the original unlabelled messages back unchanged.
+func assertRenderedSQL(t TestingT, siteID, label, wantSQL, approvedDiff string, build func(tx *gorm.DB) *gorm.DB) {
+	t.Helper()
+
 	rendered, vars, err := renderDryRun(build)
 	if err != nil {
-		t.Fatalf("ormharness: site %q: rendering GORM statement: %v", siteID, err)
+		t.Fatalf("ormharness: site %q%s: rendering GORM statement: %v", siteID, label, err)
 	}
 
-	wantCanon := Canonical(site.GoldenSQL)
+	wantCanon := Canonical(wantSQL)
 
 	// Two renderings are acceptable, and which one applies depends on the
 	// golden, not on a guess.
@@ -143,16 +155,16 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 		gotCanon = resolved
 	}
 
-	if site.ApprovedDiff != "" && Canonical(site.ApprovedDiff) == gotCanon {
+	if approvedDiff != "" && Canonical(approvedDiff) == gotCanon {
 		return // A reviewer already recorded and justified exactly this divergence.
 	}
 
 	verdict := "no approvedDiff is recorded for this site"
-	if site.ApprovedDiff != "" {
+	if approvedDiff != "" {
 		verdict = "the rendered SQL does not match the recorded approvedDiff either"
 	}
-	t.Fatalf("ormharness: site %q: rendered SQL diverges from goldenSql and %s\n%s",
-		siteID, verdict, formatMismatch(site.GoldenSQL, rendered, wantCanon, gotCanon))
+	t.Fatalf("ormharness: site %q%s: rendered SQL diverges from goldenSql and %s\n%s",
+		siteID, label, verdict, formatMismatch(wantSQL, rendered, wantCanon, gotCanon))
 }
 
 // RenderDryRunSQL builds a GORM statement via build and returns the raw SQL

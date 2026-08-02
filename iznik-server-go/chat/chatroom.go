@@ -1437,24 +1437,26 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 	// Create nudge message
 	now := time.Now()
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 1f5798e8214d (insertid-conv). Table()+map Create
+	// reads the generated id back from the same sql.Result the INSERT
+	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	row := map[string]interface{}{
+		"chatid":               chatid,
+		"userid":               myid,
+		"type":                 utils.CHAT_MESSAGE_NUDGE,
+		"date":                 now,
+		"message":              gorm.Expr("''"),
+		"replyexpected":        gorm.Expr("1"),
+		"reportreason":         gorm.Expr("NULL"),
+		"reviewrequired":       gorm.Expr("0"),
+		"reviewrejected":       gorm.Expr("0"),
+		"processingsuccessful": gorm.Expr("1"),
 	}
-	// Left raw (1f5798e8214d, wave 2): this INSERT exists specifically to call
-	// sql.Result.LastInsertId() on the same connection that ran it - the
-	// read/write split makes a follow-up SELECT unsafe, and GORM's map-Create
-	// id writeback for a schema-less Table()+map call is undocumented
-	// behaviour, not something to rely on for a fresh message id.
-	sqlResult, err := sqlDB.Exec(
-		"INSERT INTO chat_messages (chatid, userid, type, date, message, replyexpected, reportreason, reviewrequired, reviewrejected, processingsuccessful) VALUES (?, ?, ?, ?, '', 1, NULL, 0, 0, 1)",
-		chatid, myid, utils.CHAT_MESSAGE_NUDGE, now,
-	)
-	if err != nil {
+	if err := db.Table("chat_messages").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create nudge")
 	}
 
-	newIdInt, _ := sqlResult.LastInsertId()
+	newIdInt, _ := row["@id"].(int64)
 	newId := uint64(newIdInt)
 
 	// Update latestmessage on chat room

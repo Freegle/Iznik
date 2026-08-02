@@ -20,6 +20,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"gorm.io/gorm"
 )
 
 // PersistentToken represents the old-style session token from the Authorization2 header.
@@ -318,17 +319,21 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	// cross-node apply window, can return the user's PREVIOUS session - so the
 	// persistent token/JWT would carry the wrong session id (cf. message create,
 	// Discourse 9832). db.DB() returns the source even with dbresolver registered.
-	sqlDB, err := db.DB()
-	if err != nil {
-		return nil, "", fmt.Errorf("database error: %w", err)
+	// ORM migration site 45c97c1f1f58 (insertid-conv). Table()+map Create
+	// reads the generated id back from the same sql.Result the INSERT
+	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	row := map[string]interface{}{
+		"userid":     userID,
+		"series":     series,
+		"token":      token,
+		"date":       gorm.Expr("NOW()"),
+		"lastactive": gorm.Expr("NOW()"),
 	}
-	res, err := sqlDB.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
-		userID, series, token)
-	if err != nil {
+	if err := db.Table("sessions").Create(row).Error; err != nil {
 		return nil, "", fmt.Errorf("failed to create session: %w", err)
 	}
-	lastID, err := res.LastInsertId()
-	if err != nil || lastID <= 0 {
+	lastID, _ := row["@id"].(int64)
+	if lastID <= 0 {
 		return nil, "", fmt.Errorf("failed to create session")
 	}
 	sessionID := uint64(lastID)

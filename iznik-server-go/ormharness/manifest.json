@@ -2,10 +2,10 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1365,
-    "keep-raw": 257,
+    "converted": 1378,
+    "keep-raw": 244,
     "retired": 22,
-    "test-fixture": 4229
+    "test-fixture": 4234
   },
   "sites": {
     "00053e96d76f": {
@@ -2359,9 +2359,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "findOrCreateUser2UserRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "0510fa1a8a85": {
       "id": "0510fa1a8a85",
@@ -9188,7 +9188,7 @@
     "123512413259": {
       "id": "123512413259",
       "file": "iznik-server-go/message/helper.go",
-      "line": 696,
+      "line": 708,
       "function": "helperSendAction",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -9210,9 +9210,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "helperSendAction() inserts into helper_repliers and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "1240e34dd28e": {
       "id": "1240e34dd28e",
@@ -10511,7 +10511,7 @@
     "1571f00a4ce8": {
       "id": "1571f00a4ce8",
       "file": "iznik-server-go/image/image.go",
-      "line": 259,
+      "line": 266,
       "function": "doCreate",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -10573,9 +10573,9 @@
       "dynamic": false,
       "args": 11,
       "goldenSql": "INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, fromcountry, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "PutMessageAs() inserts into messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -10798,7 +10798,7 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM `{{expr}}` WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
       "status": "keep-raw",
       "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction.",
@@ -11938,9 +11938,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "PostModConfig() inserts into mod_configs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -13935,7 +13935,7 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM `{{expr}}` WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
       "status": "keep-raw",
       "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction.",
@@ -14731,7 +14731,7 @@
     "1d98111ea90d": {
       "id": "1d98111ea90d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1722,
+      "line": 1724,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -14932,6 +14932,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "1dd99d969f8b": {
+      "id": "1dd99d969f8b",
+      "file": "iznik-server-go/test/orm_insertid_ondupe_zero_test.go",
+      "line": 85,
+      "function": "TestInsertID_OnDuplicateNoOpUpdateLosesAtID",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "1de7b48d433b": {
       "id": "1de7b48d433b",
@@ -15799,9 +15821,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, date, message, replyexpected, reportreason, reviewrequired, reviewrejected, processingsuccessful) VALUES (?, ?, ?, ?, '', 1, NULL, 0, 0, 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "handleNudge() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -18911,9 +18933,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "PutUser() inserts into users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -19542,9 +19564,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "SetGiftAid() inserts into giftaid and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "2591913ca689": {
       "id": "2591913ca689",
@@ -20151,7 +20173,7 @@
     "26c94565517d": {
       "id": "26c94565517d",
       "file": "iznik-server-go/message/message.go",
-      "line": 5541,
+      "line": 5554,
       "function": "createSystemChatMessage",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -20173,9 +20195,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "createSystemChatMessage() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "26d9ec85b895": {
       "id": "26d9ec85b895",
@@ -22031,7 +22053,7 @@
     "2ad46344c8b2": {
       "id": "2ad46344c8b2",
       "file": "iznik-server-go/image/image.go",
-      "line": 312,
+      "line": 319,
       "function": "doRotate",
       "receiver": "db",
       "method": "Exec",
@@ -27456,7 +27478,7 @@
     "35023816be21": {
       "id": "35023816be21",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1813,
+      "line": 1815,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -27571,7 +27593,7 @@
     "3519e352775b": {
       "id": "3519e352775b",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1716,
+      "line": 1718,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -29464,7 +29486,7 @@
     "395499023142": {
       "id": "395499023142",
       "file": "iznik-server-go/user/user.go",
-      "line": 3476,
+      "line": 3482,
       "function": "GetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -31606,6 +31628,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "3dcf5630e1b1": {
+      "id": "3dcf5630e1b1",
+      "file": "iznik-server-go/test/orm_insertid_ondupe_zero_test.go",
+      "line": 129,
+      "function": "TestInsertID_WithResultSurvivesOnDuplicateNoOpUpdate",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "3df9a32dc731": {
       "id": "3df9a32dc731",
       "file": "iznik-server-go/user/user.go",
@@ -32125,9 +32169,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "GetOrCreateUser2UserChat() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "3efef6d7b4e0": {
       "id": "3efef6d7b4e0",
@@ -35623,9 +35667,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "CreateSessionAndJWT() inserts into sessions and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -38543,9 +38587,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "helperUpsertReplier() inserts into helper_repliers and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "4b13c81d7f07": {
       "id": "4b13c81d7f07",
@@ -40580,7 +40624,7 @@
     "4f9d823a53a7": {
       "id": "4f9d823a53a7",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1741,
+      "line": 1743,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -46438,7 +46482,7 @@
     "5b72a0acad8e": {
       "id": "5b72a0acad8e",
       "file": "iznik-server-go/user/user.go",
-      "line": 3075,
+      "line": 3081,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -51580,9 +51624,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "PutChatRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "655ed45477dc": {
       "id": "655ed45477dc",
@@ -51767,9 +51811,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "PutChatRoom() inserts into chat_rooms and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "65bff989abbe": {
       "id": "65bff989abbe",
@@ -54970,9 +55014,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "PostModConfig() inserts into mod_configs and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
+      "reason": "INSERT ... SELECT: PostModConfig's \"copy from an existing config\" path copies the mod_configs columns of the template config into the new row in a single statement (INSERT INTO mod_configs (...) SELECT ?, ... FROM mod_configs WHERE id = ?). GORM has no builder that expresses INSERT ... SELECT as one atomic statement - Create takes values, not a query - so converting it would mean reading the template row and inserting the copy separately, a different statement with a different concurrency story, not a port. This entry previously carried the generic \"LastInsertId is connection-scoped\" reasoning used for the 58 sites that turned out to be ordinary conversions (see test/orm_insertid_test.go); that reasoning was wrong for THIS site for an unrelated reason - it is not a plain VALUES-list INSERT at all, so the id-readback question is moot. Sibling of e137c396bd13 (the same function's mod_bulkops copy), which already carried the correct reason.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "category": "INSERT ... SELECT"
     },
     "6ba0b887748c": {
       "id": "6ba0b887748c",
@@ -57026,7 +57070,7 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT `{{expr}}` FROM `{{expr}}` WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
       "status": "keep-raw",
       "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction.",
@@ -59340,9 +59384,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO helper_proposals (batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "helperCreateProposal() inserts into helper_proposals and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -65212,9 +65256,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "ensureBatchRow() inserts into helper_batches and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "7e4550661950": {
       "id": "7e4550661950",
@@ -65739,9 +65783,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO helper_proposals (batchid, type, replierid, summary, proposed_text, status) VALUES (?, 'message', ?, ?, ?, 'pending')",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "helperSendAction() inserts into helper_proposals and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -65866,7 +65910,7 @@
     "7efd04588fb2": {
       "id": "7efd04588fb2",
       "file": "iznik-server-go/message/message.go",
-      "line": 5052,
+      "line": 5065,
       "function": "handlePromise",
       "receiver": "db",
       "method": "Exec",
@@ -70567,9 +70611,9 @@
       "dynamic": false,
       "args": 10,
       "goldenSql": "INSERT INTO admins (createdby, groupid, subject, text, ctatext, ctalink, essential, template, editprotected, sendafter, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "PostAdmin() inserts into admins and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -72292,7 +72336,7 @@
     "8c15ce918aa2": {
       "id": "8c15ce918aa2",
       "file": "iznik-server-go/message/message.go",
-      "line": 4703,
+      "line": 4716,
       "function": "PutMessageAs",
       "receiver": "db",
       "method": "Exec",
@@ -73086,7 +73130,7 @@
     "8d359d691beb": {
       "id": "8d359d691beb",
       "file": "iznik-server-go/message/helper.go",
-      "line": 829,
+      "line": 844,
       "function": "helperResolveProposal",
       "receiver": "db",
       "method": "Exec",
@@ -76656,7 +76700,7 @@
     "941509171a6e": {
       "id": "941509171a6e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2431,
+      "line": 2437,
       "function": "PatchUser",
       "receiver": "db",
       "method": "Exec",
@@ -86341,7 +86385,7 @@
     "a79f147726d0": {
       "id": "a79f147726d0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2910,
+      "line": 2916,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -86388,7 +86432,7 @@
     "a7b00c5503b7": {
       "id": "a7b00c5503b7",
       "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 601,
+      "line": 605,
       "function": "PatchModConfig",
       "receiver": "db",
       "method": "Exec",
@@ -90603,7 +90647,7 @@
     "b0445c89f59e": {
       "id": "b0445c89f59e",
       "file": "iznik-server-go/image/image.go",
-      "line": 264,
+      "line": 271,
       "function": "doCreate",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -92425,6 +92469,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "b3a1c79e86e5": {
+      "id": "b3a1c79e86e5",
+      "file": "iznik-server-go/test/orm_insertid_ondupe_zero_test.go",
+      "line": 178,
+      "function": "TestInsertID_MapReuseAcrossCallsLeaksStaleID",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain IN (?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "b3a6d62b9bff": {
       "id": "b3a6d62b9bff",
@@ -96450,9 +96516,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "socialMatchOrCreate() inserts into users and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -96725,8 +96791,8 @@
     "bc2f944bfbb7": {
       "id": "bc2f944bfbb7",
       "file": "iznik-server-go/image/image.go",
-      "line": 193,
-      "function": "ownsImageParent",
+      "line": 312,
+      "function": "doRotate",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -96743,9 +96809,7 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction.",
-      "porting": "PostgreSQL: no single translation - the statement is assembled at runtime, so each shape needs its own review. The SQL inside is generally ordinary, so the port cost is in reading the builder rather than in dialect features. Worth reviewing these for whether the dynamic assembly is still needed at all, since several build a WHERE from a fixed set of options that a query builder could express directly.",
-      "category": "Runtime-varying SQL"
+      "reason": "Runtime-varying: the statement has more than one possible rendered form (a literal value, column name, table name, WHERE fragment, or whole clause assembled at request time via fmt.Sprintf/string concatenation, captured by the extractor as \"{{expr}}\"/\"%s\"/\"%d\"/\"%f\" placeholders in the source text rather than as bind parameters). No single golden can describe every form it can take, so Layer 1 parity - one rendered statement compared against one golden - is impossible by construction."
     },
     "bc351e61ae54": {
       "id": "bc351e61ae54",
@@ -103633,9 +103697,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "PutUser() inserts into sessions and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -108835,9 +108899,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "insertHelperChat() inserts into chat_messages and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -109065,7 +109129,7 @@
     "d44b753b35c8": {
       "id": "d44b753b35c8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1846,
+      "line": 1848,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -109838,7 +109902,7 @@
     "d5ecca066b1b": {
       "id": "d5ecca066b1b",
       "file": "iznik-server-go/user/user.go",
-      "line": 3141,
+      "line": 3147,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -114757,9 +114821,9 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "keep-raw",
-      "reason": "helperSetItemState() inserts into helper_item_states and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
-      "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
-      "category": "INSERT whose generated id is read back"
+      "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), whose generated id the caller reads back. Note what this is NOT: it is not a cross-statement dependency on session state. LAST_INSERT_ID(expr) is the one-argument form, which makes the server report expr in the OK packet for THAT statement, so sql.Result.LastInsertId() reads it exactly as for a plain insert. The idiom exists so a conflicting upsert returns the EXISTING row id rather than nothing. It renders fine under GORM - clause.OnConflict with an ordered clause.Set carrying gorm.Expr(\"LAST_INSERT_ID(id)\") - and inserting, or colliding and changing a column, both return the right id (measured in test/orm_upsert_id_test.go). What blocks a mechanical conversion is narrower and real: GORM returns early from its create callback when RowsAffected is 0 (callbacks/create.go:123) and skips the id writeback, and MySQL reports 0 rows affected for an upsert that matched but changed nothing. So a repeat upsert with identical values leaves \"@id\" absent where the raw code still got the id back. Converting means handling a missing id with a lookup at each call site, which is a behaviour change to review rather than a swap - a deliberate decision, not an impossibility.",
+      "porting": "PostgreSQL: INSERT ... ON CONFLICT (cols) DO UPDATE SET ... RETURNING id, which is strictly better - RETURNING reports the id on both the insert and the conflict path, so the rowsAffected=0 gap that blocks the MySQL/GORM conversion does not exist. These become ordinary at the port. Note ON CONFLICT needs a named unique index or constraint on the conflict target, which Postgres will not infer.",
+      "category": "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     },
     "dfc60b541e97": {
       "id": "dfc60b541e97",
@@ -119793,7 +119857,7 @@
     "e99680f74b2e": {
       "id": "e99680f74b2e",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1826,
+      "line": 1828,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -128312,6 +128376,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "f9c23e9b5ac4": {
+      "id": "f9c23e9b5ac4",
+      "file": "iznik-server-go/ormharness/shapes_test.go",
+      "line": 190,
+      "function": "TestAssertGoldenShapes_CosmeticDifferencePasses",
+      "receiver": "tx",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "select `id` from `users` where id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "f9ca1aafe42b": {
       "id": "f9ca1aafe42b",
       "file": "iznik-server-go/test/microvolunteering_test.go",
@@ -128888,9 +128976,9 @@
       "dynamic": false,
       "args": 8,
       "goldenSql": "INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions, photourl, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "upsertBulkItems() inserts into messages_bulk_items and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -129408,9 +129496,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO messages_attachments (msgid, externaluid) VALUES (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "keep-raw",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
       "reason": "ingestBulkItemPhotos() inserts into messages_attachments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
@@ -129575,6 +129663,26 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "fbf0044ae07f": {
+      "id": "fbf0044ae07f",
+      "file": "iznik-server-go/ormharness/shapes_test.go",
+      "line": 171,
+      "function": "TestAssertGoldenShapes_NoShapesDeclaredForSiteFails",
+      "receiver": "tx",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "SELECT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "fbf8a34131ef": {
       "id": "fbf8a34131ef",
@@ -130567,7 +130675,7 @@
     "fdeb2007824a": {
       "id": "fdeb2007824a",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1772,
+      "line": 1774,
       "function": "countUnseenMT",
       "receiver": "db",
       "method": "Raw",

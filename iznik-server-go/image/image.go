@@ -190,7 +190,14 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	}
 	db := database.DBConn
 	var owner uint64
-	db.Raw("SELECT `"+ownerCol+"` FROM `"+table+"` WHERE id = ?", parentID).Scan(&owner)
+	// ORM migration site bc2f944bfbb7 (wave 5 shapes pilot). ownerCol/table
+	// come from the switch above, which has exactly 6 reachable cases
+	// (Message, ChatMessage, CommunityEvent, Volunteering, Story, Newsfeed -
+	// "User" and the default branch return before reaching this query), so
+	// this statement has exactly 6 possible rendered forms. All 6 are
+	// declared in ormharness/shapes.json and proven by
+	// TestShapesPilot_bc2f944bfbb7 (iznik-server-go/test).
+	db.Table("`"+table+"`").Select("`"+ownerCol+"`").Where("id = ?", parentID).Scan(&owner)
 	return owner != 0 && owner == myid
 }
 
@@ -430,7 +437,15 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var rows []legacyAttachment
-	db.Raw("SELECT "+cols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&rows)
+	// ORM migration site 1be407fe0a15 (wave 5 shapes pilot). cfg.Table comes
+	// from typeConfigs, which has exactly 10 entries, all reachable here (the
+	// default imgType "Message" plus the 9 getFlagTypes flags); cols is
+	// determined by imgType too (only Message adds externalurl), so there is
+	// exactly one rendered form per typeConfigs entry, not a cross product -
+	// 10 possible shapes total. All 10 are declared in
+	// ormharness/shapes.json and proven by TestShapesPilot_1be407fe0a15
+	// (iznik-server-go/test).
+	db.Table("`"+cfg.Table+"`").Select(cols).Where("id = ?", id).Scan(&rows)
 
 	if len(rows) == 0 {
 		return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
@@ -472,7 +487,13 @@ func Get(c *fiber.Ctx) error {
 		Data        []byte
 		Contenttype string
 	}
-	db.Raw("SELECT "+blobCols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&blob)
+	// ORM migration site 1606033fd8f7 (wave 5 shapes pilot). Same reasoning as
+	// 1be407fe0a15 above: blobCols is determined by cfg.HasContentType, which
+	// is itself a function of imgType (false only for Message), so this is
+	// again exactly one rendered form per typeConfigs entry - 10 shapes, all
+	// declared in ormharness/shapes.json and proven by
+	// TestShapesPilot_1606033fd8f7 (iznik-server-go/test).
+	db.Table("`"+cfg.Table+"`").Select(blobCols).Where("id = ?", id).Scan(&blob)
 	if len(blob.Data) > 0 {
 		ct := blob.Contenttype
 		if ct == "" {

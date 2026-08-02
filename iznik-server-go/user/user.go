@@ -2037,22 +2037,24 @@ func PutUser(c *fiber.Ctx) error {
 		lastname = &req.Lastname
 	}
 
-	// Create user.  Use raw database/sql to get LastInsertId() from the
-	// same result — avoids the GORM connection-pool race where a separate
-	// SELECT LAST_INSERT_ID() query could land on a different connection.
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get DB connection")
+	// Create user. Table()+map Create reads the generated id back from the
+	// same sql.Result the INSERT returned (gorm.io/gorm/callbacks/create.go),
+	// under the map key "@id" - no separate connection-scoped
+	// SELECT LAST_INSERT_ID() query, so no connection-pool race. See
+	// test/orm_insertid_test.go, which proves this against the real database.
+	// ORM migration site 24704432f4d4 (insertid-conv).
+	row := map[string]interface{}{
+		"fullname":  fullname,
+		"firstname": firstname,
+		"lastname":  lastname,
+		"added":     gorm.Expr("NOW()"),
 	}
-
-	sqlResult, err := sqlDB.Exec("INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
-		fullname, firstname, lastname)
-	if err != nil {
+	if err := db.Table("users").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 	}
 
-	newUserIDInt, err := sqlResult.LastInsertId()
-	if err != nil || newUserIDInt == 0 {
+	newUserIDInt, _ := row["@id"].(int64)
+	if newUserIDInt == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new user ID")
 	}
 	newUserID := uint64(newUserIDInt)
@@ -2140,12 +2142,16 @@ func PutUser(c *fiber.Ctx) error {
 	// split routes to a replica that can return the user's PREVIOUS session under
 	// Galera's cross-node apply window - putting the wrong session id in the JWT.
 	var sessionID uint64
-	if sqlDB, dberr := db.DB(); dberr == nil {
-		if res, exErr := sqlDB.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-			newUserID, series, token); exErr == nil {
-			if lastID, idErr := res.LastInsertId(); idErr == nil && lastID > 0 {
-				sessionID = uint64(lastID)
-			}
+	// ORM migration site c9c7922e5379 (insertid-conv).
+	sessionRow := map[string]interface{}{
+		"userid":     newUserID,
+		"series":     series,
+		"token":      token,
+		"lastactive": gorm.Expr("NOW()"),
+	}
+	if db.Table("sessions").Create(sessionRow).Error == nil {
+		if lastID, ok := sessionRow["@id"].(int64); ok && lastID > 0 {
+			sessionID = uint64(lastID)
 		}
 	}
 

@@ -85,29 +85,26 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		// SELECT LAST_INSERT_ID() as it's unsafe under parallel load (GORM's
 		// connection pool may assign a different connection).
 		//
-		// Left raw (bbbc465b075c, wave 2): this INSERT exists specifically to
-		// call sql.Result.LastInsertId() on the same connection that ran it -
-		// the read/write split makes a follow-up SELECT unsafe. GORM's
-		// map-Create id writeback for a schema-less Table()+map call is
-		// undocumented behaviour, not something to rely on for a fresh user
-		// id (see the Wave 2 pilot's writeup for the same reasoning on
-		// 698ab1090087/c1fca2fe89a0/da7e48606815). The golden column order
-		// (fullname, firstname, lastname, added) is also not alphabetical,
-		// so even setting the id question aside, a map Create would reorder
-		// the column list.
-		sqlDB, err := db.DB()
-		if err != nil {
-			return 0, fmt.Errorf("failed to get sql.DB: %w", err)
+		// ORM migration site bbbc465b075c (insertid-conv). Table()+map
+		// Create reads the generated id back from the SAME sql.Result the
+		// INSERT returned (gorm.io/gorm/callbacks/create.go), writing it
+		// into the map under "@id" - no separate connection-scoped query,
+		// so no connection to lose. Proven against the real database in
+		// test/orm_insertid_test.go. Column order in the map doesn't matter
+		// either way: normaliseColumnOrder (ormharness) pairs each column
+		// with its value before comparing against the golden.
+		row := map[string]interface{}{
+			"fullname":  fullname,
+			"firstname": firstname,
+			"lastname":  lastname,
+			"added":     gorm.Expr("NOW()"),
 		}
-
-		sqlResult, err := sqlDB.Exec("INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
-			fullname, firstname, lastname)
-		if err != nil {
+		if err := db.Table("users").Create(row).Error; err != nil {
 			return 0, fmt.Errorf("failed to create user: %w", err)
 		}
 
-		lastID, err := sqlResult.LastInsertId()
-		if err != nil || lastID == 0 {
+		lastID, _ := row["@id"].(int64)
+		if lastID == 0 {
 			return 0, fmt.Errorf("failed to get new user ID")
 		}
 		userID = uint64(lastID)
