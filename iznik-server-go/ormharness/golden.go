@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -102,6 +103,24 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 	if resolved == wantCanon {
 		return
 	}
+
+	// Third and last acceptable form: an IN list expanded to match the bound
+	// slice. GORM renders "id IN (?,?,?)" for a three-element slice, while the
+	// golden records whatever the source wrote, which is "IN ?" or "IN (?)".
+	//
+	// Crucially the OLD statement expands too: db.Raw("... IN ?", slice) goes
+	// through the same clause.Expr machinery. So the executed SQL was always
+	// the expanded form on both sides, and the mismatch is purely an artefact
+	// of the golden being captured from source text before expansion. Comparing
+	// the two is comparing a statement to itself at two different stages.
+	//
+	// The collapse is applied to BOTH sides so it stays symmetric, and it only
+	// touches runs of placeholders: a changed column, table or operator still
+	// fails, and an IN list of literals is untouched.
+	if collapseInLists(wantCanon) == collapseInLists(resolved) ||
+		collapseInLists(wantCanon) == collapseInLists(gotCanon) {
+		return
+	}
 	// Report against whichever form is closer to the golden, so the failure is
 	// about the real difference rather than about placeholder spelling. A
 	// golden that kept "limit ?" was dynamic to begin with, so the unresolved
@@ -167,6 +186,21 @@ func renderDryRun(build func(tx *gorm.DB) *gorm.DB) (string, []any, error) {
 			"since GORM rejects it in dry-run mode")
 	}
 	return sql, tx.Statement.Vars, nil
+}
+
+// inListPattern matches an IN or NOT IN whose operand is a run of bind
+// placeholders, with or without surrounding parentheses: "in ?", "in (?)",
+// "in (?,?,?)". Deliberately narrow - an IN list of literals such as
+// "in (1,2,3)" is left alone, because that is real content rather than an
+// artefact of how many values happened to be bound.
+var inListPattern = regexp.MustCompile(`(?i)\bin\s*(?:\(\s*\?(?:\s*,\s*\?)*\s*\)|\?)`)
+
+// collapseInLists rewrites every placeholder IN list to the single canonical
+// form "in ?", so a golden captured before slice expansion compares equal to a
+// render captured after it. Applied to both sides of the comparison, never to
+// one alone.
+func collapseInLists(sql string) string {
+	return inListPattern.ReplaceAllString(sql, "in ?")
 }
 
 // resolveLimitOffset puts the bound LIMIT and OFFSET values back into the

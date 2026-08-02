@@ -238,6 +238,41 @@ else
   note "gate (g) OK: the committed manifest matches what re-extraction finds"
 fi
 
+# --- Gate (h): identical statements in a file convert together ----------------
+# A site ID is a hash of (file, normalised SQL, occurrence index within the
+# file). That index is positional, so converting ONE of two textually identical
+# statements renumbers the survivor: the second becomes the first, inherits the
+# first's ID, and therefore inherits its parity test. The manifest then records
+# the wrong line, and a test vouches for a site it was not written for. Gate 2's
+# guarantee quietly stops holding.
+#
+# This was not hypothetical: converting group.go's first "SELECT id, poly,
+# polyofficial ... IN ?" rebound its ID to the untouched second one.
+#
+# 364 of the 1,636 in-scope sites sit in such duplicate groups, so the exposure
+# is real. Rather than chase a perfectly stable identifier - any positional
+# index renumbers when a sibling disappears - this refuses the one configuration
+# that triggers it. Identical statements in a file are converted together, which
+# is natural anyway since they are the same statement.
+jq -n --slurpfile c "$COMMITTED_MANIFEST" '
+  [ $c[0].sites | to_entries[]
+    | select(.value.status != "test-fixture")
+    | {k: (.value.file + " " + .value.goldenSql), id: .key, st: .value.status, f: .value.file} ]
+  | group_by(.k)
+  | map(select(length > 1))
+  | map(select((map(.st) | index("converted")) and (map(.st) | index("raw"))))
+  | map({file: .[0].f, members: map(.id + "/" + .st)})
+' >"$WORKDIR/split.json"
+
+split_count=$(jq 'length' "$WORKDIR/split.json")
+if [ "$split_count" -gt 0 ]; then
+  fail "$split_count group(s) of identical statements are half converted, which renumbers the survivors' site IDs:"
+  jq -r '.[] | "  \(.file)\n    \(.members | join("  "))"' "$WORKDIR/split.json" | head -30
+  note "fix: convert every identical statement in the file together, or leave them all raw"
+else
+  note "gate (h) OK: no half-converted groups of identical statements"
+fi
+
 # --- Summary -----------------------------------------------------------------
 counts=$(jq -c '.counts' "$COMMITTED_MANIFEST")
 note "committed manifest status counts: $counts"

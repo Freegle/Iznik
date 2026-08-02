@@ -35,7 +35,8 @@ func PostExport(c *fiber.Ctx) error {
 	// Check for existing pending export to prevent abuse.
 	db := database.DBConn
 	var pendingCount int64
-	db.Raw("SELECT COUNT(*) FROM users_exports WHERE userid = ? AND completed IS NULL", myid).Scan(&pendingCount)
+	// ORM migration site b6628daeeaf7 (wave 1).
+	db.Table("users_exports").Where("userid = ? AND completed IS NULL", myid).Count(&pendingCount)
 	if pendingCount > 0 {
 		return fiber.NewError(fiber.StatusConflict, "Export already in progress")
 	}
@@ -113,8 +114,11 @@ func GetExport(c *fiber.Ctx) error {
 	}
 
 	var row ExportRow
-	db.Raw("SELECT id, userid, requested, started, completed, data FROM users_exports WHERE userid = ? AND id = ? AND tag = ?",
-		myid, id, tag).Scan(&row)
+	// ORM migration site 407acfe2232b (wave 1).
+	db.Table("users_exports").
+		Select("id, userid, requested, started, completed, data").
+		Where("userid = ? AND id = ? AND tag = ?", myid, id, tag).
+		Scan(&row)
 
 	if row.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Export not found")
@@ -146,7 +150,8 @@ func GetExport(c *fiber.Ctx) error {
 
 	// Not completed yet — return queue position.
 	var infront int64
-	db.Raw("SELECT COUNT(*) FROM users_exports WHERE id < ? AND completed IS NULL", id).Scan(&infront)
+	// ORM migration site 796077395eca (wave 1).
+	db.Table("users_exports").Where("id < ? AND completed IS NULL", id).Count(&infront)
 
 	return c.JSON(fiber.Map{
 		"export": fiber.Map{

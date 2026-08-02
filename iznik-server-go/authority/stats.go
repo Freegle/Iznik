@@ -314,8 +314,8 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		var avgResult struct {
 			Average *float64 `gorm:"column:average"`
 		}
-		if err := writer().Raw(`SELECT SUM(popularity * weight) / SUM(popularity) AS average
-		FROM items WHERE weight IS NOT NULL AND weight != 0`).Scan(&avgResult).Error; err != nil {
+		// ORM migration site a496537bc045 (wave 1).
+		if err := writer().Table("items").Select("SUM(popularity * weight) / SUM(popularity) AS average").Where("weight IS NOT NULL AND weight != 0").Scan(&avgResult).Error; err != nil {
 			return err
 		}
 

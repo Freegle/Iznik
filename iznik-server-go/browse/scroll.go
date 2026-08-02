@@ -128,10 +128,12 @@ func ScrollDepthCurve(c *fiber.Ctx) error {
 		MaxPosition int   `gorm:"column:max_position"`
 		Cnt         int64 `gorm:"column:cnt"`
 	}
-	db.Raw(`SELECT max_position, COUNT(*) AS cnt
-	        FROM browse_scroll_depth
-	        WHERE created_at BETWEEN ? AND ?
-	        GROUP BY max_position`, startDate, endDateTime).Scan(&rows)
+	// ORM migration site 44d646441e3f (wave 1).
+	db.Table("browse_scroll_depth").
+		Select("max_position, COUNT(*) AS cnt").
+		Where("created_at BETWEEN ? AND ?", startDate, endDateTime).
+		Group("max_position").
+		Scan(&rows)
 
 	var total int64
 	maxObserved := 0

@@ -64,7 +64,8 @@ func GetLogs(c *fiber.Ctx) error {
 		}
 
 		// Get all groups this user moderates.
-		db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Pluck("groupid", &modGroupIDs)
+		// ORM migration site 5dc370f37ed3 (wave 1).
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Pluck("groupid", &modGroupIDs)
 
 		if groupid > 0 {
 			// Check they moderate the specific group requested.

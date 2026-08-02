@@ -144,7 +144,29 @@ a real gap to weigh when reviewing, not a theoretical one.
 Worth deciding before the waves get much further: retrofitting later costs more
 than adopting it now.
 
-## The `IN ?` sites are convertible, not permanently raw
+## The `IN ?` sites are convertible: resolved
+
+`AssertGoldenSQL` now collapses placeholder `IN` lists on both sides of the
+comparison, which is what makes these convertible. The reasoning is in
+golden.go: `db.Raw("... IN ?", slice)` expands the slice through the same
+`clause.Expr` machinery the chained `Where` uses, so both statements always
+executed the same SQL, and the mismatch was an artefact of the golden being
+captured from source text before expansion.
+
+The collapse is deliberately narrow. It matches only runs of bind
+placeholders, so a changed column, table or operator still fails, `NOT IN`
+does not collapse into `IN`, and an `IN` list of literals such as
+`IN (1,2,3)` is untouched.
+
+One thing it genuinely cannot distinguish, stated plainly: a golden of
+`IN (?)` bound to a single scalar compares equal to a render of `IN (?,?)`
+bound to a slice, because both reduce to `in ?`. That is a real gap, but it
+sits inside the larger limitation recorded below - the Layer 1 test
+re-implements the chain rather than calling the production code, so it could
+not have caught a changed bind expression anyway. It is not a new hole, and
+Layer 2 result parity is what actually closes it.
+
+## Original analysis, retained for the reasoning
 
 Every wave 1 batch has skipped the same shape: a Go slice bound to `IN ?`.
 Eleven so far across group, membership and dashboard, and the count will keep

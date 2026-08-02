@@ -77,7 +77,11 @@ func GetAlert(c *fiber.Ctx) error {
 	}
 
 	var a Alert
-	db.Raw("SELECT id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created FROM alerts WHERE id = ?", id).Scan(&a)
+	// ORM migration site 1b28d8692d77 (wave 1).
+	db.Table("alerts").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Where("id = ?", id).
+		Scan(&a)
 
 	if a.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Alert not found")
@@ -95,14 +99,20 @@ func GetAlert(c *fiber.Ctx) error {
 
 		// Get response counts.
 		var responseCounts []AlertResponseStat
-		db.Raw("SELECT response, COUNT(*) AS count FROM alerts_tracking WHERE alertid = ? AND response IS NOT NULL GROUP BY response", id).Scan(&responseCounts)
+		// ORM migration site 69fd80c0297d (wave 1).
+		db.Table("alerts_tracking").
+			Select("response, COUNT(*) AS count").
+			Where("alertid = ? AND response IS NOT NULL", id).
+			Group("response").
+			Scan(&responseCounts)
 		if responseCounts == nil {
 			responseCounts = make([]AlertResponseStat, 0)
 		}
 		stats.Responses = responseCounts
 
 		// Get reached (total tracking entries).
-		db.Raw("SELECT COUNT(*) FROM alerts_tracking WHERE alertid = ?", id).Scan(&stats.Reached)
+		// ORM migration site 40675ee7a91d (wave 1).
+		db.Table("alerts_tracking").Where("alertid = ?", id).Count(&stats.Reached)
 
 		// Merge stats into the alert map in the response.
 		alertMap := response["alert"].(Alert)
@@ -149,7 +159,11 @@ func ListAlerts(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var alerts []Alert
-	db.Raw("SELECT id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created FROM alerts ORDER BY created DESC").Scan(&alerts)
+	// ORM migration site 28fbc7fe399f (wave 1).
+	db.Table("alerts").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Order("created DESC").
+		Scan(&alerts)
 
 	if alerts == nil {
 		alerts = make([]Alert, 0)

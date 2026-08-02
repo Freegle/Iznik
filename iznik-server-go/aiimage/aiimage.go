@@ -550,10 +550,12 @@ func ListReview(c *fiber.Ctx) error {
 	}
 
 	var rows []aiImageRow
-	db.Raw(`SELECT id, name, COALESCE(externaluid, '') AS externaluid, status,
-		regeneration_notes, pending_externaluid
-		FROM ai_images WHERE status IN ('rejected', 'regenerating')
-		ORDER BY id DESC`).Scan(&rows)
+	// ORM migration site f1f623a9631a (wave 1).
+	db.Table("ai_images").
+		Select("id, name, COALESCE(externaluid, '') AS externaluid, status, regeneration_notes, pending_externaluid").
+		Where("status IN ('rejected', 'regenerating')").
+		Order("id DESC").
+		Scan(&rows)
 
 	type voteRow struct {
 		AIImageID      uint64    `gorm:"column:aiimageid"`
@@ -668,7 +670,8 @@ func Regenerate(c *fiber.Ctx) error {
 
 	// Verify image exists and is in a regenerable state.
 	var name string
-	db.Raw("SELECT name FROM ai_images WHERE id = ? AND status IN ('rejected', 'regenerating')", id).Scan(&name)
+	// ORM migration site f77079a22d72 (wave 1).
+	db.Table("ai_images").Select("name").Where("id = ? AND status IN ('rejected', 'regenerating')", id).Scan(&name)
 	if name == "" {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found or not in rejected/regenerating status")
 	}
@@ -760,7 +763,8 @@ func Accept(c *fiber.Ctx) error {
 		PendingExternaluid *string `gorm:"column:pending_externaluid"`
 	}
 	var row aiRow
-	db.Raw("SELECT COALESCE(externaluid, '') AS externaluid, pending_externaluid FROM ai_images WHERE id = ?", id).Scan(&row)
+	// ORM migration site db12a9f0ba25 (wave 1).
+	db.Table("ai_images").Select("COALESCE(externaluid, '') AS externaluid, pending_externaluid").Where("id = ?", id).Scan(&row)
 	if row.Externaluid == "" && (row.PendingExternaluid == nil || *row.PendingExternaluid == "") {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
 	}
@@ -858,7 +862,8 @@ func Suppress(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var existing uint64
-	db.Raw("SELECT id FROM ai_images WHERE id = ?", id).Scan(&existing)
+	// ORM migration site e6f234781920 (wave 1).
+	db.Table("ai_images").Select("id").Where("id = ?", id).Scan(&existing)
 	if existing == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
 	}
@@ -888,7 +893,8 @@ func Count(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var count int64
-	db.Raw(`SELECT COUNT(*) FROM ai_images WHERE status IN ('rejected', 'regenerating')`).Scan(&count)
+	// ORM migration site 701f9b6a7b6e (wave 1).
+	db.Table("ai_images").Where("status IN ('rejected', 'regenerating')").Count(&count)
 
 	return c.JSON(fiber.Map{"count": count})
 }

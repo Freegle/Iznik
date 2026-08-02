@@ -192,7 +192,8 @@ func canModStory(myid uint64, storyID uint64) bool {
 	db := database.DBConn
 
 	var authorID uint64
-	db.Raw("SELECT userid FROM users_stories WHERE id = ?", storyID).Scan(&authorID)
+	// ORM migration site bedf24ad52b9 (wave 1).
+	db.Table("users_stories").Select("userid").Where("id = ?", storyID).Scan(&authorID)
 
 	if authorID == 0 {
 		return false
@@ -361,7 +362,11 @@ func UpdateStory(c *fiber.Ctx) error {
 		Fromnewsfeed bool
 	}
 	var before StoryState
-	db.Raw("SELECT reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed FROM users_stories WHERE id = ?", req.ID).Scan(&before)
+	// ORM migration site cb4e17982644 (wave 1).
+	db.Table("users_stories").
+		Select("reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed").
+		Where("id = ?", req.ID).
+		Scan(&before)
 
 	// Update settable attributes.
 	if p := toBoolInt(req.Public); p != nil {
@@ -387,7 +392,11 @@ func UpdateStory(c *fiber.Ctx) error {
 	newsfeedBefore := before.Reviewed && before.Public
 
 	var after StoryState
-	db.Raw("SELECT reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed FROM users_stories WHERE id = ?", req.ID).Scan(&after)
+	// ORM migration site 88a8f87abcde (wave 1).
+	db.Table("users_stories").
+		Select("reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed").
+		Where("id = ?", req.ID).
+		Scan(&after)
 	newsfeedAfter := after.Reviewed && after.Public
 
 	if !newsfeedBefore && newsfeedAfter && !before.Fromnewsfeed {

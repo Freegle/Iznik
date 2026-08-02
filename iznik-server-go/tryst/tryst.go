@@ -98,7 +98,8 @@ func GetTryst(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single tryst.
 		var t Tryst
-		db.Raw("SELECT * FROM trysts WHERE id = ?", id).Scan(&t)
+		// ORM migration site eb5bf7b5109a (wave 1).
+		db.Table("trysts").Where("id = ?", id).Scan(&t)
 		if !canSee(myid, &t) {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
@@ -119,8 +120,8 @@ func GetTryst(c *fiber.Ctx) error {
 
 	// List all future trysts for user.
 	var trysts []Tryst
-	db.Raw("SELECT * FROM trysts WHERE (user1 = ? OR user2 = ?) AND arrangedfor >= NOW()",
-		myid, myid).Scan(&trysts)
+	// ORM migration site 488c92a4f115 (wave 1).
+	db.Table("trysts").Where("(user1 = ? OR user2 = ?) AND arrangedfor >= NOW()", myid, myid).Scan(&trysts)
 
 	result := make([]map[string]interface{}, len(trysts))
 	for i, t := range trysts {
@@ -248,7 +249,8 @@ func PatchTryst(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var t Tryst
-	db.Raw("SELECT * FROM trysts WHERE id = ?", req.ID).Scan(&t)
+	// ORM migration site 5ab7247c7c0c (wave 1).
+	db.Table("trysts").Where("id = ?", req.ID).Scan(&t)
 
 	if !canSee(myid, &t) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
@@ -295,7 +297,8 @@ func PostTryst(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var t Tryst
-	db.Raw("SELECT * FROM trysts WHERE id = ?", req.ID).Scan(&t)
+	// ORM migration site f01a084039fd (wave 1).
+	db.Table("trysts").Where("id = ?", req.ID).Scan(&t)
 
 	if !canSee(myid, &t) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
@@ -354,7 +357,8 @@ func DeleteTryst(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var t Tryst
-	db.Raw("SELECT * FROM trysts WHERE id = ?", id).Scan(&t)
+	// ORM migration site ae0478d1c57d (wave 1).
+	db.Table("trysts").Where("id = ?", id).Scan(&t)
 
 	if !canSee(myid, &t) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")

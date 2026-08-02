@@ -159,11 +159,13 @@ func Near(c *fiber.Ctx) error {
 		Lng  float64
 	}
 	var rows []row
-	db.Raw(`SELECT id, name, lat, lng FROM towns
-		WHERE lat IS NOT NULL AND lng IS NOT NULL
-		  AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
-		ORDER BY id`,
-		lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).Scan(&rows)
+	// ORM migration site ed5b9c0716a2 (wave 1).
+	db.Table("towns").
+		Select("id, name, lat, lng").
+		Where("lat IS NOT NULL AND lng IS NOT NULL AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+			lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).
+		Order("id").
+		Scan(&rows)
 	if len(rows) == 0 {
 		return c.JSON(empty)
 	}

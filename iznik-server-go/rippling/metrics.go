@@ -362,8 +362,12 @@ func Metrics(c *fiber.Ctx) error {
 
 	// §15 raw event counters.
 	section("totals", func() error {
-		return db.Raw("SELECT '' AS day, event, COALESCE(SUM(count), 0) AS count " +
-			"FROM rippling_event_metrics GROUP BY event ORDER BY event").Scan(&totals).Error
+		// ORM migration site 7b13019b71cf (wave 1).
+		return db.Table("rippling_event_metrics").
+			Select("'' AS day, event, COALESCE(SUM(count), 0) AS count").
+			Group("event").
+			Order("event").
+			Scan(&totals).Error
 	})
 
 	section("recent", func() error {
@@ -411,8 +415,12 @@ func Metrics(c *fiber.Ctx) error {
 	// column is added by migration 2026_07_08_000001 — before it runs the query errors and the
 	// slice stays empty (the panel just omits the breakdown), which is fine.
 	section("held_reply_by_source", func() error {
-		return db.Raw("SELECT source, status, COUNT(*) AS count " +
-			"FROM rippling_held_replies GROUP BY source, status ORDER BY source, status").Scan(&heldBySource).Error
+		// ORM migration site 7a72ebd3ef4b (wave 1).
+		return db.Table("rippling_held_replies").
+			Select("source, status, COUNT(*) AS count").
+			Group("source, status").
+			Order("source, status").
+			Scan(&heldBySource).Error
 	})
 
 	// §16.4 timing / capture: latest offline-simulator week.

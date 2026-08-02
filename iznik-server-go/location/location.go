@@ -328,11 +328,13 @@ func Resolve(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var loc Location
-	db.Raw("SELECT id, name, type, lat, lng, areaid "+
-		"FROM locations "+
-		"WHERE name = ? "+
-		"ORDER BY FIELD(type, 'Polygon', 'Postcode', 'Road', 'Line', 'Point'), id "+
-		"LIMIT 1;", name).Scan(&loc)
+	// ORM migration site 845387e20e9b (wave 1).
+	db.Table("locations").
+		Select("id, name, type, lat, lng, areaid").
+		Where("name = ?", name).
+		Order("FIELD(type, 'Polygon', 'Postcode', 'Road', 'Line', 'Point'), id").
+		Limit(1).
+		Scan(&loc)
 
 	if loc.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "No matching place")
@@ -848,7 +850,8 @@ func UpdateLocation(c *fiber.Ctx) error {
 		// Refresh the spatial KNN index before the remap below runs, so it remaps
 		// against the new shape rather than the one from the last delta sync.
 		var locName string
-		db.Raw("SELECT name FROM locations WHERE id = ?", req.ID).Scan(&locName)
+		// ORM migration site 72908ace6717 (wave 1).
+		db.Table("locations").Select("name").Where("id = ?", req.ID).Scan(&locName)
 		if err := spatial.UpsertLocation(req.ID, *req.Polygon, locName, "Polygon"); err != nil {
 			log.Printf("UpdateLocation: spatial upsert of %d failed, postcodes may not remap until the next delta sync: %v", req.ID, err)
 		}
@@ -927,10 +930,12 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	// If byname, also exclude all locations with the same name.
 	if req.Byname {
 		var name string
-		db.Raw("SELECT name FROM locations WHERE id = ?", req.ID).Scan(&name)
+		// ORM migration site f987324c1334 (wave 1).
+		db.Table("locations").Select("name").Where("id = ?", req.ID).Scan(&name)
 		if name != "" {
 			var otherIDs []uint64
-			db.Raw("SELECT id FROM locations WHERE name = ? AND id != ?", name, req.ID).Pluck("id", &otherIDs)
+			// ORM migration site 2f3a9cd57a29 (wave 1).
+			db.Table("locations").Where("name = ? AND id != ?", name, req.ID).Pluck("id", &otherIDs)
 			for _, otherID := range otherIDs {
 				db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
 					otherID, req.GroupID, myid)

@@ -186,10 +186,12 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	// Compute "using" - user IDs of moderators currently using this config.
 	var usingUserIDs []uint64
-	db.Raw("SELECT DISTINCT m.userid "+
-		"FROM memberships m "+
-		"WHERE m.configid = ? AND m.role IN (?, ?) "+
-		"LIMIT 10", cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Pluck("userid", &usingUserIDs)
+	// ORM migration site 683a3a4c4854 (wave 1).
+	db.Table("memberships m").
+		Distinct("m.userid").
+		Where("m.configid = ? AND m.role IN (?, ?)", cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Limit(10).
+		Pluck("userid", &usingUserIDs)
 
 	if usingUserIDs == nil {
 		usingUserIDs = []uint64{}
@@ -603,7 +605,8 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	// Check if still in use.
 	var inUse int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&inUse)
+	// ORM migration site 8a1e00c30243 (wave 1).
+	db.Table("memberships").Where("configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&inUse)
 	if inUse > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 5, "status": "Config still in use"})
 	}

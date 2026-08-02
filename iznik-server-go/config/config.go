@@ -105,7 +105,8 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	db.Raw("SELECT * FROM config WHERE `key` = ?", key).Scan(&items)
+	// ORM migration site 1f790095e709 (wave 1).
+	db.Table("config").Where("`key` = ?", key).Scan(&items)
 
 	if len(items) > 0 {
 		return c.JSON(items)

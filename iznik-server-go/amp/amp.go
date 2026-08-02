@@ -343,7 +343,8 @@ func GetChatMessages(c *fiber.Ctx) error {
 
 	// Verify user is member of this chat
 	var memberUserID uint64
-	db.Raw(`SELECT userid FROM chat_roster WHERE chatid = ? AND userid = ?`, chatID, userID).Scan(&memberUserID)
+	// ORM migration site 0e6418b09480 (wave 1).
+	db.Table("chat_roster").Select("userid").Where("chatid = ? AND userid = ?", chatID, userID).Scan(&memberUserID)
 
 	if memberUserID == 0 {
 		return c.JSON(AMPChatResponse{Items: []AMPChatMessage{}, CanReply: false})
@@ -441,10 +442,8 @@ func PostChatReply(c *fiber.Ctx) error {
 
 	// Verify user is still member of chat
 	var memberUserID uint64
-	db.Raw(`
-		SELECT userid FROM chat_roster
-		WHERE chatid = ? AND userid = ?
-	`, chatID, userID).Scan(&memberUserID)
+	// ORM migration site f726d20766fe (wave 1).
+	db.Table("chat_roster").Select("userid").Where("chatid = ? AND userid = ?", chatID, userID).Scan(&memberUserID)
 
 	if memberUserID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(ReplyResponse{

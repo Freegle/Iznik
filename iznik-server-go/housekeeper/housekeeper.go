@@ -198,7 +198,8 @@ func ListTasks(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var tasks []HousekeeperTask
-	result := db.Raw(`SELECT * FROM housekeeper_tasks ORDER BY task_key`).Scan(&tasks)
+	// ORM migration site 2c37feb50055 (wave 1).
+	result := db.Table("housekeeper_tasks").Order("task_key").Scan(&tasks)
 
 	if result.Error != nil {
 		log.Printf("[Housekeeper] ListTasks query error: %v", result.Error)

@@ -705,13 +705,15 @@ func UserEmails(c *fiber.Ctx) error {
 			UserID uint64 `gorm:"column:userid"`
 		}
 		// First try users_emails table (for users with multiple emails)
-		result := db.Raw("SELECT userid FROM users_emails WHERE email = ? AND backwards IS NULL LIMIT 1", email).Scan(&userLookup)
+		// ORM migration site 5335567292aa (wave 1).
+		result := db.Table("users_emails").Select("userid").Where("email = ? AND backwards IS NULL", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
 			// Fallback to users table (for new users whose email is only in users.email)
 			var userFallback struct {
 				ID uint64 `gorm:"column:id"`
 			}
-			result = db.Raw("SELECT id FROM users WHERE email = ? LIMIT 1", email).Scan(&userFallback)
+			// ORM migration site 39805074ce3d (wave 1).
+			result = db.Table("users").Select("id").Where("email = ?", email).Limit(1).Scan(&userFallback)
 			if result.Error != nil || userFallback.ID == 0 {
 				// No user found - search by recipient_email in email_tracking table directly
 				searchByRecipientEmail = true
@@ -1758,16 +1760,13 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// send time. Segment has no bearing on opens/clicks so it isn't joined
 	// to email_tracking.
 	bySegment := make([]ReengageSegmentStat, 0)
-	db.Raw(`
-		SELECT
-			r.segment AS segment,
-			COUNT(*) AS sent,
-			SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged
-		FROM reengage r
-		WHERE r.sentat BETWEEN ? AND ? AND r.segment IS NOT NULL
-		GROUP BY r.segment
-		ORDER BY r.segment ASC
-	`, startDate, endDateTime).Scan(&bySegment)
+	// ORM migration site 9db29fd9c43a (wave 1).
+	db.Table("reengage r").
+		Select("r.segment AS segment, COUNT(*) AS sent, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Where("r.sentat BETWEEN ? AND ? AND r.segment IS NOT NULL", startDate, endDateTime).
+		Group("r.segment").
+		Order("r.segment ASC").
+		Scan(&bySegment)
 
 	// Sends broken down by how the sign-off community was resolved. Rows
 	// predating this instrumentation have volunteer_source = NULL and are

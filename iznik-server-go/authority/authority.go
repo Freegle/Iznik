@@ -255,7 +255,8 @@ func Search(c *fiber.Ctx) error {
 		AreaCode *string `gorm:"column:area_code"`
 	}
 
-	db.Raw("SELECT id, name, area_code FROM authorities WHERE name LIKE ? LIMIT ?", searchTerm, limit).Scan(&results)
+	// ORM migration site c097d3e46f7f (wave 1).
+	db.Table("authorities").Select("id, name, area_code").Where("name LIKE ?", searchTerm).Limit(limit).Scan(&results)
 
 	// Map area codes to friendly names.
 	var searchResults []SearchResult

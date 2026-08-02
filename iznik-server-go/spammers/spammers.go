@@ -29,7 +29,8 @@ func GetSpammers(c *fiber.Ctx) error {
 	if partner != "" {
 		db := database.DBConn
 		var partnerID uint64
-		db.Raw("SELECT id FROM partners_keys WHERE `key` = ?", partner).Scan(&partnerID)
+		// ORM migration site 4d467f8ef688 (wave 1).
+		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
@@ -174,7 +175,8 @@ func PostSpammer(c *fiber.Ctx) error {
 	// This is the fix for Discourse #9589 (wrong-attribution bug).
 	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
 		var existingCount int64
-		db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ?", req.Userid).Scan(&existingCount)
+		// ORM migration site 3a1a2fda0491 (wave 1).
+		db.Table("spam_users").Where("userid = ?", req.Userid).Count(&existingCount)
 		if existingCount > 0 {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": 0})
 		}
@@ -255,7 +257,8 @@ func PatchSpammer(c *fiber.Ctx) error {
 		Byuserid   *uint64
 		Heldby     *uint64
 	}
-	db.Raw("SELECT collection, reason, byuserid, heldby FROM spam_users WHERE id = ?", req.ID).Scan(&current)
+	// ORM migration site b35f73621756 (wave 1).
+	db.Table("spam_users").Select("collection, reason, byuserid, heldby").Where("id = ?", req.ID).Scan(&current)
 
 	if current.Collection == "" {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -271,7 +274,8 @@ func PatchSpammer(c *fiber.Ctx) error {
 		takingHold := req.Heldby != nil
 		if changingCollection || takingHold {
 			var holderName string
-			db.Raw("SELECT fullname FROM users WHERE id = ?", *current.Heldby).Scan(&holderName)
+			// ORM migration site 4e48616b5b66 (wave 1).
+			db.Table("users").Select("fullname").Where("id = ?", *current.Heldby).Scan(&holderName)
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"ret":        1,
 				"status":     "Held by another moderator",
@@ -344,7 +348,8 @@ func ExportSpammers(c *fiber.Ctx) error {
 	if partner != "" {
 		db := database.DBConn
 		var partnerID uint64
-		db.Raw("SELECT id FROM partners_keys WHERE `key` = ?", partner).Scan(&partnerID)
+		// ORM migration site 9f33a7d0a5b1 (wave 1).
+		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")

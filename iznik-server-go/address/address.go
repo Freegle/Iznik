@@ -74,7 +74,8 @@ func Update(c *fiber.Ctx) error {
 
 	// Check ownership
 	var ownerID uint64
-	db.Raw("SELECT userid FROM users_addresses WHERE id = ?", req.ID).Scan(&ownerID)
+	// ORM migration site c9552d1439f7 (wave 1).
+	db.Table("users_addresses").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 
 	if ownerID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Address not found")
@@ -116,7 +117,8 @@ func Delete(c *fiber.Ctx) error {
 
 	// Check ownership
 	var ownerID uint64
-	db.Raw("SELECT userid FROM users_addresses WHERE id = ?", id).Scan(&ownerID)
+	// ORM migration site e5e485de6a36 (wave 1).
+	db.Table("users_addresses").Select("userid").Where("id = ?", id).Scan(&ownerID)
 
 	if ownerID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Address not found")

@@ -39,7 +39,8 @@ func GetABTest(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var variants []ABTestVariant
-	db.Raw("SELECT * FROM abtest WHERE uid = ? AND suggest = 1 ORDER BY rate DESC, RAND()", uid).Scan(&variants)
+	// ORM migration site b8d3220fdb2f (wave 1).
+	db.Table("abtest").Where("uid = ? AND suggest = 1", uid).Order("rate DESC, RAND()").Scan(&variants)
 
 	if len(variants) == 0 {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "variant": nil})

@@ -113,7 +113,8 @@ func RequireModeratorMiddleware() fiber.Handler {
 
 		// Check if user is a moderator of any group.
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", userID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+		// ORM migration site 85edeab31954 (wave 1).
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", userID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 
 		if modCount == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Moderator role required")
@@ -846,10 +847,10 @@ func canViewGroupLogs(currentUserID, targetGroupID uint64, systemRole string) bo
 
 	// Check if current user moderates the target group.
 	var count int64
-	db.Raw(`
-		SELECT COUNT(*) FROM memberships
-		WHERE userid = ? AND groupid = ? AND role IN (?, ?)
-	`, currentUserID, targetGroupID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site 70ea6178db24 (wave 1).
+	db.Table("memberships").
+		Where("userid = ? AND groupid = ? AND role IN (?, ?)", currentUserID, targetGroupID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&count)
 
 	return count > 0
 }

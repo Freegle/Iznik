@@ -165,17 +165,21 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Get user details.
 	var fullname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", userID).Scan(&fullname)
+	// ORM migration site 2edbbcc133b4 (wave 1).
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", userID).Scan(&fullname)
 
 	var email string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&email)
+	// ORM migration site 0e811eecaa3a (wave 1).
+	db.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&email)
 
 	var profileURL string
-	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&profileURL)
+	// ORM migration site 5ad089d40930 (wave 1).
+	db.Table("users_images").Select("url").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
 
 	var isAdmin bool
 	var systemrole string
-	db.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	// ORM migration site fc671dfc8f18 (wave 1).
+	db.Table("users").Select("systemrole").Where("id = ?", userID).Scan(&systemrole)
 	isAdmin = systemrole == "Admin"
 
 	// Get group list — try active mod groups first, fall back to all moderatorships.
