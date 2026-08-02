@@ -1,6 +1,7 @@
 package emailtracking
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -86,15 +87,15 @@ type EmailStats struct {
 	TotalSent       int64   `json:"total_sent"`
 	Opened          int64   `json:"opened"`
 	Clicked         int64   `json:"clicked"`
-	LinkedBounces   int64   `json:"linked_bounces"`   // Bounces matched to specific tracked emails via bounced_at
+	LinkedBounces   int64   `json:"linked_bounces"` // Bounces matched to specific tracked emails via bounced_at
 	OpenRate        float64 `json:"open_rate"`
 	ClickRate       float64 `json:"click_rate"`
 	ClickToOpenRate float64 `json:"click_to_open_rate"`
 	BounceRate      float64 `json:"bounce_rate"`
 	// Actual bounces from bounces_emails table (includes all bounces, not just tracked ones)
-	TotalBounces     int64   `json:"total_bounces"`
-	PermanentBounces int64   `json:"permanent_bounces"`
-	TemporaryBounces int64   `json:"temporary_bounces"`
+	TotalBounces     int64 `json:"total_bounces"`
+	PermanentBounces int64 `json:"permanent_bounces"`
+	TemporaryBounces int64 `json:"temporary_bounces"`
 }
 
 // AMPStats represents AMP-specific statistics
@@ -106,18 +107,18 @@ type AMPStats struct {
 	AMPRendered   int64   `json:"amp_rendered"`
 	AMPRenderRate float64 `json:"amp_render_rate"`
 	// AMP engagement metrics
-	AMPOpened     int64   `json:"amp_opened"`
-	AMPClicked    int64   `json:"amp_clicked"`
-	AMPLinkedBounces int64 `json:"amp_linked_bounces"` // AMP emails with bounces matched to tracked emails
-	AMPReplied    int64   `json:"amp_replied"`
-	AMPOpenRate   float64 `json:"amp_open_rate"`
-	AMPClickRate  float64 `json:"amp_click_rate"`
-	AMPBounceRate float64 `json:"amp_bounce_rate"`
-	AMPReplyRate  float64 `json:"amp_reply_rate"`
+	AMPOpened        int64   `json:"amp_opened"`
+	AMPClicked       int64   `json:"amp_clicked"`
+	AMPLinkedBounces int64   `json:"amp_linked_bounces"` // AMP emails with bounces matched to tracked emails
+	AMPReplied       int64   `json:"amp_replied"`
+	AMPOpenRate      float64 `json:"amp_open_rate"`
+	AMPClickRate     float64 `json:"amp_click_rate"`
+	AMPBounceRate    float64 `json:"amp_bounce_rate"`
+	AMPReplyRate     float64 `json:"amp_reply_rate"`
 	// Reply breakdown by method for AMP-enabled emails
-	AMPRepliedViaAMP   int64   `json:"amp_replied_via_amp"`   // Replies via AMP form
-	AMPRepliedViaEmail int64   `json:"amp_replied_via_email"` // Replies via email
-	AMPReplyViaAMPRate float64 `json:"amp_reply_via_amp_rate"`
+	AMPRepliedViaAMP     int64   `json:"amp_replied_via_amp"`   // Replies via AMP form
+	AMPRepliedViaEmail   int64   `json:"amp_replied_via_email"` // Replies via email
+	AMPReplyViaAMPRate   float64 `json:"amp_reply_via_amp_rate"`
 	AMPReplyViaEmailRate float64 `json:"amp_reply_via_email_rate"`
 	// Click breakdown: reply clicks (to message/chat pages) vs other clicks
 	AMPReplyClicks    int64   `json:"amp_reply_clicks"`     // Clicks to reply on web
@@ -129,14 +130,14 @@ type AMPStats struct {
 	// Legacy action rate (for backwards compatibility)
 	AMPActionRate float64 `json:"amp_action_rate"`
 	// Non-AMP engagement metrics (for comparison)
-	NonAMPOpened      int64   `json:"non_amp_opened"`
-	NonAMPClicked     int64   `json:"non_amp_clicked"`
-	NonAMPLinkedBounces int64 `json:"non_amp_linked_bounces"` // Non-AMP emails with bounces matched to tracked emails
-	NonAMPReplied     int64   `json:"non_amp_replied"`
-	NonAMPOpenRate    float64 `json:"non_amp_open_rate"`
-	NonAMPClickRate   float64 `json:"non_amp_click_rate"`
-	NonAMPBounceRate  float64 `json:"non_amp_bounce_rate"`
-	NonAMPReplyRate   float64 `json:"non_amp_reply_rate"`
+	NonAMPOpened        int64   `json:"non_amp_opened"`
+	NonAMPClicked       int64   `json:"non_amp_clicked"`
+	NonAMPLinkedBounces int64   `json:"non_amp_linked_bounces"` // Non-AMP emails with bounces matched to tracked emails
+	NonAMPReplied       int64   `json:"non_amp_replied"`
+	NonAMPOpenRate      float64 `json:"non_amp_open_rate"`
+	NonAMPClickRate     float64 `json:"non_amp_click_rate"`
+	NonAMPBounceRate    float64 `json:"non_amp_bounce_rate"`
+	NonAMPReplyRate     float64 `json:"non_amp_reply_rate"`
 	// Click breakdown for non-AMP
 	NonAMPReplyClicks    int64   `json:"non_amp_reply_clicks"`
 	NonAMPOtherClicks    int64   `json:"non_amp_other_clicks"`
@@ -669,18 +670,18 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 
 // UserEmailTrackingResponse represents email tracking data for a user
 type UserEmailTrackingResponse struct {
-	ID            uint64     `json:"id"`
-	EmailType     string     `json:"email_type"`
-	Subject       *string    `json:"subject"`
-	SentAt        *time.Time `json:"sent_at"`
-	OpenedAt      *time.Time `json:"opened_at"`
-	OpenedVia     *string    `json:"opened_via"`
-	ClickedAt     *time.Time `json:"clicked_at"`
-	ClickedLink   *string    `json:"clicked_link"`
-	LinksClicked  uint16     `json:"links_clicked"`
-	BouncedAt     *time.Time `json:"bounced_at"`
+	ID             uint64     `json:"id"`
+	EmailType      string     `json:"email_type"`
+	Subject        *string    `json:"subject"`
+	SentAt         *time.Time `json:"sent_at"`
+	OpenedAt       *time.Time `json:"opened_at"`
+	OpenedVia      *string    `json:"opened_via"`
+	ClickedAt      *time.Time `json:"clicked_at"`
+	ClickedLink    *string    `json:"clicked_link"`
+	LinksClicked   uint16     `json:"links_clicked"`
+	BouncedAt      *time.Time `json:"bounced_at"`
 	UnsubscribedAt *time.Time `json:"unsubscribed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // UserEmails returns email tracking for a specific user (requires authentication)
@@ -855,11 +856,11 @@ type DailyStats struct {
 	PermanentBounces int64 `json:"permanent_bounces"`
 	TemporaryBounces int64 `json:"temporary_bounces"`
 	// AMP-specific metrics
-	AMPSent          int64 `json:"amp_sent"`
-	AMPOpened        int64 `json:"amp_opened"`
-	AMPClicked       int64 `json:"amp_clicked"`
-	AMPLinkedBounces int64 `json:"amp_linked_bounces"`
-	AMPReplied       int64 `json:"amp_replied"`
+	AMPSent             int64 `json:"amp_sent"`
+	AMPOpened           int64 `json:"amp_opened"`
+	AMPClicked          int64 `json:"amp_clicked"`
+	AMPLinkedBounces    int64 `json:"amp_linked_bounces"`
+	AMPReplied          int64 `json:"amp_replied"`
 	NonAMPSent          int64 `json:"non_amp_sent"`
 	NonAMPOpened        int64 `json:"non_amp_opened"`
 	NonAMPClicked       int64 `json:"non_amp_clicked"`
@@ -1458,6 +1459,80 @@ type DigestPositionStat struct {
 	CTR float64 `json:"ctr"`
 }
 
+// digestChunkDays bounds how much history a single email_tracking statement
+// scans in DigestClickPositions. email_tracking is 6M+ rows with no composite
+// (email_type, sent_at) index, so a FORCE INDEX(sent_at) scan over a wide
+// user-selected range can take minutes and stall Galera cluster-wide commits.
+const digestChunkDays = 1
+
+// digestDateWindow is one [Start, End] sub-range of a chunked date query,
+// pre-formatted for direct use as SQL BETWEEN bounds.
+type digestDateWindow struct {
+	Start string
+	End   string
+}
+
+// chunkDateWindows splits [startDate, endDateTime] into contiguous windows no
+// wider than chunkDays. Every email_tracking row's sent_at falls inside
+// exactly one window, so summing GROUP BY-aggregated counts across these
+// disjoint windows is mathematically identical to running one query over the
+// whole range - just without any single statement scanning more than
+// chunkDays worth of rows.
+func chunkDateWindows(startDate, endDateTime string, chunkDays int) ([]digestDateWindow, error) {
+	if chunkDays <= 0 {
+		chunkDays = 1
+	}
+
+	start, err := parseDigestBound(startDate)
+	if err != nil {
+		return nil, err
+	}
+	end, err := parseDigestBound(endDateTime)
+	if err != nil {
+		return nil, err
+	}
+
+	if !end.After(start) {
+		return []digestDateWindow{{Start: startDate, End: endDateTime}}, nil
+	}
+
+	const layout = "2006-01-02 15:04:05"
+	var windows []digestDateWindow
+	for chunkStart := start; !chunkStart.After(end); {
+		chunkEnd := chunkStart.AddDate(0, 0, chunkDays).Add(-time.Second)
+		if chunkEnd.After(end) {
+			chunkEnd = end
+		}
+		windows = append(windows, digestDateWindow{
+			Start: chunkStart.Format(layout),
+			End:   chunkEnd.Format(layout),
+		})
+		chunkStart = chunkEnd.Add(time.Second)
+	}
+	return windows, nil
+}
+
+// parseDigestBound parses a start/end bound as supplied to
+// DigestClickPositions: either a bare date or a date with a time component
+// (endDateTime always has one by the time it reaches here; startDate may or
+// may not).
+func parseDigestBound(s string) (time.Time, error) {
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	}
+	var lastErr error
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return time.Time{}, lastErr
+}
+
 // DigestClickPositions returns the click-through rate by post position within
 // unified digest emails. This shows how a post's vertical position in the
 // digest affects whether recipients click it.
@@ -1486,8 +1561,17 @@ type DigestPositionStat struct {
 // @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} fiber.Error "Unauthorized"
 // @Failure 403 {object} fiber.Error "Forbidden"
+// digestClickPositionsDeadline bounds the whole chunked walk below: each
+// per-window statement is short, but a wide admin-selected range issues many of
+// them, and the fiber request context alone would never fire (fasthttp only
+// cancels it on server shutdown), so an abandoned request would otherwise keep
+// stepping through the remaining windows.
+const digestClickPositionsDeadline = 60 * time.Second
+
 func DigestClickPositions(c *fiber.Ctx) error {
-	db := database.DBConn
+	ctx, cancel := context.WithTimeout(c.Context(), digestClickPositionsDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
 
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -1545,27 +1629,49 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		LEFT JOIN users u ON e.userid = u.id
 		WHERE ` + cohort + `
 		GROUP BY num_posts`
-	denomArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
 
-	var sizeRows []struct {
-		NumPosts int   `gorm:"column:num_posts"`
-		Cnt      int64 `gorm:"column:cnt"`
+	// Run both this query and clickQuery below in short date sub-windows
+	// instead of one scan over the whole requested range - see
+	// chunkDateWindows. Falls back to a single window over the whole range
+	// if the bounds don't parse in an expected format, matching the prior
+	// (unchunked) behaviour.
+	windows, err := chunkDateWindows(startDate, endDateTime, digestChunkDays)
+	if err != nil {
+		windows = []digestDateWindow{{Start: startDate, End: endDateTime}}
 	}
-	db.Raw(denomQuery, denomArgs...).Scan(&sizeRows)
+
+	sizeCounts := make(map[int]int64)
+	for _, w := range windows {
+		denomArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			NumPosts int   `gorm:"column:num_posts"`
+			Cnt      int64 `gorm:"column:cnt"`
+		}
+		if err := db.Raw(denomQuery, denomArgs...).Scan(&chunkRows).Error; err != nil {
+			// Fail the whole distribution (empty chart, like the replaced
+			// single statement did on error) rather than silently returning
+			// totals missing an unknown subset of days.
+			sizeCounts = map[int]int64{}
+			break
+		}
+		for _, r := range chunkRows {
+			sizeCounts[r.NumPosts] += r.Cnt
+		}
+	}
 
 	maxPosts := 0
-	for _, r := range sizeRows {
-		if r.NumPosts > maxPosts {
-			maxPosts = r.NumPosts
+	for numPosts := range sizeCounts {
+		if numPosts > maxPosts {
+			maxPosts = numPosts
 		}
 	}
 
 	// shown[n] = number of digests whose size was greater than n (i.e. displayed
-	// a post at position n). sizeRows is small (one row per distinct digest size).
+	// a post at position n).
 	shown := make([]int64, maxPosts)
-	for _, r := range sizeRows {
-		for n := 0; n < r.NumPosts && n < maxPosts; n++ {
-			shown[n] += r.Cnt
+	for numPosts, cnt := range sizeCounts {
+		for n := 0; n < numPosts && n < maxPosts; n++ {
+			shown[n] += cnt
 		}
 	}
 
@@ -1591,35 +1697,41 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		WHERE ` + cohort + `
 		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
 		GROUP BY c.link_position`
-	clickArgs := append(append([]interface{}{}, typeArgs...), startDate, endDateTime)
-
-	var clickRows []struct {
-		LinkPosition  string `gorm:"column:link_position"`
-		EmailsClicked int64  `gorm:"column:emails_clicked"`
-		Clicks        int64  `gorm:"column:clicks"`
-	}
-	db.Raw(clickQuery, clickArgs...).Scan(&clickRows)
 
 	emailsClickedByPos := make(map[int]int64)
 	clicksByPos := make(map[int]int64)
-	for _, r := range clickRows {
-		// link_position is "post_N" or "pN"; extract the trailing integer
-		// position regardless of the prefix/separator.
-		s := r.LinkPosition
-		i := len(s)
-		for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
-			i--
+	for _, w := range windows {
+		clickArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			LinkPosition  string `gorm:"column:link_position"`
+			EmailsClicked int64  `gorm:"column:emails_clicked"`
+			Clicks        int64  `gorm:"column:clicks"`
 		}
-		if i == len(s) {
-			// No trailing digits - not a positional label.
-			continue
+		if err := db.Raw(clickQuery, clickArgs...).Scan(&chunkRows).Error; err != nil {
+			// As above: all-or-nothing for the click counts.
+			emailsClickedByPos = map[int]int64{}
+			clicksByPos = map[int]int64{}
+			break
 		}
-		n, err := strconv.Atoi(s[i:])
-		if err != nil || n < 0 {
-			continue
+		for _, r := range chunkRows {
+			// link_position is "post_N" or "pN"; extract the trailing integer
+			// position regardless of the prefix/separator.
+			s := r.LinkPosition
+			i := len(s)
+			for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+				i--
+			}
+			if i == len(s) {
+				// No trailing digits - not a positional label.
+				continue
+			}
+			n, err := strconv.Atoi(s[i:])
+			if err != nil || n < 0 {
+				continue
+			}
+			emailsClickedByPos[n] += r.EmailsClicked
+			clicksByPos[n] += r.Clicks
 		}
-		emailsClickedByPos[n] += r.EmailsClicked
-		clicksByPos[n] += r.Clicks
 	}
 
 	// 3. Build the per-position result, ascending, skipping positions never shown.
