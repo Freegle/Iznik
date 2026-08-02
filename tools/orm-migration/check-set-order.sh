@@ -1,48 +1,97 @@
 #!/usr/bin/env bash
 #
-# check-set-order.sh - does any converted UPDATE have a SET clause whose order
-# is load-bearing?
+# check-set-order.sh - has a conversion reordered an UPDATE whose SET order
+# carries meaning?
 #
 # MySQL evaluates UPDATE assignments left to right, so
 #
-#   UPDATE t SET a = b, b = 1     -- a gets the OLD b
-#   UPDATE t SET b = 1, a = b     -- a gets 1
+#   UPDATE t SET action = action + 1, rate = 100 * action / shown
 #
-# are different statements. GORM sorts map keys alphabetically when it builds
-# Updates(map[string]interface{}{...}), so a conversion silently reorders the
-# SET list.
+# computes rate from the INCREMENTED action, while the reverse order computes it
+# from the old one. GORM sorts map keys when it builds
+# Updates(map[string]interface{}{...}) (callbacks/update.go:205-208), so a
+# conversion emits the assignments in alphabetical order regardless of how the
+# original was written.
 #
-# For almost every statement here that is harmless: the values are binds and
-# constants that do not reference each other. But where one assigned value
-# mentions another assigned column, the reorder changes what gets written.
+# Two distinct things follow, and the first version of this check conflated
+# them:
 #
-# The reason this needs its own check is that the golden-SQL harness CANNOT
-# catch it. normaliseColumnOrder deliberately sorts SET lists on both sides so
-# that a reordered-but-equivalent statement passes - which means it would also
-# wave through a reordered-and-NOT-equivalent one. A normalisation that hides a
-# class of bug has to be paired with a check for that class.
+#   1. The order carries meaning (one assignment's value names another
+#      assigned column). That on its own is not a defect.
+#   2. GORM's alphabetical order DIFFERS from the order the original statement
+#      used. That is the defect, and only that.
 #
-# Flags any Updates(map...) literal where a value expression names one of the
-# other keys in the same map. Read the flagged site and either keep it raw or
-# split it into two statements.
+# Freegle's one order-dependent site, engage_mails in user.go, is case 1 but not
+# case 2: "action" sorts before "rate", which is the order the original SQL
+# already used, so the conversion is correct. A check that failed on case 1
+# alone would block a correct tree - which is exactly what the first version
+# did, and it is why this now compares against the recorded goldenSql rather
+# than flagging on shape.
+#
+# The golden-SQL harness cannot do this itself: normaliseColumnOrder sorts SET
+# lists on both sides so that harmless reordering passes, which means it would
+# accept harmful reordering just as readily. It now declines to normalise these
+# statements, and this gate covers the case where a site has no golden to pin.
+#
+# Test files are skipped: a parity test mirrors its production chain, so the
+# production site is where the question is decided, and flagging both just
+# doubles the noise.
 set -uo pipefail
 
-ROOT="${1:-/home/edward/FreegleDocker-orm-v2/iznik-server-go}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT="${1:-$REPO_ROOT/iznik-server-go}"
+MANIFEST="${RATCHET_MANIFEST:-$REPO_ROOT/iznik-server-go/ormharness/manifest.json}"
 
 node -e '
 const fs = require("fs"), path = require("path");
-const root = process.argv[1];
-let flagged = 0, checked = 0;
+const [root, manifestPath] = process.argv.slice(1);
+
+let manifest = {sites: {}};
+try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")); } catch {}
 
 const walk = (d) => fs.readdirSync(d, {withFileTypes: true}).flatMap((e) => {
   const p = path.join(d, e.name);
   if (e.isDirectory()) return e.name === "vendor" ? [] : walk(p);
-  return e.name.endsWith(".go") ? [p] : [];
+  return e.name.endsWith(".go") && !e.name.endsWith("_test.go") ? [p] : [];
 });
 
+// Column order of the SET list in a raw UPDATE, e.g.
+// "UPDATE t SET a = a + 1, rate = ... WHERE id = ?" -> ["a", "rate"]
+const goldenSetOrder = (sql) => {
+  const m = /\bset\b([\s\S]*?)(?:\bwhere\b|$)/i.exec(sql || "");
+  if (!m) return null;
+  const parts = [];
+  let depth = 0, cur = "", inQuote = false;
+  for (const ch of m[1]) {
+    if (ch === "'"'"'") inQuote = !inQuote;
+    if (!inQuote) {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      else if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts.map((p) => {
+    const eq = p.indexOf("=");
+    return eq < 0 ? "" : p.slice(0, eq).trim().replace(/`/g, "").split(".").pop().toLowerCase();
+  }).filter(Boolean);
+};
+
+const stripStrings = (s) => {
+  let out = "", inQuote = false;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && inQuote) { i++; continue; }
+    if (s[i] === "'"'"'") { inQuote = !inQuote; continue; }
+    if (!inQuote) out += s[i];
+  }
+  return out;
+};
+
+let flagged = 0, checked = 0, benign = 0;
 for (const file of walk(root)) {
   const src = fs.readFileSync(file, "utf8");
-  // Find each Updates(map[string]interface{}{ ... }) and take its braces span.
   const re = /Updates\(\s*map\[string\]interface\{\}\{/g;
   let m;
   while ((m = re.exec(src)) !== null) {
@@ -55,32 +104,54 @@ for (const file of walk(root)) {
     const body = src.slice(m.index + m[0].length, i - 1);
     checked++;
 
-    // Keys are the quoted strings in key position: "col": value
     const keys = [...body.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"\s*:/g)].map((k) => k[1]);
     if (keys.length < 2) continue;
 
-    // For each entry, does its VALUE mention another key as a bare word?
-    // Only gorm.Expr / clause values can contain SQL that names a column; a
-    // plain Go variable is a bind and cannot.
+    // Does any entry read another entry'"'"'s column?
+    let crossRef = false;
     for (const entry of body.split(/,\s*\n|,(?=\s*")/)) {
       const km = entry.match(/"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*([\s\S]*)/);
       if (!km) continue;
       const [, key, value] = km;
       if (!/gorm\.Expr|clause\./.test(value)) continue;
+      const stripped = stripStrings(value);
       for (const other of keys) {
-        if (other === key) continue;
-        // Bare column reference, not inside a quoted SQL string literal.
-        const stripped = value.replace(/'"'"'[^'"'"']*'"'"'/g, "");
-        if (new RegExp("\\b" + other + "\\b").test(stripped)) {
-          const line = src.slice(0, m.index).split("\n").length;
-          console.log(`SET ORDER  ${path.relative(root, file)}:${line}  "${key}" is set from an expression naming "${other}", which is also set here`);
-          flagged++;
-        }
+        if (other !== key && new RegExp("\\b" + other + "\\b").test(stripped)) crossRef = true;
       }
+    }
+    if (!crossRef) continue;
+
+    const line = src.slice(0, m.index).split("\n").length;
+    const rel = path.relative(path.dirname(root), file);
+
+    // Order matters here. Does GORM'"'"'s alphabetical order match what the
+    // original statement did? Find the site id from the conversion marker
+    // above, and compare against its recorded goldenSql.
+    const above = src.slice(Math.max(0, m.index - 600), m.index);
+    const idm = [...above.matchAll(/ORM migration site ([0-9a-f]{12})/g)].pop();
+    if (!idm) {
+      console.log(`SET ORDER  ${rel}:${line}  order-dependent SET list with no ORM migration site marker, so it cannot be checked against a golden`);
+      flagged++;
+      continue;
+    }
+    const site = manifest.sites[idm[1]];
+    const want = site ? goldenSetOrder(site.goldenSql) : null;
+    if (!want) {
+      console.log(`SET ORDER  ${rel}:${line}  site ${idm[1]} has no usable goldenSql to check the SET order against`);
+      flagged++;
+      continue;
+    }
+    const got = [...keys].map((k) => k.toLowerCase()).sort();
+    const wantFiltered = want.filter((c) => got.includes(c));
+    if (JSON.stringify(wantFiltered) !== JSON.stringify(got)) {
+      console.log(`SET ORDER  ${rel}:${line}  site ${idm[1]}: GORM sorts to [${got.join(", ")}] but the original SET order was [${want.join(", ")}], and the order changes what is written`);
+      flagged++;
+    } else {
+      benign++;
     }
   }
 }
 
-console.log(`check-set-order: ${checked} Updates(map) sites checked, ${flagged} flagged`);
+console.log(`check-set-order: ${checked} Updates(map) sites checked, ${benign} order-dependent but unchanged by sorting, ${flagged} flagged`);
 process.exit(flagged ? 1 : 0);
-' "$ROOT"
+' "$ROOT" "$MANIFEST"
