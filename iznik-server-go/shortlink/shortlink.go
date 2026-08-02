@@ -1,9 +1,9 @@
 package shortlink
 
 import (
-	"strings"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -50,7 +50,8 @@ func GetShortlink(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single shortlink with click history.
 		var s Shortlink
-		db.Raw("SELECT * FROM shortlinks WHERE id = ?", id).Scan(&s)
+		// ORM migration site 23b1c7ff40ab (wave 1).
+		db.Table("shortlinks").Where("id = ?", id).Scan(&s)
 
 		if s.ID == 0 {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Not found"})
@@ -60,7 +61,9 @@ func GetShortlink(c *fiber.Ctx) error {
 
 		// Get click history.
 		var clicks []ClickHistory
-		db.Raw("SELECT DATE(timestamp) AS date, COUNT(*) AS count FROM shortlink_clicks WHERE shortlinkid = ? GROUP BY date ORDER BY date ASC", id).Scan(&clicks)
+		// ORM migration site 8ce94884434d (wave 1).
+		db.Table("shortlink_clicks").Select("DATE(timestamp) AS date, COUNT(*) AS count").Where("shortlinkid = ?", id).
+			Group("date").Order("date ASC").Scan(&clicks)
 
 		if clicks == nil {
 			clicks = make([]ClickHistory, 0)
@@ -86,9 +89,11 @@ func GetShortlink(c *fiber.Ctx) error {
 	// List all shortlinks.
 	var links []Shortlink
 	if groupid > 0 {
-		db.Raw("SELECT * FROM shortlinks WHERE groupid = ? ORDER BY LOWER(name) ASC", groupid).Scan(&links)
+		// ORM migration site 87c8a0b19cab (wave 1).
+		db.Table("shortlinks").Where("groupid = ?", groupid).Order("LOWER(name) ASC").Scan(&links)
 	} else {
-		db.Raw("SELECT * FROM shortlinks ORDER BY LOWER(name) ASC").Scan(&links)
+		// ORM migration site 5604e1f583b4 (wave 1).
+		db.Table("shortlinks").Order("LOWER(name) ASC").Scan(&links)
 	}
 
 	if links == nil {
@@ -152,7 +157,8 @@ func PostShortlink(c *fiber.Ctx) error {
 
 	// Check if name already exists.
 	var existing uint64
-	db.Raw("SELECT id FROM shortlinks WHERE name LIKE ?", req.Name).Scan(&existing)
+	// ORM migration site d9283245db83 (wave 1).
+	db.Table("shortlinks").Select("id").Where("name LIKE ?", req.Name).Scan(&existing)
 	if existing > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Name already in use"})
 	}
@@ -191,7 +197,8 @@ func resolveShortlinkURL(s *Shortlink, userSite string) {
 			External  *string
 			Onhere    int
 		}
-		database.DBConn.Raw("SELECT nameshort, external, onhere FROM `groups` WHERE id = ?", *s.Groupid).Scan(&g)
+		// ORM migration site 4c3e63baca48 (wave 1).
+		database.DBConn.Table("groups").Select("nameshort, external, onhere").Where("id = ?", *s.Groupid).Scan(&g)
 
 		s.Nameshort = g.Nameshort
 

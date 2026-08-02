@@ -98,13 +98,17 @@ func GetVisualise(c *fiber.Ctx) error {
 	// Query visualise table with optional cursor.
 	var rows []VisualiseRow
 	if ctx > 0 {
-		db.Raw("SELECT id, msgid, attid, fromuser, touser, fromlat, fromlng, tolat, tolng, distance, timestamp "+
-			"FROM visualise WHERE id < ? AND fromlat BETWEEN ? AND ? AND fromlng BETWEEN ? AND ? "+
-			"ORDER BY id DESC LIMIT ?", ctx, swlat, nelat, swlng, nelng, limit).Scan(&rows)
+		// ORM migration site d613d8d0e239 (wave 1).
+		db.Table("visualise").
+			Select("id, msgid, attid, fromuser, touser, fromlat, fromlng, tolat, tolng, distance, timestamp").
+			Where("id < ? AND fromlat BETWEEN ? AND ? AND fromlng BETWEEN ? AND ?", ctx, swlat, nelat, swlng, nelng).
+			Order("id DESC").Limit(limit).Scan(&rows)
 	} else {
-		db.Raw("SELECT id, msgid, attid, fromuser, touser, fromlat, fromlng, tolat, tolng, distance, timestamp "+
-			"FROM visualise WHERE fromlat BETWEEN ? AND ? AND fromlng BETWEEN ? AND ? "+
-			"ORDER BY id DESC LIMIT ?", swlat, nelat, swlng, nelng, limit).Scan(&rows)
+		// ORM migration site 3323eb1d5b7e (wave 1).
+		db.Table("visualise").
+			Select("id, msgid, attid, fromuser, touser, fromlat, fromlng, tolat, tolng, distance, timestamp").
+			Where("fromlat BETWEEN ? AND ? AND fromlng BETWEEN ? AND ?", swlat, nelat, swlng, nelng).
+			Order("id DESC").Limit(limit).Scan(&rows)
 	}
 
 	imageDomain := os.Getenv("IMAGE_DOMAIN")
@@ -149,7 +153,8 @@ func GetVisualise(c *fiber.Ctx) error {
 		go func(idx int, attid uint64) {
 			defer wg.Done()
 			var att AttachmentInfo
-			db.Raw("SELECT id, archived, externaluid, externalmods FROM messages_attachments WHERE id = ?", attid).Scan(&att)
+			// ORM migration site ef5ef50abd33 (wave 1).
+			db.Table("messages_attachments").Select("id, archived, externaluid, externalmods").Where("id = ?", attid).Scan(&att)
 
 			attPath, attThumb := getAttachmentPaths(att, imageDomain, archivedDomain)
 			mu.Lock()
@@ -187,19 +192,21 @@ func GetVisualise(c *fiber.Ctx) error {
 			defer wg.Done()
 
 			var otherIDs []struct{ Userid uint64 }
-			db.Raw("SELECT DISTINCT userid FROM chat_messages WHERE refmsgid = ? AND userid != ? AND userid != ?",
-				msgid, touser, fromuser).Scan(&otherIDs)
+			// ORM migration site e4507adb61a2 (wave 1).
+			db.Table("chat_messages").Select("DISTINCT userid").
+				Where("refmsgid = ? AND userid != ? AND userid != ?", msgid, touser, fromuser).Scan(&otherIDs)
 
 			for _, o := range otherIDs {
 				icon := getUserIcon(db, o.Userid, imageDomain, archivedDomain)
 
 				// Get user location from settings JSON.
 				var lat, lng float64
-				db.Raw("SELECT CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) "+
+				// ORM migration site 817db6feee45 (wave 1).
+				db.Table("users").Select("CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) "+
 					"THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.lat')), 0) ELSE 0 END AS lat, "+
 					"CASE WHEN settings IS NOT NULL AND JSON_VALID(settings) "+
-					"THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.lng')), 0) ELSE 0 END AS lng "+
-					"FROM users WHERE id = ?", o.Userid).Row().Scan(&lat, &lng)
+					"THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.lng')), 0) ELSE 0 END AS lng").
+					Where("id = ?", o.Userid).Row().Scan(&lat, &lng)
 
 				if lat != 0 || lng != 0 {
 					bLat, bLng := utils.Blur(lat, lng, utils.BLUR_USER)

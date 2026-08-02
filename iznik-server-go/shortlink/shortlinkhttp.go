@@ -38,7 +38,8 @@ func RedirectShortlink(c *fiber.Ctx) error {
 
 	// Look up the shortlink by name.
 	var s Shortlink
-	db.Raw("SELECT * FROM shortlinks WHERE name LIKE ?", name).Scan(&s)
+	// ORM migration site ae66a83e23cf (wave 1).
+	db.Table("shortlinks").Where("name LIKE ?", name).Scan(&s)
 
 	if s.ID == 0 {
 		log.Printf("[Shortlink] Name '%s' not found, redirecting to %s", name, defaultURL)

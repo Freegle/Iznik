@@ -76,12 +76,40 @@ func AssertGoldenSQL(t TestingT, siteID string, build func(tx *gorm.DB) *gorm.DB
 	if err != nil {
 		t.Fatalf("ormharness: site %q: rendering GORM statement: %v", siteID, err)
 	}
-	rendered = resolveLimitOffset(rendered, vars)
 
 	wantCanon := Canonical(site.GoldenSQL)
+
+	// Two renderings are acceptable, and which one applies depends on the
+	// golden, not on a guess.
+	//
+	// GORM always binds LIMIT and OFFSET, so a golden with a literal "LIMIT 1"
+	// only matches once the bound value is substituted back in. But a golden
+	// whose LIMIT was ALREADY dynamic records the placeholder text "LIMIT ?",
+	// and substituting there turns "LIMIT ?" into "LIMIT 5", which no chain
+	// could ever match. Resolving unconditionally made those sites impossible
+	// to convert.
+	//
+	// Trying the unresolved form first and the resolved form second covers both
+	// without weakening anything: each is an exact comparison against the
+	// golden, so a conversion that changed Limit(1) to Limit(50) still fails
+	// against a golden of "LIMIT 1".
 	gotCanon := Canonical(rendered)
 	if gotCanon == wantCanon {
 		return
+	}
+
+	resolved := Canonical(resolveLimitOffset(rendered, vars))
+	if resolved == wantCanon {
+		return
+	}
+	// Report against whichever form is closer to the golden, so the failure is
+	// about the real difference rather than about placeholder spelling. A
+	// golden that kept "limit ?" was dynamic to begin with, so the unresolved
+	// render is the fair comparison; otherwise the resolved one is.
+	goldenKeptPlaceholder := strings.Contains(wantCanon, "limit ?") || strings.Contains(wantCanon, "offset ?")
+	if !goldenKeptPlaceholder {
+		rendered = resolveLimitOffset(rendered, vars)
+		gotCanon = resolved
 	}
 
 	if site.ApprovedDiff != "" && Canonical(site.ApprovedDiff) == gotCanon {

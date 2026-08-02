@@ -1,8 +1,8 @@
 package stdmsg
 
 import (
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -34,8 +34,10 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 
 	var createdby *uint64
 	var protected int
-	database.DBConn.Raw("SELECT createdby FROM mod_configs WHERE id = ?", configid).Scan(&createdby)
-	database.DBConn.Raw("SELECT protected FROM mod_configs WHERE id = ?", configid).Scan(&protected)
+	// ORM migration site a1df6eefdf33 (wave 1).
+	database.DBConn.Table("mod_configs").Select("createdby").Where("id = ?", configid).Scan(&createdby)
+	// ORM migration site 22a63b0ac626 (wave 1).
+	database.DBConn.Table("mod_configs").Select("protected").Where("id = ?", configid).Scan(&protected)
 
 	if createdby != nil && *createdby == myid {
 		return true
@@ -45,7 +47,6 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 	}
 	return false
 }
-
 
 // GetStdMsg handles GET /stdmsg.
 //
@@ -73,7 +74,8 @@ func GetStdMsg(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var msg StdMsg
-	db.Raw("SELECT * FROM mod_stdmsgs WHERE id = ?", id).Scan(&msg)
+	// ORM migration site ae1076412fce (wave 1).
+	db.Table("mod_stdmsgs").Where("id = ?", id).Scan(&msg)
 	if msg.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
@@ -224,7 +226,8 @@ func PatchStdMsg(c *fiber.Ctx) error {
 
 	// Get the stdmsg to find its configid.
 	var configid uint64
-	db.Raw("SELECT configid FROM mod_stdmsgs WHERE id = ?", req.ID).Scan(&configid)
+	// ORM migration site 102535ad9bab (wave 1).
+	db.Table("mod_stdmsgs").Select("configid").Where("id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
@@ -303,7 +306,8 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var configid uint64
-	db.Raw("SELECT configid FROM mod_stdmsgs WHERE id = ?", req.ID).Scan(&configid)
+	// ORM migration site d6c28a45c7b1 (wave 1).
+	db.Table("mod_stdmsgs").Select("configid").Where("id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}

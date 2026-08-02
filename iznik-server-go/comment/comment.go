@@ -148,8 +148,12 @@ func getSingle(c *fiber.Ctx, myid uint64, id uint64) error {
 	var row CommentItem
 
 	if isAdmin {
-		db.Raw("SELECT * FROM users_comments WHERE id = ?", id).Scan(&row)
+		// ORM migration site 55738aa5637a (wave 1).
+		db.Table("users_comments").Where("id = ?", id).Scan(&row)
 	} else if len(modGroupIDs) > 0 {
+		// Site fb45e5ba61ec: skipped (see wave1 tail-a report) - modGroupIDs is a
+		// variable-length Go slice bound to IN (?), which GORM/the harness cannot
+		// render deterministically; left on db.Raw.
 		db.Raw("SELECT * FROM users_comments WHERE id = ? AND groupid IN (?)", id, modGroupIDs).Scan(&row)
 	}
 
@@ -207,7 +211,8 @@ func canModerate(myid uint64, groupid *uint64) bool {
 
 	db := database.DBConn
 	var role string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, *groupid, utils.COLLECTION_APPROVED).Scan(&role)
+	// ORM migration site 6d0d83bfc10d (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?", myid, *groupid, utils.COLLECTION_APPROVED).Scan(&role)
 
 	return role == utils.ROLE_MODERATOR || role == utils.ROLE_OWNER
 }
@@ -217,7 +222,8 @@ func canModerateComment(myid uint64, commentID uint64) bool {
 	db := database.DBConn
 
 	var groupid *uint64
-	db.Raw("SELECT groupid FROM users_comments WHERE id = ?", commentID).Scan(&groupid)
+	// ORM migration site 255c7f92cc07 (wave 1).
+	db.Table("users_comments").Select("groupid").Where("id = ?", commentID).Scan(&groupid)
 
 	return canModerate(myid, groupid)
 }
@@ -228,7 +234,8 @@ func flagOthers(userid uint64, groupid uint64) {
 	db := database.DBConn
 
 	var otherGroupIDs []uint64
-	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND groupid != ?", userid, groupid).Pluck("groupid", &otherGroupIDs)
+	// ORM migration site 2bc13e60bc01 (wave 1).
+	db.Table("memberships").Where("userid = ? AND groupid != ?", userid, groupid).Pluck("groupid", &otherGroupIDs)
 
 	now := time.Now().Format("2006-01-02 15:04")
 	reason := "Note flagged to other groups"
@@ -334,7 +341,8 @@ func Edit(c *fiber.Ctx) error {
 	if req.Flag != nil && *req.Flag {
 		var commentUserid uint64
 		var commentGroupid uint64
-		db.Raw("SELECT userid, groupid FROM users_comments WHERE id = ?", req.ID).Row().Scan(&commentUserid, &commentGroupid)
+		// ORM migration site 9c9df615ba74 (wave 1).
+		db.Table("users_comments").Select("userid, groupid").Where("id = ?", req.ID).Row().Scan(&commentUserid, &commentGroupid)
 		if commentUserid > 0 && commentGroupid > 0 {
 			flagOthers(commentUserid, commentGroupid)
 		}

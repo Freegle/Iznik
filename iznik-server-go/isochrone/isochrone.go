@@ -64,7 +64,8 @@ func ListIsochrones(c *fiber.Ctx) error {
 		// Auto-create a default isochrone using the user's last known location
 		// when none exist.
 		var locationid uint64
-		db.Raw("SELECT lastlocation FROM users WHERE id = ? AND lastlocation IS NOT NULL", myid).Scan(&locationid)
+		// ORM migration site cedb6ee252fe (wave 1).
+		db.Table("users").Select("lastlocation").Where("id = ? AND lastlocation IS NOT NULL", myid).Scan(&locationid)
 
 		if locationid > 0 {
 			isoID := EnsureIsochroneExists(locationid, "Walk", 15)
@@ -106,7 +107,8 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		Lat float64
 		Lng float64
 	}
-	db.Raw("SELECT lat, lng FROM locations WHERE id = ?", locationid).Scan(&loc)
+	// ORM migration site d646a78aab13 (wave 1).
+	db.Table("locations").Select("lat, lng").Where("id = ?", locationid).Scan(&loc)
 
 	if loc.Lat == 0 && loc.Lng == 0 {
 		log.Printf("Location %d has no lat/lng", locationid)
@@ -163,8 +165,9 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 	if isoID == 0 {
 		// INSERT IGNORE skipped a pre-existing row (the checks above missed it, e.g. under
 		// read-split lag); read that existing row's id.
-		db.Raw("SELECT id FROM isochrones WHERE locationid = ? AND transport = ? AND minutes = ? ORDER BY id DESC LIMIT 1",
-			locationid, transport, minutes).Scan(&isoID)
+		// ORM migration site b405451d2644 (wave 1).
+		db.Table("isochrones").Select("id").Where("locationid = ? AND transport = ? AND minutes = ?", locationid, transport, minutes).
+			Order("id DESC").Limit(1).Scan(&isoID)
 	}
 
 	return isoID
@@ -272,7 +275,8 @@ func CreateIsochrone(c *fiber.Ctx) error {
 
 	// Validate location exists.
 	var locCount int64
-	db.Raw("SELECT COUNT(*) FROM locations WHERE id = ?", req.Locationid).Scan(&locCount)
+	// ORM migration site 0ea54cb9b6d9 (wave 1).
+	db.Table("locations").Where("id = ?", req.Locationid).Count(&locCount)
 	if locCount == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Location not found")
 	}
@@ -440,7 +444,8 @@ func DeleteIsochrone(c *fiber.Ctx) error {
 
 	// Verify ownership: the isochrones_users record must belong to the current user.
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM isochrones_users WHERE id = ? AND userid = ?", id, myid).Scan(&count)
+	// ORM migration site 781fa9ba9257 (wave 1).
+	db.Table("isochrones_users").Where("id = ? AND userid = ?", id, myid).Count(&count)
 	if count == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Access denied"})
 	}

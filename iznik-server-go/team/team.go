@@ -58,7 +58,8 @@ func GetTeam(c *fiber.Ctx) error {
 
 	// Get by name.
 	if name != "" {
-		db.Raw("SELECT id FROM teams WHERE name LIKE ?", name).Scan(&id)
+		// ORM migration site 95dc122ad363 (wave 1).
+		db.Table("teams").Select("id").Where("name LIKE ?", name).Scan(&id)
 		if id == 0 {
 			// Team not found is a search result, not a resource error - return 200.
 			return c.JSON(fiber.Map{"ret": 2, "status": "Not found"})
@@ -75,8 +76,9 @@ func GetTeam(c *fiber.Ctx) error {
 		}
 
 		var members []TeamMember
-		db.Raw("SELECT userid, description, added, nameoverride, imageoverride "+
-			"FROM teams_members WHERE teamid = ?", id).Scan(&members)
+		// ORM migration site 7fa3d8451353 (wave 1).
+		db.Table("teams_members").Select("userid, description, added, nameoverride, imageoverride").
+			Where("teamid = ?", id).Scan(&members)
 
 		memberList := make([]map[string]interface{}, len(members))
 		for i, m := range members {
@@ -91,8 +93,9 @@ func GetTeam(c *fiber.Ctx) error {
 				entry["displayname"] = *m.Nameoverride
 			} else {
 				var displayname string
-				db.Raw("SELECT COALESCE(fullname, CONCAT(COALESCE(firstname,''), ' ', COALESCE(lastname,'')), 'Unknown') FROM users WHERE id = ?",
-					m.Userid).Scan(&displayname)
+				// ORM migration site e0154f7f2b3c (wave 1).
+				db.Table("users").Select("COALESCE(fullname, CONCAT(COALESCE(firstname,''), ' ', COALESCE(lastname,'')), 'Unknown')").
+					Where("id = ?", m.Userid).Scan(&displayname)
 				entry["displayname"] = strings.TrimSpace(displayname)
 			}
 
@@ -121,7 +124,8 @@ func GetTeam(c *fiber.Ctx) error {
 
 	// List all teams.
 	var teams []Team
-	db.Raw("SELECT * FROM teams ORDER BY LOWER(name) ASC").Scan(&teams)
+	// ORM migration site 7f14b1d8b5c5 (wave 1).
+	db.Table("teams").Order("LOWER(name) ASC").Scan(&teams)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -217,7 +221,8 @@ func getUserProfile(userid uint64, imageOverride *string) map[string]interface{}
 
 	db := database.DBConn
 	var imgID uint64
-	db.Raw("SELECT id FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userid).Scan(&imgID)
+	// ORM migration site 10f0be0a062b (wave 1).
+	db.Table("users_images").Select("id").Where("userid = ?", userid).Order("id DESC").Limit(1).Scan(&imgID)
 
 	if imgID > 0 {
 		return map[string]interface{}{
