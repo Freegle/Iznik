@@ -43,18 +43,18 @@ func TestAuthorityStats_AvgPrecisionBound(t *testing.T) {
 	// proving it on a large, targeted sample is a check that the mechanism
 	// behaves as the mathematics says, not an attempt to enumerate all cases.
 	//
-	// The comparison below allows a tiny relative slack (1e-9, about one part
-	// in a billion) on top of that mathematical 5e-7 bound. Without it this
-	// test is flaky against its own arithmetic: avg, the reparsed %f text,
-	// and the drift subtraction are themselves computed in float64, the same
-	// imprecise representation the bound describes, so a case whose true
-	// drift is exactly 5e-7 can round to a handful of ULPs on either side of
-	// that constant - observed directly: avg=2.9999995 formatted to
-	// "2.999999" measured drift=5.00000000069889e-07 against a bare 5e-7
-	// bound, which is a comparison artefact, not a real precision failure.
-	// 1e-9 relative is far too small to mask an actual regression: it would
-	// need to be roughly a million times looser before it could hide
-	// anything that matters to the aggregate-impact test below.
+	// The comparison needs slack on top of that mathematical bound, because the
+	// test's own arithmetic runs in the same float64 it is describing: avg, the
+	// reparsed %f text and the drift subtraction are all computed in it, so a
+	// case whose true drift is exactly 5e-7 lands a few ulps either side of the
+	// literal constant. Observed directly at avg=2.9999995, which formats to
+	// "2.999999" and measures drift=5.00000000069889e-07 against a bare 5e-7.
+	//
+	// A FLAT relative slack is not enough, and that is worth stating because it
+	// was the first fix tried. 5e-7 * (1 + 1e-9) still failed, at
+	// avg=2648.4397875, drift=5.000001692678779e-07 - because the error is not
+	// proportional to 5e-7, it is proportional to the MAGNITUDE OF THE VALUE.
+	//
 	// The bound has to be half an ulp of the SIXTH DECIMAL PLACE plus a few
 	// ulps of the value itself, not a flat 5e-7.
 	//
