@@ -5,7 +5,7 @@
     "converted": 1365,
     "keep-raw": 257,
     "retired": 22,
-    "test-fixture": 4223
+    "test-fixture": 4226
   },
   "sites": {
     "00053e96d76f": {
@@ -42420,6 +42420,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed) VALUES (?, 'Taken', 'Happy', 'Great!', 0)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "53ea7c086b86": {
+      "id": "53ea7c086b86",
+      "file": "iznik-server-go/test/orm_insertid_test.go",
+      "line": 99,
+      "function": "TestInsertID_IsPerStatementNotPerConnectionRace",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain IN (?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -104173,6 +104195,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "caf954b5ea54": {
+      "id": "caf954b5ea54",
+      "file": "iznik-server-go/test/orm_insertid_test.go",
+      "line": 73,
+      "function": "TestInsertID_WithResultExposesSQLResult",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "cb000fd5c0fa": {
       "id": "cb000fd5c0fa",
       "file": "iznik-server-go/test/user_test.go",
@@ -116493,6 +116537,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages_groups WHERE msgid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "e3554e58c8f3": {
+      "id": "e3554e58c8f3",
+      "file": "iznik-server-go/test/orm_insertid_test.go",
+      "line": 41,
+      "function": "TestInsertID_MapCreateReturnsIDUnderAtID",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
