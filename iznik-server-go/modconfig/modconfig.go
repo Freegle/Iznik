@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type ModConfig struct {
@@ -369,26 +370,46 @@ func PostModConfig(c *fiber.Ctx) error {
 		if newID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
 		}
-		db.Exec("UPDATE mod_configs SET createdby = ? WHERE id = ?", myid, newID)
+		// ORM migration site 207260729430 (wave 2).
+		db.Table("mod_configs").Where("id = ?", newID).Update("createdby", myid)
 
 		// Copy stdmsgs.
 		var srcMsgs []StdMsg
 		db.Raw("SELECT "+stdMsgColumns+" FROM mod_stdmsgs WHERE configid = ?", req.ID).Scan(&srcMsgs)
 		for _, m := range srcMsgs {
-			db.Exec("INSERT INTO mod_stdmsgs (configid, title, action, subjpref, subjsuff, body, "+
-				"rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert`) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-				newID, m.Title, m.Action, m.Subjpref, m.Subjsuff, m.Body,
-				m.Rarelyused, m.Autosend, m.Newmodstatus, m.Newdelstatus, m.Edittext, m.Insert)
+			// ORM migration site ef309513694a (wave 2).
+			db.Table("mod_stdmsgs").Create(map[string]interface{}{
+				"configid":     newID,
+				"title":        m.Title,
+				"action":       m.Action,
+				"subjpref":     m.Subjpref,
+				"subjsuff":     m.Subjsuff,
+				"body":         m.Body,
+				"rarelyused":   m.Rarelyused,
+				"autosend":     m.Autosend,
+				"newmodstatus": m.Newmodstatus,
+				"newdelstatus": m.Newdelstatus,
+				"edittext":     m.Edittext,
+				"insert":       m.Insert,
+			})
 		}
 
-		// Copy bulkops.
+		// Copy bulkops. Left raw (e137c396bd13, wave 2): INSERT ... SELECT has
+		// no GORM builder equivalent that keeps it a single atomic statement -
+		// no site with this shape has been converted anywhere in the codebase.
 		db.Exec("INSERT INTO mod_bulkops (title, configid, `set`, criterion, runevery, action, bouncingfor) "+
 			"SELECT title, ?, `set`, criterion, runevery, action, bouncingfor "+
 			"FROM mod_bulkops WHERE configid = ?", newID, req.ID)
 
 		// Log the creation.
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_CREATED, myid, newID)
+		// ORM migration site e07a25573e68 (wave 2).
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log.LOG_TYPE_CONFIG,
+			"subtype":   log.LOG_SUBTYPE_CREATED,
+			"byuser":    myid,
+			"configid":  newID,
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 	}
@@ -417,7 +438,14 @@ func PostModConfig(c *fiber.Ctx) error {
 	}
 
 	// Log the creation.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_CREATED, myid, newID)
+	// ORM migration site b4d152ba261c (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CONFIG,
+		"subtype":   log.LOG_SUBTYPE_CREATED,
+		"byuser":    myid,
+		"configid":  newID,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
@@ -568,7 +596,14 @@ func PatchModConfig(c *fiber.Ctx) error {
 	}
 
 	// Log the edit.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_EDIT, myid, req.ID)
+	// ORM migration site d42d9aa90149 (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CONFIG,
+		"subtype":   log.LOG_SUBTYPE_EDIT,
+		"byuser":    myid,
+		"configid":  req.ID,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -611,10 +646,18 @@ func DeleteModConfig(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 5, "status": "Config still in use"})
 	}
 
-	db.Exec("DELETE FROM mod_configs WHERE id = ?", id)
+	// ORM migration site 954d3085c050 (wave 2).
+	db.Table("mod_configs").Where("id = ?", id).Delete(nil)
 
 	// Log the deletion.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_DELETED, myid, id)
+	// ORM migration site e31c7ddcc714 (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CONFIG,
+		"subtype":   log.LOG_SUBTYPE_DELETED,
+		"byuser":    myid,
+		"configid":  id,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

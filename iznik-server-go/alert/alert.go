@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 var htmlTagRE = regexp.MustCompile(`(?s)<[^>]*>`)
@@ -294,7 +295,9 @@ func RecordAlert(c *fiber.Ctx) error {
 
 	if req.Action == "clicked" && req.Trackid > 0 {
 		db := database.DBConn
-		db.Exec("UPDATE alerts_tracking SET responded = NOW(), response = 'Clicked' WHERE id = ?", req.Trackid)
+		// ORM migration site 053433aae0e7 (wave 2).
+		db.Table("alerts_tracking").Where("id = ?", req.Trackid).
+			Updates(map[string]interface{}{"responded": gorm.Expr("NOW()"), "response": gorm.Expr("'Clicked'")})
 	}
 
 	return c.JSON(fiber.Map{

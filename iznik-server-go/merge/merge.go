@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type loginRow struct {
@@ -238,8 +239,10 @@ func CreateMerge(c *fiber.Ctx) error {
 	}
 
 	// Flag related users as notified.
-	db.Exec("UPDATE users_related SET notified = 1 WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		req.User1, req.User2, req.User2, req.User1)
+	// ORM migration site 6c13f84896c6 (wave 2).
+	db.Table("users_related").
+		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
+		Update("notified", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID, "uid": uid})
 }
@@ -308,9 +311,11 @@ func PostMerge(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Accept":
-		db.Exec("UPDATE merges SET accepted = NOW() WHERE id = ?", req.ID)
+		// ORM migration site 2b580119e4e3 (wave 2).
+		db.Table("merges").Where("id = ?", req.ID).Update("accepted", gorm.Expr("NOW()"))
 	case "Reject":
-		db.Exec("UPDATE merges SET rejected = NOW() WHERE id = ?", req.ID)
+		// ORM migration site a4b133b08878 (wave 2).
+		db.Table("merges").Where("id = ?", req.ID).Update("rejected", gorm.Expr("NOW()"))
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid action")
 	}
@@ -359,8 +364,10 @@ func DeleteMerge(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("UPDATE users_related SET notified = 1 WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		req.User1, req.User2, req.User2, req.User1)
+	// ORM migration site f1b4641550c1 (wave 2).
+	db.Table("users_related").
+		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
+		Update("notified", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

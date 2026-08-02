@@ -137,7 +137,8 @@ func Post(c *fiber.Ctx) error {
 	if raterecognise != "" && id != "" {
 		idNum, _ := strconv.ParseUint(id, 10, 64)
 		db := database.DBConn
-		db.Exec("UPDATE messages_attachments_recognise SET rating = ? WHERE attid = ?", raterecognise, idNum)
+		// ORM migration site 30517f1cbffd (wave 2).
+		db.Table("messages_attachments_recognise").Where("attid = ?", idNum).Update("rating", raterecognise)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 

@@ -5,6 +5,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 	"time"
 )
 
@@ -121,7 +122,9 @@ func Seen(c *fiber.Ctx) error {
 	}
 
 	// Mark specific notification as seen for this user
-	result := db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ? AND id = ?", myid, req.ID)
+	// ORM migration site 44a7f7cc40fc (wave 2).
+	result := db.Table("users_notifications").Where("touser = ? AND id = ?", myid, req.ID).
+		Update("seen", gorm.Expr("1"))
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update notification")
@@ -154,7 +157,8 @@ func AllSeen(c *fiber.Ctx) error {
 	}
 
 	// Mark all notifications as seen for this user
-	result := db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ?", myid)
+	// ORM migration site be340be71e2b (wave 2).
+	result := db.Table("users_notifications").Where("touser = ?", myid).Update("seen", gorm.Expr("1"))
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update notifications")

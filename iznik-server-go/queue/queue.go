@@ -57,10 +57,11 @@ func QueueTask(taskType string, data map[string]interface{}) error {
 		return err
 	}
 
-	result := db.Exec(
-		"INSERT INTO background_tasks (task_type, data) VALUES (?, ?)",
-		taskType, string(jsonData),
-	)
+	// ORM migration site 1a41e1c07178 (wave 2).
+	result := db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": taskType,
+		"data":      string(jsonData),
+	})
 
 	if result.Error != nil {
 		log.Printf("Failed to queue task type %s: %v", taskType, result.Error)

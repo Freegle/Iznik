@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // RedirectShortlink handles GET /shortlink?name=xxx — the public-facing redirect endpoint.
@@ -57,7 +58,8 @@ func RedirectShortlink(c *fiber.Ctx) error {
 	}
 
 	// Record the click.
-	db.Exec("UPDATE shortlinks SET clicks = clicks + 1 WHERE id = ?", s.ID)
+	// ORM migration site a2ca92d61766 (wave 2).
+	db.Table("shortlinks").Where("id = ?", s.ID).Update("clicks", gorm.Expr("clicks + 1"))
 	// ORM migration site 507986a628ba (wave 2).
 	db.Table("shortlink_clicks").Create(map[string]interface{}{"shortlinkid": s.ID})
 

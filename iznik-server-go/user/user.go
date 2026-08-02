@@ -1491,7 +1491,12 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 				db.Table("users_logins").Select("credentials").Where("userid = ? AND type = 'Link'", id).Limit(1).Scan(&key)
 				if key == "" {
 					key = generateRandomKey(32)
-					db.Exec("INSERT INTO users_logins (userid, type, credentials) VALUES (?, 'Link', ?)", id, key)
+					// ORM migration site f619bcea08df (wave 2).
+					db.Table("users_logins").Create(map[string]interface{}{
+						"userid":      id,
+						"type":        gorm.Expr("'Link'"),
+						"credentials": key,
+					})
 				}
 				if key != "" {
 					userSite := os.Getenv("USER_SITE")
@@ -1787,8 +1792,17 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		}
 
 		// Orphaned row (userid IS NULL) or admin reassigning: update the existing row.
-		db.Exec("UPDATE users_emails SET userid = ?, preferred = ?, validated = NOW(), canon = ?, backwards = ? WHERE id = ?",
-			targetID, primaryVal, canon, reverseString(canon), existingID)
+		// ORM migration site 07c4bef29c2f (wave 2). None of these five
+		// assignments reference another assigned column, so the SET order is
+		// not load-bearing and GORM's alphabetical Updates(map) order is safe;
+		// see check-set-order.sh / setOrderIsLoadBearing.
+		db.Table("users_emails").Where("id = ?", existingID).Updates(map[string]interface{}{
+			"userid":    targetID,
+			"preferred": primaryVal,
+			"validated": gorm.Expr("NOW()"),
+			"canon":     canon,
+			"backwards": reverseString(canon),
+		})
 
 		if isPrimary {
 			// ORM migration site a80f1b38c186 (wave 2).
@@ -1996,8 +2010,15 @@ func PutUser(c *fiber.Ctx) error {
 
 	// Add email.
 	canon := CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
-		newUserID, email, canon, reverseString(canon))
+	// ORM migration site c5b11d58ae60 (wave 2).
+	db.Table("users_emails").Create(map[string]interface{}{
+		"userid":    newUserID,
+		"email":     email,
+		"preferred": gorm.Expr("1"),
+		"validated": gorm.Expr("NOW()"),
+		"canon":     canon,
+		"backwards": reverseString(canon),
+	})
 
 	// Generate random password if none provided (for email-only signup).
 	// The client shows this to the user in the welcome modal.
@@ -2014,16 +2035,34 @@ func PutUser(c *fiber.Ctx) error {
 	h := sha1.New()
 	h.Write([]byte(password + salt))
 	hashed := hex.EncodeToString(h.Sum(nil))
-	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?)",
-		newUserID, utils.LOGIN_TYPE_NATIVE, newUserID, hashed, salt)
+	// ORM migration site 9c4b09b388ef (wave 2).
+	db.Table("users_logins").Create(map[string]interface{}{
+		"userid":      newUserID,
+		"type":        utils.LOGIN_TYPE_NATIVE,
+		"uid":         newUserID,
+		"credentials": hashed,
+		"salt":        salt,
+	})
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
-		result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-			newUserID, req.GroupID, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+		// ORM migration site fec927e74aaa (wave 2).
+		result := db.Table("memberships").Create(map[string]interface{}{
+			"userid":     newUserID,
+			"groupid":    req.GroupID,
+			"role":       utils.ROLE_MEMBER,
+			"collection": utils.COLLECTION_APPROVED,
+		})
 		if result.RowsAffected > 0 {
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
-				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_JOINED, req.GroupID, newUserID, newUserID)
+			// ORM migration site 2f4ae0de2f36 (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log2.LOG_TYPE_GROUP,
+				"subtype":   log2.LOG_SUBTYPE_JOINED,
+				"groupid":   req.GroupID,
+				"user":      newUserID,
+				"byuser":    newUserID,
+			})
 
 			// V1 parity (User::addMembership, User.php:911-916): record the join in
 			// memberships_history with processingrequired=1 so the background
@@ -2031,8 +2070,14 @@ func PutUser(c *fiber.Ctx) error {
 			// treats this as a brand-new joiner. AddMembership() writes this row, but
 			// the website-signup path inserts the membership inline and never calls it,
 			// so without this the new member bypasses new-joiner scrutiny.
-			db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired, added) VALUES (?, ?, ?, 1, NOW())",
-				newUserID, req.GroupID, utils.COLLECTION_APPROVED)
+			// ORM migration site e7a34e3dea3b (wave 2).
+			db.Table("memberships_history").Create(map[string]interface{}{
+				"userid":             newUserID,
+				"groupid":            req.GroupID,
+				"collection":         utils.COLLECTION_APPROVED,
+				"processingrequired": gorm.Expr("1"),
+				"added":              gorm.Expr("NOW()"),
+			})
 		}
 	}
 
@@ -2158,9 +2203,14 @@ func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
 
 	// Flag the user's memberships for review, but don't re-flag rows already pending (only a fresh
 	// request, or one whose previous request has already been actioned).
-	db.Exec("UPDATE memberships SET reviewrequestedat = NOW(), reviewreason = ? WHERE userid = ? "+
-		"AND (reviewrequestedat IS NULL OR (reviewedat IS NOT NULL AND reviewedat >= reviewrequestedat))",
-		reason, myid)
+	// ORM migration site 80bda541244b (wave 2). Neither assignment references
+	// the other assigned column, so the SET order is not load-bearing.
+	db.Table("memberships").Where("userid = ? "+
+		"AND (reviewrequestedat IS NULL OR (reviewedat IS NOT NULL AND reviewedat >= reviewrequestedat))", myid).
+		Updates(map[string]interface{}{
+			"reviewrequestedat": gorm.Expr("NOW()"),
+			"reviewreason":      reason,
+		})
 
 	log2.Log(log2.LogEntry{
 		Type:    log2.LOG_TYPE_USER,
@@ -2302,8 +2352,13 @@ func PatchUser(c *fiber.Ctx) error {
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
-		db.Exec("UPDATE users SET fullname = ?, firstname = NULL, lastname = NULL WHERE id = ?",
-			*req.Displayname, myid)
+		// ORM migration site 29d38c03b5c7 (wave 2). None of these three
+		// assignments reference another assigned column.
+		db.Table("users").Where("id = ?", myid).Updates(map[string]interface{}{
+			"fullname":  *req.Displayname,
+			"firstname": gorm.Expr("NULL"),
+			"lastname":  gorm.Expr("NULL"),
+		})
 	}
 
 	if req.Settings != nil {
@@ -2346,7 +2401,12 @@ func PatchUser(c *fiber.Ctx) error {
 
 	if req.Aboutme != nil {
 		// Insert a new aboutme entry. The most recent is fetched via ORDER BY timestamp DESC LIMIT 1.
-		db.Exec("INSERT INTO users_aboutme (userid, text, timestamp) VALUES (?, ?, NOW())", myid, *req.Aboutme)
+		// ORM migration site 896940a53068 (wave 2).
+		db.Table("users_aboutme").Create(map[string]interface{}{
+			"userid":    myid,
+			"text":      *req.Aboutme,
+			"timestamp": gorm.Expr("NOW()"),
+		})
 	}
 
 	if req.Newsfeedmodstatus != nil {
@@ -2580,11 +2640,25 @@ func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uin
 		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
 	for _, groupid := range groupids {
 		if byUser == 0 {
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, NULL, ?)",
-				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, groupid)
+			// ORM migration site 564e5329c133 (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log2.LOG_TYPE_GROUP,
+				"subtype":   log2.LOG_SUBTYPE_LEFT,
+				"user":      targetID,
+				"byuser":    gorm.Expr("NULL"),
+				"groupid":   groupid,
+			})
 		} else {
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, ?, ?)",
-				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, byUser, groupid)
+			// ORM migration site cfcd2f885279 (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log2.LOG_TYPE_GROUP,
+				"subtype":   log2.LOG_SUBTYPE_LEFT,
+				"user":      targetID,
+				"byuser":    byUser,
+				"groupid":   groupid,
+			})
 		}
 	}
 }
@@ -2604,8 +2678,14 @@ func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
 	db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
 	// ORM migration site b561dab1c2bd (wave 2).
 	db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
-		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, byUser)
+	// ORM migration site 8bb010b9529b (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log2.LOG_TYPE_USER,
+		"subtype":   log2.LOG_SUBTYPE_DELETED,
+		"user":      targetID,
+		"byuser":    byUser,
+	})
 }
 
 // handleUserUnsubscribe puts a target user into a recoverable limbo (soft-delete)
@@ -3043,14 +3123,24 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 
 	// Merge log entries (two entries, one per user — V1 parity).
 	logText := fmt.Sprintf("Merged %d into %d", uint64(req.ID1), uint64(req.ID2))
-	tx.Exec(
-		"INSERT INTO logs (user, byuser, type, subtype, text, timestamp) VALUES (?, ?, ?, ?, ?, NOW())",
-		uint64(req.ID1), myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_MERGED, logText,
-	)
-	tx.Exec(
-		"INSERT INTO logs (user, byuser, type, subtype, text, timestamp) VALUES (?, ?, ?, ?, ?, NOW())",
-		uint64(req.ID2), myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_MERGED, logText,
-	)
+	// ORM migration site 8278f05f07af (wave 2).
+	tx.Table("logs").Create(map[string]interface{}{
+		"user":      uint64(req.ID1),
+		"byuser":    myid,
+		"type":      log2.LOG_TYPE_USER,
+		"subtype":   log2.LOG_SUBTYPE_MERGED,
+		"text":      logText,
+		"timestamp": gorm.Expr("NOW()"),
+	})
+	// ORM migration site 6f9705358ae3 (wave 2).
+	tx.Table("logs").Create(map[string]interface{}{
+		"user":      uint64(req.ID2),
+		"byuser":    myid,
+		"type":      log2.LOG_TYPE_USER,
+		"subtype":   log2.LOG_SUBTYPE_MERGED,
+		"text":      logText,
+		"timestamp": gorm.Expr("NOW()"),
+	})
 
 	// ── Commit ──────────────────────────────────────────────────────────────────
 	if err := tx.Commit().Error; err != nil {

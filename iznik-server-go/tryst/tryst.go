@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type Tryst struct {
@@ -257,7 +258,8 @@ func PatchTryst(c *fiber.Ctx) error {
 	}
 
 	if req.Arrangedfor != "" {
-		db.Exec("UPDATE trysts SET arrangedfor = ? WHERE id = ?", req.Arrangedfor, req.ID)
+		// ORM migration site 31ca1c3e3e7a (wave 2).
+		db.Table("trysts").Where("id = ?", req.ID).Update("arrangedfor", req.Arrangedfor)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -309,17 +311,21 @@ func PostTryst(c *fiber.Ctx) error {
 
 	if req.Confirm {
 		if isUser1 {
-			db.Exec("UPDATE trysts SET user1confirmed = NOW() WHERE id = ?", req.ID)
+			// ORM migration site a692d161ad11 (wave 2).
+			db.Table("trysts").Where("id = ?", req.ID).Update("user1confirmed", gorm.Expr("NOW()"))
 		} else {
-			db.Exec("UPDATE trysts SET user2confirmed = NOW() WHERE id = ?", req.ID)
+			// ORM migration site e7862c3da563 (wave 2).
+			db.Table("trysts").Where("id = ?", req.ID).Update("user2confirmed", gorm.Expr("NOW()"))
 		}
 	}
 
 	if req.Decline {
 		if isUser1 {
-			db.Exec("UPDATE trysts SET user1declined = NOW() WHERE id = ?", req.ID)
+			// ORM migration site 4d017739e5ae (wave 2).
+			db.Table("trysts").Where("id = ?", req.ID).Update("user1declined", gorm.Expr("NOW()"))
 		} else {
-			db.Exec("UPDATE trysts SET user2declined = NOW() WHERE id = ?", req.ID)
+			// ORM migration site b6d802da0733 (wave 2).
+			db.Table("trysts").Where("id = ?", req.ID).Update("user2declined", gorm.Expr("NOW()"))
 		}
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // CommentItem is a flat comment representation. Client fetches user details separately via /user/:id.
@@ -239,8 +240,9 @@ func flagOthers(userid uint64, groupid uint64) {
 	reason := "Note flagged to other groups"
 
 	for _, gid := range otherGroupIDs {
-		db.Exec("UPDATE memberships SET reviewreason = ?, reviewrequestedat = ? WHERE groupid = ? AND userid = ?",
-			reason, now, gid, userid)
+		// ORM migration site eda36bc0f75a (wave 2).
+		db.Table("memberships").Where("groupid = ? AND userid = ?", gid, userid).
+			Updates(map[string]interface{}{"reviewreason": reason, "reviewrequestedat": now})
 	}
 }
 
@@ -328,12 +330,23 @@ func Edit(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	db.Exec(
-		"UPDATE users_comments SET user1 = ?, user2 = ?, user3 = ?, user4 = ?, user5 = ?, user6 = ?, user7 = ?, user8 = ?, user9 = ?, user10 = ?, user11 = ?, flag = COALESCE(?, flag), byuserid = ?, reviewed = NOW() WHERE id = ?",
-		req.User1, req.User2, req.User3, req.User4, req.User5,
-		req.User6, req.User7, req.User8, req.User9, req.User10,
-		req.User11, req.Flag, myid, req.ID,
-	)
+	// ORM migration site 408704240109 (wave 2).
+	db.Table("users_comments").Where("id = ?", req.ID).Updates(map[string]interface{}{
+		"user1":    req.User1,
+		"user2":    req.User2,
+		"user3":    req.User3,
+		"user4":    req.User4,
+		"user5":    req.User5,
+		"user6":    req.User6,
+		"user7":    req.User7,
+		"user8":    req.User8,
+		"user9":    req.User9,
+		"user10":   req.User10,
+		"user11":   req.User11,
+		"flag":     gorm.Expr("COALESCE(?, flag)", req.Flag),
+		"byuserid": myid,
+		"reviewed": gorm.Expr("NOW()"),
+	})
 
 	// Flag user in other groups if flag is set to true
 	if req.Flag != nil && *req.Flag {
@@ -368,7 +381,8 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM users_comments WHERE id = ?", id)
+	// ORM migration site c7d4d6e14e0d (wave 2).
+	db.Table("users_comments").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{
 		"success": true,

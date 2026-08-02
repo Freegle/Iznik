@@ -881,7 +881,9 @@ func UpdateLocation(c *fiber.Ctx) error {
 
 	if req.Name != nil && *req.Name != "" {
 		canon := strings.ToLower(*req.Name)
-		db.Exec("UPDATE locations SET name = ?, canon = ? WHERE id = ?", *req.Name, canon, req.ID)
+		// ORM migration site cf7be3980e03 (wave 2).
+		db.Table("locations").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"name": *req.Name, "canon": canon})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

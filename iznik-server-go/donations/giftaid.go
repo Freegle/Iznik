@@ -8,6 +8,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // GiftAid represents a user's Gift Aid declaration
@@ -328,31 +329,40 @@ func EditGiftAid(c *fiber.Ctx) error {
 	// Update each field individually if provided (non-nil pointer means explicitly sent,
 	// even if empty string -- allowing fields to be cleared).
 	if req.Period != nil {
-		db.Exec("UPDATE giftaid SET period = ? WHERE id = ?", *req.Period, req.ID)
+		// ORM migration site 4f053cd8dd78 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("period", *req.Period)
 	}
 	if req.Fullname != nil {
-		db.Exec("UPDATE giftaid SET fullname = ? WHERE id = ?", *req.Fullname, req.ID)
+		// ORM migration site 645c6f681043 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("fullname", *req.Fullname)
 	}
 	if req.Firstname != nil {
-		db.Exec("UPDATE giftaid SET firstname = ? WHERE id = ?", *req.Firstname, req.ID)
+		// ORM migration site ef4a0c1acdcb (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("firstname", *req.Firstname)
 	}
 	if req.Lastname != nil {
-		db.Exec("UPDATE giftaid SET lastname = ? WHERE id = ?", *req.Lastname, req.ID)
+		// ORM migration site 09c76dc0c164 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("lastname", *req.Lastname)
 	}
 	if req.Homeaddress != nil {
-		db.Exec("UPDATE giftaid SET homeaddress = ? WHERE id = ?", *req.Homeaddress, req.ID)
+		// ORM migration site d21ef86c2517 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("homeaddress", *req.Homeaddress)
 	}
 	if req.Postcode != nil {
-		db.Exec("UPDATE giftaid SET postcode = ? WHERE id = ?", *req.Postcode, req.ID)
+		// ORM migration site 6eb0a1069fb6 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("postcode", *req.Postcode)
 	}
 	if req.Housenameornumber != nil {
-		db.Exec("UPDATE giftaid SET housenameornumber = ? WHERE id = ?", *req.Housenameornumber, req.ID)
+		// ORM migration site 246bbfcc9225 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("housenameornumber", *req.Housenameornumber)
 	}
 	if req.Reviewed != nil && *req.Reviewed {
-		db.Exec("UPDATE giftaid SET reviewed = NOW() WHERE id = ?", req.ID)
+		// ORM migration site 2ecbd6874f42 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("reviewed", gorm.Expr("NOW()"))
 	}
 	if req.Deleted != nil && *req.Deleted {
-		db.Exec("UPDATE giftaid SET deleted = NOW() WHERE id = ?", req.ID)
+		// ORM migration site 40da338804c9 (wave 2).
+		db.Table("giftaid").Where("id = ?", req.ID).Update("deleted", gorm.Expr("NOW()"))
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

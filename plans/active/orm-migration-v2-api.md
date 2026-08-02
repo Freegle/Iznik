@@ -144,6 +144,43 @@ a real gap to weigh when reviewing, not a theoretical one.
 Worth deciding before the waves get much further: retrofitting later costs more
 than adopting it now.
 
+## Layer 2 coverage: the actual numbers
+
+I twice described Layers 2, 3 and 4 as having "never run against a converted
+site". That was wrong, and overstated in the direction that flatters the gap
+rather than the work: the wave 0 pilot already had three `AssertResultParity`
+tests against converted sites. The accurate position is a coverage number, not
+a binary.
+
+`orm_layer2_resultparity_test.go` now covers the 27 converted SELECTs whose SQL
+carries no bind parameters, plus the 3 pilot sites, so **30 of 982 converted
+sites have result parity**. Parameterless sites are the set that can be run with
+no fixture assumptions: identical statement, no args, both ways. That is what
+makes them mechanical to generate and free of judgement about which id to pass.
+
+What is still uncovered, stated plainly:
+
+- **524 converted SELECTs take bind parameters.** Each needs values chosen so
+  the query returns rows worth comparing; an empty result set on both sides
+  proves almost nothing. That is per-site judgement, not generation.
+- **Writes have no Layer 2 by design** - running them would mutate fixture data
+  other tests depend on. Plan 7.2 covers writes with Layer 4 replay instead,
+  which is built (`RunUpsertParity`, `DiffTables`) and wired to no converted
+  site.
+- **Layer 3 shadow reads** are tested for their own behaviour in
+  `ormshadow_test.go` and are likewise wired to no converted site.
+
+So the honest summary is: Layer 1 covers every converted site, Layer 2 covers
+30, Layers 3 and 4 cover none. The three-line version I had been giving was
+worse than the numbers.
+
+One thing the generation exposed, which is the argument for doing it rather
+than describing it: a `Count` chain carries its aggregate in the terminal, not
+in the chain. Since a Layer 2 replacement must stop short of a terminal,
+dropping it turns `SELECT COUNT(*)` into `SELECT *`. Eleven of the 27 are
+counts. Layer 1 could never have shown this, because Layer 1 never removes the
+terminal.
+
 ## The `IN ?` sites are convertible: resolved
 
 `AssertGoldenSQL` now collapses placeholder `IN` lists on both sides of the

@@ -190,7 +190,8 @@ func HealPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Is
 				needsRefetch = true
 				if newIsoID != iso.Isochroneid {
 					// Point user to the new proper isochrone.
-					db.Exec("UPDATE isochrones_users SET isochroneid = ? WHERE id = ?", newIsoID, iso.ID)
+					// ORM migration site efe4a0639f44 (wave 2).
+					db.Table("isochrones_users").Where("id = ?", iso.ID).Update("isochroneid", newIsoID)
 				}
 			}
 		}
@@ -396,11 +397,13 @@ func EditIsochrone(c *fiber.Ctx) error {
 	}
 
 	// Update the link to point to the new isochrone.
-	result := db.Exec("UPDATE isochrones_users SET isochroneid = ? WHERE id = ?", isoID, req.ID)
+	// ORM migration site ba1bbcbc0b5d (wave 2).
+	result := db.Table("isochrones_users").Where("id = ?", req.ID).Update("isochroneid", isoID)
 	if result.Error != nil {
 		// Handle duplicate entry (timing window).
 		log.Printf("Failed to update isochrone link %d, deleting duplicate: %v", req.ID, result.Error)
-		db.Exec("DELETE FROM isochrones_users WHERE id = ?", req.ID)
+		// ORM migration site 53769722a855 (wave 2).
+		db.Table("isochrones_users").Where("id = ?", req.ID).Delete(nil)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -450,7 +453,8 @@ func DeleteIsochrone(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Access denied"})
 	}
 
-	db.Exec("DELETE FROM isochrones_users WHERE id = ?", id)
+	// ORM migration site eddf7acf7d4d (wave 2).
+	db.Table("isochrones_users").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

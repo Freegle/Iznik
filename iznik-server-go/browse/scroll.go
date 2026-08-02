@@ -79,8 +79,13 @@ func RecordScrollDepth(c *fiber.Ctx) error {
 			req.Session, userid, req.MaxPosition, items, ctx)
 	} else {
 		// Legacy clients without a session id: a single fire-and-forget insert.
-		db.Exec("INSERT INTO browse_scroll_depth (userid, max_position, items_available, context) VALUES (?, ?, ?, ?)",
-			userid, req.MaxPosition, items, ctx)
+		// ORM migration site b90542fe5559 (wave 2).
+		db.Table("browse_scroll_depth").Create(map[string]interface{}{
+			"userid":          userid,
+			"max_position":    req.MaxPosition,
+			"items_available": items,
+			"context":         ctx,
+		})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

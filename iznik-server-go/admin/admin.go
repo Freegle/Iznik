@@ -191,7 +191,8 @@ func PostAdmin(c *fiber.Ctx) error {
 			return heldByAnotherResponse(c, holder, name)
 		}
 
-		db.Exec("UPDATE admins SET heldby = ? WHERE id = ?", myid, req.ID)
+		// ORM migration site 758cc8542da6 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("heldby", myid)
 		return c.JSON(fiber.Map{"success": true})
 
 	case "Release":
@@ -207,7 +208,8 @@ func PostAdmin(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
 		}
 
-		db.Exec("UPDATE admins SET heldby = NULL WHERE id = ?", req.ID)
+		// ORM migration site 392f5063e394 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"success": true})
 
 	default:
@@ -353,7 +355,8 @@ func PatchAdmin(c *fiber.Ctx) error {
 	}
 
 	if req.Subject != nil {
-		db.Exec("UPDATE admins SET subject = ? WHERE id = ?", *req.Subject, req.ID)
+		// ORM migration site 410038882811 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
 	if req.Text != nil {
 		// ORM migration site 3a093ace39bb (wave 2).
@@ -363,33 +366,43 @@ func PatchAdmin(c *fiber.Ctx) error {
 		// Completing is terminal, so drop the hold with it. Leaving it set pinned the
 		// message as "Held" indefinitely, so it stayed locked to a mod who had already
 		// finished with it and only a manual Release cleared it.
-		db.Exec("UPDATE admins SET complete = NOW(), heldby = NULL WHERE id = ?", req.ID)
+		// ORM migration site 4848bb7140d6 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"complete": gorm.Expr("NOW()"), "heldby": gorm.Expr("NULL")})
 	}
 	if req.Pending != nil {
 		var val int
 		if *req.Pending {
 			val = 1
 		}
-		db.Exec("UPDATE admins SET pending = ? WHERE id = ?", val, req.ID)
+		// ORM migration site a6f6b67bbf10 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("pending", val)
 	}
 	if req.CTA_Text != nil {
-		db.Exec("UPDATE admins SET ctatext = ? WHERE id = ?", *req.CTA_Text, req.ID)
+		// ORM migration site ff2cd33b1601 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("ctatext", *req.CTA_Text)
 	}
 	if req.CTA_Link != nil {
-		db.Exec("UPDATE admins SET ctalink = ? WHERE id = ?", *req.CTA_Link, req.ID)
+		// ORM migration site aeab343d2b29 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("ctalink", *req.CTA_Link)
 	}
 	if req.Essential != nil {
-		db.Exec("UPDATE admins SET essential = ? WHERE id = ?", *req.Essential, req.ID)
+		// ORM migration site dfb2e5f3ddfb (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("essential", *req.Essential)
 	}
 	if req.Template != nil {
-		db.Exec("UPDATE admins SET template = ? WHERE id = ?", *req.Template, req.ID)
+		// ORM migration site 4129ec17482b (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("template", *req.Template)
 	}
 	if req.Editprotected != nil {
-		db.Exec("UPDATE admins SET editprotected = ? WHERE id = ?", *req.Editprotected, req.ID)
+		// ORM migration site 339f96b301b3 (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("editprotected", *req.Editprotected)
 	}
 
 	// Track who edited and when.
-	db.Exec("UPDATE admins SET editedat = NOW(), editedby = ? WHERE id = ?", myid, req.ID)
+	// ORM migration site e833309ff21a (wave 2).
+	db.Table("admins").Where("id = ?", req.ID).
+		Updates(map[string]interface{}{"editedat": gorm.Expr("NOW()"), "editedby": myid})
 
 	return c.JSON(fiber.Map{"success": true})
 }

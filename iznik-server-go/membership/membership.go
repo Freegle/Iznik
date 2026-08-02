@@ -182,8 +182,14 @@ func PostMemberships(c *fiber.Ctx) error {
 		if req.Stdmsgid != nil {
 			stdmsgid = *req.Stdmsgid
 		}
-		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-			"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member")
+		// ORM migration site 3b43ce5f3f6c (wave 2). normaliseColumnOrder handles
+		// the map-Create column reorder (data, task_type) against a JSON_OBJECT
+		// value; see ormharness/normalise_test.go TestNormaliseColumnOrder_InsertWithNestedFunctionArgs.
+		db.Table("background_tasks").Create(map[string]interface{}{
+			"task_type": "email_mod_stdmsg",
+			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member"),
+		})
 		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -206,8 +212,12 @@ func PostMemberships(c *fiber.Ctx) error {
 			body = *req.Body
 		}
 		if subject != "" || body != "" {
-			db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-				"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member")
+			// ORM migration site a7dec15999b7 (wave 2).
+			db.Table("background_tasks").Create(map[string]interface{}{
+				"task_type": "email_mod_stdmsg",
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member"),
+			})
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -233,8 +243,12 @@ func PostMemberships(c *fiber.Ctx) error {
 			stdmsgid = *req.Stdmsgid
 		}
 		if subject != "" || body != "" {
-			db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-				"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action)
+			// ORM migration site 8d3cfe20b403 (wave 2).
+			db.Table("background_tasks").Create(map[string]interface{}{
+				"task_type": "email_mod_stdmsg",
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action),
+			})
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1254,23 +1268,31 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
 	}
 
-	// Insert membership. Left raw (759766c83c01, wave 2): golden column order
-	// (userid, groupid, role, collection) is not alphabetical, so a map-valued
-	// Create would render "(collection, groupid, role, userid)" instead -
-	// reported rather than forced. Identical twin: addMemberToGroup (27aa0e237120).
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	// Insert membership. ORM migration site 759766c83c01 (wave 2). Golden column
+	// order (userid, groupid, role, collection) is not alphabetical, but
+	// normaliseColumnOrder sorts both sides' columns together with their values
+	// before comparing (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert),
+	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
+	db.Table("memberships").Create(map[string]interface{}{
+		"userid":     userid,
+		"groupid":    groupid,
+		"role":       utils.ROLE_MEMBER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	// Record in memberships_history with processingrequired=1 so the
 	// Laravel batch (memberships:process) sends the group welcome email,
 	// runs spam checks, and applies review flags. Without this row the
 	// cron has nothing to do and welcomes are silently dropped.
-	// Left raw (32d907621f09, wave 2): same map-Create column-reorder issue
-	// (golden order userid, groupid, collection, processingrequired is not
-	// alphabetical) plus a literal "1" the golden never binds. Identical twin:
+	// ORM migration site 32d907621f09 (wave 2). processingrequired is a literal
+	// 1 in the golden, not a bind, so it goes through gorm.Expr. Identical twin:
 	// addMemberToGroup (2f0c55ec88d6).
-	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
-		userid, groupid, utils.COLLECTION_APPROVED)
+	db.Table("memberships_history").Create(map[string]interface{}{
+		"userid":             userid,
+		"groupid":            groupid,
+		"collection":         utils.COLLECTION_APPROVED,
+		"processingrequired": gorm.Expr("1"),
+	})
 
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
 
@@ -1311,21 +1333,29 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
-	// Insert membership as approved member. Left raw (27aa0e237120, wave 2):
-	// identical twin of putMembershipsPartner's insert (759766c83c01) - same
-	// map-Create column-reorder issue, reported rather than forced.
-	result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	// Insert membership as approved member. ORM migration site 27aa0e237120
+	// (wave 2). Identical twin of putMembershipsPartner's insert (759766c83c01);
+	// see the comment there on why the map-Create column reorder is safe.
+	result := db.Table("memberships").Create(map[string]interface{}{
+		"userid":     userid,
+		"groupid":    groupid,
+		"role":       utils.ROLE_MEMBER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	if result.RowsAffected > 0 {
 		// Record in memberships_history with processingrequired=1 so the
 		// Laravel batch (memberships:process) sends the group welcome email,
 		// runs spam checks, and applies review flags. Without this row the
 		// cron has nothing to do and welcomes are silently dropped.
-		// Left raw (2f0c55ec88d6, wave 2): identical twin of putMembershipsPartner's
-		// insert (32d907621f09) - same map-Create column-reorder issue.
-		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
-			userid, groupid, utils.COLLECTION_APPROVED)
+		// ORM migration site 2f0c55ec88d6 (wave 2). Identical twin of
+		// putMembershipsPartner's insert (32d907621f09).
+		db.Table("memberships_history").Create(map[string]interface{}{
+			"userid":             userid,
+			"groupid":            groupid,
+			"collection":         utils.COLLECTION_APPROVED,
+			"processingrequired": gorm.Expr("1"),
+		})
 
 		// V1 parity (User.php:944-957): log text records how the user joined.
 		// manual=true→"Manual" (clicked Join button), false→"Auto" (auto-joined

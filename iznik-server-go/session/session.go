@@ -531,11 +531,17 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 	newKey := utils.RandomHex(16)
 
 	// Insert the login key. Use uid=userid as a unique identifier.
-	// Left raw (812775236c88, wave 2): golden column order (userid, type, uid,
-	// credentials) is not alphabetical, so a map-valued Create would reorder
-	// the column list - reported rather than forced.
-	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, ?, ?, ?)",
-		userID, utils.LOGIN_TYPE_LINK, fmt.Sprintf("%d", userID), newKey)
+	// ORM migration site 812775236c88 (wave 2). Golden column order (userid,
+	// type, uid, credentials) is not alphabetical, but normaliseColumnOrder
+	// sorts both sides' columns together with their values before comparing
+	// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert), so the
+	// map-Create reorder is harmless.
+	db.Table("users_logins").Create(map[string]interface{}{
+		"userid":      userID,
+		"type":        utils.LOGIN_TYPE_LINK,
+		"uid":         fmt.Sprintf("%d", userID),
+		"credentials": newKey,
+	})
 
 	return newKey, nil
 }
@@ -667,19 +673,37 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 
 		// V1 parity (User::delete with $log=TRUE): audit trail for the deletion.
 		// byuser is NULL because there is no acting Freegle user in the partner flow.
-		// Left raw (02506a663a0e, wave 2): golden column order (timestamp, type,
-		// subtype, user, byuser) is not alphabetical, so a map-valued Create
-		// would reorder the column list - reported rather than forced.
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, NULL)",
-			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID)
+		// ORM migration site 02506a663a0e (wave 2). Golden column order (timestamp,
+		// type, subtype, user, byuser) is not alphabetical, but normaliseColumnOrder
+		// sorts both sides' columns together with their values before comparing
+		// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert), so the
+		// map-Create reorder is harmless.
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log2.LOG_TYPE_USER,
+			"subtype":   log2.LOG_SUBTYPE_DELETED,
+			"user":      targetID,
+			"byuser":    gorm.Expr("NULL"),
+		})
 
 		// GDPR erasure: partner-deleted accounts have no recovery affordance (the partner
 		// owns the contract), so unlike the self-service flow we blank message content
 		// immediately rather than deferring to the 14-day grace cleanup.
-		// Left raw (735b4f446b8e, wave 2): nine SET columns whose golden order is
-		// not alphabetical, so Updates(map) would reorder the SET list - reported
-		// rather than forced.
-		db.Exec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", targetID)
+		// ORM migration site 735b4f446b8e (wave 2). None of these nine assignments
+		// reference another assigned column (all NULL/NOW() literals), so the SET
+		// order is not load-bearing and GORM's alphabetical Updates(map) order is
+		// safe; see check-set-order.sh / setOrderIsLoadBearing.
+		db.Table("messages").Where("fromuser = ?", targetID).Updates(map[string]interface{}{
+			"fromip":       gorm.Expr("NULL"),
+			"message":      gorm.Expr("NULL"),
+			"envelopefrom": gorm.Expr("NULL"),
+			"fromname":     gorm.Expr("NULL"),
+			"fromaddr":     gorm.Expr("NULL"),
+			"messageid":    gorm.Expr("NULL"),
+			"textbody":     gorm.Expr("NULL"),
+			"htmlbody":     gorm.Expr("NULL"),
+			"deleted":      gorm.Expr("NOW()"),
+		})
 		db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID)
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -740,10 +764,14 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	db.Table("users").Where("id = ?", myid).Update("deleted", gorm.Expr("NOW()"))
 
 	// V1 parity (User::delete with $log=TRUE): record the deletion in the audit log.
-	// Left raw (9f1d1bde8950, wave 2): same golden column-order mismatch as
-	// 02506a663a0e above - reported rather than forced.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
-		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, myid, myid)
+	// ORM migration site 9f1d1bde8950 (wave 2). Same reasoning as 02506a663a0e above.
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log2.LOG_TYPE_USER,
+		"subtype":   log2.LOG_SUBTYPE_DELETED,
+		"user":      myid,
+		"byuser":    myid,
+	})
 
 	// Destroy session so the user is logged out.
 	// ORM migration site 5e425bd87624 (wave 2).
@@ -1820,11 +1848,16 @@ func PatchSession(c *fiber.Ctx) error {
 			// Clear all preferred flags for this user, then set the confirmed email as preferred.
 			// ORM migration site fc7cf4ff8b35 (wave 2).
 			db.Table("users_emails").Where("userid = ?", myid).Update("preferred", gorm.Expr("0"))
-			// Left raw (db15655f044f, wave 2): four SET columns whose golden
-			// order (userid, preferred, validated, validatekey) is not
-			// alphabetical, so Updates(map) would reorder the SET list -
-			// reported rather than forced.
-			db.Exec("UPDATE users_emails SET userid = ?, preferred = 1, validated = NOW(), validatekey = NULL WHERE id = ?", myid, mail.ID)
+			// ORM migration site db15655f044f (wave 2). None of these four
+			// assignments reference another assigned column, so the SET order
+			// is not load-bearing and GORM's alphabetical Updates(map) order is
+			// safe; see check-set-order.sh / setOrderIsLoadBearing.
+			db.Table("users_emails").Where("id = ?", mail.ID).Updates(map[string]interface{}{
+				"userid":      myid,
+				"preferred":   gorm.Expr("1"),
+				"validated":   gorm.Expr("NOW()"),
+				"validatekey": gorm.Expr("NULL"),
+			})
 
 			// Confirming the key proves this address accepts mail: the member had to
 			// receive the verification email to click the link. Clear the bounce
@@ -1955,10 +1988,14 @@ func PatchSession(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Left raw (3e8f726f0ef8, wave 2): golden column order (userid,
-			// text, timestamp) is not alphabetical, so a map-valued Create
-			// would reorder the column list - reported rather than forced.
-			db.Exec("INSERT INTO users_aboutme (userid, text, timestamp) VALUES (?, ?, NOW())", myid, *req.Aboutme)
+			// ORM migration site 3e8f726f0ef8 (wave 2). Golden column order not
+			// alphabetical, but normaliseColumnOrder handles the map-Create
+			// reorder; see TestNormaliseColumnOrder_Insert.
+			db.Table("users_aboutme").Create(map[string]interface{}{
+				"userid":    myid,
+				"text":      *req.Aboutme,
+				"timestamp": gorm.Expr("NOW()"),
+			})
 		}()
 	}
 

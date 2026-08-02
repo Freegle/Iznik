@@ -109,11 +109,18 @@ func PayPalIPN(c *fiber.Ctx) error {
 		userIDPtr = &userID
 	}
 
-	result := gdb.Exec(
-		"INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source, TransactionType, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		userIDPtr, payerEmail, displayName, timestamp,
-		txnID, mcGross, SOURCE_DONATE_WITH_PAYPAL, txnType, TYPE_PAYPAL,
-	)
+	// ORM migration site 6fdb2c3b96f5 (wave 2).
+	result := gdb.Table("users_donations").Create(map[string]interface{}{
+		"userid":           userIDPtr,
+		"Payer":            payerEmail,
+		"PayerDisplayName": displayName,
+		"timestamp":        timestamp,
+		"TransactionID":    txnID,
+		"GrossAmount":      mcGross,
+		"source":           SOURCE_DONATE_WITH_PAYPAL,
+		"TransactionType":  txnType,
+		"type":             TYPE_PAYPAL,
+	})
 
 	if result.Error != nil {
 		log.Printf("[PayPalIPN] Failed to record donation: %v", result.Error)

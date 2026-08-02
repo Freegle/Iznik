@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 	"iznik-server-go/location"
 )
 
@@ -67,7 +68,13 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 
 					// Create avatar from LoveJunk profile URL if provided.
 					if profileurl != nil && *profileurl != "" {
-						db.Exec("INSERT INTO users_images (userid, url, contenttype, `default`) VALUES (?, ?, 'image/jpeg', 0)", myid, *profileurl)
+						// ORM migration site 5bd4b2e2c8ff (wave 2).
+						db.Table("users_images").Create(map[string]interface{}{
+							"userid":      myid,
+							"url":         *profileurl,
+							"contenttype": gorm.Expr("'image/jpeg'"),
+							"default":     gorm.Expr("0"),
+						})
 					}
 				}
 

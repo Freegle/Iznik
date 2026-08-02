@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // TaskHousekeeperNotify is the background_tasks type for housekeeping notifications.
@@ -162,10 +163,14 @@ func CompleteTask(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	result := db.Exec(`UPDATE housekeeper_tasks
-		SET last_run_at = NOW(), last_status = 'success', last_summary = 'Marked done manually', updated_at = NOW()
-		WHERE task_key = ? AND placeholder = 1`,
-		taskKey)
+	// ORM migration site aae1a88f63f1 (wave 2).
+	result := db.Table("housekeeper_tasks").Where("task_key = ? AND placeholder = 1", taskKey).
+		Updates(map[string]interface{}{
+			"last_run_at":  gorm.Expr("NOW()"),
+			"last_status":  gorm.Expr("'success'"),
+			"last_summary": gorm.Expr("'Marked done manually'"),
+			"updated_at":   gorm.Expr("NOW()"),
+		})
 
 	if result.Error != nil {
 		log.Printf("[Housekeeper] CompleteTask error: %v", result.Error)

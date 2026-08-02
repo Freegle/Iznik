@@ -206,8 +206,9 @@ func PostSpammer(c *fiber.Ctx) error {
 	// V1 parity: reporting a SYSTEMROLE_USER as PendingAdd suppresses their ChitChat/newsfeed
 	// posts by setting users.newsfeedmodstatus = 'Suppressed' while pending review.
 	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
-		db.Exec("UPDATE users SET newsfeedmodstatus = ? WHERE id = ? AND systemrole = ?",
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED, req.Userid, utils.SYSTEMROLE_USER)
+		// ORM migration site 284c8dddea5c (wave 2).
+		db.Table("users").Where("id = ? AND systemrole = ?", req.Userid, utils.SYSTEMROLE_USER).
+			Update("newsfeedmodstatus", utils.NEWSFEED_MODSTATUS_SUPPRESSED)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
@@ -323,6 +324,14 @@ func PatchSpammer(c *fiber.Ctx) error {
 			heldby = &myid
 		}
 
+		// Left raw (site 2c2dda80b557): the heldat expression's placeholder is
+		// bound from the same `heldby` Go variable as the heldby column's own
+		// assignment, so check-set-order.sh's textual scan sees a cross-key
+		// reference. GORM's Updates(map) sorts assignments alphabetically
+		// (byuserid, collection, heldat, heldby, reason), which does not match
+		// this statement's original SET order (collection, reason, byuserid,
+		// heldby, heldat) - see check-set-order.sh's comparison against the
+		// recorded golden. Reported to the batch owner rather than converted.
 		db.Exec("UPDATE spam_users SET collection = ?, reason = ?, byuserid = ?, "+
 			"heldby = ?, heldat = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END "+
 			"WHERE id = ?",
@@ -424,7 +433,8 @@ func DeleteSpammer(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM spam_users WHERE id = ?", req.ID)
+	// ORM migration site cd86450dea5a (wave 2).
+	db.Table("spam_users").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

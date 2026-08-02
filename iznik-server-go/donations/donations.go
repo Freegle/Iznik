@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 const TYPE_PAYPAL = "PayPal"
@@ -326,8 +327,13 @@ func AddDonation(c *fiber.Ctx) error {
 
 		if giftAidPeriod == nil || *giftAidPeriod == PERIOD_THIS {
 			// Create a GiftAid notification for the user.
-			db.Exec("INSERT INTO users_notifications (touser, type, timestamp, seen) VALUES (?, 'GiftAid', NOW(), 0)",
-				req.UserID)
+			// ORM migration site dcb461443c86 (wave 2).
+			db.Table("users_notifications").Create(map[string]interface{}{
+				"touser":    req.UserID,
+				"type":      gorm.Expr("'GiftAid'"),
+				"timestamp": gorm.Expr("NOW()"),
+				"seen":      gorm.Expr("0"),
+			})
 		}
 	}
 

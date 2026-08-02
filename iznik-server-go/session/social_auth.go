@@ -13,19 +13,22 @@ import (
 // GetProfileRecord uses ORDER BY id DESC LIMIT 1, so the latest INSERT is always shown.
 // Only called when a real (non-silhouette) picture URL is available.
 //
-// Left raw (9ccb23bbcdaf, wave 2): golden column order (userid, url, default,
-// contenttype) is not alphabetical and two of the four values are literals
-// (0, 'image/jpeg') the golden never binds, so a map-valued Create would both
-// reorder the column list and bind values the golden writes inline - reported
-// rather than forced.
+// ORM migration site 9ccb23bbcdaf (wave 2). Golden column order (userid, url,
+// default, contenttype) is not alphabetical, but normaliseColumnOrder sorts
+// both sides' columns together with their values before comparing
+// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert); the two
+// literal values (0, 'image/jpeg') go through gorm.Expr so they render inline
+// rather than as binds.
 func saveProfileImage(userID uint64, pictureURL string) {
 	if pictureURL == "" {
 		return
 	}
-	database.DBConn.Exec(
-		"INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
-		userID, pictureURL,
-	)
+	database.DBConn.Table("users_images").Create(map[string]interface{}{
+		"userid":      userID,
+		"url":         pictureURL,
+		"default":     gorm.Expr("0"),
+		"contenttype": gorm.Expr("'image/jpeg'"),
+	})
 }
 
 // socialMatchOrCreate finds an existing user by email or social login UID,
@@ -109,14 +112,19 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		userID = uint64(lastID)
 
 		// Add email if provided.
-		// Left raw (f6bd87f2df8e, wave 2): golden column order (userid, email,
-		// preferred, validated, canon, backwards) is not alphabetical, so a
-		// map-valued Create would reorder the column list - reported rather
-		// than forced.
+		// ORM migration site f6bd87f2df8e (wave 2). Golden column order not
+		// alphabetical, but normaliseColumnOrder handles the map-Create
+		// reorder; see TestNormaliseColumnOrder_Insert.
 		if email != "" {
 			canon := user.CanonicalizeEmail(email)
-			db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
-				userID, email, canon, user.ReverseString(canon))
+			db.Table("users_emails").Create(map[string]interface{}{
+				"userid":    userID,
+				"email":     email,
+				"preferred": gorm.Expr("0"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": user.ReverseString(canon),
+			})
 		}
 
 		// Add social login record.
@@ -144,13 +152,17 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		Update("lastaccess", gorm.Expr("NOW()"))
 
 	// Update name if missing.
-	// Left raw (994ffacdcb47, wave 2): three SET columns whose golden order
-	// (firstname, lastname, fullname) is not alphabetical ("fullname" sorts
-	// before "lastname"), so Updates(map) would reorder the SET list -
-	// reported rather than forced.
+	// ORM migration site 994ffacdcb47 (wave 2). None of these three assignments
+	// reference another assigned column (all plain binds), so the SET order is
+	// not load-bearing and GORM's alphabetical Updates(map) order is safe; see
+	// check-set-order.sh / setOrderIsLoadBearing.
 	if fullname != "" {
-		db.Exec("UPDATE users SET firstname = ?, lastname = ?, fullname = ? WHERE id = ? AND (fullname IS NULL OR fullname = '')",
-			firstname, lastname, fullname, userID)
+		db.Table("users").Where("id = ? AND (fullname IS NULL OR fullname = '')", userID).
+			Updates(map[string]interface{}{
+				"firstname": firstname,
+				"lastname":  lastname,
+				"fullname":  fullname,
+			})
 	}
 
 	return userID, nil

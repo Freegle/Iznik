@@ -77,15 +77,17 @@ func recordAmpReplyTracking(db *gorm.DB, emailTrackingID *uint64, linkURL, linkP
 	if emailTrackingID == nil {
 		return
 	}
-	db.Exec(
-		"UPDATE email_tracking SET replied_at = NOW(), replied_via = 'amp' WHERE id = ?",
-		*emailTrackingID,
-	)
-	db.Exec(
-		"INSERT INTO email_tracking_clicks (email_tracking_id, link_url, link_position, action, clicked_at) "+
-			"VALUES (?, ?, ?, 'amp_reply', NOW())",
-		*emailTrackingID, linkURL, linkPosition,
-	)
+	// ORM migration site 44deaf6c0e25 (wave 2).
+	db.Table("email_tracking").Where("id = ?", *emailTrackingID).
+		Updates(map[string]interface{}{"replied_at": gorm.Expr("NOW()"), "replied_via": gorm.Expr("'amp'")})
+	// ORM migration site 83bf328b1b50 (wave 2).
+	db.Table("email_tracking_clicks").Create(map[string]interface{}{
+		"email_tracking_id": *emailTrackingID,
+		"link_url":          linkURL,
+		"link_position":     linkPosition,
+		"action":            gorm.Expr("'amp_reply'"),
+		"clicked_at":        gorm.Expr("NOW()"),
+	})
 }
 
 // computeHMAC generates an HMAC-SHA256 signature.
@@ -327,12 +329,11 @@ func GetChatMessages(c *fiber.Ctx) error {
 		if tid, err := strconv.ParseUint(tidStr, 10, 64); err == nil {
 			// Record AMP render - always upgrade to 'amp' since it's a stronger
 			// signal than pixel tracking (proves AMP content was rendered)
-			db.Exec(`
-				UPDATE email_tracking
-				SET opened_at = COALESCE(opened_at, NOW()),
-				    opened_via = 'amp'
-				WHERE id = ?
-			`, tid)
+			// ORM migration site 7c20a8b4293a (wave 2).
+			db.Table("email_tracking").Where("id = ?", tid).Updates(map[string]interface{}{
+				"opened_at":  gorm.Expr("COALESCE(opened_at, NOW())"),
+				"opened_via": gorm.Expr("'amp'"),
+			})
 			// Also record in clicks table for analytics (won't duplicate due to unique tracking)
 			db.Exec(`
 				INSERT IGNORE INTO email_tracking_clicks (email_tracking_id, link_url, action, clicked_at)
@@ -482,7 +483,8 @@ func PostChatReply(c *fiber.Ctx) error {
 	}
 
 	// Update chat room latest message time
-	db.Exec(`UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?`, chatID)
+	// ORM migration site 0a874cdbfabf (wave 2).
+	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://reply", "amp_reply_form")
 
@@ -707,8 +709,9 @@ func processDigestReply(c *fiber.Ctx, userID, messageID uint64, rawMessage strin
 	chatMessageID := chatMsg.ID
 
 	// ChatRoom struct doesn't model the latestmessage column (it's not
-	// returned in normal reads), so touch it with a small raw UPDATE.
-	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+	// returned in normal reads), so touch it with a small write.
+	// ORM migration site 6e0285470b75 (wave 2).
+	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://digest-reply", "amp_digest_reply_form")
 

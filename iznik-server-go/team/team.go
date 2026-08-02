@@ -354,8 +354,8 @@ func PatchTeam(c *fiber.Ctx) error {
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})
 		}
-		db.Exec("DELETE FROM teams_members WHERE userid = ? AND teamid = ?",
-			req.Userid, req.ID)
+		// ORM migration site c3c9a6a6b11f (wave 2).
+		db.Table("teams_members").Where("userid = ? AND teamid = ?", req.Userid, req.ID).Delete(nil)
 	default:
 		// Update team attributes.
 		if req.Name != "" {
@@ -363,14 +363,16 @@ func PatchTeam(c *fiber.Ctx) error {
 			db.Table("teams").Where("id = ?", req.ID).Update("name", req.Name)
 		}
 		if req.Description != "" {
-			db.Exec("UPDATE teams SET description = ? WHERE id = ?", req.Description, req.ID)
+			// ORM migration site e3656e6c44b5 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("description", req.Description)
 		}
 		if req.Email != "" {
 			// ORM migration site 0472cfcf52d2 (wave 2).
 			db.Table("teams").Where("id = ?", req.ID).Update("email", req.Email)
 		}
 		if req.Wikiurl != "" {
-			db.Exec("UPDATE teams SET wikiurl = ? WHERE id = ?", req.Wikiurl, req.ID)
+			// ORM migration site f33669b723a8 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("wikiurl", req.Wikiurl)
 		}
 	}
 

@@ -87,16 +87,20 @@ func Update(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Instructions != nil {
-		db.Exec("UPDATE users_addresses SET instructions = ? WHERE id = ?", *req.Instructions, req.ID)
+		// ORM migration site 8d9bcc14ce4f (wave 2).
+		db.Table("users_addresses").Where("id = ?", req.ID).Update("instructions", *req.Instructions)
 	}
 	if req.Lat != nil {
-		db.Exec("UPDATE users_addresses SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+		// ORM migration site 47ad28590287 (wave 2).
+		db.Table("users_addresses").Where("id = ?", req.ID).Update("lat", *req.Lat)
 	}
 	if req.Lng != nil {
-		db.Exec("UPDATE users_addresses SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+		// ORM migration site 339b4832d0ee (wave 2).
+		db.Table("users_addresses").Where("id = ?", req.ID).Update("lng", *req.Lng)
 	}
 	if req.PafID != nil {
-		db.Exec("UPDATE users_addresses SET pafid = ? WHERE id = ?", *req.PafID, req.ID)
+		// ORM migration site 34929e307f19 (wave 2).
+		db.Table("users_addresses").Where("id = ?", req.ID).Update("pafid", *req.PafID)
 	}
 
 	return c.JSON(fiber.Map{"success": true})
@@ -128,7 +132,8 @@ func Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not your address")
 	}
 
-	db.Exec("DELETE FROM users_addresses WHERE id = ?", id)
+	// ORM migration site 57a5e9a51661 (wave 2).
+	db.Table("users_addresses").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
 }
