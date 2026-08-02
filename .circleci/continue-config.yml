@@ -23,7 +23,17 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1.1.364
+  # 1.1.365 adds the ORM migration inventory ratchet (Gate 1) to build-and-test.
+  # Publishing the orb is what makes a step take effect - CircleCI resolves
+  # freegle/tests from the registry, not from the copy in this repo - but the
+  # PIN here is what decides which published version runs, and it was still on
+  # 1.1.364. So the ratchet existed, was published, and did not run: the whole
+  # gate was decorative on this PR until this bump.
+  #
+  # Safe to raise on master ahead of the migration merging: the step exits 0
+  # when tools/orm-migration/ci-ratchet.sh is absent, so a branch without the
+  # migration is unaffected.
+  freegle: freegle/tests@1.1.365
 
 jobs:
   mark-ci-passed:
