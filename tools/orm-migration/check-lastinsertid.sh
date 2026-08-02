@@ -1,29 +1,35 @@
 #!/usr/bin/env bash
 #
-# check-lastinsertid.sh - has an INSERT whose generated id is read back been
+# check-lastinsertid.sh - has a statement that depends on LAST_INSERT_ID been
 # converted?
 #
-# An INSERT followed by a LastInsertId read has to stay raw. LAST_INSERT_ID() is
-# connection-scoped session state, so the read only returns the right value when
-# it happens on the same connection as the write. Converting the INSERT to
-# GORM's map-Create moves the id onto GORM's own "@id" writeback path, which is
-# undocumented and untested upstream, and hands the connection choice to the
-# dbresolver plugin. The failure mode is not an error: it is a row created with
-# the wrong parent id, found days later.
+# Only the SQL FUNCTION is unsafe. "id = LAST_INSERT_ID(id)" in an upsert
+# returns the existing row's id on conflict, and "SELECT LAST_INSERT_ID()" as a
+# separate statement reads session state that belongs to whichever connection
+# the pool hands out. Those depend on the session and stay raw.
 #
-# This is written down in the conversion rules and agents are told about it.
-# That is not enforcement. This gate refuses the build instead, so the rule
-# survives someone not having read the rules.
+# Reading sql.Result.LastInsertId() in Go is NOT unsafe, and this gate used to
+# say it was. That cost 58 sites, each with a keep-raw entry and a porting note
+# explaining how much better they would be on Postgres.
 #
-# The list cannot be derived from the manifest after the fact. Converting a site
-# removes its raw SQL, so re-extraction stops finding it and presentInCode goes
-# false - by design (that is what gate (f) checks). The question "did this
-# INSERT read its id back?" can only be answered against a tree where the raw
-# SQL is still there. So the list is generated once from the merge-base with
-# master and committed as lastinsertid-sites.json; this script then asserts that
-# none of those ids has status "converted".
+# The distinction is the one go-sql-driver/mysql#377 had to make. Its first
+# answer is "No, it is not - the connection pooling by database/sql makes it
+# unsafe", which is corrected: Result.LastInsertId is "perfectly safe to use
+# concurrently because it's stored in the result and has nothing to do with the
+# connections", while a following SELECT LAST_INSERT_ID() "might use a different
+# connection because of the pooling".
 #
-# Regenerate after rebasing onto a master that added INSERT sites:
+# The driver agrees. The id is parsed from the OK packet into mysqlResult at exec
+# time (packets.go handleOkPacket); Exec returns a COPY of that struct
+# (connection.go, "copied := mc.result"); and clearResult nils the slice, so the
+# next statement appends to a fresh array rather than overwriting the previous
+# one. Checked under concurrency in test/orm_insertid_test.go, where 24
+# goroutines insert at once and each id must name the row that goroutine wrote.
+#
+# The list is generated from the merge-base with master, because converting a
+# site removes its SQL and the question stops being answerable from the code.
+#
+# Regenerate after rebasing onto a new master:
 #   tools/orm-migration/check-lastinsertid.sh --regenerate
 set -uo pipefail
 
@@ -45,61 +51,38 @@ if [ "${1:-}" = "--regenerate" ]; then
     const m = JSON.parse(fs.readFileSync(work + "/base.json", "utf8"));
     const out = {};
 
-    // Link THIS Exec to the LastInsertId read, rather than guessing by
-    // proximity. Two earlier attempts got this wrong in opposite directions:
+    // What is actually unsafe is LAST_INSERT_ID in the SQL TEXT, and nothing
+    // else. This gate used to flag any INSERT whose Go code went on to call
+    // sql.Result.LastInsertId(), on the theory that the id was connection-scoped
+    // session state. That was wrong, and it cost 58 sites.
     //
-    //   - a 12-line lookahead missed comment.go PostComment, where the read is
-    //     13 lines below the write, separated only by error handling and a var
-    //     declaration. How far apart they sit is a property of the surrounding
-    //     code, not of the risk.
-    //   - widening to the enclosing function then flagged the
-    //     noticeboards_checks INSERTs, which are correctly converted: the
-    //     LastInsertId in that function belongs to an entirely different Exec.
+    // The distinction is the one go-sql-driver/mysql#377 had to make. The first
+    // answer there is "No, it is not - the connection pooling by database/sql
+    // makes it unsafe", and it is corrected: Result.LastInsertId is "perfectly
+    // safe to use concurrently because it is stored in the result and has
+    // nothing to do with the connections", whereas issuing SELECT
+    // LAST_INSERT_ID() afterwards "might use a different connection because of
+    // the pooling".
     //
-    // What actually matters is whether the result of this statement is the one
-    // whose id is read. An Exec whose result is assigned to a variable that is
-    // later asked for LastInsertId is unsafe; an Exec whose result is discarded
-    // cannot have its id read at all, however many other statements nearby do.
-    const enclosingFunc = (lines, line) => {
-      let start = 0;
-      for (let i = line - 1; i >= 0; i--) {
-        if (/^func\b/.test(lines[i] || "")) { start = i; break; }
-      }
-      let end = lines.length;
-      for (let i = line; i < lines.length; i++) {
-        if (/^func\b/.test(lines[i] || "")) { end = i; break; }
-      }
-      return {start, end};
-    };
-
+    // Reading the driver agrees: the value is parsed out of the OK packet into
+    // mysqlResult at exec time, Exec returns a copy of that struct, and
+    // clearResult nils the slice so the next statement allocates a fresh array
+    // rather than overwriting it. Verified concurrently in
+    // test/orm_insertid_test.go, where 24 goroutines insert at once and each
+    // id is checked to name the row that goroutine wrote.
+    //
+    // So the list is now the statements that mention LAST_INSERT_ID themselves:
+    // the "id = LAST_INSERT_ID(id)" upsert idiom, which returns the EXISTING
+    // row id on conflict and genuinely depends on session state, and any
+    // SELECT LAST_INSERT_ID(). Those stay raw.
     for (const [id, s] of Object.entries(m.sites)) {
       if (s.status === "test-fixture") continue;
-      if (!/^\s*(insert|replace)/i.test(s.goldenSql || "")) continue;
-      let lines;
-      try { lines = fs.readFileSync(path.join(work, s.file), "utf8").split("\n"); } catch { continue; }
-
-      // MySQL LAST_INSERT_ID() in the statement text is unsafe on its own.
-      if (/LAST_INSERT_ID/i.test(s.goldenSql || "")) {
-        out[id] = {file: s.file, line: s.line, sql: (s.goldenSql || "").slice(0, 90)};
-        continue;
-      }
-
-      // Find the result variable this Exec assigns to. The call may be split
-      // over lines, so look at the site line and the two above it.
-      const head = lines.slice(Math.max(0, s.line - 3), s.line).join("\n");
-      const assign = head.match(/(\w+)\s*,\s*\w+\s*:?=\s*[\w.]*Exec\(/);
-      if (!assign) continue; // result discarded: its id cannot be read
-      const resultVar = assign[1];
-      if (resultVar === "_") continue;
-
-      const {end} = enclosingFunc(lines, s.line);
-      const after = lines.slice(s.line - 1, end).join("\n");
-      if (new RegExp("\\b" + resultVar + "\\s*\\.\\s*LastInsertId\\s*\\(").test(after)) {
-        out[id] = {file: s.file, line: s.line, sql: (s.goldenSql || "").slice(0, 90)};
-      }
+      if (!/LAST_INSERT_ID/i.test(s.goldenSql || "")) continue;
+      out[id] = {file: s.file, line: s.line, sql: (s.goldenSql || "").slice(0, 90)};
     }
+
     fs.writeFileSync(listPath, JSON.stringify({
-      _comment: "Site ids whose INSERT has its generated id read back on the same connection. Generated from " + mb + " by check-lastinsertid.sh --regenerate. These must never be converted: LAST_INSERT_ID() is connection-scoped session state.",
+      _comment: "Sites whose SQL TEXT uses LAST_INSERT_ID - the upsert idiom id = LAST_INSERT_ID(id), or a separate SELECT LAST_INSERT_ID(). Generated from " + mb + " by check-lastinsertid.sh --regenerate. These depend on connection-scoped session state and stay raw. Reading sql.Result.LastInsertId() in Go is a DIFFERENT thing and is safe - see the header comment.",
       sites: out,
     }, null, 2) + "\n");
     console.log(`check-lastinsertid: regenerated ${listPath} with ${Object.keys(out).length} sites from ${mb}`);
@@ -128,6 +111,6 @@ for (const [id, info] of Object.entries(list)) {
     flagged++;
   }
 }
-console.log(`check-lastinsertid: ${Object.keys(list).length} id-reading INSERT sites, ${flagged} wrongly converted, ${missing} no longer in the manifest`);
+console.log(`check-lastinsertid: ${Object.keys(list).length} LAST_INSERT_ID sites, ${flagged} wrongly converted, ${missing} no longer in the manifest`);
 process.exit(flagged ? 1 : 0);
 ' "$LIST" "$MANIFEST"

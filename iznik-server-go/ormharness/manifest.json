@@ -5,7 +5,7 @@
     "converted": 1365,
     "keep-raw": 257,
     "retired": 22,
-    "test-fixture": 4227
+    "test-fixture": 4229
   },
   "sites": {
     "00053e96d76f": {
@@ -12651,6 +12651,28 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "1979f45d1422": {
+      "id": "1979f45d1422",
+      "file": "iznik-server-go/test/orm_upsert_id_test.go",
+      "line": 62,
+      "function": "TestUpsertID_InsertThenConflictReturnsSameID",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -82175,6 +82197,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 51.5, -0.1)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "a001bdf11bed": {
+      "id": "a001bdf11bed",
+      "file": "iznik-server-go/test/orm_upsert_id_test.go",
+      "line": 93,
+      "function": "TestUpsertID_NoChangeConflictIsTheTrap",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"

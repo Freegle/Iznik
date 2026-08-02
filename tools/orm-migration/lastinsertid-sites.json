@@ -1,65 +1,15 @@
 {
-  "_comment": "Site ids whose INSERT has its generated id read back on the same connection. Generated from 31979fa2e80c61a7d1bfebb03033643fb7b2e99a by check-lastinsertid.sh --regenerate. These must never be converted: LAST_INSERT_ID() is connection-scoped session state.",
+  "_comment": "Sites whose SQL TEXT uses LAST_INSERT_ID - the upsert idiom id = LAST_INSERT_ID(id), or a separate SELECT LAST_INSERT_ID(). Generated from 31979fa2e80c61a7d1bfebb03033643fb7b2e99a by check-lastinsertid.sh --regenerate. These depend on connection-scoped session state and stay raw. Reading sql.Result.LastInsertId() in Go is a DIFFERENT thing and is safe - see the header comment.",
   "sites": {
-    "02f8f0aee316": {
-      "file": "iznik-server-go/team/team.go",
-      "line": 280,
-      "sql": "INSERT INTO teams (name, email, description) VALUES (?, ?, ?)"
-    },
     "050e3574aa6f": {
       "file": "iznik-server-go/message/bulkItem.go",
       "line": 426,
       "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON "
     },
-    "0adadbabde5b": {
-      "file": "iznik-server-go/volunteering/volunteering.go",
-      "line": 387,
-      "sql": "INSERT INTO volunteering (userid, pending, title, online, location, contactname, contactph"
-    },
-    "10bcbd6a6404": {
-      "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1484,
-      "sql": "INSERT INTO newsfeed (type, userid, replyto, msgid, position) VALUES (?, ?, ?, NULLIF(?, 0"
-    },
     "123512413259": {
       "file": "iznik-server-go/message/helper.go",
       "line": 636,
       "sql": "INSERT INTO helper_repliers (batchid, userid, chatid, state) VALUES (?, ?, ?, 'NEW') ON DU"
-    },
-    "132b1f639e73": {
-      "file": "iznik-server-go/stdmsg/stdmsg.go",
-      "line": 148,
-      "sql": "INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', "
-    },
-    "1571f00a4ce8": {
-      "file": "iznik-server-go/image/image.go",
-      "line": 258,
-      "sql": "INSERT INTO `{{expr}}` (`{{expr}}`, externaluid, externalmods, hash, contenttype) VALUES ("
-    },
-    "1590b130f529": {
-      "file": "iznik-server-go/message/message.go",
-      "line": 4260,
-      "sql": "INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, a"
-    },
-    "181d8342ea4a": {
-      "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 402,
-      "sql": "INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccf"
-    },
-    "1f5798e8214d": {
-      "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1402,
-      "sql": "INSERT INTO chat_messages (chatid, userid, type, date, message, replyexpected, reportreaso"
-    },
-    "20dfce4d2228": {
-      "file": "iznik-server-go/spammers/spammers.go",
-      "line": 190,
-      "sql": "REPLACE INTO spam_users (userid, collection, reason, byuserid, heldby, heldat) VALUES (?, "
-    },
-    "24704432f4d4": {
-      "file": "iznik-server-go/user/user.go",
-      "line": 1935,
-      "sql": "INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())"
     },
     "258437a60f5d": {
       "file": "iznik-server-go/donations/giftaid.go",
@@ -71,60 +21,15 @@
       "line": 5121,
       "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON "
     },
-    "322b611c86cc": {
-      "file": "iznik-server-go/shortlink/shortlink.go",
-      "line": 168,
-      "sql": "INSERT INTO shortlinks (name, type, groupid) VALUES (?, 'Group', ?)"
-    },
     "3efeb225c001": {
       "file": "iznik-server-go/chat/chatroom.go",
       "line": 584,
       "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) ON DUPL"
     },
-    "40de8b0d3f98": {
-      "file": "iznik-server-go/comment/comment.go",
-      "line": 276,
-      "sql": "INSERT INTO users_comments (userid, groupid, byuserid, user1, user2, user3, user4, user5, "
-    },
-    "42bb2fc5fe91": {
-      "file": "iznik-server-go/noticeboard/noticeboard.go",
-      "line": 248,
-      "sql": "INSERT INTO noticeboards (`name`, `lat`, `lng`, `position`, `added`, `addedby`, `descripti"
-    },
-    "45b8b0bc2060": {
-      "file": "iznik-server-go/communityevent/communityEvent.go",
-      "line": 307,
-      "sql": "INSERT INTO communityevents (userid, pending, title, location, contactname, contactphone, "
-    },
-    "45c97c1f1f58": {
-      "file": "iznik-server-go/auth/auth.go",
-      "line": 313,
-      "sql": "INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW"
-    },
-    "47417e0f74d7": {
-      "file": "iznik-server-go/location/location.go",
-      "line": 722,
-      "sql": "INSERT INTO locations (name, type, geometry, canon, popularity) VALUES (?, 'Polygon', ST_G"
-    },
     "4aef5392a01f": {
       "file": "iznik-server-go/message/helper.go",
       "line": 438,
       "sql": "INSERT INTO helper_repliers (batchid, userid, state) VALUES (?, ?, 'NEW') ON DUPLICATE KEY"
-    },
-    "4d2e18cf27e3": {
-      "file": "iznik-server-go/merge/merge.go",
-      "line": 207,
-      "sql": "INSERT INTO merges (user1, user2, offeredby, uid) VALUES (?, ?, ?, ?)"
-    },
-    "54e869591bc4": {
-      "file": "iznik-server-go/alert/alert.go",
-      "line": 243,
-      "sql": "INSERT INTO alerts (createdby, groupid, `from`, `to`, subject, text, html, askclick, tryha"
-    },
-    "58cb0a225ebe": {
-      "file": "iznik-server-go/amp/amp.go",
-      "line": 467,
-      "sql": "INSERT INTO chat_messages (chatid, userid, message, type, date, processingsuccessful) VALU"
     },
     "65574169749a": {
       "file": "iznik-server-go/chat/chatroom.go",
@@ -136,110 +41,15 @@
       "line": 465,
       "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) ON DUPL"
     },
-    "698ab1090087": {
-      "file": "iznik-server-go/message/message.go",
-      "line": 3935,
-      "sql": "INSERT INTO users (added) VALUES (NOW())"
-    },
-    "69ed53a55edc": {
-      "file": "iznik-server-go/chat/chatroom.go",
-      "line": 526,
-      "sql": "INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())"
-    },
-    "6b9a23982cc9": {
-      "file": "iznik-server-go/modconfig/modconfig.go",
-      "line": 350,
-      "sql": "INSERT INTO mod_configs (name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccr"
-    },
-    "7394291c903d": {
-      "file": "iznik-server-go/message/helper.go",
-      "line": 566,
-      "sql": "INSERT INTO helper_proposals (batchid, type, replierid, bulkitemid, summary, proposed_text"
-    },
     "7e3e5f4d0b36": {
       "file": "iznik-server-go/message/helper.go",
       "line": 361,
       "sql": "INSERT INTO helper_batches (msgid, offereruserid, status) VALUES (?, ?, 'active') ON DUPLI"
     },
-    "7ec60cde5d39": {
-      "file": "iznik-server-go/message/helper.go",
-      "line": 670,
-      "sql": "INSERT INTO helper_proposals (batchid, type, replierid, summary, proposed_text, status) VA"
-    },
-    "88399aa73e56": {
-      "file": "iznik-server-go/admin/admin.go",
-      "line": 257,
-      "sql": "INSERT INTO admins (createdby, groupid, subject, text, ctatext, ctalink, essential, templa"
-    },
-    "8cbeeeb7e32f": {
-      "file": "iznik-server-go/group/group.go",
-      "line": 920,
-      "sql": "INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?,"
-    },
-    "90b0f0bb3029": {
-      "file": "iznik-server-go/newsfeed/create.go",
-      "line": 108,
-      "sql": "INSERT INTO newsfeed (`type`, userid, groupid, eventid, volunteeringid, position, location"
-    },
-    "938d9dc56c71": {
-      "file": "iznik-server-go/tryst/tryst.go",
-      "line": 204,
-      "sql": "INSERT INTO trysts (user1, user2, arrangedfor) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ar"
-    },
-    "b0445c89f59e": {
-      "file": "iznik-server-go/image/image.go",
-      "line": 263,
-      "sql": "INSERT INTO `{{expr}}` (`{{expr}}`, externaluid, externalmods, hash) VALUES (?, ?, ?, ?)"
-    },
-    "bbbc465b075c": {
-      "file": "iznik-server-go/session/social_auth.go",
-      "line": 76,
-      "sql": "INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())"
-    },
-    "c1fca2fe89a0": {
-      "file": "iznik-server-go/user/partner.go",
-      "line": 117,
-      "sql": "INSERT INTO users (fullname, added) VALUES (?, NOW())"
-    },
-    "c9c7922e5379": {
-      "file": "iznik-server-go/user/user.go",
-      "line": 2000,
-      "sql": "INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())"
-    },
-    "d3790f53ec52": {
-      "file": "iznik-server-go/message/helper.go",
-      "line": 584,
-      "sql": "INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequir"
-    },
-    "da7e48606815": {
-      "file": "iznik-server-go/export/export.go",
-      "line": 60,
-      "sql": "INSERT INTO users_exports (userid, tag) VALUES (?, ?)"
-    },
     "dfc3d2fdb2ba": {
       "file": "iznik-server-go/message/helper.go",
       "line": 518,
       "sql": "INSERT INTO helper_item_states (replierid, bulkitemid, state) VALUES (?, ?, 'NEW') ON DUPL"
-    },
-    "f6190b74d8d5": {
-      "file": "iznik-server-go/story/story.go",
-      "line": 282,
-      "sql": "INSERT INTO users_stories (public, userid, headline, story) VALUES (?, ?, ?, ?)"
-    },
-    "f961504c334d": {
-      "file": "iznik-server-go/newsfeed/newsfeed.go",
-      "line": 1362,
-      "sql": "INSERT INTO newsfeed (type, userid, imageid, replyto, message, position, hidden, location)"
-    },
-    "faa9018435a3": {
-      "file": "iznik-server-go/message/bulkItem.go",
-      "line": 493,
-      "sql": "INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions,"
-    },
-    "fb88302d28cb": {
-      "file": "iznik-server-go/message/bulkItem.go",
-      "line": 706,
-      "sql": "INSERT INTO messages_attachments (msgid, externaluid) VALUES (?, ?)"
     }
   }
 }
