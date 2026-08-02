@@ -2748,7 +2748,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	tx.Exec("UPDATE messages_history SET fromuser = ? WHERE fromuser = ?", req.ID2, req.ID1)
 	tx.Exec("UPDATE memberships_history SET userid = ? WHERE userid = ?", req.ID2, req.ID1)
 	// Log references.
-	tx.Exec("UPDATE logs SET user = ? WHERE user = ?", req.ID2, req.ID1)
+	// ORM migration site 4718b42d0c88 (wave 2).
+	tx.Table("logs").Where("user = ?", req.ID1).Update("user", req.ID2)
 	tx.Exec("UPDATE logs SET byuser = ? WHERE byuser = ?", req.ID2, req.ID1)
 
 	// Chat room merge with deduplication (V1 parity).
@@ -2990,7 +2991,10 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	committed = true
 
 	// Hard-delete id1 AFTER commit (V1 parity: DELETE FROM users WHERE id = ?).
-	db.Exec("DELETE FROM users WHERE id = ?", req.ID1)
+	// ORM migration site 55a57788c875 (wave 2). Table()+Delete(nil) carries no
+	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
+	// turn this into a soft-delete UPDATE.
+	db.Table("users").Where("id = ?", req.ID1).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

@@ -842,7 +842,10 @@ func PatchGroup(c *fiber.Ctx) error {
 	// Admin/Support only fields
 	if isAdmin {
 		if req.Lat != nil {
-			db.Exec("UPDATE `groups` SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+			// ORM migration site cf14153e46ac (wave 2). Converted together with
+			// its identical twin in CreateGroup: a half-converted pair renumbers
+			// the survivor's site ID, so gate (h) refuses the split state.
+			db.Table("groups").Where("id = ?", req.ID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
 			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, req.ID)
@@ -967,7 +970,8 @@ func CreateGroup(c *fiber.Ctx) error {
 	// Admin/support can set lat/lng.
 	if isAdmin {
 		if req.Lat != nil {
-			db.Exec("UPDATE `groups` SET lat = ? WHERE id = ?", *req.Lat, newID)
+			// ORM migration site 194062f24f48 (wave 2).
+			db.Table("groups").Where("id = ?", newID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
 			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, newID)

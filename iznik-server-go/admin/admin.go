@@ -356,7 +356,8 @@ func PatchAdmin(c *fiber.Ctx) error {
 		db.Exec("UPDATE admins SET subject = ? WHERE id = ?", *req.Subject, req.ID)
 	}
 	if req.Text != nil {
-		db.Exec("UPDATE admins SET text = ? WHERE id = ?", *req.Text, req.ID)
+		// ORM migration site 3a093ace39bb (wave 2).
+		db.Table("admins").Where("id = ?", req.ID).Update("text", *req.Text)
 	}
 	if req.Complete != nil {
 		// Completing is terminal, so drop the hold with it. Leaving it set pinned the
@@ -433,7 +434,8 @@ func DeleteAdmin(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
 	}
 
-	db.Exec("DELETE FROM admins WHERE id = ?", id)
+	// ORM migration site c6a830b48e43 (wave 2).
+	db.Table("admins").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
 }

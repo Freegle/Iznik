@@ -366,7 +366,8 @@ func PatchTeam(c *fiber.Ctx) error {
 			db.Exec("UPDATE teams SET description = ? WHERE id = ?", req.Description, req.ID)
 		}
 		if req.Email != "" {
-			db.Exec("UPDATE teams SET email = ? WHERE id = ?", req.Email, req.ID)
+			// ORM migration site 0472cfcf52d2 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("email", req.Email)
 		}
 		if req.Wikiurl != "" {
 			db.Exec("UPDATE teams SET wikiurl = ? WHERE id = ?", req.Wikiurl, req.ID)

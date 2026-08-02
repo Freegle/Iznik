@@ -364,7 +364,8 @@ func DeleteTryst(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
-	db.Exec("DELETE FROM trysts WHERE id = ?", id)
+	// ORM migration site 8d87c99d21c7 (wave 2).
+	db.Table("trysts").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

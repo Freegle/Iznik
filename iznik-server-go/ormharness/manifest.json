@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 556,
-    "keep-raw": 49,
-    "raw": 1031,
+    "converted": 564,
+    "keep-raw": 55,
+    "raw": 1017,
     "test-fixture": 4223
   },
   "sites": {
@@ -1520,7 +1520,8 @@
       "goldenSql": "INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId from the exact connection that ran it. See the shared note on CreatePartnerUser below: GORM's map-valued Create writes the new id back under the literal key \"@id\" when no schema is parsed, which is undocumented, contradicts GORM's own 'Create From Map' documentation, and has no coverage in GORM's test suite. Found by the Wave 2 write pilot."
     },
     "0342b4eeb513": {
       "id": "0342b4eeb513",
@@ -1984,9 +1985,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE teams SET email = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0477a681ffd6": {
       "id": "0477a681ffd6",
@@ -6133,7 +6134,7 @@
     "0c7fcde60aa8": {
       "id": "0c7fcde60aa8",
       "file": "iznik-server-go/user/user.go",
-      "line": 3270,
+      "line": 3274,
       "function": "GetUserMembershipHistory",
       "receiver": "db",
       "method": "Raw",
@@ -6224,7 +6225,7 @@
     "0c8e0836a74b": {
       "id": "0c8e0836a74b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2969,
+      "line": 2970,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -7345,7 +7346,7 @@
     "0e9905e6f0ce": {
       "id": "0e9905e6f0ce",
       "file": "iznik-server-go/group/group.go",
-      "line": 851,
+      "line": 854,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -12475,9 +12476,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET lat = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "19506bc28cc1": {
       "id": "19506bc28cc1",
@@ -17446,7 +17447,7 @@
     "22727b8ed343": {
       "id": "22727b8ed343",
       "file": "iznik-server-go/group/group.go",
-      "line": 854,
+      "line": 857,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -18837,7 +18838,7 @@
     "247abd84a59e": {
       "id": "247abd84a59e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2845,
+      "line": 2846,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -25089,7 +25090,7 @@
     "313bbe346bf7": {
       "id": "313bbe346bf7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2866,
+      "line": 2867,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -26462,7 +26463,7 @@
     "339f96b301b3": {
       "id": "339f96b301b3",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 387,
+      "line": 388,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -27111,7 +27112,7 @@
     "34c2c6e9128b": {
       "id": "34c2c6e9128b",
       "file": "iznik-server-go/group/group.go",
-      "line": 894,
+      "line": 897,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -29211,7 +29212,7 @@
     "395499023142": {
       "id": "395499023142",
       "file": "iznik-server-go/user/user.go",
-      "line": 3237,
+      "line": 3241,
       "function": "GetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -29589,9 +29590,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE admins SET text = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "3a1a2fda0491": {
       "id": "3a1a2fda0491",
@@ -30635,7 +30636,8 @@
       "goldenSql": "UPDATE users SET tnuserid = ? WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId. These sites use sqlDB.Exec deliberately so the id is read from the MySQL protocol response on the very connection that performed the insert. The hazard being avoided is NOT replication lag: LAST_INSERT_ID() is connection-scoped session state, so a follow-up SELECT can be handed a different pooled connection and return 0 or another session's id, as the comment in session/social_auth.go already spells out. Converting to GORM's Create would instead depend on primary-key writeback that, traced through callbacks/create.go in v1.31.0, stores the id under the literal key \"@id\" when stmt.Schema is nil - real behaviour, but undocumented, contradicted by the public docs, and untested upstream. Relying on that for the one value these sites exist to protect is precisely the silent, expensive rewrite bug plan 7.5 reserves keep-raw for. database/insert.go's ExecInsertGetID already encapsulates this pattern and is itself recorded as non-migration infrastructure; pointing these call sites at it would be a sensible dedup, but that is a refactor rather than an ORM conversion."
     },
     "3c10650302e0": {
       "id": "3c10650302e0",
@@ -30728,7 +30730,7 @@
     "3c462363aa82": {
       "id": "3c462363aa82",
       "file": "iznik-server-go/user/user.go",
-      "line": 2808,
+      "line": 2809,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -32960,7 +32962,7 @@
     "4129ec17482b": {
       "id": "4129ec17482b",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 384,
+      "line": 385,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -35033,7 +35035,7 @@
     "450c5b5fca94": {
       "id": "450c5b5fca94",
       "file": "iznik-server-go/group/group.go",
-      "line": 873,
+      "line": 876,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -35894,9 +35896,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE logs SET user = ? WHERE user = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "47190c495d80": {
       "id": "47190c495d80",
@@ -36433,7 +36435,7 @@
     "47daaacbf97d": {
       "id": "47daaacbf97d",
       "file": "iznik-server-go/user/user.go",
-      "line": 2805,
+      "line": 2806,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -36655,7 +36657,7 @@
     "4848bb7140d6": {
       "id": "4848bb7140d6",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 365,
+      "line": 366,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -41586,7 +41588,8 @@
       "goldenSql": "INSERT INTO users_emails (userid, email, preferred, added, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId. These sites use sqlDB.Exec deliberately so the id is read from the MySQL protocol response on the very connection that performed the insert. The hazard being avoided is NOT replication lag: LAST_INSERT_ID() is connection-scoped session state, so a follow-up SELECT can be handed a different pooled connection and return 0 or another session's id, as the comment in session/social_auth.go already spells out. Converting to GORM's Create would instead depend on primary-key writeback that, traced through callbacks/create.go in v1.31.0, stores the id under the literal key \"@id\" when stmt.Schema is nil - real behaviour, but undocumented, contradicted by the public docs, and untested upstream. Relying on that for the one value these sites exist to protect is precisely the silent, expensive rewrite bug plan 7.5 reserves keep-raw for. database/insert.go's ExecInsertGetID already encapsulates this pattern and is itself recorded as non-migration infrastructure; pointing these call sites at it would be a sensible dedup, but that is a refactor rather than an ORM conversion."
     },
     "52c8694fa39b": {
       "id": "52c8694fa39b",
@@ -42395,7 +42398,7 @@
     "548090e97d00": {
       "id": "548090e97d00",
       "file": "iznik-server-go/group/group.go",
-      "line": 891,
+      "line": 894,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -43099,9 +43102,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM users WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "55b1868ffda7": {
       "id": "55b1868ffda7",
@@ -46038,7 +46041,7 @@
     "5b72a0acad8e": {
       "id": "5b72a0acad8e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2859,
+      "line": 2860,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -53339,7 +53342,8 @@
       "goldenSql": "INSERT INTO users (added) VALUES (NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId from the exact connection that ran it. See the shared note on CreatePartnerUser below: GORM's map-valued Create writes the new id back under the literal key \"@id\" when no schema is parsed, which is undocumented, contradicts GORM's own 'Create From Map' documentation, and has no coverage in GORM's test suite. Found by the Wave 2 write pilot."
     },
     "69be990f6cc8": {
       "id": "69be990f6cc8",
@@ -53677,7 +53681,7 @@
     "6a225df4a259": {
       "id": "6a225df4a259",
       "file": "iznik-server-go/user/user.go",
-      "line": 3108,
+      "line": 3112,
       "function": "GetUserBans",
       "receiver": "db",
       "method": "Raw",
@@ -53769,7 +53773,7 @@
     "6a4f5b776c87": {
       "id": "6a4f5b776c87",
       "file": "iznik-server-go/group/group.go",
-      "line": 848,
+      "line": 851,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -56525,7 +56529,7 @@
     "6f9705358ae3": {
       "id": "6f9705358ae3",
       "file": "iznik-server-go/user/user.go",
-      "line": 2981,
+      "line": 2982,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -62557,7 +62561,7 @@
     "7993248ef4e6": {
       "id": "7993248ef4e6",
       "file": "iznik-server-go/group/group.go",
-      "line": 868,
+      "line": 871,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -67006,7 +67010,7 @@
     "8278f05f07af": {
       "id": "8278f05f07af",
       "file": "iznik-server-go/user/user.go",
-      "line": 2977,
+      "line": 2978,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -72113,7 +72117,7 @@
     "8cbeeeb7e32f": {
       "id": "8cbeeeb7e32f",
       "file": "iznik-server-go/group/group.go",
-      "line": 955,
+      "line": 958,
       "function": "CreateGroup",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -72451,7 +72455,7 @@
     "8d21c566d0ae": {
       "id": "8d21c566d0ae",
       "file": "iznik-server-go/user/user.go",
-      "line": 2752,
+      "line": 2753,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -72666,9 +72670,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM trysts WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8d96aef6c803": {
       "id": "8d96aef6c803",
@@ -72827,7 +72831,7 @@
     "8dc9211fdcbe": {
       "id": "8dc9211fdcbe",
       "file": "iznik-server-go/user/user.go",
-      "line": 2804,
+      "line": 2805,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -75756,7 +75760,7 @@
     "93b72dfa783e": {
       "id": "93b72dfa783e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2854,
+      "line": 2855,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -76337,7 +76341,7 @@
     "94b0be1107e0": {
       "id": "94b0be1107e0",
       "file": "iznik-server-go/user/user.go",
-      "line": 2791,
+      "line": 2792,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -77342,7 +77346,7 @@
     "96b1fd8dbd45": {
       "id": "96b1fd8dbd45",
       "file": "iznik-server-go/user/user.go",
-      "line": 3181,
+      "line": 3185,
       "function": "GetUserApplied",
       "receiver": "db",
       "method": "Raw",
@@ -79570,7 +79574,7 @@
     "9bddeb538459": {
       "id": "9bddeb538459",
       "file": "iznik-server-go/user/user.go",
-      "line": 2800,
+      "line": 2801,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -82960,7 +82964,7 @@
     "a2ad9104af21": {
       "id": "a2ad9104af21",
       "file": "iznik-server-go/user/user.go",
-      "line": 2867,
+      "line": 2868,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -84440,7 +84444,7 @@
     "a54abf2c60c7": {
       "id": "a54abf2c60c7",
       "file": "iznik-server-go/user/user.go",
-      "line": 2837,
+      "line": 2838,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -85255,7 +85259,7 @@
     "a6f6b67bbf10": {
       "id": "a6f6b67bbf10",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 372,
+      "line": 373,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -88069,7 +88073,7 @@
     "ac3cfe1aa429": {
       "id": "ac3cfe1aa429",
       "file": "iznik-server-go/user/user.go",
-      "line": 2934,
+      "line": 2935,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -88712,7 +88716,7 @@
     "adbbb9dadd0c": {
       "id": "adbbb9dadd0c",
       "file": "iznik-server-go/group/group.go",
-      "line": 973,
+      "line": 977,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -89208,7 +89212,7 @@
     "aeab343d2b29": {
       "id": "aeab343d2b29",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 378,
+      "line": 379,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -89362,7 +89366,7 @@
     "af0ff5e0f4de": {
       "id": "af0ff5e0f4de",
       "file": "iznik-server-go/user/user.go",
-      "line": 2926,
+      "line": 2927,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -92628,7 +92632,7 @@
     "b54105bda6de": {
       "id": "b54105bda6de",
       "file": "iznik-server-go/user/user.go",
-      "line": 2795,
+      "line": 2796,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -94612,7 +94616,7 @@
     "b986dc546bdb": {
       "id": "b986dc546bdb",
       "file": "iznik-server-go/user/user.go",
-      "line": 2793,
+      "line": 2794,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -97923,7 +97927,7 @@
     "c04d965dfd0e": {
       "id": "c04d965dfd0e",
       "file": "iznik-server-go/user/user.go",
-      "line": 2862,
+      "line": 2863,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -98778,7 +98782,8 @@
       "goldenSql": "INSERT INTO users (fullname, added) VALUES (?, NOW())",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId. These sites use sqlDB.Exec deliberately so the id is read from the MySQL protocol response on the very connection that performed the insert. The hazard being avoided is NOT replication lag: LAST_INSERT_ID() is connection-scoped session state, so a follow-up SELECT can be handed a different pooled connection and return 0 or another session's id, as the comment in session/social_auth.go already spells out. Converting to GORM's Create would instead depend on primary-key writeback that, traced through callbacks/create.go in v1.31.0, stores the id under the literal key \"@id\" when stmt.Schema is nil - real behaviour, but undocumented, contradicted by the public docs, and untested upstream. Relying on that for the one value these sites exist to protect is precisely the silent, expensive rewrite bug plan 7.5 reserves keep-raw for. database/insert.go's ExecInsertGetID already encapsulates this pattern and is itself recorded as non-migration infrastructure; pointing these call sites at it would be a sensible dedup, but that is a refactor rather than an ORM conversion."
     },
     "c1fe77ab7ef0": {
       "id": "c1fe77ab7ef0",
@@ -99091,7 +99096,7 @@
     "c26ff21a50e2": {
       "id": "c26ff21a50e2",
       "file": "iznik-server-go/user/user.go",
-      "line": 2848,
+      "line": 2849,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -101167,9 +101172,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM admins WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c6ae40a34425": {
       "id": "c6ae40a34425",
@@ -101504,7 +101509,7 @@
     "c76f7046abbd": {
       "id": "c76f7046abbd",
       "file": "iznik-server-go/user/user.go",
-      "line": 2798,
+      "line": 2799,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -105519,9 +105524,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET lat = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cf14c222c7fa": {
       "id": "cf14c222c7fa",
@@ -105927,7 +105932,7 @@
     "cff1d8adacf1": {
       "id": "cff1d8adacf1",
       "file": "iznik-server-go/group/group.go",
-      "line": 879,
+      "line": 882,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -106931,7 +106936,7 @@
     "d19e540cf33b": {
       "id": "d19e540cf33b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2809,
+      "line": 2810,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -108962,7 +108967,7 @@
     "d5ecca066b1b": {
       "id": "d5ecca066b1b",
       "file": "iznik-server-go/user/user.go",
-      "line": 2922,
+      "line": 2923,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -111378,7 +111383,8 @@
       "goldenSql": "INSERT INTO users_exports (userid, tag) VALUES (?, ?)",
       "presentInCode": true,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "keep-raw",
+      "reason": "INSERT whose caller needs LastInsertId; see the note on CreatePartnerUser. Found by the Wave 2 write pilot."
     },
     "da9167a6911f": {
       "id": "da9167a6911f",
@@ -112719,7 +112725,7 @@
     "dd57ad0485df": {
       "id": "dd57ad0485df",
       "file": "iznik-server-go/group/group.go",
-      "line": 860,
+      "line": 863,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -113810,7 +113816,7 @@
     "dfb2e5f3ddfb": {
       "id": "dfb2e5f3ddfb",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 381,
+      "line": 382,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -114125,7 +114131,7 @@
     "e0386c3b3a9c": {
       "id": "e0386c3b3a9c",
       "file": "iznik-server-go/user/user.go",
-      "line": 2810,
+      "line": 2811,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -116485,7 +116491,7 @@
     "e4f0bcf9f2eb": {
       "id": "e4f0bcf9f2eb",
       "file": "iznik-server-go/group/group.go",
-      "line": 884,
+      "line": 887,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -116886,7 +116892,7 @@
     "e5fa7f0e05bd": {
       "id": "e5fa7f0e05bd",
       "file": "iznik-server-go/group/group.go",
-      "line": 857,
+      "line": 860,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -118093,7 +118099,7 @@
     "e833309ff21a": {
       "id": "e833309ff21a",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 391,
+      "line": 392,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -119308,7 +119314,7 @@
     "ea603dbc3fe0": {
       "id": "ea603dbc3fe0",
       "file": "iznik-server-go/group/group.go",
-      "line": 978,
+      "line": 982,
       "function": "CreateGroup",
       "receiver": "db",
       "method": "Exec",
@@ -123636,7 +123642,7 @@
     "f33669b723a8": {
       "id": "f33669b723a8",
       "file": "iznik-server-go/team/team.go",
-      "line": 372,
+      "line": 373,
       "function": "PatchTeam",
       "receiver": "db",
       "method": "Exec",
@@ -124506,7 +124512,7 @@
     "f4a8db8dd183": {
       "id": "f4a8db8dd183",
       "file": "iznik-server-go/user/user.go",
-      "line": 2927,
+      "line": 2928,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -127717,7 +127723,7 @@
     "fa6c771b3c3a": {
       "id": "fa6c771b3c3a",
       "file": "iznik-server-go/user/user.go",
-      "line": 2842,
+      "line": 2843,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -128438,7 +128444,7 @@
     "fbbd963966cb": {
       "id": "fbbd963966cb",
       "file": "iznik-server-go/user/user.go",
-      "line": 2972,
+      "line": 2973,
       "function": "handleMerge",
       "receiver": "tx",
       "method": "Exec",
@@ -130422,7 +130428,7 @@
     "ff2cd33b1601": {
       "id": "ff2cd33b1601",
       "file": "iznik-server-go/admin/admin.go",
-      "line": 375,
+      "line": 376,
       "function": "PatchAdmin",
       "receiver": "db",
       "method": "Exec",

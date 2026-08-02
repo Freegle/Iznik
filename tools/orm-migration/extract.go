@@ -159,6 +159,13 @@ func main() {
 	// keep-raw decision in that run.
 	flag.StringVar(&rules, "rules", "", "keep-raw rules file (default: keep-raw.json beside the manifest)")
 	flag.BoolVar(&selftest, "selftest", false, "run the extractor's own checks and exit")
+	var duplicates string
+	// Pre-flight for gate (h). Converting one of two identical statements in a
+	// file renumbers the survivor's site ID, so they have to move together. The
+	// gate catches it, but only after the work is done; the Wave 2 pilot found
+	// its duplicate by grepping afterwards and said so. This makes the check
+	// available before editing, which is when it is useful.
+	flag.StringVar(&duplicates, "duplicates", "", "list sites sharing identical SQL within a file (\"all\", or a path substring) and exit")
 	flag.Parse()
 
 	if selftest {
@@ -178,6 +185,11 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "extract:", err)
 		os.Exit(1)
+	}
+
+	if duplicates != "" {
+		reportDuplicates(sites, duplicates)
+		return
 	}
 
 	// Carry forward statuses and reviewer annotations from the existing
@@ -611,6 +623,47 @@ func exprString(e ast.Expr) string {
 		return exprString(v.X) + "[]"
 	}
 	return "?"
+}
+
+// reportDuplicates lists sites that share identical SQL within one file, which
+// are the sites gate (h) requires to be converted together. filter is "all" or
+// a substring of the path, so an agent can check just the file it is about to
+// edit.
+func reportDuplicates(sites []*Site, filter string) {
+	groups := map[string][]*Site{}
+	for _, s := range sites {
+		if s.Status == StatusTestFixture {
+			continue
+		}
+		if filter != "all" && !strings.Contains(s.File, filter) {
+			continue
+		}
+		groups[s.File+"\x00"+s.GoldenSQL] = append(groups[s.File+"\x00"+s.GoldenSQL], s)
+	}
+
+	keys := make([]string, 0, len(groups))
+	for k, g := range groups {
+		if len(g) > 1 {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	if len(keys) == 0 {
+		fmt.Println("no duplicate statements found; nothing needs converting together")
+		return
+	}
+
+	fmt.Printf("%d group(s) of identical statements. Convert each group together, or leave it alone:\n\n", len(keys))
+	for _, k := range keys {
+		g := groups[k]
+		sort.Slice(g, func(i, j int) bool { return g[i].Line < g[j].Line })
+		fmt.Printf("%s\n  %s\n", g[0].File, g[0].GoldenSQL)
+		for _, s := range g {
+			fmt.Printf("    %s  line %-6d %s()  [%s]\n", s.ID, s.Line, s.Function, s.Status)
+		}
+		fmt.Println()
+	}
 }
 
 // keepRawRules is the declarative form of plan 7.5.

@@ -67,7 +67,8 @@ func GetUserDump(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cnt int64
-	db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", targetID).Scan(&cnt)
+	// ORM migration site 3777f46262ba (wave 1).
+	db.Table("users").Where("id = ?", targetID).Count(&cnt)
 	if cnt == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
 	}
