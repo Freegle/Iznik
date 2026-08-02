@@ -2364,6 +2364,31 @@ jobs:
               echo "ORM migration tooling not present on this branch; nothing to ratchet."
               exit 0
             fi
+
+            # The ratchet regenerates the inventory from source, so it needs Go.
+            # This host does not have it: every Go suite here runs inside a
+            # container (docker exec ... apiv2 'go test'), and the VM itself
+            # never installs a toolchain. The first run of this step with the
+            # correct orb pinned failed on exactly that - "required tool 'go'
+            # not found on PATH" - which is a better failure than the one it
+            # replaced, where the step was not running at all.
+            #
+            # Provisioned AFTER the self-guard above so a branch without the
+            # migration never pays for a toolchain it will not use.
+            if ! command -v go >/dev/null 2>&1; then
+              if [ -x /usr/local/go/bin/go ]; then
+                export PATH="/usr/local/go/bin:$PATH"
+              else
+                GO_VERSION=1.23.12
+                echo "Installing Go ${GO_VERSION} for the ratchet..."
+                curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz
+                sudo rm -rf /usr/local/go
+                sudo tar -C /usr/local -xzf /tmp/go.tgz
+                export PATH="/usr/local/go/bin:$PATH"
+              fi
+            fi
+            go version
+
             tools/orm-migration/ci-ratchet.sh
 
       - run:
