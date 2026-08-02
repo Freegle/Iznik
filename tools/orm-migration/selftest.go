@@ -196,7 +196,7 @@ func runSelfCheck() []string {
 
 	for _, tc := range selfCases {
 		fset := token.NewFileSet()
-		got, err := sitesInFile(fset, "selftest.go", "selftest.go", tc.src, false)
+		got, err := sitesInFile(fset, "selftest.go", "selftest.go", tc.src, false, nil)
 		if err != nil {
 			fail(tc.name, "parse error: %v", err)
 			continue
@@ -239,8 +239,8 @@ func runSelfCheck() []string {
 	// as new on each regeneration.
 	fset := token.NewFileSet()
 	src := "package p\nfunc f() { db.Raw(\"SELECT 1 FROM dual\") }"
-	a, _ := sitesInFile(fset, "x.go", "x.go", src, false)
-	b, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", src, false)
+	a, _ := sitesInFile(fset, "x.go", "x.go", src, false, nil)
+	b, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", src, false, nil)
 	if len(a) == 1 && len(b) == 1 && a[0].ID != b[0].ID {
 		fail("stable id", "ID differs between runs: %s vs %s", a[0].ID, b[0].ID)
 	}
@@ -270,9 +270,32 @@ func runSelfCheck() []string {
 
 	// Two identical statements in one file must not collide onto one ID.
 	dup := "package p\nfunc f() { db.Raw(\"SELECT 1 FROM dual\"); db.Raw(\"SELECT 1 FROM dual\") }"
-	d, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", dup, false)
+	d, _ := sitesInFile(token.NewFileSet(), "x.go", "x.go", dup, false, nil)
 	if len(d) == 2 && d[0].ID == d[1].ID {
 		fail("duplicate sql", "two sites in one file share ID %s", d[0].ID)
+	}
+
+	// A package-level string constant must fold into the golden, so a statement
+	// that is static in fact is not written off as dynamic because of how this
+	// tool reads it. And a value it cannot resolve must still mark the site
+	// dynamic, since such a statement genuinely has more than one form.
+	constSrc := "package p\nfunc f() { db.Raw(\"SELECT \" + cols + \" FROM t\") }"
+	c, _ := sitesInFile(token.NewFileSet(), "c.go", "c.go", constSrc, false,
+		map[string]string{"cols": "a, b"})
+	if len(c) != 1 {
+		fail("const fold", "expected 1 site, got %d", len(c))
+	} else {
+		if c[0].GoldenSQL != "SELECT a, b FROM t" {
+			fail("const fold", "constant not resolved: %q", c[0].GoldenSQL)
+		}
+		if c[0].Dynamic {
+			fail("const fold", "site marked dynamic despite a fully resolved statement")
+		}
+	}
+
+	u, _ := sitesInFile(token.NewFileSet(), "u.go", "u.go", constSrc, false, nil)
+	if len(u) == 1 && !u[0].Dynamic {
+		fail("const fold", "an unresolvable fragment must still mark the site dynamic, got %q", u[0].GoldenSQL)
 	}
 
 	return failures

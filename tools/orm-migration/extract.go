@@ -235,6 +235,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	retired, err := applyRetired(sites, filepath.Join(filepath.Dir(rules), "retired.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "extract:", err)
+		os.Exit(1)
+	}
+	_ = retired
+
 	diffs, err := applyApprovedDiffs(sites, filepath.Join(filepath.Dir(rules), "approved-diffs.json"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "extract:", err)
@@ -293,7 +300,7 @@ func scan(root, repo string) ([]*Site, error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		found, err := sitesInFile(fset, path, rel, nil, isTest)
+		found, err := sitesInFile(fset, path, rel, nil, isTest, packageConsts(fset, filepath.Dir(path)))
 		if err != nil {
 			return err
 		}
@@ -305,7 +312,59 @@ func scan(root, repo string) ([]*Site, error) {
 
 // sitesInFile inventories one file. src may be nil to read from disk, or a
 // string holding the source, which is what the self-test uses.
-func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool) ([]*Site, error) {
+// packageConsts collects package-level string constants and vars for one
+// directory, so that "SELECT " + configColumns + " FROM ..." folds to real SQL
+// instead of a {{expr}} hole. Results are cached per directory because every
+// file in a package asks for the same table.
+//
+// Only single-name specs with a foldable, non-dynamic string value are
+// recorded. Anything assembled at runtime is deliberately left out: it has no
+// single value, so a site using it genuinely has more than one form.
+var packageConstCache = map[string]map[string]string{}
+
+func packageConsts(fset *token.FileSet, dir string) map[string]string {
+	if cached, ok := packageConstCache[dir]; ok {
+		return cached
+	}
+	out := map[string]string{}
+	packageConstCache[dir] = out
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+		if err != nil {
+			continue
+		}
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+					continue
+				}
+				// nil table: a constant defined in terms of another constant is
+				// not resolved, which keeps this a single pass with no ordering
+				// question. In this codebase the SQL fragments are plain
+				// literals.
+				if text, dynamic, ok := foldWith(vs.Values[0], nil); ok && !dynamic {
+					out[vs.Names[0].Name] = text
+				}
+			}
+		}
+	}
+	return out
+}
+
+func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool, consts map[string]string) ([]*Site, error) {
 	file, err := parser.ParseFile(fset, path, src, 0)
 	if err != nil {
 		// A file that does not parse cannot be inventoried; fail loudly
@@ -335,7 +394,7 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool) ([
 				}
 
 				recv := exprString(sel.X)
-				text, dynamic, ok := fold(call.Args[0])
+				text, dynamic, ok := foldWith(call.Args[0], consts)
 
 				var sql, source string
 				switch {
@@ -410,7 +469,32 @@ func sitesInFile(fset *token.FileSet, path, rel string, src any, isTest bool) ([
 // the site dynamic; a dynamic site can never be mechanically converted, so the
 // classifier pushes it to complex.
 func fold(e ast.Expr) (text string, dynamic bool, ok bool) {
+	return foldWith(e, nil)
+}
+
+// foldWith is fold with a table of package-level string constants.
+//
+// Without it, "SELECT " + configColumns + " FROM mod_configs" records a golden
+// containing a {{expr}} hole and the site is written off as dynamic. But
+// configColumns is a Go constant: its value is fixed at compile time, so the
+// statement really is static and the hole is an artefact of how the extractor
+// reads it, not a property of the query. Seventy-four wave 5 sites carry such
+// holes, and writing them all off as unconvertible would have been a large
+// silent deferral justified by a limitation of my own tool.
+//
+// A genuinely runtime-varying fragment - rippling/metrics.go's srcGroup, which
+// depends on whether a column exists - still resolves to nothing and still
+// marks the site dynamic, which is correct: that statement has more than one
+// form and no single golden can describe it.
+func foldWith(e ast.Expr, consts map[string]string) (text string, dynamic bool, ok bool) {
 	switch v := e.(type) {
+	case *ast.Ident:
+		if consts != nil {
+			if s, found := consts[v.Name]; found {
+				return s, false, true
+			}
+		}
+		return "", false, false
 	case *ast.BasicLit:
 		if v.Kind != token.STRING {
 			return "", false, false
@@ -425,11 +509,11 @@ func fold(e ast.Expr) (text string, dynamic bool, ok bool) {
 		if v.Op != token.ADD {
 			return "", false, false
 		}
-		l, ld, lok := fold(v.X)
+		l, ld, lok := foldWith(v.X, consts)
 		if !lok {
 			l, ld = "{{expr}}", true
 		}
-		r, rd, rok := fold(v.Y)
+		r, rd, rok := foldWith(v.Y, consts)
 		if !rok {
 			r, rd = "{{expr}}", true
 		}
@@ -441,13 +525,13 @@ func fold(e ast.Expr) (text string, dynamic bool, ok bool) {
 		return l + r, ld || rd, true
 
 	case *ast.ParenExpr:
-		return fold(v.X)
+		return foldWith(v.X, consts)
 
 	case *ast.CallExpr:
 		// fmt.Sprintf("...", x) - keep the format string, which retains the
 		// SQL shape, and treat the interpolations as holes.
 		if sel, isSel := v.Fun.(*ast.SelectorExpr); isSel && sel.Sel.Name == "Sprintf" && len(v.Args) > 0 {
-			if s, _, sok := fold(v.Args[0]); sok {
+			if s, _, sok := foldWith(v.Args[0], consts); sok {
 				return s, true, true
 			}
 		}
@@ -759,6 +843,68 @@ func applyKeepRaw(sites []*Site, path string) (int, error) {
 				fmt.Fprintf(os.Stderr, "warning: keep-raw rule %d matched no sites: %s %s\n", i, r.File, r.Function)
 			}
 		}
+	}
+	return applied, nil
+}
+
+// applyRetired marks sites the plan's "retired" status was made for: ones that
+// no longer exist and are not coming back.
+//
+// The case that needed it: resolving a Go constant into the golden changes the
+// statement text, and a site ID is a hash of path plus normalised SQL, so the
+// site is renumbered. The old ID is retained by merge() as vanished-and-raw,
+// which the burn-down correctly reports as an unproven conversion - a site
+// whose SQL went away with no parity test to account for it.
+//
+// But nothing was converted. The old entry recorded "SELECT {{expr}} FROM ..."
+// as its golden, and that is not a statement anyone ever wrote; it is what the
+// extractor produced before it could resolve the constant. Retiring those
+// entries says so explicitly rather than leaving them to be read as work done
+// or work skipped.
+//
+// Declarative and per-ID, like keep-raw, so each retirement carries a written
+// reason and survives review.
+func applyRetired(sites []*Site, path string) (int, error) {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	var rules struct {
+		Retired []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		} `json:"retired"`
+	}
+	if err := json.Unmarshal(b, &rules); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+
+	byID := map[string]string{}
+	for i, r := range rules.Retired {
+		if strings.TrimSpace(r.Reason) == "" {
+			return 0, fmt.Errorf("%s: retirement %d (%s) has no reason", path, i, r.ID)
+		}
+		byID[r.ID] = r.Reason
+	}
+
+	applied := 0
+	for _, s := range sites {
+		reason, ok := byID[s.ID]
+		if !ok {
+			continue
+		}
+		// Retiring a site that is still in the code would hide live raw SQL,
+		// which is the one thing the inventory exists to prevent.
+		if s.PresentInCode {
+			return 0, fmt.Errorf("%s: site %s is retired but its SQL is still in %s:%d", path, s.ID, s.File, s.Line)
+		}
+		s.Status = StatusRetired
+		s.Reason = reason
+		applied++
 	}
 	return applied, nil
 }

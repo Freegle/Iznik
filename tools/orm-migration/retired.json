@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Sites the plan's retired status was made for: gone from the code, not coming back.",
+    "",
+    "These IDs were orphaned when the extractor learned to resolve Go string constants.",
+    "A site ID hashes path plus normalised SQL, so folding a constant into the golden",
+    "renumbers the site. The old entry recorded a golden of the form",
+    "'SELECT {{expr}} FROM ...' - which is not a statement anyone wrote, but what the",
+    "extractor produced before it could resolve the constant. Nothing was converted and",
+    "nothing was skipped: the entry described a statement that never existed.",
+    "",
+    "Without this the burn-down reports them as conversions with no parity test, which",
+    "is the correct reading of the data and the wrong reading of the situation."
+  ],
+  "retired": [
+    {
+      "id": "0075741e6c44",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE createdby = ? UN...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "251541e122a3",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "2ec5308a64bf",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs ORDER BY name...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "a4f70f50bdc1",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_stdmsgs WHERE configid = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "af4f68fe3489",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "c79c0e036697",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "e3b25042ecfe",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_stdmsgs WHERE configid = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    },
+    {
+      "id": "f86f6230fb8c",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
+    }
+  ]
+}

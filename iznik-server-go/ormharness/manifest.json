@@ -5,6 +5,7 @@
     "converted": 1305,
     "keep-raw": 101,
     "raw": 230,
+    "retired": 8,
     "test-fixture": 4223
   },
   "sites": {
@@ -302,9 +303,10 @@
       "dynamic": true,
       "args": 6,
       "goldenSql": "SELECT {{expr}} FROM mod_configs WHERE createdby = ? UNION SELECT {{expr}} FROM mod_configs WHERE `default` = 1 UNION SELECT {{expr}} FROM mod_configs WHERE id IN (SELECT m1.configid FROM memberships m1 WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) AND m1.groupid IN (SELECT m2.groupid FROM memberships m2 WHERE m2.userid = ? AND m2.role IN (?, ?))) ORDER BY name",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE createdby = ? UN...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "007d794603e9": {
       "id": "007d794603e9",
@@ -19130,9 +19132,10 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM mod_configs WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "2528b4d34465": {
       "id": "2528b4d34465",
@@ -23008,6 +23011,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "2d4f322cfd3f": {
+      "id": "2d4f322cfd3f",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 264,
+      "function": "listModConfigs",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_configs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs ORDER BY name",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "2d5eab31ef67": {
       "id": "2d5eab31ef67",
       "file": "iznik-server-go/test/session_test.go",
@@ -23672,6 +23699,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "2e87012dbaed": {
+      "id": "2e87012dbaed",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 154,
+      "function": "GetModConfig",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_stdmsgs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, configid, title, action, subjpref, subjsuff, body, rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert` FROM mod_stdmsgs WHERE configid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "2e9297840f59": {
       "id": "2e9297840f59",
       "file": "iznik-server-go/test/message_test.go",
@@ -23800,9 +23851,10 @@
       "dynamic": true,
       "args": 0,
       "goldenSql": "SELECT {{expr}} FROM mod_configs ORDER BY name",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs ORDER BY name...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "2ecbd6874f42": {
       "id": "2ecbd6874f42",
@@ -38539,6 +38591,30 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "4bbe84a257f3": {
+      "id": "4bbe84a257f3",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 507,
+      "function": "PatchModConfig",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_configs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "4bc40c860595": {
       "id": "4bc40c860595",
@@ -69927,6 +70003,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "87d36c5d843f": {
+      "id": "87d36c5d843f",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 340,
+      "function": "PostModConfig",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_configs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "87d469ee286a": {
       "id": "87d469ee286a",
       "file": "iznik-server-go/test/user_test.go",
@@ -81482,6 +81582,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "9fc1bbefed72": {
+      "id": "9fc1bbefed72",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 635,
+      "function": "DeleteModConfig",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_configs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "9fce7295f9c1": {
       "id": "9fce7295f9c1",
       "file": "iznik-server-go/test/logs_test.go",
@@ -84384,9 +84508,10 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM mod_stdmsgs WHERE configid = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_stdmsgs WHERE configid = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "a52e487937b0": {
       "id": "a52e487937b0",
@@ -85534,6 +85659,30 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "a74b7b022b84": {
+      "id": "a74b7b022b84",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 381,
+      "function": "PostModConfig",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_stdmsgs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, configid, title, action, subjpref, subjsuff, body, rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert` FROM mod_stdmsgs WHERE configid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "a74bfa8a19c1": {
       "id": "a74bfa8a19c1",
@@ -89528,9 +89677,10 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM mod_configs WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "af4fc1dff251": {
       "id": "af4fc1dff251",
@@ -98755,6 +98905,30 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "c1e1f7ddeb2d": {
+      "id": "c1e1f7ddeb2d",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 140,
+      "function": "GetModConfig",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "mod_configs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
+    },
     "c1e9e27ce56c": {
       "id": "c1e9e27ce56c",
       "file": "iznik-server-go/test/message_test.go",
@@ -101652,9 +101826,10 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM mod_configs WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "c79ced9cb682": {
       "id": "c79ced9cb682",
@@ -115908,9 +116083,10 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM mod_stdmsgs WHERE configid = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_stdmsgs WHERE configid = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "e3c6b6ec99a7": {
       "id": "e3c6b6ec99a7",
@@ -119154,6 +119330,31 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "e9ea468dab80": {
+      "id": "e9ea468dab80",
+      "file": "iznik-server-go/modconfig/modconfig.go",
+      "line": 276,
+      "function": "listModConfigs",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "memberships",
+        "mod_configs"
+      ],
+      "mysqlisms": [
+        "backticks"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 6,
+      "goldenSql": "SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE createdby = ? UNION SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE `default` = 1 UNION SELECT id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread FROM mod_configs WHERE id IN (SELECT m1.configid FROM memberships m1 WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) AND m1.groupid IN (SELECT m2.groupid FROM memberships m2 WHERE m2.userid = ? AND m2.role IN (?, ?))) ORDER BY name",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "raw"
     },
     "e9f2c662be69": {
       "id": "e9f2c662be69",
@@ -126723,9 +126924,10 @@
       "dynamic": true,
       "args": 1,
       "goldenSql": "SELECT {{expr}} FROM mod_configs WHERE id = ?",
-      "presentInCode": true,
+      "presentInCode": false,
       "hasParityTest": false,
-      "status": "raw"
+      "status": "retired",
+      "reason": "Superseded when the extractor learned to resolve Go string constants. Its golden was an unresolved-constant artefact (SELECT {{expr}} FROM mod_configs WHERE id = ?...), not real SQL. The same statement in modconfig/modconfig.go is now inventoried under a new id with the constant folded in, and is converted or triaged there."
     },
     "f8759c784868": {
       "id": "f8759c784868",
