@@ -712,8 +712,15 @@ func validateGeometry(wkt string) bool {
 // logGroupEdit inserts an audit log entry for group edit operations.
 func logGroupEdit(groupid uint64, byuser uint64, text string) {
 	db := database.DBConn
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_EDIT, groupid, byuser, text)
+	// ORM migration site cbad92a90c0d (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_GROUP,
+		"subtype":   log.LOG_SUBTYPE_EDIT,
+		"groupid":   groupid,
+		"byuser":    byuser,
+		"text":      text,
+	})
 }
 
 type PatchGroupRequest struct {
@@ -780,19 +787,24 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Apply mod/owner settable fields
 	if req.Tagline != nil {
-		db.Exec("UPDATE `groups` SET tagline = ? WHERE id = ?", *req.Tagline, req.ID)
+		// ORM migration site b1c25f5b67a9 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("tagline", *req.Tagline)
 	}
 	if req.Namefull != nil {
-		db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", *req.Namefull, req.ID)
+		// ORM migration site bc7de11031d3 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("namefull", *req.Namefull)
 	}
 	if req.Welcomemail != nil {
-		db.Exec("UPDATE `groups` SET welcomemail = ? WHERE id = ?", *req.Welcomemail, req.ID)
+		// ORM migration site 7a9e12196036 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("welcomemail", *req.Welcomemail)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE `groups` SET description = ? WHERE id = ?", *req.Description, req.ID)
+		// ORM migration site fb4e48c03bee (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Region != nil {
-		db.Exec("UPDATE `groups` SET region = ? WHERE id = ?", *req.Region, req.ID)
+		// ORM migration site 4fd65f2418a6 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("region", *req.Region)
 	}
 	if req.AffiliationConfirmed != nil {
 		affConfirmed := *req.AffiliationConfirmed
@@ -802,40 +814,51 @@ func PatchGroup(c *fiber.Ctx) error {
 				break
 			}
 		}
-		db.Exec("UPDATE `groups` SET affiliationconfirmed = ?, affiliationconfirmedby = ? WHERE id = ?",
-			affConfirmed, myid, req.ID)
+		// ORM migration site b7a7c29b7611 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"affiliationconfirmed": affConfirmed, "affiliationconfirmedby": myid})
 	}
 	if req.Onhere != nil {
-		db.Exec("UPDATE `groups` SET onhere = ? WHERE id = ?", *req.Onhere, req.ID)
+		// ORM migration site 0510fa1a8a85 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("onhere", *req.Onhere)
 	}
 	if req.Publish != nil {
-		db.Exec("UPDATE `groups` SET publish = ? WHERE id = ?", *req.Publish, req.ID)
+		// ORM migration site fd0917d06441 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("publish", *req.Publish)
 	}
 	if req.Microvolunteering != nil {
-		db.Exec("UPDATE `groups` SET microvolunteering = ? WHERE id = ?", *req.Microvolunteering, req.ID)
+		// ORM migration site 2e011a3ca233 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteering", *req.Microvolunteering)
 	}
 	if req.Microvolunteeringoptions != nil {
-		db.Exec("UPDATE `groups` SET microvolunteeringoptions = ? WHERE id = ?", string(*req.Microvolunteeringoptions), req.ID)
+		// ORM migration site 11cd46e11f5a (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteeringoptions", string(*req.Microvolunteeringoptions))
 	}
 	if req.Mentored != nil {
-		db.Exec("UPDATE `groups` SET mentored = ? WHERE id = ?", *req.Mentored, req.ID)
+		// ORM migration site dbd2165e28c7 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("mentored", *req.Mentored)
 	}
 	if req.Ontn != nil {
-		db.Exec("UPDATE `groups` SET ontn = ? WHERE id = ?", *req.Ontn, req.ID)
+		// ORM migration site 5a1f3cd17397 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("ontn", *req.Ontn)
 	}
 	if req.Onlovejunk != nil {
-		db.Exec("UPDATE `groups` SET onlovejunk = ? WHERE id = ?", *req.Onlovejunk, req.ID)
+		// ORM migration site 1e4d0a106c72 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("onlovejunk", *req.Onlovejunk)
 	}
 	if req.Profile != nil {
-		db.Exec("UPDATE `groups` SET profile = ? WHERE id = ?", *req.Profile, req.ID)
+		// ORM migration site 23cf0e34c542 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("profile", *req.Profile)
 		logGroupEdit(req.ID, myid, "Profile")
 	}
 	if req.Settings != nil {
-		db.Exec("UPDATE `groups` SET settings = ? WHERE id = ?", string(*req.Settings), req.ID)
+		// ORM migration site 585a51354a68 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("settings", string(*req.Settings))
 		logGroupEdit(req.ID, myid, "Settings")
 	}
 	if req.Rules != nil {
-		db.Exec("UPDATE `groups` SET rules = ? WHERE id = ?", string(*req.Rules), req.ID)
+		// ORM migration site 6de535f15717 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("rules", string(*req.Rules))
 		logGroupEdit(req.ID, myid, "Rules")
 	}
 
@@ -848,19 +871,27 @@ func PatchGroup(c *fiber.Ctx) error {
 			db.Table("groups").Where("id = ?", req.ID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+			// ORM migration site 6a4f5b776c87 (wave 2). Converted together with
+			// its identical twin in CreateGroup (adbbb9dadd0c): a half-converted
+			// pair renumbers the survivor's site ID, so gate (h) refuses the
+			// split state.
+			db.Table("groups").Where("id = ?", req.ID).Update("lng", *req.Lng)
 		}
 		if req.Altlat != nil {
-			db.Exec("UPDATE `groups` SET altlat = ? WHERE id = ?", *req.Altlat, req.ID)
+			// ORM migration site 0e9905e6f0ce (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("altlat", *req.Altlat)
 		}
 		if req.Altlng != nil {
-			db.Exec("UPDATE `groups` SET altlng = ? WHERE id = ?", *req.Altlng, req.ID)
+			// ORM migration site 22727b8ed343 (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("altlng", *req.Altlng)
 		}
 		if req.Nameshort != nil {
-			db.Exec("UPDATE `groups` SET nameshort = ? WHERE id = ?", *req.Nameshort, req.ID)
+			// ORM migration site e5fa7f0e05bd (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("nameshort", *req.Nameshort)
 		}
 		if req.Licenserequired != nil {
-			db.Exec("UPDATE `groups` SET licenserequired = ? WHERE id = ?", *req.Licenserequired, req.ID)
+			// ORM migration site dd57ad0485df (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("licenserequired", *req.Licenserequired)
 		}
 		// poly (DPA) / polyofficial (CGA). An empty string means "clear this area" - it must be
 		// allowed (a moderator removing the DPA), so skip geometry validation and store NULL rather
@@ -868,23 +899,27 @@ func PatchGroup(c *fiber.Ctx) error {
 		polyChanged := false
 		if req.Poly != nil {
 			if *req.Poly == "" {
-				db.Exec("UPDATE `groups` SET poly = NULL WHERE id = ?", req.ID)
+				// ORM migration site 7993248ef4e6 (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("poly", gorm.Expr("NULL"))
 			} else {
 				if !validateGeometry(*req.Poly) {
 					return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
 				}
-				db.Exec("UPDATE `groups` SET poly = ? WHERE id = ?", *req.Poly, req.ID)
+				// ORM migration site 450c5b5fca94 (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("poly", *req.Poly)
 			}
 			polyChanged = true
 		}
 		if req.Polyofficial != nil {
 			if *req.Polyofficial == "" {
-				db.Exec("UPDATE `groups` SET polyofficial = NULL WHERE id = ?", req.ID)
+				// ORM migration site cff1d8adacf1 (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", gorm.Expr("NULL"))
 			} else {
 				if !validateGeometry(*req.Polyofficial) {
 					return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
 				}
-				db.Exec("UPDATE `groups` SET polyofficial = ? WHERE id = ?", *req.Polyofficial, req.ID)
+				// ORM migration site e4f0bcf9f2eb (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", *req.Polyofficial)
 			}
 			polyChanged = true
 		}
@@ -894,7 +929,8 @@ func PatchGroup(c *fiber.Ctx) error {
 			db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d) WHERE id = ?", utils.SRID), req.ID)
 		}
 		if req.Showonyahoo != nil {
-			db.Exec("UPDATE `groups` SET showonyahoo = ? WHERE id = ?", *req.Showonyahoo, req.ID)
+			// ORM migration site 34c2c6e9128b (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("showonyahoo", *req.Showonyahoo)
 		}
 	}
 
@@ -974,12 +1010,22 @@ func CreateGroup(c *fiber.Ctx) error {
 			db.Table("groups").Where("id = ?", newID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, newID)
+			// ORM migration site adbbb9dadd0c (wave 2). Converted together with
+			// its identical twin in PatchGroup (6a4f5b776c87): a half-converted
+			// pair renumbers the survivor's site ID, so gate (h) refuses the
+			// split state.
+			db.Table("groups").Where("id = ?", newID).Update("lng", *req.Lng)
 		}
 	}
 
 	// Creator becomes Owner.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)", myid, newID, utils.ROLE_OWNER, utils.COLLECTION_APPROVED)
+	// ORM migration site ea603dbc3fe0 (wave 2).
+	db.Table("memberships").Create(map[string]interface{}{
+		"userid":     myid,
+		"groupid":    newID,
+		"role":       utils.ROLE_OWNER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }

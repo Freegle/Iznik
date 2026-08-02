@@ -649,10 +649,18 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
 	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
 	if holdReply {
-		db.Exec("INSERT INTO rippling_held_replies "+
-			"(chatid, chatmsgid, msgid, replieruserid, source, lat, lng, status, created_at) "+
-			"VALUES (?, ?, ?, ?, 'web', ?, ?, 'held', NOW())",
-			id, newid, *payload.Refmsgid, myid, reach.lat, reach.lng)
+		// ORM migration site e9be2e263367 (wave 2).
+		db.Table("rippling_held_replies").Create(map[string]interface{}{
+			"chatid":        id,
+			"chatmsgid":     newid,
+			"msgid":         *payload.Refmsgid,
+			"replieruserid": myid,
+			"source":        gorm.Expr("'web'"),
+			"lat":           reach.lat,
+			"lng":           reach.lng,
+			"status":        gorm.Expr("'held'"),
+			"created_at":    gorm.Expr("NOW()"),
+		})
 		db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'held', 1) " +
 			"ON DUPLICATE KEY UPDATE count = count + 1")
 	}
@@ -708,7 +716,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	if payload.Imageid != nil {
 		// Update the chat image to link it to this chat message.  This also stops it being purged in
 		// purge_chats.
-		db.Exec("UPDATE chat_images SET chatmsgid = ? WHERE id = ?;", newid, *payload.Imageid)
+		// ORM migration site b443c0f36dd2 (wave 2). Converted together with its
+		// identical twin in CreateChatMessageLoveJunk (8eddd54c5c0b): a half-
+		// converted pair renumbers the survivor's site ID, so gate (h) refuses
+		// the split state.
+		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
 	}
 
 	// If anyone has closed this chat, reopen it so it reappears in their list.
@@ -828,7 +840,8 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	if payload.Offerid != nil {
 		// Update the offer id in the chat room, which we need to be able to send back replies.  LoveJunk only allows
 		// one offer per Freegle user and hence this can be stored in the chat room.
-		db.Exec("UPDATE chat_rooms SET ljofferid = ? WHERE id = ?", *payload.Offerid, chat.ID)
+		// ORM migration site d0743f528af9 (wave 2).
+		db.Table("chat_rooms").Where("id = ?", chat.ID).Update("ljofferid", *payload.Offerid)
 	}
 
 	var chattype string
@@ -861,7 +874,9 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	if payload.Imageid != nil {
 		// Link the chat image to this message, matching CreateChatMessage behaviour.
-		db.Exec("UPDATE chat_images SET chatmsgid = ? WHERE id = ?;", newid, *payload.Imageid)
+		// ORM migration site 8eddd54c5c0b (wave 2). Converted together with its
+		// identical twin in CreateChatMessage (b443c0f36dd2).
+		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
 	}
 
 	var ret ChatMessageLovejunkResponse
@@ -908,7 +923,8 @@ func PatchChatMessage(c *fiber.Ctx) error {
 
 	// Update replyexpected if provided.
 	if req.Replyexpected != nil {
-		db.Exec("UPDATE chat_messages SET replyexpected = ? WHERE id = ?", *req.Replyexpected, req.ID)
+		// ORM migration site 89645312ccd2 (wave 2).
+		db.Table("chat_messages").Where("id = ?", req.ID).Update("replyexpected", *req.Replyexpected)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -946,9 +962,11 @@ func DeleteChatMessage(c *fiber.Ctx) error {
 	}
 
 	// Soft-delete: set type to Default, deleted to 1, clear imageid, remove chat_images.
-	db.Exec("UPDATE chat_messages SET type = ?, deleted = 1, imageid = NULL WHERE id = ?",
-		utils.CHAT_MESSAGE_DEFAULT, id)
-	db.Exec("DELETE FROM chat_images WHERE chatmsgid = ?", id)
+	// ORM migration site 4c1209980f1f (wave 2).
+	db.Table("chat_messages").Where("id = ?", id).
+		Updates(map[string]interface{}{"type": utils.CHAT_MESSAGE_DEFAULT, "deleted": gorm.Expr("1"), "imageid": gorm.Expr("NULL")})
+	// ORM migration site 4b773363a4f4 (wave 2).
+	db.Table("chat_images").Where("chatmsgid = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1464,7 +1482,12 @@ func autoApproveModmails(db *gorm.DB, myid uint64, chatID uint64, afterMsgID uin
 		chatID, afterMsgID).Scan(&modmailIDs)
 
 	for _, id := range modmailIDs {
-		db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ? WHERE id = ?", myid, id)
+		// ORM migration site 7631a317a13b (wave 2). Converted together with its
+		// identical twin in approveChatMessage (a2ab9aecba3e): a half-converted
+		// pair renumbers the survivor's site ID, so gate (h) refuses the split
+		// state.
+		db.Table("chat_messages").Where("id = ?", id).
+			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid})
 	}
 }
 
@@ -1504,8 +1527,9 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 		msgInvalid = 0
 	}
 
-	db.Exec("UPDATE chat_rooms SET msgvalid = ?, msginvalid = ?, latestmessage = ? WHERE id = ?",
-		msgValid, msgInvalid, time.Now(), chatID)
+	// ORM migration site f4cc7314bea4 (wave 2).
+	db.Table("chat_rooms").Where("id = ?", chatID).
+		Updates(map[string]interface{}{"msgvalid": msgValid, "msginvalid": msgInvalid, "latestmessage": time.Now()})
 }
 
 func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, approveAllFuture bool) error {
@@ -1519,13 +1543,26 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	}
 
 	// Approve the message
-	if result := db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ? WHERE id = ?", myid, msgID); result.Error != nil {
+	// ORM migration site a2ab9aecba3e (wave 2). Converted together with its
+	// identical twin in autoApproveModmails (7631a317a13b).
+	if result := db.Table("chat_messages").Where("id = ?", msgID).
+		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid}); result.Error != nil {
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
 	}
 
 	// Log the approve action
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_CHAT, log.LOG_SUBTYPE_APPROVED, msg.Userid, myid, fmt.Sprintf("Chat message %d approved", msgID))
+	// ORM migration site ef470baa050b (wave 2). Converted together with its
+	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
+	// pair renumbers the survivor's site ID, so gate (h) refuses the split
+	// state.
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CHAT,
+		"subtype":   log.LOG_SUBTYPE_APPROVED,
+		"user":      msg.Userid,
+		"byuser":    myid,
+		"text":      fmt.Sprintf("Chat message %d approved", msgID),
+	})
 
 	// Auto-approve any ModMail messages after this one in the same chat
 	autoApproveModmails(db, myid, msg.Chatid, msgID)
@@ -1534,7 +1571,11 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	updateMessageCounts(db, msg.Chatid)
 
 	// Remove hold if it exists
-	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	// ORM migration site 2e5a6f9c7077 (wave 2). Converted together with its
+	// identical twins in rejectChatMessage (030c4c489394) and
+	// releaseChatMessage (91271beda4fa): a half-converted group renumbers the
+	// survivors' site IDs, so gate (h) refuses the split state.
+	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
 
 	// Whitelist the message text so similar messages aren't flagged again
 	//.
@@ -1544,7 +1585,10 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 
 	if approveAllFuture {
 		// Set user's chatmodstatus to Unmoderated
-		db.Exec("UPDATE users SET chatmodstatus = 'Unmoderated' WHERE id = ?", msg.Userid)
+		// ORM migration site 818065956105 (wave 2). Golden sets a literal
+		// 'Unmoderated', so it goes through gorm.Expr rather than as a bind,
+		// which would have rendered "chatmodstatus = ?".
+		db.Table("users").Where("id = ?", msg.Userid).Update("chatmodstatus", gorm.Expr("'Unmoderated'"))
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1563,13 +1607,26 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Reject the message
-	if result := db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?", myid, msgID); result.Error != nil {
+	// ORM migration site 09878cd3c660 (wave 2). Converted together with its
+	// identical twin below for the duplicate-message flood path (29b68b1db029):
+	// a half-converted pair renumbers the survivor's site ID, so gate (h)
+	// refuses the split state.
+	if result := db.Table("chat_messages").Where("id = ?", msgID).
+		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")}); result.Error != nil {
 		stdlog.Printf("Failed to reject chat message %d: %v", msgID, result.Error)
 	}
 
 	// Log the reject action
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_CHAT, log.LOG_SUBTYPE_REJECTED, msg.Userid, myid, fmt.Sprintf("Chat message %d rejected", msgID))
+	// ORM migration site b8fc832d50a0 (wave 2). Converted together with its
+	// identical twin in approveChatMessage (ef470baa050b).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CHAT,
+		"subtype":   log.LOG_SUBTYPE_REJECTED,
+		"user":      msg.Userid,
+		"byuser":    myid,
+		"text":      fmt.Sprintf("Chat message %d rejected", msgID),
+	})
 
 	// Auto-approve any ModMail messages after this one
 	autoApproveModmails(db, myid, msg.Chatid, msgID)
@@ -1590,7 +1647,10 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	affectedChats := map[uint64]bool{msg.Chatid: true}
 
 	for _, dup := range dups {
-		db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?", myid, dup.ID)
+		// ORM migration site 29b68b1db029 (wave 2). Converted together with its
+		// identical twin above (09878cd3c660).
+		db.Table("chat_messages").Where("id = ?", dup.ID).
+			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")})
 		affectedChats[dup.Chatid] = true
 	}
 
@@ -1600,7 +1660,10 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Remove hold if it exists
-	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	// ORM migration site 030c4c489394 (wave 2). Converted together with its
+	// identical twins in approveChatMessage (2e5a6f9c7077) and
+	// releaseChatMessage (91271beda4fa).
+	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1633,7 +1696,10 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 
 func releaseChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
 	// Delete the hold record
-	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	// ORM migration site 91271beda4fa (wave 2). Converted together with its
+	// identical twins in approveChatMessage (2e5a6f9c7077) and
+	// rejectChatMessage (030c4c489394).
+	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1802,7 +1868,8 @@ func redactChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	cleaned := emailRegexp.ReplaceAllString(msg.Message, "(email removed)")
 
 	if cleaned != msg.Message {
-		db.Exec("UPDATE chat_messages SET message = ? WHERE id = ?", cleaned, msgID)
+		// ORM migration site 8e568332ecdb (wave 2).
+		db.Table("chat_messages").Where("id = ?", msgID).Update("message", cleaned)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

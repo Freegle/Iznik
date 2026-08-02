@@ -448,8 +448,12 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 	if existingID > 0 {
 		if req.UpdateRoster != nil && *req.UpdateRoster {
-			db.Exec("UPDATE chat_roster SET status = ? WHERE chatid = ? AND userid = ?",
-				utils.CHAT_STATUS_ONLINE, existingID, myid)
+			// ORM migration site c3c151b4b7a5 (wave 2). Converted together with
+			// its identical twin below (a29c37823e28): a half-converted pair
+			// renumbers the survivor's site ID, so gate (h) refuses the split
+			// state.
+			db.Table("chat_roster").Where("chatid = ? AND userid = ?", existingID, myid).
+				Update("status", utils.CHAT_STATUS_ONLINE)
 		}
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
 	}
@@ -492,8 +496,10 @@ func PutChatRoom(c *fiber.Ctx) error {
 	// If updateRoster is true, unblock the chat for the current user after creation
 	// (opening a chat unblocks it).
 	if req.UpdateRoster != nil && *req.UpdateRoster {
-		db.Exec("UPDATE chat_roster SET status = ? WHERE chatid = ? AND userid = ?",
-			utils.CHAT_STATUS_ONLINE, chatID, myid)
+		// ORM migration site a29c37823e28 (wave 2). Converted together with its
+		// identical twin above (c3c151b4b7a5).
+		db.Table("chat_roster").Where("chatid = ? AND userid = ?", chatID, myid).
+			Update("status", utils.CHAT_STATUS_ONLINE)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": chatID})
@@ -1408,6 +1414,11 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
+	// Left raw (1f5798e8214d, wave 2): this INSERT exists specifically to call
+	// sql.Result.LastInsertId() on the same connection that ran it - the
+	// read/write split makes a follow-up SELECT unsafe, and GORM's map-Create
+	// id writeback for a schema-less Table()+map call is undocumented
+	// behaviour, not something to rely on for a fresh message id.
 	sqlResult, err := sqlDB.Exec(
 		"INSERT INTO chat_messages (chatid, userid, type, date, message, replyexpected, reportreason, reviewrequired, reviewrejected, processingsuccessful) VALUES (?, ?, ?, ?, '', 1, NULL, 0, 0, 1)",
 		chatid, myid, utils.CHAT_MESSAGE_NUDGE, now,
@@ -1420,11 +1431,18 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	newId := uint64(newIdInt)
 
 	// Update latestmessage on chat room
-	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
+	// ORM migration site 8a247fbd07a3 (wave 2). Identical SQL also appears in
+	// GetOrCreateUser2ModChat, which is left entirely raw (transaction/FOR
+	// UPDATE, keep-raw); that occurrence precedes this one in the file, so
+	// converting only this later occurrence leaves its site ID unrenumbered.
+	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 
 	// Record nudge for analytics
-	db.Exec("INSERT INTO users_nudges (fromuser, touser) VALUES (?, ?)",
-		myid, getOtherUser(room, myid))
+	// ORM migration site 05c1cd917f86 (wave 2).
+	db.Table("users_nudges").Create(map[string]interface{}{
+		"fromuser": myid,
+		"touser":   getOtherUser(room, myid),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newId})
 }
@@ -1450,7 +1468,9 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	count := result.RowsAffected
 
 	// Record the last typing time in roster.
-	db.Exec("UPDATE chat_roster SET lasttype = NOW() WHERE chatid = ? AND userid = ?", chatid, myid)
+	// ORM migration site 16ab70b058c0 (wave 2).
+	db.Table("chat_roster").Where("chatid = ? AND userid = ?", chatid, myid).
+		Update("lasttype", gorm.Expr("NOW()"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "count": count})
 }
@@ -1514,12 +1534,15 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	// Update lastmsgseen if provided
 	if req.Lastmsgseen > 0 {
 		if req.Allowback {
-			db.Exec("UPDATE chat_roster SET lastmsgseen = ? WHERE chatid = ? AND userid = ?",
-				req.Lastmsgseen, req.ID, myid)
+			// ORM migration site 645c3f56baac (wave 2).
+			db.Table("chat_roster").Where("chatid = ? AND userid = ?", req.ID, myid).
+				Update("lastmsgseen", req.Lastmsgseen)
 		} else {
 			// Only update forward (don't go backwards)
-			db.Exec("UPDATE chat_roster SET lastmsgseen = ? WHERE chatid = ? AND userid = ? AND (lastmsgseen IS NULL OR lastmsgseen < ?)",
-				req.Lastmsgseen, req.ID, myid, req.Lastmsgseen)
+			// ORM migration site 54cdf0e1dfa0 (wave 2).
+			db.Table("chat_roster").
+				Where("chatid = ? AND userid = ? AND (lastmsgseen IS NULL OR lastmsgseen < ?)", req.ID, myid, req.Lastmsgseen).
+				Update("lastmsgseen", req.Lastmsgseen)
 		}
 
 		// Check if message has been seen by all roster members
@@ -1578,8 +1601,11 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 	}
 
 	// Queue sending a support referral email.
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?))",
-		"refer_to_support", chatid, myid)
+	// ORM migration site 747de3c4a649 (wave 2).
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "refer_to_support",
+		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1617,8 +1643,12 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 		return fiber.NewError(fiber.StatusBadRequest, "Groups in common exist; use the normal report flow")
 	}
 
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?))",
-		"email_chat_spam_report", req.ID, myid, req.Reason, req.Comment)
+	// ORM migration site bc1ca64ed7ec (wave 2).
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "email_chat_spam_report",
+		"data": gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?)",
+			req.ID, myid, req.Reason, req.Comment),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

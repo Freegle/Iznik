@@ -2,9 +2,9 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 694,
+    "converted": 751,
     "keep-raw": 55,
-    "raw": 887,
+    "raw": 830,
     "test-fixture": 4223
   },
   "sites": {
@@ -1451,9 +1451,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_messages_held WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "03107a123939": {
       "id": "03107a123939",
@@ -2367,9 +2367,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET onhere = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0513d4c53158": {
       "id": "0513d4c53158",
@@ -2855,9 +2855,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO users_nudges (fromuser, touser) VALUES (?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "05c9af123275": {
       "id": "05c9af123275",
@@ -3463,7 +3463,7 @@
     "07113a2db28b": {
       "id": "07113a2db28b",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1126,
+      "line": 1144,
       "function": "getChatMessagesForRoom",
       "receiver": "db",
       "method": "Raw",
@@ -4732,9 +4732,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "09888971a65d": {
       "id": "09888971a65d",
@@ -7363,9 +7363,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET altlat = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "0ea54cb9b6d9": {
       "id": "0ea54cb9b6d9",
@@ -8985,9 +8985,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET microvolunteeringoptions = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "11dc9e87c025": {
       "id": "11dc9e87c025",
@@ -11185,9 +11185,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_roster SET lasttype = NOW() WHERE chatid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "16c4a7f6e566": {
       "id": "16c4a7f6e566",
@@ -13893,7 +13893,7 @@
     "1c2cfaaab39b": {
       "id": "1c2cfaaab39b",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 551,
+      "line": 557,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "db",
       "method": "Exec",
@@ -14630,7 +14630,7 @@
     "1d98111ea90d": {
       "id": "1d98111ea90d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1646,
+      "line": 1676,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -15185,9 +15185,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET onlovejunk = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "1e5a7a00c4ae": {
       "id": "1e5a7a00c4ae",
@@ -15677,7 +15677,7 @@
     "1f5798e8214d": {
       "id": "1f5798e8214d",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1411,
+      "line": 1422,
       "function": "handleNudge",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -15721,7 +15721,7 @@
     "1f5fe9f4e306": {
       "id": "1f5fe9f4e306",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 761,
+      "line": 773,
       "function": "CreateChatMessageLoveJunk",
       "receiver": "db",
       "method": "Raw",
@@ -16147,7 +16147,7 @@
     "1ff296c8656c": {
       "id": "1ff296c8656c",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1284,
+      "line": 1302,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -17464,9 +17464,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET altlng = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2273a3aab7b5": {
       "id": "2273a3aab7b5",
@@ -17671,7 +17671,7 @@
     "22b6e811aaa9": {
       "id": "22b6e811aaa9",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 650,
+      "line": 656,
       "function": "GetCommonGroups",
       "receiver": "db",
       "method": "Raw",
@@ -18360,9 +18360,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET profile = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "23d7ee103f9b": {
       "id": "23d7ee103f9b",
@@ -18681,7 +18681,7 @@
     "2451a0b54d63": {
       "id": "2451a0b54d63",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 526,
+      "line": 532,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "tx",
       "method": "Exec",
@@ -21327,7 +21327,7 @@
     "2984f464c081": {
       "id": "2984f464c081",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1543,
+      "line": 1566,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -21410,9 +21410,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "29b8b471b724": {
       "id": "29b8b471b724",
@@ -23389,9 +23389,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET microvolunteering = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2e09ae46184d": {
       "id": "2e09ae46184d",
@@ -23543,9 +23543,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_messages_held WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "2e5c9b3e7631": {
       "id": "2e5c9b3e7631",
@@ -27129,9 +27129,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET showonyahoo = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "34e1f2e54b22": {
       "id": "34e1f2e54b22",
@@ -27224,7 +27224,7 @@
     "35023816be21": {
       "id": "35023816be21",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1739,
+      "line": 1769,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -27336,7 +27336,7 @@
     "3519e352775b": {
       "id": "3519e352775b",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1640,
+      "line": 1670,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -27965,7 +27965,7 @@
     "366c64b4d972": {
       "id": "366c64b4d972",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1196,
+      "line": 1202,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -28100,7 +28100,7 @@
     "36b33902c122": {
       "id": "36b33902c122",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1526,
+      "line": 1549,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -31839,7 +31839,7 @@
     "3efeb225c001": {
       "id": "3efeb225c001",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 589,
+      "line": 595,
       "function": "GetOrCreateUser2UserChat",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -35052,9 +35052,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET poly = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "45132b9db487": {
       "id": "45132b9db487",
@@ -37082,7 +37082,7 @@
     "491a9ebdf3f8": {
       "id": "491a9ebdf3f8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1657,
+      "line": 1687,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -38491,9 +38491,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_images WHERE chatmsgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4bb399eac601": {
       "id": "4bb399eac601",
@@ -38672,9 +38672,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET type = ?, deleted = 1, imageid = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "4c1b505cf40d": {
       "id": "4c1b505cf40d",
@@ -40251,7 +40251,7 @@
     "4f9d823a53a7": {
       "id": "4f9d823a53a7",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1667,
+      "line": 1697,
       "function": "handleAllSeen",
       "receiver": "db",
       "method": "Exec",
@@ -40340,9 +40340,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET region = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5001f72dabc4": {
       "id": "5001f72dabc4",
@@ -42017,7 +42017,7 @@
     "537a2764efde": {
       "id": "537a2764efde",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1016,
+      "line": 1022,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -42398,7 +42398,7 @@
     "548090e97d00": {
       "id": "548090e97d00",
       "file": "iznik-server-go/group/group.go",
-      "line": 894,
+      "line": 929,
       "function": "PatchGroup",
       "receiver": "db",
       "method": "Exec",
@@ -42504,9 +42504,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "UPDATE chat_roster SET lastmsgseen = ? WHERE chatid = ? AND userid = ? AND (lastmsgseen IS NULL OR lastmsgseen \u003c ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "54e06c0b3711": {
       "id": "54e06c0b3711",
@@ -44241,7 +44241,7 @@
     "57f83af68a60": {
       "id": "57f83af68a60",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 557,
+      "line": 563,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "db",
       "method": "Exec",
@@ -44531,9 +44531,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET settings = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "585af4a6e42f": {
       "id": "585af4a6e42f",
@@ -45333,9 +45333,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET ontn = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "5a2d67157238": {
       "id": "5a2d67157238",
@@ -47100,7 +47100,7 @@
     "5da587b4234d": {
       "id": "5da587b4234d",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1290,
+      "line": 1308,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -48647,7 +48647,7 @@
     "60aa69c60334": {
       "id": "60aa69c60334",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 488,
+      "line": 492,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -49691,7 +49691,7 @@
     "62a2f6fa4bdb": {
       "id": "62a2f6fa4bdb",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1322,
+      "line": 1340,
       "function": "getReviewQueue",
       "receiver": "db",
       "method": "Raw",
@@ -50640,9 +50640,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE chat_roster SET lastmsgseen = ? WHERE chatid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "645c6f681043": {
       "id": "645c6f681043",
@@ -51318,7 +51318,7 @@
     "659e00792d43": {
       "id": "659e00792d43",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 469,
+      "line": 473,
       "function": "PutChatRoom",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -51454,7 +51454,7 @@
     "65fde41159df": {
       "id": "65fde41159df",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 521,
+      "line": 527,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "tx",
       "method": "QueryRow",
@@ -52195,7 +52195,7 @@
     "67871ee12b8f": {
       "id": "67871ee12b8f",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1629,
+      "line": 1692,
       "function": "holdChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -53503,7 +53503,7 @@
     "69ed53a55edc": {
       "id": "69ed53a55edc",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 530,
+      "line": 536,
       "function": "GetOrCreateUser2ModChat",
       "receiver": "tx",
       "method": "Exec",
@@ -53790,9 +53790,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET lng = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6a6172f43c42": {
       "id": "6a6172f43c42",
@@ -55738,9 +55738,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET rules = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "6deceec8ec53": {
       "id": "6deceec8ec53",
@@ -58895,7 +58895,7 @@
     "739b42667028": {
       "id": "739b42667028",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 716,
+      "line": 728,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -59335,9 +59335,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "748bbc383365": {
       "id": "748bbc383365",
@@ -60410,9 +60410,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET reviewrequired = 0, reviewedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "76369e632908": {
       "id": "76369e632908",
@@ -62578,9 +62578,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE `groups` SET poly = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7993386c805f": {
       "id": "7993386c805f",
@@ -63045,9 +63045,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET welcomemail = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "7ab15f7bfb8f": {
       "id": "7ab15f7bfb8f",
@@ -64564,7 +64564,7 @@
     "7db50195bb3c": {
       "id": "7db50195bb3c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1494,
+      "line": 1514,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -66556,9 +66556,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE users SET chatmodstatus = 'Unmoderated' WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8189fbbf8e0a": {
       "id": "8189fbbf8e0a",
@@ -70469,9 +70469,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET replyexpected = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "896940a53068": {
       "id": "896940a53068",
@@ -70843,9 +70843,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8a26fb40097e": {
       "id": "8a26fb40097e",
@@ -72117,7 +72117,7 @@
     "8cbeeeb7e32f": {
       "id": "8cbeeeb7e32f",
       "file": "iznik-server-go/group/group.go",
-      "line": 958,
+      "line": 994,
       "function": "CreateGroup",
       "receiver": "sqlDB",
       "method": "Exec",
@@ -73134,9 +73134,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET message = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8e7c1be72a0b": {
       "id": "8e7c1be72a0b",
@@ -73288,9 +73288,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_images SET chatmsgid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "8ef16859487a": {
       "id": "8ef16859487a",
@@ -73471,7 +73471,7 @@
     "8f117eb67b75": {
       "id": "8f117eb67b75",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1612,
+      "line": 1638,
       "function": "handleReportNoGroup",
       "receiver": "db",
       "method": "Raw",
@@ -74448,9 +74448,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM chat_messages_held WHERE msgid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "9128088fe6bf": {
       "id": "9128088fe6bf",
@@ -79933,7 +79933,7 @@
     "9c86a991eb7c": {
       "id": "9c86a991eb7c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1507,
+      "line": 1527,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -82890,9 +82890,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE chat_roster SET status = ? WHERE chatid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a2a6a74e67d6": {
       "id": "a2a6a74e67d6",
@@ -82935,9 +82935,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_messages SET reviewrequired = 0, reviewedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "a2ab9af6f4f4": {
       "id": "a2ab9af6f4f4",
@@ -85303,7 +85303,7 @@
     "a70cf3624bdb": {
       "id": "a70cf3624bdb",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 606,
+      "line": 612,
       "function": "GetOrCreateUser2UserChat",
       "receiver": "db",
       "method": "Exec",
@@ -88026,7 +88026,7 @@
     "ac238fc96e7e": {
       "id": "ac238fc96e7e",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 656,
+      "line": 664,
       "function": "CreateChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -88733,9 +88733,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET lng = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "adbdb8bd62eb": {
       "id": "adbdb8bd62eb",
@@ -89592,7 +89592,7 @@
     "af7676dc1734": {
       "id": "af7676dc1734",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1542,
+      "line": 1583,
       "function": "approveChatMessage",
       "receiver": "db",
       "method": "Exec",
@@ -90606,7 +90606,7 @@
     "b184ef8e3ad2": {
       "id": "b184ef8e3ad2",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1162,
+      "line": 1168,
       "function": "listChats",
       "receiver": "db",
       "method": "Raw",
@@ -90755,9 +90755,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET tagline = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b1d7ae973ff2": {
       "id": "b1d7ae973ff2",
@@ -91940,9 +91940,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_images SET chatmsgid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b45b1dab8f3a": {
       "id": "b45b1dab8f3a",
@@ -93695,9 +93695,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE `groups` SET affiliationconfirmed = ?, affiliationconfirmedby = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b7a92f6d9ca5": {
       "id": "b7a92f6d9ca5",
@@ -94345,9 +94345,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, user, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "b8fd8e1ebb61": {
       "id": "b8fd8e1ebb61",
@@ -95939,9 +95939,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?))",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bc2d44f1bce6": {
       "id": "bc2d44f1bce6",
@@ -96194,9 +96194,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET namefull = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "bc8c57e4cf3d": {
       "id": "bc8c57e4cf3d",
@@ -99642,9 +99642,9 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "UPDATE chat_roster SET status = ? WHERE chatid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "c3c203516806": {
       "id": "c3c203516806",
@@ -100236,7 +100236,7 @@
     "c49605990641": {
       "id": "c49605990641",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1044,
+      "line": 1062,
       "function": "canSeeChatRoom",
       "receiver": "db",
       "method": "Raw",
@@ -103872,9 +103872,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, groupid, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cbc596c69647": {
       "id": "cbc596c69647",
@@ -105949,9 +105949,9 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "UPDATE `groups` SET polyofficial = NULL WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "cff56c94c471": {
       "id": "cff56c94c471",
@@ -106239,9 +106239,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE chat_rooms SET ljofferid = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "d07fb5370e57": {
       "id": "d07fb5370e57",
@@ -108202,7 +108202,7 @@
     "d44b753b35c8": {
       "id": "d44b753b35c8",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1772,
+      "line": 1802,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -109271,7 +109271,7 @@
     "d6518a523f9c": {
       "id": "d6518a523f9c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1448,
+      "line": 1466,
       "function": "handleTyping",
       "receiver": "db",
       "method": "Exec",
@@ -112032,9 +112032,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET mentored = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dbd744cc0e15": {
       "id": "dbd744cc0e15",
@@ -112742,9 +112742,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET licenserequired = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "dd592cb342c9": {
       "id": "dd592cb342c9",
@@ -116508,9 +116508,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET polyofficial = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e4f379018ff8": {
       "id": "e4f379018ff8",
@@ -116909,9 +116909,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET nameshort = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e6054492d72e": {
       "id": "e6054492d72e",
@@ -116960,7 +116960,7 @@
     "e611588b2309": {
       "id": "e611588b2309",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 485,
+      "line": 489,
       "function": "PutChatRoom",
       "receiver": "db",
       "method": "Exec",
@@ -117318,7 +117318,7 @@
     "e6d3316c800c": {
       "id": "e6d3316c800c",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1501,
+      "line": 1521,
       "function": "handleRosterUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -117387,7 +117387,7 @@
     "e71799673a73": {
       "id": "e71799673a73",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 604,
+      "line": 610,
       "function": "GetOrCreateUser2UserChat",
       "receiver": "db",
       "method": "Exec",
@@ -118839,7 +118839,7 @@
     "e99680f74b2e": {
       "id": "e99680f74b2e",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1752,
+      "line": 1782,
       "function": "getModeratorChatIDs",
       "receiver": "db",
       "method": "Raw",
@@ -118969,9 +118969,9 @@
       "dynamic": false,
       "args": 6,
       "goldenSql": "INSERT INTO rippling_held_replies (chatid, chatmsgid, msgid, replieruserid, source, lat, lng, status, created_at) VALUES (?, ?, ?, ?, 'web', ?, ?, 'held', NOW())",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "e9be70b75e7f": {
       "id": "e9be70b75e7f",
@@ -119329,9 +119329,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ea6d613f2231": {
       "id": "ea6d613f2231",
@@ -121787,9 +121787,9 @@
       "dynamic": false,
       "args": 5,
       "goldenSql": "INSERT INTO logs (timestamp, type, subtype, user, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "ef4a0c1acdcb": {
       "id": "ef4a0c1acdcb",
@@ -123896,7 +123896,7 @@
     "f3911b4339db": {
       "id": "f3911b4339db",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1434,
+      "line": 1452,
       "function": "fetchReviewMessage",
       "receiver": "db",
       "method": "Raw",
@@ -124639,9 +124639,9 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "UPDATE chat_rooms SET msgvalid = ?, msginvalid = ?, latestmessage = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "f4d56a882813": {
       "id": "f4d56a882813",
@@ -128210,9 +128210,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET description = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fb5595498d68": {
       "id": "fb5595498d68",
@@ -129067,9 +129067,9 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "UPDATE `groups` SET publish = ? WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "raw"
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted"
     },
     "fd13a45cf36f": {
       "id": "fd13a45cf36f",
@@ -129517,7 +129517,7 @@
     "fdeb2007824a": {
       "id": "fdeb2007824a",
       "file": "iznik-server-go/chat/chatroom.go",
-      "line": 1698,
+      "line": 1728,
       "function": "countUnseenMT",
       "receiver": "db",
       "method": "Raw",

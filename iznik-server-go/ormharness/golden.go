@@ -215,13 +215,49 @@ func collapseInLists(sql string) string {
 	return inListPattern.ReplaceAllString(sql, "in ?")
 }
 
-var (
-	// Single-row INSERT with an explicit column list. Multi-row VALUES and
-	// INSERT ... SELECT deliberately do not match, and are left alone.
-	insertColumnsPattern = regexp.MustCompile(`(?is)^(insert(?:\s+ignore)?\s+into\s+\S+\s*)\(([^()]*)\)\s*values\s*\(([^()]*)\)(.*)$`)
-	// The SET list of an UPDATE, up to WHERE or end of statement.
-	updateSetPattern = regexp.MustCompile(`(?is)^(update\s+.*?\sset\s+)(.*?)(\s+where\s.*|\s*)$`)
-)
+// insertPrefixPattern matches only as far as the table name. The column list
+// and the VALUES list are then scanned with a paren matcher rather than a
+// regexp, because both routinely contain nested parentheses - "values (now(),
+// ?, ?)" and "json_object('chatid', ?, 'userid', ?)" are ordinary here - and a
+// character-class like [^()]* silently fails to match those, which is exactly
+// how six INSERT conversions slipped past this normalisation.
+//
+// The table name is matched with [^\s(]+ rather than \S+ for the same reason:
+// the codebase writes "insert into logs(timestamp, ...)" with no space, and a
+// greedy \S+ swallows the opening paren.
+var insertPrefixPattern = regexp.MustCompile(`(?is)^insert(?:\s+ignore)?\s+into\s+[^\s(]+\s*\(`)
+
+// updateSetPattern captures the SET list of an UPDATE, up to WHERE or the end.
+var updateSetPattern = regexp.MustCompile(`(?is)^(update\s+.*?\sset\s+)(.*?)(\s+where\s.*|\s*)$`)
+
+// matchParen returns the index of the parenthesis closing the one at open, or
+// -1 if unbalanced. Quoted spans are skipped so a paren inside a string literal
+// does not affect the depth.
+func matchParen(s string, open int) int {
+	depth := 0
+	inQuote := byte(0)
+	for i := open; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			if c == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"', '`':
+			inQuote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
 
 // normaliseColumnOrder rewrites an INSERT's column list, and an UPDATE's SET
 // list, into a canonical order.
@@ -242,25 +278,54 @@ var (
 func normaliseColumnOrder(sql string) string {
 	trimmed := strings.TrimSpace(sql)
 
-	if m := insertColumnsPattern.FindStringSubmatch(trimmed); m != nil {
-		cols := splitList(m[2])
-		vals := splitList(m[3])
-		if len(cols) == len(vals) && len(cols) > 1 {
-			type pair struct{ col, val string }
-			pairs := make([]pair, len(cols))
-			for i := range cols {
-				pairs[i] = pair{cols[i], vals[i]}
-			}
-			sort.Slice(pairs, func(i, j int) bool { return pairs[i].col < pairs[j].col })
-
-			c := make([]string, len(pairs))
-			v := make([]string, len(pairs))
-			for i, p := range pairs {
-				c[i], v[i] = p.col, p.val
-			}
-			return m[1] + "(" + strings.Join(c, ", ") + ") values (" + strings.Join(v, ", ") + ")" + m[4]
+	if loc := insertPrefixPattern.FindStringIndex(trimmed); loc != nil {
+		colOpen := loc[1] - 1
+		colClose := matchParen(trimmed, colOpen)
+		if colClose < 0 {
+			return trimmed
 		}
-		return trimmed
+
+		rest := trimmed[colClose+1:]
+		lower := strings.ToLower(rest)
+		vi := strings.Index(lower, "values")
+		if vi < 0 {
+			return trimmed // INSERT ... SELECT, or something else: leave alone
+		}
+		valOpen := strings.Index(rest[vi:], "(")
+		if valOpen < 0 {
+			return trimmed
+		}
+		valOpen += vi
+		valClose := matchParen(rest, valOpen)
+		if valClose < 0 {
+			return trimmed
+		}
+		// A second "(...)" straight after the first means multi-row VALUES,
+		// where reordering one row's columns would be meaningless. Leave it.
+		if strings.HasPrefix(strings.TrimSpace(rest[valClose+1:]), ",") {
+			return trimmed
+		}
+
+		cols := splitList(trimmed[colOpen+1 : colClose])
+		vals := splitList(rest[valOpen+1 : valClose])
+		if len(cols) != len(vals) || len(cols) < 2 {
+			return trimmed
+		}
+
+		type pair struct{ col, val string }
+		pairs := make([]pair, len(cols))
+		for i := range cols {
+			pairs[i] = pair{cols[i], vals[i]}
+		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].col < pairs[j].col })
+
+		c := make([]string, len(pairs))
+		v := make([]string, len(pairs))
+		for i, p := range pairs {
+			c[i], v[i] = p.col, p.val
+		}
+		return trimmed[:colOpen] + "(" + strings.Join(c, ", ") + ") values (" +
+			strings.Join(v, ", ") + ")" + rest[valClose+1:]
 	}
 
 	if m := updateSetPattern.FindStringSubmatch(trimmed); m != nil {
