@@ -5,7 +5,7 @@
     "converted": 1365,
     "keep-raw": 257,
     "retired": 22,
-    "test-fixture": 4226
+    "test-fixture": 4227
   },
   "sites": {
     "00053e96d76f": {
@@ -42427,7 +42427,7 @@
     "53ea7c086b86": {
       "id": "53ea7c086b86",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 99,
+      "line": 101,
       "function": "TestInsertID_IsPerStatementNotPerConnectionRace",
       "receiver": "db",
       "method": "Exec",
@@ -104198,7 +104198,7 @@
     "caf954b5ea54": {
       "id": "caf954b5ea54",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 73,
+      "line": 75,
       "function": "TestInsertID_WithResultExposesSQLResult",
       "receiver": "db",
       "method": "Exec",
@@ -106045,6 +106045,28 @@
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
+    },
+    "cec2724370a0": {
+      "id": "cec2724370a0",
+      "file": "iznik-server-go/test/orm_insertid_test.go",
+      "line": 167,
+      "function": "TestInsertID_ConcurrentInsertsEachGetTheirOwnID",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "spam_whitelist_links"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "DELETE FROM spam_whitelist_links WHERE domain LIKE 'orm-insertid-conc-%'",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "cec5731fc7f3": {
       "id": "cec5731fc7f3",
@@ -116544,7 +116566,7 @@
     "e3554e58c8f3": {
       "id": "e3554e58c8f3",
       "file": "iznik-server-go/test/orm_insertid_test.go",
-      "line": 41,
+      "line": 43,
       "function": "TestInsertID_MapCreateReturnsIDUnderAtID",
       "receiver": "db",
       "method": "Exec",

@@ -21,6 +21,8 @@ package test
 // unrelated value, which is precisely the failure mode being guarded against.
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -116,5 +118,80 @@ func TestInsertID_IsPerStatementNotPerConnectionRace(t *testing.T) {
 		if domain != c.want {
 			t.Fatalf("id %d points at %q, want %q", c.id, domain, c.want)
 		}
+	}
+}
+
+// TestInsertID_ConcurrentInsertsEachGetTheirOwnID is the test the sequential
+// ones above could not be: it runs many inserts at once through the shared
+// connection pool, so any window between the INSERT and the id being read would
+// have a chance to show up as one goroutine reporting another's id.
+//
+// Reading the driver says there is no window. mysqlConn.Exec does
+// "copied := mc.result; return &copied" (connection.go:329), so the result
+// leaves the connection as a snapshot; clearResult sets mc.result to a zero
+// struct, making insertIds nil, so the next statement's append allocates a
+// fresh backing array rather than writing into the previous one. The value is
+// therefore private to the statement that produced it.
+//
+// That is an argument. This is a check. If the argument is wrong the ids will
+// collide or point at the wrong rows, and with enough concurrency that shows up
+// quickly rather than as a rare production oddity.
+func TestInsertID_ConcurrentInsertsEachGetTheirOwnID(t *testing.T) {
+	const workers = 24
+	db := database.DBConn
+
+	type outcome struct {
+		domain string
+		id     int64
+	}
+	results := make(chan outcome, workers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			domain := fmt.Sprintf("orm-insertid-conc-%d.example", n)
+			row := map[string]interface{}{"domain": domain, "count": 1}
+			if err := db.Table(insertIDProbeTable).Create(row).Error; err != nil {
+				t.Errorf("worker %d insert: %v", n, err)
+				return
+			}
+			id, _ := row["@id"].(int64)
+			results <- outcome{domain: domain, id: id}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+
+	defer db.Exec("DELETE FROM " + insertIDProbeTable + " WHERE domain LIKE 'orm-insertid-conc-%'")
+
+	seen := map[int64]string{}
+	got := 0
+	for r := range results {
+		got++
+		if r.id <= 0 {
+			t.Errorf("%s got no id", r.domain)
+			continue
+		}
+		if prev, dup := seen[r.id]; dup {
+			t.Errorf("id %d reported by both %s and %s - the id is not private to its statement", r.id, prev, r.domain)
+			continue
+		}
+		seen[r.id] = r.domain
+
+		// The decisive assertion: the id must name the row this goroutine
+		// wrote, not merely be unique.
+		var domain string
+		if err := db.Table(insertIDProbeTable).Select("domain").Where("id = ?", r.id).Row().Scan(&domain); err != nil {
+			t.Errorf("reading back %d for %s: %v", r.id, r.domain, err)
+			continue
+		}
+		if domain != r.domain {
+			t.Errorf("id %d belongs to %q but was reported to the goroutine that inserted %q", r.id, domain, r.domain)
+		}
+	}
+	if got != workers {
+		t.Errorf("only %d of %d workers reported", got, workers)
 	}
 }
