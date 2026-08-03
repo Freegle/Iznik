@@ -134,9 +134,44 @@ export const useMobileStore = defineStore({
       this.fixWindowOpen(AppLauncher)
       this.initDeepLinks(App)
       this.initShareIntent(App)
+      this.initTextZoom(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
+    },
+
+    async initTextZoom(App) {
+      // Respect the OS accessibility text-size setting. WKWebView ignores iOS
+      // Dynamic Type for web content entirely, so without this the app renders
+      // at a fixed text size no matter what the member set in Settings ->
+      // Accessibility. getPreferred() returns the zoom the system wants
+      // (Dynamic Type on iOS, font scale on Android); applying it makes text
+      // grow WITH REFLOW, unlike pinch zoom which scales the whole viewport
+      // including the navbars.
+      try {
+        const { TextZoom } = await import('@capacitor/text-zoom')
+
+        const apply = async () => {
+          try {
+            const { value } = await TextZoom.getPreferred()
+            if (value && value > 0) {
+              await TextZoom.set({ value })
+              dbg()?.info('Applied preferred text zoom', { value })
+            }
+          } catch (e) {
+            dbg()?.debug('Text zoom apply failed', e?.message)
+          }
+        }
+
+        await apply()
+
+        // The member can change the OS setting while we're backgrounded, and
+        // getPreferred() only reflects it on next read - re-apply on resume.
+        App.addListener('resume', apply)
+      } catch (e) {
+        // Plugin unavailable (old installed build without it) - nothing to do.
+        dbg()?.debug('Text zoom unavailable', e?.message)
+      }
     },
 
     async getDeviceInfo(Device) {
