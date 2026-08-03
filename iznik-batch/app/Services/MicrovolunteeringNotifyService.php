@@ -77,7 +77,14 @@ class MicrovolunteeringNotifyService
                 AND users_notifications.type = ?
             WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
               AND messages.deleted IS NULL
-              AND messages.heldby IS NULL
+              -- A hold is per-group. Every other predicate here is already
+              -- scoped to this messages_groups row (arrival, and groupid via
+              -- the SELECT above); this one wasn't. messages.heldby is a
+              -- legacy message-wide mirror that nothing writes any more, so
+              -- checking it here let a copy held on this row's group still
+              -- be offered up for \"please review\" - the hold only ever
+              -- belonged to the group it was placed on.
+              AND messages_groups.heldby IS NULL
               AND users_notifications.id IS NULL
               AND groups.microvolunteering = 1
         ", [self::NOTIFICATION_TYPE]);

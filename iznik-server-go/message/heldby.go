@@ -18,12 +18,30 @@ package message
 // per-group rows keeps those apps working without resurrecting the
 // messages.heldby mirror, which is genuinely obsolete.
 //
-// Returns nil when none of the viewer's groups hold the message.
+// Returns nil when none of the viewer's groups hold the message, or when the
+// viewer's own groups disagree about it (held on one, not on another) - a compat
+// client has no way to say WHICH of the viewer's groups a single yes/no flag refers
+// to, so claiming "held" when it's only true for a group the viewer isn't
+// necessarily looking at is actively misleading (Discourse 9481/642: a moderator
+// covering several communities saw a hold that belonged to a different one of
+// theirs reported as if it were on the group they were reviewing). nil is exactly
+// what an unheld post already reports, so this never invents a false negative -
+// only avoids a false positive that a compat client cannot untangle.
 func effectiveHeldby(groups []MessageGroup, viewerGroups map[uint64]bool) *uint64 {
+	var holder *uint64
+	sawOwnGroup := false
 	for i := range groups {
-		if groups[i].Heldby != nil && viewerGroups[groups[i].Groupid] {
-			return groups[i].Heldby
+		if !viewerGroups[groups[i].Groupid] {
+			continue
 		}
+		sawOwnGroup = true
+		if groups[i].Heldby == nil {
+			return nil
+		}
+		holder = groups[i].Heldby
 	}
-	return nil
+	if !sawOwnGroup {
+		return nil
+	}
+	return holder
 }

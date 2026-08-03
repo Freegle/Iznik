@@ -390,6 +390,63 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $stats['chased'], 'a rippled-only posting must not be chased up');
     }
 
+    /**
+     * Per-group hold (Discourse 9970/2): notifyLanguishing() reads messages_groups.heldby,
+     * not the removed message-wide mirror. A post cross-posted to two groups, held on only
+     * one of them, must still surface the languishing, unheld copy on the OTHER group - a
+     * hold on group B must not suppress group A.
+     */
+    public function test_notify_languishing_counts_unheld_group_when_a_different_group_is_held(): void
+    {
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupA, ['added' => now()->subDays(60)]);
+        $this->createMembership($user, $groupB, ['added' => now()->subDays(60)]);
+        $holder = $this->createTestUser();
+
+        $message = $this->createTestMessage($user, $groupA, [
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Group A copy: languishing (old arrival, max reposts, no outcome/reply) and unheld.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupA->id)
+            ->update([
+                'arrival' => now()->subDays(5),
+                'autoreposts' => 6,
+                'msgtype' => Message::TYPE_OFFER,
+            ]);
+
+        // Cross-post to group B: also languishing, but held there.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)->where('groupid', $groupB->id)
+            ->update([
+                'autoreposts' => 6,
+                'msgtype' => Message::TYPE_OFFER,
+                'heldby' => $holder->id,
+            ]);
+
+        $count = $this->service->notifyLanguishing();
+
+        // Only the unheld group A copy is counted - the hold on group B suppresses that
+        // copy alone, not the whole message.
+        $this->assertEquals(1, $count, 'a hold on group B must not suppress the unheld copy on group A');
+
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $user->id,
+            'type' => 'OpenPosts',
+        ]);
+    }
+
     public function test_constants(): void
     {
         $this->assertEquals(90, ChaseUpService::LOOKBACK_DAYS);

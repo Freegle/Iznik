@@ -9,9 +9,13 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
 {
     private function createGroup(bool $microvolunteering = true): int
     {
+        $nameshort = 'TestGroup' . uniqid();
+
         return DB::table('groups')->insertGetId([
-            'nameshort'         => 'TestGroup' . uniqid(),
-            'namefull'          => 'Test Group',
+            'nameshort'         => $nameshort,
+            // namefull carries a unique key, so it must vary per group - the
+            // cross-group hold test creates two groups in one test.
+            'namefull'          => 'Test Group ' . $nameshort,
             'type'              => 'Freegle',
             'publish'           => 1,
             'onhere'            => 1,
@@ -52,7 +56,7 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         ]);
     }
 
-    private function createMessage(int $groupId, int $fromuser, string $collection = 'Approved'): int
+    private function createMessage(int $groupId, int $fromuser, string $collection = 'Approved', ?int $heldBy = null): int
     {
         $msgId = DB::table('messages')->insertGetId([
             'subject'  => 'OFFER: Test item (Test Area)',
@@ -60,7 +64,6 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
             'type'     => 'Offer',
             'fromuser' => $fromuser,
             'deleted'  => null,
-            'heldby'   => null,
         ]);
 
         DB::table('messages_groups')->insert([
@@ -68,6 +71,9 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
             'groupid'    => $groupId,
             'collection' => $collection,
             'arrival'    => now(),
+            // Per-group hold - the real source of truth. messages.heldby is a
+            // dead column nothing writes any more; don't seed it.
+            'heldby'     => $heldBy,
         ]);
 
         return $msgId;
@@ -269,6 +275,66 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         ]);
         $this->assertDatabaseHas('users_notifications', [
             'touser' => $unreviewed,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+    }
+
+    public function test_hold_on_one_group_does_not_suppress_notification_for_unheld_group(): void
+    {
+        // A hold is per-group (messages_groups.heldby). A post rippled to two
+        // groups and held on only one of them must still notify a reviewer on
+        // the OTHER group's unheld copy, and must not notify a reviewer whose
+        // only route to this message is the held group. The message-wide
+        // messages.heldby column is dead (nothing writes it) and must not
+        // gate this any more.
+        $groupA    = $this->createGroup(microvolunteering: true);
+        $groupB    = $this->createGroup(microvolunteering: true);
+        $fromUser  = $this->createUser('Basic');
+        // Separate reviewers per group, each a member of only their own group:
+        // if group B's held row is still let into the candidate set, reviewerB
+        // gets notified too, which is exactly the bug being fixed.
+        $reviewerA = $this->createUser('Moderate');
+        $reviewerB = $this->createUser('Moderate');
+        $holder    = $this->createUser('Moderate');
+
+        $this->addMembership($fromUser, $groupA);
+        $this->addMembership($reviewerA, $groupA);
+        $this->addMembership($reviewerB, $groupB);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'subject'  => 'OFFER: Test item (Test Area)',
+            'message'  => 'Test item description.',
+            'type'     => 'Offer',
+            'fromuser' => $fromUser,
+            'deleted'  => null,
+        ]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $groupA,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'heldby'     => null,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $groupB,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'heldby'     => $holder,
+        ]);
+
+        $this->artisan('microvolunteering:notify')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $reviewerA,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+        $this->assertDatabaseMissing('users_notifications', [
+            'touser' => $reviewerB,
             'type'   => 'Exhort',
             'url'    => '/microvolunteering/message/' . $msgId,
         ]);
