@@ -164,28 +164,43 @@ Mobile-specific Stripe implementation:
    - Share posts using native share sheet
    - Platform-specific share UI
 
-3. **Calendar Integration**
+3. **Share Into the App (photo → give flow)**
+   - Android: `ACTION_SEND`/`ACTION_SEND_MULTIPLE` handled by `MainActivity`,
+     which copies images to cache and exposes them via the
+     `window.FreegleShare` bridge; iOS mirrors this with a
+     `freegleshare://` deep link
+   - `stores/mobile.js` consumes pending shares as soon as the App plugin
+     import resolves (early in `initApp()`), and routes to
+     `/give/mobile/photos`
+   - The photos page attaches each shared image through the same
+     `PhotoUploader.processPhoto()` path as manual picks; Next is disabled
+     while any attachment is still uploading
+   - The photo-quality image loaders are bounded (8s timeout) so a
+     `capacitor://` file URL that never fires load/error cannot hang the
+     upload
+
+4. **Calendar Integration**
    - Add events to native calendar
    - Permission handling (iOS requires multiple permission types)
    - Uses Cordova Calendar plugin
 
-4. **Pinch Zoom**
+5. **Pinch Zoom**
    - Enabled for Android
    - Native zoom gestures
 
-5. **Device Information**
+6. **Device Information**
    - Collect device details for debugging
    - Persistent device ID
    - OS version tracking
    - Send to Sentry for error context
 
-6. **App Updates**
+7. **App Updates**
    - Check for required updates
    - Check for available updates
    - Version comparison logic
    - Update prompts
 
-7. **Rate App**
+8. **Rate App**
    - Native rating prompts
    - Timing logic to avoid annoying users
    - Platform-specific app store links
