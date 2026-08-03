@@ -323,6 +323,43 @@ func TestInventNameFallsBackToGeneratedName(t *testing.T) {
 	assert.NotEqual(t, "A freegler", u.Displayname)
 }
 
+func TestInventNameRejectsAuthorityEmailLocalPart(t *testing.T) {
+	db := database.DBConn
+
+	// Role addresses like info@ are common, and "info" is an authority word, so
+	// SanitizeDisplayName rewrites it to "A freegler" on every read. Storing it
+	// would strand the user there permanently: InventName only runs when the
+	// stored fullname is "A freegler", which it no longer would be.
+	db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('A freegler', 'User')")
+	var targetID uint64
+	db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&targetID)
+	require.NotZero(t, targetID)
+
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, 'info@example.com', 1)", targetID)
+
+	prefix := uniquePrefix("invent_authority")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, viewerToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	assert.NoError(t, err)
+	assert.NotEqual(t, "info", u.Displayname, "an authority local part must not be used as the invented name")
+	assert.NotEqual(t, "A freegler", u.Displayname)
+	assert.NotEmpty(t, u.Displayname)
+
+	// The name we stored must be one that survives sanitisation, otherwise the
+	// next read shows "A freegler" again with no way back.
+	var storedFullname string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", targetID).Scan(&storedFullname)
+	assert.Equal(t, u.Displayname, storedFullname)
+}
+
 func TestGetUsersBatch(t *testing.T) {
 	t.Run("Batch fetch multiple users returns all users", func(t *testing.T) {
 		// Create two test users
