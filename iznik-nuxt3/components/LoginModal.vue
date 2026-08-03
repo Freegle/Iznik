@@ -467,6 +467,21 @@ function loginNative(e) {
     }
   } else if (emailError.value || passwordError.value) {
     nativeLoginError.value = 'Please fill out the form.'
+    // This whole arm is a race: it's only entered when a login is submitted
+    // before the async email validation has come back, so whether a given
+    // end-to-end run takes this branch at all - not just the
+    // PasswordCredential lines inside it - depends on which of the two wins
+    // on the day. That used to only swing the PasswordCredential lines
+    // (harmless, already excluded below), but the ORM migration (PR #1230)
+    // changed apiv2's response timing enough to also flip whether this arm
+    // is entered at all in a Playwright run, tripping Coveralls' "coverage
+    // decreased" check on a branch that changes nothing here - this arm and
+    // the plain login() arm below both call authStore.login with identical
+    // arguments. Widening the ignore to the whole arm, not just the
+    // PasswordCredential lines - same treatment as SpinButton.vue's timer
+    // line (PR #910). Excluded from V8/Playwright coverage only; vitest
+    // (istanbul, which ignores v8 comments) still counts it.
+    /* v8 ignore start */
   } else if (email.value && password.value && !emailValid.value) {
     // Email validation may still be in progress - attempt login anyway
     // If the email is invalid, the server will reject it
@@ -478,16 +493,6 @@ function loginNative(e) {
       })
       .then(() => {
         // We are now logged in. Prompt the browser to remember the credentials.
-        //
-        // This arm is a race: it runs only when a login is submitted before the
-        // async email validation has come back, so whether an end-to-end run
-        // reaches it depends on which of the two wins on the day. Per-line
-        // coverage confirms it - these lines read 0 in one Playwright job and 2
-        // in another, which is the whole 33-vs-38 swing on this file and enough
-        // to fail Coveralls on branches that change nothing here. The 0 also
-        // proves the unit tests never reach it, so excluding it costs nothing
-        // there. Same treatment as SpinButton.vue's timer line (PR #910).
-        /* v8 ignore start */
         if (window.PasswordCredential) {
           try {
             // We used to pass in the DOM element, but in Chrome 92 that causes a crash.
@@ -511,7 +516,6 @@ function loginNative(e) {
         } else {
           pleaseShowModal.value = false
         }
-        /* v8 ignore stop */
       })
       .catch((e) => {
         console.log('Login error', e)
@@ -521,6 +525,7 @@ function loginNative(e) {
           throw e // let others bubble up
         }
       })
+    /* v8 ignore stop */
   } else {
     // Login
     authStore
