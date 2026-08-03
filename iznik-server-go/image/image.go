@@ -1,7 +1,6 @@
 package image
 
 import (
-	"database/sql"
 	"encoding/json"
 	stdlog "log"
 	"os"
@@ -17,22 +16,28 @@ import (
 
 // imageTypeConfig maps imgtype names to their database table and parent ID column.
 type imageTypeConfig struct {
-	Table          string
-	IDColumn       string
-	HasContentType bool // All image tables except messages_attachments have a NOT NULL contenttype column.
+	Table    string
+	IDColumn string
+	// TrustStoredContentType says whether a row's stored contenttype can be
+	// believed when serving a legacy `data` blob. It is NOT "does this table
+	// have the column" - all ten do, NOT NULL with no default. Message is false
+	// because historic messages_attachments rows were written without it (see
+	// below), so their stored value is blank and must not be served as a
+	// Content-Type.
+	TrustStoredContentType bool
 }
 
 var typeConfigs = map[string]imageTypeConfig{
-	"Message":        {Table: "messages_attachments", IDColumn: "msgid", HasContentType: false},
-	"Group":          {Table: "groups_images", IDColumn: "groupid", HasContentType: true},
-	"Newsletter":     {Table: "newsletters_images", IDColumn: "articleid", HasContentType: true},
-	"CommunityEvent": {Table: "communityevents_images", IDColumn: "eventid", HasContentType: true},
-	"Volunteering":   {Table: "volunteering_images", IDColumn: "opportunityid", HasContentType: true},
-	"ChatMessage":    {Table: "chat_images", IDColumn: "chatmsgid", HasContentType: true},
-	"User":           {Table: "users_images", IDColumn: "userid", HasContentType: true},
-	"Newsfeed":       {Table: "newsfeed_images", IDColumn: "newsfeedid", HasContentType: true},
-	"Story":          {Table: "users_stories_images", IDColumn: "storyid", HasContentType: true},
-	"Noticeboard":    {Table: "noticeboards_images", IDColumn: "noticeboardid", HasContentType: true},
+	"Message":        {Table: "messages_attachments", IDColumn: "msgid", TrustStoredContentType: false},
+	"Group":          {Table: "groups_images", IDColumn: "groupid", TrustStoredContentType: true},
+	"Newsletter":     {Table: "newsletters_images", IDColumn: "articleid", TrustStoredContentType: true},
+	"CommunityEvent": {Table: "communityevents_images", IDColumn: "eventid", TrustStoredContentType: true},
+	"Volunteering":   {Table: "volunteering_images", IDColumn: "opportunityid", TrustStoredContentType: true},
+	"ChatMessage":    {Table: "chat_images", IDColumn: "chatmsgid", TrustStoredContentType: true},
+	"User":           {Table: "users_images", IDColumn: "userid", TrustStoredContentType: true},
+	"Newsfeed":       {Table: "newsfeed_images", IDColumn: "newsfeedid", TrustStoredContentType: true},
+	"Story":          {Table: "users_stories_images", IDColumn: "storyid", TrustStoredContentType: true},
+	"Noticeboard":    {Table: "noticeboards_images", IDColumn: "noticeboardid", TrustStoredContentType: true},
 }
 
 // PostRequest handles all POST /image operations.
@@ -255,18 +260,27 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
 
-	var sqlResult sql.Result
-	if cfg.HasContentType {
-		sqlResult, err = sqlDB.Exec(
-			"INSERT INTO `"+cfg.Table+"` (`"+cfg.IDColumn+"`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')",
-			parentIDParam, req.ExternalUID, modsStr, utils.NilIfEmpty(req.Hash),
-		)
-	} else {
-		sqlResult, err = sqlDB.Exec(
-			"INSERT INTO `"+cfg.Table+"` (`"+cfg.IDColumn+"`, externaluid, externalmods, hash) VALUES (?, ?, ?, ?)",
-			parentIDParam, req.ExternalUID, modsStr, utils.NilIfEmpty(req.Hash),
-		)
-	}
+	// Always write contenttype. Every one of the ten tables declares it NOT NULL
+	// with no default, so omitting it is only survivable when the server is not
+	// in strict mode: MySQL then substitutes '' and the row is written with a
+	// meaningless content type. Under STRICT_TRANS_TABLES the same INSERT fails
+	// outright with Error 1364 and the caller sees a 500.
+	//
+	// Both happen in practice. Production's sql_mode has no STRICT_TRANS_TABLES,
+	// which is why this never surfaced as an outage - but of the most recent
+	// 200,000 messages_attachments rows, 54,057 carry contenttype='' against
+	// 3,544 with 'image/jpeg'. In CI the mode is not even constant within a run:
+	// scripts/setup-test-database.sh issues SET GLOBAL sql_mode partway through,
+	// and a connection opened before that still sees strict, so the same upload
+	// could 500 early in a run and succeed later (Playwright's HEIC mobile give
+	// flow, intermittently).
+	//
+	// A single unconditional statement removes the dependency on server mode
+	// entirely, which is the only version that is correct in both.
+	sqlResult, err := sqlDB.Exec(
+		"INSERT INTO `"+cfg.Table+"` (`"+cfg.IDColumn+"`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')",
+		parentIDParam, req.ExternalUID, modsStr, utils.NilIfEmpty(req.Hash),
+	)
 
 	if err != nil {
 		// Log the real cause. Returning only the generic message made a genuine
@@ -474,7 +488,7 @@ func Get(c *fiber.Ctx) error {
 	// work again. We fetch `data` only HERE, not in the main SELECT above, so the
 	// common external/archived path never loads a longblob.
 	blobCols := "data"
-	if cfg.HasContentType {
+	if cfg.TrustStoredContentType {
 		blobCols += ", COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype"
 	} else {
 		blobCols += ", 'image/jpeg' AS contenttype"
