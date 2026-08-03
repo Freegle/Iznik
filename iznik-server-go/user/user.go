@@ -429,8 +429,20 @@ func InventName(db *gorm.DB, id uint64) string {
 	}
 
 	// Fall back to trigram-generated name when email local part is unusable.
+	// The generator occasionally produces a real English word (e.g. "info",
+	// "admin", "agent") that the anti-impersonation filter in
+	// SanitizeDisplayName would immediately reject back to "A freegler",
+	// silently defeating the invention. Retry a few times so that vanishingly
+	// rare collision doesn't surface as "A freegler" on display.
 	if name == "" || name == "A freegler" {
-		name = utils.GenerateName()
+		for attempt := 0; attempt < 5; attempt++ {
+			candidate := utils.GenerateName()
+			if candidate != "" && candidate != "A freegler" && !isSuspiciousName(candidate) {
+				name = candidate
+				break
+			}
+			name = candidate
+		}
 	}
 
 	if name == "" || name == "A freegler" {
