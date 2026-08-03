@@ -13,14 +13,35 @@
           This post has no location, so its rippling reach can't be shown.
         </div>
         <div v-else style="height: 100%">
+          <div
+            v-if="reachHeld"
+            class="alert alert-warning py-1 px-2 mb-0 small text-center"
+          >
+            This post's reach is <strong>frozen (held)</strong> — usually
+            because the origin copy went back to Pending. The blue area is where
+            it actually stopped.
+          </div>
+          <div
+            v-else-if="reach?.polygon"
+            class="text-muted small text-center py-1"
+          >
+            Blue area = how far this post has actually rippled out.
+          </div>
+          <div
+            v-else-if="reach && !reach.rippling"
+            class="text-muted small text-center py-1"
+          >
+            This post hasn't rippled out yet, so there's no reach to show.
+          </div>
           <RipplingExplorer
             v-if="rendered"
             minimal
+            hide-projection
             initial-view="outbound"
             :initial-lat="lat"
             :initial-lng="lng"
             :initial-elapsed-hours="elapsedHours"
-            :actual-elapsed-hours="actualElapsedHours"
+            :actual-reach="reach?.polygon || null"
             :spatial-url="spatialUrl"
             :jwt="jwt"
           />
@@ -62,33 +83,17 @@ const spatialUrl = computed(
 )
 const hasLocation = computed(() => props.lat != null && props.lng != null)
 
-// How long the post has already been live: the EXPECTED point (where reach SHOULD be).
-// The map + scrubber open here; this is the "up to" marker.
+// A held reach is frozen (e.g. the origin copy was pulled back to Pending) — worth
+// calling out, since the outline then stops short of where the post is still listed.
+const reachHeld = computed(() => reach.value?.status === 'held')
+
+// How long the post has already been live. Seeds the explorer's time position so the
+// group tinting matches the post's age rather than a default slider value.
 const elapsedHours = computed(() => {
   if (!props.arrival) return 0
   const t = new Date(props.arrival).getTime()
   if (Number.isNaN(t)) return 0
   return Math.max(0, (Date.now() - t) / 3600000)
-})
-
-// The hazard schedule (wall-clock hours per reach tick) — mirrors config/freegle.php.
-const HAZARD_HOURS = [1, 3, 6, 12, 24, 48, 72, 120, 168]
-function tickForHours(hours) {
-  let t = 1
-  HAZARD_HOURS.forEach((h, i) => {
-    if (hours >= h) t = i + 1
-  })
-  return Math.min(t, HAZARD_HOURS.length)
-}
-
-// The ACTUAL point ("now"), as elapsed-hours, ONLY when the engine is behind where it
-// should be. Null = up to date (or not rippling / dark) -> the modal shows just "up to".
-const actualElapsedHours = computed(() => {
-  const r = reach.value
-  if (!r || !r.rippling || !r.tick) return null
-  const expectedTick = tickForHours(elapsedHours.value)
-  if (r.tick >= expectedTick) return null // caught up -> only "up to"
-  return HAZARD_HOURS[Math.min(r.tick, HAZARD_HOURS.length) - 1]
 })
 
 async function show() {

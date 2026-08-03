@@ -442,6 +442,16 @@ const reply = computed(() => {
   return props.replyData || newsfeedStore?.byId(props.id)
 })
 
+/* Where a reply to this block should hang. Consecutive posts from one person are
+   shown as a single block that keeps the FIRST post's id, so replying to it used
+   to attach the reply to the first post - which then can't combine any more, and
+   the person's own run of posts ends up split apart by the reply sitting in the
+   middle of it. Attaching to the last post in the run keeps them in order. */
+const replyTarget = computed(() => {
+  const ids = props.replyData?.combinedIds
+  return ids?.length ? ids[ids.length - 1] : props.id
+})
+
 const replyaddedago = computed(() => {
   return timeago(reply.value.added)
 })
@@ -554,7 +564,7 @@ function showInfo() {
 }
 
 function focusedReply() {
-  replyingTo.value = props.id
+  replyingTo.value = replyTarget.value
   showReplyBox.value = true
 }
 
@@ -565,7 +575,7 @@ watch(replyboxref, (newVal, oldVal) => {
 })
 
 function replyReply() {
-  replyingTo.value = props.id
+  replyingTo.value = replyTarget.value
   showReplyBox.value = true
 
   // Reply with tag.

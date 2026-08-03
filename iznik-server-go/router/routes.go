@@ -1157,6 +1157,29 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "Newsfeed item not found"
 		rg.Get("/newsfeed/:id", newsfeed.Single)
 
+		// Newsfeed duplicate check (ChitChat moderators only)
+		// @Router /newsfeed/{id}/duplicate [get]
+		// @Summary Whether a ChitChat post duplicates the poster's own live OFFER/WANTED
+		// @Description Moderator-only. Names one of the poster's own live posts when the
+		// @Description ChitChat entry says the same thing, so it can be hidden.
+		// @Tags newsfeed
+		// @Produce json
+		// @Param id path integer true "Newsfeed ID"
+		// @Success 200 {object} newsfeed.DuplicateResponse
+		// @Failure 403 {object} fiber.Error "Not a ChitChat moderator"
+		rg.Get("/newsfeed/:id/duplicate", newsfeed.Duplicate)
+
+		// @Router /newsfeed/{id}/convertinfo [get]
+		// @Summary Where a convert-to-post would land
+		// @Description Moderator-only. The postcode and community a post made for the
+		// @Description member would use, so the modal can show it before committing.
+		// @Tags newsfeed
+		// @Produce json
+		// @Param id path integer true "Newsfeed ID"
+		// @Success 200 {object} newsfeed.ConvertInfoResult
+		// @Failure 403 {object} fiber.Error "Not a ChitChat moderator"
+		rg.Get("/newsfeed/:id/convertinfo", newsfeed.ConvertInfo)
+
 		// Newsfeed Count
 		// @Router /newsfeedcount [get]
 		// @Summary Get newsfeed count

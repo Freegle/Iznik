@@ -55,7 +55,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="!message.heldby"
+        v-if="!heldByOnThisGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="warning"
@@ -243,6 +243,16 @@ watch(
 
 const showRare = ref(false)
 const allowAutoSend = ref(true)
+
+// heldby is per-group (messages_groups.heldby); a hold on a DIFFERENT group this
+// post also rippled to must not swap Hold for Release on the copy being
+// administered here (Discourse 9970/2).
+const heldByOnThisGroup = computed(() => {
+  const groups = message.value?.groups || []
+  const gid = props.groupid || groups[0]?.groupid
+  const g = groups.find((grp) => parseInt(grp.groupid) === parseInt(gid))
+  return g?.heldby || null
+})
 
 function hasCollection(coll) {
   let ret = false

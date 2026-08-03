@@ -53,7 +53,6 @@ class PushNotificationServiceTest extends TestCase
             'arrival' => now(),
             'lat' => $group->lat,
             'lng' => $group->lng,
-            'heldby' => $mod->id,  // held — must not count
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
@@ -61,6 +60,9 @@ class PushNotificationServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_PENDING,
             'arrival' => now(),
             'deleted' => 0,
+            // A hold belongs to a (message, group) pair, so it is this row that carries
+            // it — the badge reads the copy on the group, not the post as a whole.
+            'heldby' => $mod->id,  // held — must not count
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -1041,6 +1043,74 @@ class PushNotificationServiceTest extends TestCase
         $this->assertEquals('1', (string) $payload['modtools']);
     }
 
+    /**
+     * Emoji reached the phone as raw twem escapes: a member saw
+     * "No worries, I'll delete it for you \\u1f642\\u" in a push. The front end
+     * stores emoji that way (untwem in useTwem.js) and the email path for this
+     * same column already decodes it; only push did not.
+     */
+    public function test_chat_payload_decodes_emoji(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "No worries, I'll delete it for you \\\\u1f642\\\\u",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringContainsString("\u{1F642}", $payload['message'],
+            'the emoji itself must reach the phone');
+        $this->assertStringNotContainsString('1f642', $payload['message'],
+            'no raw codepoint may survive');
+        $this->assertStringNotContainsString('\\u', $payload['message'],
+            'no twem escape markers may survive');
+    }
+
+    public function test_chat_payload_decodes_multi_codepoint_emoji(): void
+    {
+        // Flags and ZWJ sequences encode as several codepoints joined by '-'.
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "Flag \\\\u1f1ec-1f1e7\\\\u",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringContainsString("\u{1F1EC}\u{1F1E7}", $payload['message']);
+        $this->assertStringNotContainsString('1f1ec', $payload['message']);
+    }
+
+    /**
+     * Decoding must happen BEFORE the 256-char truncation. Truncating the encoded
+     * form could cut an escape in half and leave a fragment like "\\u1f6" on screen,
+     * and the limit should apply to what the member actually sees.
+     */
+    public function test_chat_payload_truncates_after_decoding_so_no_escape_is_severed(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        // Pad so that an emoji sits right around the 256-char boundary of the
+        // ENCODED string but well inside it once decoded.
+        $padding = str_repeat('a', 250);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => $padding . "\\\\u1f642\\\\u tail",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringNotContainsString('\\u', $payload['message'],
+            'a severed escape must never appear');
+        $this->assertStringContainsString("\u{1F642}", $payload['message'],
+            'the emoji survives because decoding happens first');
+        $this->assertLessThanOrEqual(256, mb_strlen($payload['message']));
+    }
+
     public function test_chat_payload_uses_chatid_as_notid(): void
     {
         // V1: notId = chatid so a second message in the same chat REPLACES
@@ -1114,6 +1184,28 @@ class PushNotificationServiceTest extends TestCase
             'Payload message must carry the chat text, not the sender name');
         $this->assertNotSame($payload['title'], $payload['message'],
             'Title and body must differ — body must NOT repeat the sender name');
+    }
+
+    /**
+     * TrashNothing-imported members have fullnames like "alice-g3486", taken from
+     * their -gNNN@user.trashnothing.com address. Every other surface hides that
+     * suffix via User::getDisplayNameAttribute (the chat notification email uses
+     * it), so the push banner must not show the raw users.fullname.
+     */
+    public function test_chat_payload_title_strips_trashnothing_group_suffix(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'alice-g3486']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('alice', $payload['title'],
+            'Push title must use the display name, which drops the TrashNothing -gNNN suffix');
     }
 
     /**
@@ -1222,5 +1314,50 @@ class PushNotificationServiceTest extends TestCase
             'Mod sender to member in U2M must show "{Group} Volunteers" as title');
         $this->assertStringNotContainsString('ModBob', $payload['title'],
             'Individual mod name must NOT leak to the member in push title');
+    }
+
+    /**
+     * The app pushes the payload route into vue-router, so it must be a path.
+     * The stories exhort is scheduled with a full URL in users_notifications.url,
+     * which would otherwise be routed to verbatim and land on a 404.
+     */
+    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'title' => 'Tell us your Freegle story!',
+            'text' => 'We love to hear why people Freegle.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/stories', $payload['route'],
+            'Absolute notification URLs on our own site must become a router path');
+    }
+
+    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => '/microvolunteering/message/123',
+            'title' => 'Can you help?',
+            'text' => 'Check this post.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/microvolunteering/message/123', $payload['route'],
+            'Relative notification URLs must be passed through unchanged');
     }
 }

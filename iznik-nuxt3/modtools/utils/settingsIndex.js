@@ -87,6 +87,15 @@ export const SETTINGS_INDEX = [
       'Whether members are prompted to tell us their Freegle Story for publicity.',
   },
   {
+    id: 'settings.communitynews',
+    tab: 'community',
+    section: 'accordion-features-members',
+    sectionLabel: 'Features for Members',
+    label: 'Community News',
+    description:
+      'Whether this community takes part in Community News — a friendly local round-up posted on ChitChat, with a weekly email to follow later.',
+  },
+  {
     id: 'settings.allowedits.moderated',
     tab: 'community',
     section: 'accordion-features-members',

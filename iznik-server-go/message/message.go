@@ -229,22 +229,33 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby             *uint64             `json:"heldby"`
-	Source             *string             `json:"source"`
-	Sourceheader       *string             `json:"sourceheader"`
-	Fromaddr           *string             `json:"fromaddr"`
-	Fromip             *string             `json:"fromip"`
-	Fromcountry        *string             `json:"fromcountry"`
-	Repostat           *time.Time          `json:"repostat"`
-	Canrepost          bool                `json:"canrepost"`
-	Deliverypossible   bool                `json:"deliverypossible"`
-	Deadline           *time.Time          `json:"deadline"`
-	Edits              []MessageEdit       `json:"edits,omitempty" gorm:"-"`
-	RawMessage         *string             `json:"message,omitempty" gorm:"column:message"`
-	Worry              []WorryMatch        `json:"worry,omitempty" gorm:"-"`
-	Postings           []MessagePosting    `json:"postings,omitempty" gorm:"-"`
-	Tnpostid           *string             `json:"tnpostid"`
-	Expiresat          *time.Time          `json:"expiresat,omitempty" gorm:"-"`
+	// DEPRECATED, for bundled app clients only. A hold belongs to a (message, group)
+	// pair (messages_groups.heldby, exposed as groups[].heldby); there is no correct
+	// message-wide value for a post that reached several groups, and supplying one
+	// leaks one group's hold onto the others (Discourse 9970/2). Up-to-date clients
+	// read the per-group row for the group they are acting on — see MessageGroup.Heldby.
+	//
+	// It stays in the payload because the ModTools app bundles its web build, so
+	// installed apps render held state from this field and lost holds entirely when it
+	// was removed (Discourse 9481/636). Computed per viewer by effectiveHeldby; there is
+	// no messages.heldby column behind it any more. Remove once the app floor has moved
+	// past the per-group frontend.
+	Heldby           *uint64          `json:"heldby"`
+	Source           *string          `json:"source"`
+	Sourceheader     *string          `json:"sourceheader"`
+	Fromaddr         *string          `json:"fromaddr"`
+	Fromip           *string          `json:"fromip"`
+	Fromcountry      *string          `json:"fromcountry"`
+	Repostat         *time.Time       `json:"repostat"`
+	Canrepost        bool             `json:"canrepost"`
+	Deliverypossible bool             `json:"deliverypossible"`
+	Deadline         *time.Time       `json:"deadline"`
+	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
+	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
+	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
+	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
+	Tnpostid         *string          `json:"tnpostid"`
+	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
 	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
@@ -632,11 +643,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 			message.MessageGroups = messageGroups
 
-			// Per-group hold visibility. The message-level messages.heldby mirror
-			// (set globally by Hold / Back-to-Pending) selected into Heldby above
-			// leaks one group's hold to mods of every OTHER group the post rippled
-			// to ("posts held by mods not on my team"). Resolve the hold the viewer
-			// should actually see: one on a group THEY moderate. Non-mods see none.
+			// Holds are carried per-group on messageGroups (groups[].heldby); that is the
+			// truth, and what up-to-date clients read. The message-level Heldby below is a
+			// compatibility value for bundled app clients that predate the per-group change
+			// — see effectiveHeldby. Resolve it to a hold on a group the viewer actually
+			// moderates; non-mods see none.
 			message.Heldby = nil
 			if isGroupMod {
 				var myModGroups []uint64
@@ -695,6 +706,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Fromaddr = nil
 					message.Fromip = nil
 					message.Fromcountry = nil
+
+					// Why a post was held is moderator information: it names the
+					// keyword that flagged it, which tells a spammer exactly what
+					// to avoid next time. The row is selected for everyone because
+					// collection/arrival are public, so strip the check fields here.
+					for i := range message.MessageGroups {
+						message.MessageGroups[i].ContentcheckReasons = nil
+						message.MessageGroups[i].ContentcheckCheckedAt = nil
+					}
 				}
 
 				// Convert 2-letter country code to full name for frontend display.
@@ -2187,17 +2207,8 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Release hold on the same authorised groups.
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
-	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
-	// would pin messages.heldby forever, leaving the message stuck showing "Held".
-	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
-	// read the source rather than a possibly-lagging replica.
-	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing this group's messages_groups.heldby above is the whole job: holds are
+	// per-group, so there is no message-wide flag to recompute and clear.
 
 	// Now Approved — add to the spatial index so the post appears in browse/search
 	// immediately rather than waiting for the periodic reconciler.
@@ -2363,16 +2374,10 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// A rejected or deleted copy is no longer held. If that cleared the last held copy,
-	// clear the message-level heldby too - otherwise a rejected-but-heldby row (deleted=0)
-	// keeps the whole post showing "Held", blocking a mod on another group the post rippled
-	// into from acting on their copy and leaving them unable to clear it via Release
-	// (Discourse 9894). Mirrors the recompute in handleReleaseHeld.
-	var stillHeld int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeld)
-	if stillHeld == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// A rejected or deleted copy is no longer held, and the UPDATEs above clear its
+	// per-group heldby. Holds being per-group, a stale hold on one copy can no longer
+	// keep the whole post showing "Held" and strand a mod on another group the post
+	// rippled into (Discourse 9894).
 
 	// Determine the message's ORIGIN group — the first group it was posted to (the
 	// earliest messages_groups arrival). With rippling-out, a post is added to nearby
@@ -2580,9 +2585,6 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group hold: set heldby on the authorized groups' rows.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
 
-	// Also update messages.heldby for backwards compatibility during migration.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
-
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
 		ctx.Groupid = gid
@@ -2612,9 +2614,6 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Per-group hold for re-review.
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
-
-	// Also update messages.heldby for backwards compatibility.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
 	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
 	// any copy back to pending takes the post off the board on EVERY community it is on
@@ -2661,17 +2660,8 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Per-group release.
 	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	// Only live rows count: a soft-deleted messages_groups row (e.g. a crosspost copy the
-	// member withdrew) can still carry a stale heldby, and without the deleted = 0 filter it
-	// would pin messages.heldby forever, leaving the message stuck showing "Held".
-	// Pin to the write host: this gates a cascade on rows we just UPDATEd, so it must
-	// read the source rather than a possibly-lagging replica.
-	var stillHeldCount int64
-	db.Clauses(dbresolver.Write).Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL AND deleted = 0", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing the per-group heldby above is the whole job: a hold belongs to a
+	// (message, group) pair, so there is no message-wide flag left to recompute.
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2962,6 +2952,36 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
+	// A member may only submit their own draft. A ChitChat moderator converting
+	// a ChitChat post submits the draft they just created for that member, so
+	// they submit as the member via ?onbehalfof=.
+	author, err := onBehalfOf(c, myid)
+	if err != nil {
+		return err
+	}
+
+	var owner uint64
+	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&owner)
+	if owner == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found")
+	}
+	if owner != author {
+		return fiber.NewError(fiber.StatusForbidden, "Not your message")
+	}
+
+	return JoinAndPostAs(c, author, req)
+}
+
+// JoinAndPostAs joins author to the destination group and submits the draft as
+// them. The ownership check lives in the caller: handleJoinAndPost enforces
+// "your own draft" for the member route, while the ChitChat convert-to-post
+// path instead requires the caller to be a ChitChat moderator or support/admin
+// (newsfeed.canHidePost) and passes the member as author.
+//
+// No other caller should pass an author other than the caller.
+func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
 	// Look up the existing draft message.
 	type msgInfo struct {
 		Fromuser uint64
@@ -2971,9 +2991,6 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	db.Raw("SELECT fromuser, type FROM messages WHERE id = ?", req.ID).Scan(&msg)
 	if msg.Fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
-	}
-	if msg.Fromuser != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not your message")
 	}
 
 	// Find the group — from request, then messages_drafts, then messages_groups.
@@ -3181,7 +3198,7 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 
 // applyPatchMessageCore performs the edit on a message without writing the HTTP response.
 // Returns non-nil on failure. Callers are responsible for writing the success response.
-func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
 
 	// Editing a clearance (bulk offer) is gated on the Clearance permission.
@@ -3279,6 +3296,27 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", *req.Location).Scan(&locID)
 		if locID > 0 {
 			req.Locationid = &locID
+		}
+	}
+	// A caller that supplies fresh coordinates without an explicit location name/id
+	// (the TN partner only ever knows GPS coordinates for a post, never Freegle's
+	// internal location rows) would otherwise leave locationid untouched. Since the
+	// subject's derived "vague postcode" (constructLocationString) and the mod/owner
+	// -facing location object are both read from locationid rather than lat/lng, that
+	// left the displayed postcode pinned to whatever it was before the edit, and
+	// uncorrectable, because every subsequent TN edit repeats the same gap. On
+	// production, edited TN posts are ~17x more likely than never-edited ones to
+	// have a locationid disagreeing with their own coordinates. Re-derive the
+	// nearest postcode from the new coordinates,
+	// mirroring the same lat/lng fallback already used when reading a message back.
+	// Scoped to partner callers. The Freegle web client resolves its postcode
+	// picker to a locationid before submitting, and ModTools edits a location by
+	// name, so an unscoped derivation would only fire for a caller that sent
+	// coordinates and no location at all - silently overwriting what they meant.
+	if fromPartner && req.Lat != nil && req.Lng != nil && (req.Locationid == nil || *req.Locationid == 0) {
+		nearest := location.ClosestPostcode(float32(*req.Lat), float32(*req.Lng))
+		if nearest.ID > 0 {
+			req.Locationid = &nearest.ID
 		}
 	}
 	if req.Locationid != nil {
@@ -3652,7 +3690,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 
 // applyPatchMessage performs the edit on a message after auth and ID are resolved.
 func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
-	if err := applyPatchMessageCore(c, myid, req); err != nil {
+	if err := applyPatchMessageCore(c, myid, req, false); err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3796,7 +3834,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			TNPhotoScrapeRunner(db, msgID, picPageURLs)
 		}
 
-		if err := applyPatchMessageCore(c, myid, req); err != nil {
+		if err := applyPatchMessageCore(c, myid, req, true); err != nil {
 			return err
 		}
 	}
@@ -3956,8 +3994,116 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /api/message [put]
+// PutMessage creates a message for the caller, or for another member when a
+// ChitChat moderator is converting their ChitChat post into a real OFFER/WANTED.
 func PutMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
+
+	author, err := onBehalfOf(c, myid)
+	if err != nil {
+		return err
+	}
+
+	return PutMessageAs(c, author)
+}
+
+// onBehalfOf resolves the ?onbehalfof= parameter to the member a post belongs
+// to. Absent (the normal case) it is the caller.
+//
+// Posting as someone else is restricted to ChitChat moderators and
+// support/admin, and the check lives here rather than in each caller so no
+// route can acquire the capability by omission.
+// OnBehalfPosting is where a post made on someone else's behalf would land:
+// their own postcode and their own community, never the moderator's.
+type OnBehalfPosting struct {
+	Locationid   uint64 `json:"locationid"`
+	Locationname string `json:"locationname"`
+	Groupid      uint64 `json:"groupid"`
+	Groupname    string `json:"groupname"`
+}
+
+// ResolveOnBehalfPosting works out the location and group a post for `author`
+// would use. PutMessageAs calls it when it actually posts, and the convert
+// preview calls it to show the moderator the same answer beforehand - one
+// function so the preview cannot promise a postcode the post then ignores.
+//
+// The location is the one the member CHOSE, settings.mylocation - the same
+// postcode their own posts carry. Deliberately not derived from lastlocation or
+// a nearest-postcode lookup: those say where they last were, not where they say
+// they are, so they would stamp a postcode on a member's post that the member
+// never picked. If they have not set one, we refuse rather than guess.
+//
+// The error text is shown to the moderator, so it says what to do about it.
+func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
+	db := database.DBConn
+
+	var chosen struct {
+		Locationid   uint64
+		Locationname string
+		Lat          float64
+		Lng          float64
+	}
+
+	db.Raw("SELECT "+
+		"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.id')) AS locationid, "+
+		"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
+		"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
+		"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng "+
+		"FROM users WHERE id = ?", author).Scan(&chosen)
+
+	if chosen.Locationid == 0 || chosen.Locationname == "" {
+		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
+	}
+
+	// The group must be one they are ALREADY in. Submitting joins the author to
+	// the destination group, so an arbitrary group would quietly sign a member
+	// up to a community they never chose. Default to their nearest membership.
+	var groupid uint64
+	db.Raw("SELECT m.groupid FROM memberships m "+
+		"INNER JOIN `groups` g ON g.id = m.groupid "+
+		"WHERE m.userid = ? AND m.collection = ? "+
+		"ORDER BY ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?)) LIMIT 1",
+		author, utils.COLLECTION_APPROVED, chosen.Lng, chosen.Lat).Scan(&groupid)
+
+	if groupid == 0 {
+		return nil, errors.New("That member isn't in any community, so we can't post for them")
+	}
+
+	var groupname string
+	db.Raw("SELECT COALESCE(NULLIF(namefull, ''), nameshort) FROM `groups` WHERE id = ?", groupid).Scan(&groupname)
+
+	return &OnBehalfPosting{
+		Locationid:   chosen.Locationid,
+		Locationname: chosen.Locationname,
+		Groupid:      groupid,
+		Groupname:    groupname,
+	}, nil
+}
+
+func onBehalfOf(c *fiber.Ctx, myid uint64) (uint64, error) {
+	obo := uint64(c.QueryInt("onbehalfof", 0))
+	if obo == 0 || obo == myid {
+		return myid, nil
+	}
+
+	if !auth.IsChitChatMod(myid) {
+		return 0, fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	return obo, nil
+}
+
+// PutMessageAs creates a message attributed to author, which is normally the
+// caller. It differs only for the ChitChat convert-to-post path, where a
+// ChitChat moderator turns someone's ChitChat post into a real OFFER/WANTED and
+// the post must belong to that member rather than to the moderator.
+//
+// Passing an author other than the caller is restricted to ChitChat moderators
+// and support/admin (newsfeed.canHidePost). That caller is responsible for the
+// permission check and for logging the mod action; no other caller should pass
+// a different author.
+func PutMessageAs(c *fiber.Ctx, author uint64) error {
+	myid := author
 
 	type PutMessageRequest struct {
 		Groupid            uint64          `json:"groupid"`
@@ -4028,6 +4174,31 @@ func PutMessage(c *fiber.Ctx) error {
 
 	if strings.TrimSpace(req.Item) == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
+	}
+
+	// Posting on someone's behalf: pin the post to THEIR location, never to
+	// whatever the moderator's client sent. A moderator moderates from wherever
+	// they happen to be, so trusting the client here would stamp their postcode
+	// on a member's post and put it in front of the wrong people.
+	if author != user.WhoAmI(c) {
+		// Same resolution the convert preview showed the moderator - see
+		// ResolveOnBehalfPosting.
+		posting, err := ResolveOnBehalfPosting(author)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+
+		req.Locationid = &posting.Locationid
+
+		if req.Groupid == 0 {
+			req.Groupid = posting.Groupid
+		} else {
+			var memberCount int64
+			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", author, req.Groupid).Scan(&memberCount)
+			if memberCount == 0 {
+				return fiber.NewError(fiber.StatusBadRequest, "That member isn't in that community")
+			}
+		}
 	}
 
 	// For non-Draft, check membership and fetch posting status in one query.
@@ -4420,9 +4591,8 @@ func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
 		return 0, ""
 	}
 
-	// Read the per-group hold, not the message-level messages.heldby mirror: a
-	// message held on one group must not block moderation on another group it is
-	// also pending on.
+	// Holds are per-group: a message held on one group must not block moderation on
+	// another group it is also pending on.
 	var holder uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid IN ? "+
 		"AND heldby IS NOT NULL AND heldby != ? AND deleted = 0 LIMIT 1",

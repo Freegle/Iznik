@@ -60,7 +60,7 @@ class NewsfeedLinkPreviewService
         return $count;
     }
 
-    protected function getOrCreate(string $url): ?int
+    public function getOrCreate(string $url): ?int
     {
         $existing = DB::select(
             "SELECT id FROM link_previews WHERE url = ? AND DATEDIFF(NOW(), retrieved) < 7",

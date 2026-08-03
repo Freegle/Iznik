@@ -1484,6 +1484,45 @@ commands:
               exit $VITEST_EXIT_CODE
             fi
 
+  run-agent-sdk-tests:
+    description: "Run the claude-agent-sdk unit tests (node:test). Fast, no containers."
+    steps:
+      - run:
+          name: Run claude-agent-sdk unit tests
+          command: |
+            set -e
+            # These specs (guard.js SQL guard, auth.js role gate + billing mode,
+            # device-summary.js) had no CI at all - nothing under .circleci
+            # referenced claude-agent-sdk, so they only ever ran on a developer's
+            # machine. They cover the SELECT-only guard and the Support/Admin
+            # gate, which are the security controls on de-anonymised member data,
+            # so they are worth failing the build over.
+            SDK_DIR=""
+            for d in ./claude-agent-sdk "$HOME/FreegleDocker/claude-agent-sdk" "$HOME/project/claude-agent-sdk"; do
+              if [ -d "$d" ]; then SDK_DIR="$d"; break; fi
+            done
+            if [ -z "$SDK_DIR" ]; then
+              echo "Could not find claude-agent-sdk (cwd: $(pwd))"
+              exit 1
+            fi
+            SDK_DIR=$(cd "$SDK_DIR" && pwd)
+            echo "Using $SDK_DIR"
+
+            # The tested modules require nothing outside Node's stdlib, so there is
+            # no npm install here - verified by running with node_modules removed.
+            # Prefer the runner's own Node; Katapult VMs may not have one, so fall
+            # back to a container rather than installing a toolchain.
+            if command -v node >/dev/null 2>&1 && \
+               node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' 2>/dev/null; then
+              echo "Running with host node $(node --version)"
+              cd "$SDK_DIR"
+              node --test
+            else
+              echo "No suitable host Node (need >= 20) - running in node:22-alpine"
+              docker run --rm -v "$SDK_DIR":/app -w /app node:22-alpine node --test
+            fi
+            echo "claude-agent-sdk unit tests passed"
+
   run-playwright-tests:
     description: "Run Playwright tests via the status service API and upload coverage"
     parameters:
@@ -2297,6 +2336,10 @@ jobs:
             # ModTools is now built from iznik-nuxt3/modtools (same repo, different build)
             echo "=== Verifying modtools directory ==="
             ls -la iznik-nuxt3/modtools/Dockerfile* || echo "WARNING: modtools/Dockerfile files not found"
+
+      # Cheap, container-free, and covers the SQL guard and role gate on the AI
+      # support helper - run before anything expensive starts.
+      - run-agent-sdk-tests
 
       - run:
           name: Determine changed paths
@@ -4002,11 +4045,27 @@ jobs:
             curl -X DELETE \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST \
+            # Verify the write landed. This used to print a ✅ regardless of what the API
+            # said, so an expired CIRCLECI_API_TOKEN ("Invalid token provided.") left the
+            # variable stuck at an old version while the job stayed green. Every later
+            # release then recomputed the SAME next version, and iOS failed with
+            # "Invalid Pre-Release Train ... is closed for new build submissions" once that
+            # version had been released — silently unshippable on iOS.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "The version variable is now STALE. The next ModTools release will rebuild"
+              echo "${NEW_VERSION} instead of moving on, and iOS will be rejected once that"
+              echo "version is released. Fix CIRCLECI_API_TOKEN, then set the variable to"
+              echo "${NEW_VERSION} before the next release."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - store_artifacts:
           path: android/app/build/outputs/bundle/release/
@@ -4341,10 +4400,21 @@ jobs:
             NEW_VERSION=$(cat .new_version)
             curl -X DELETE -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+            # Fail loudly rather than printing a ✅ the API never earned — see the matching
+            # step in build-android-modtools for what a silent failure here costs.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "Fix CIRCLECI_API_TOKEN, then set the variable to ${NEW_VERSION}"
+              echo "before the next release, or iOS will retry a closed version train."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - run:
           name: Collect Xcode build logs

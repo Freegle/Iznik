@@ -65,3 +65,32 @@ export function reachedIdSet(frameIds, gateIds) {
   if (Array.isArray(frameIds)) return new Set(frameIds)
   return new Set(gateIds || [])
 }
+
+// Whether the explorer should ask the browser for the moderator's location to
+// centre the map.
+//
+// This is deliberately a separate, testable rule because getting it wrong is
+// user-visible and alarming rather than merely broken. ModTools is a
+// single-page app, and the explorer defers this decision past an await (a URL
+// geocode lookup), so by the time it runs the moderator may have navigated on.
+// Firing then pops "Allow <site> to access your location?" over an unrelated
+// page - reported from /settings, where a location request has no business
+// appearing and reads as the site misbehaving.
+//
+//   destroyed       - the explorer has been torn down (navigated away)
+//   urlSetLocation  - a location already came from props or the URL
+//   hasGeolocation  - the browser offers navigator.geolocation
+//   currentLat      - the map already has a location (null when it does not)
+export function shouldAutoLocate({
+  destroyed,
+  urlSetLocation,
+  hasGeolocation,
+  currentLat,
+}) {
+  return (
+    !destroyed &&
+    !urlSetLocation &&
+    Boolean(hasGeolocation) &&
+    currentLat === null
+  )
+}

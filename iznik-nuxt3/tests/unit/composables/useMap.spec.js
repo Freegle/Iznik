@@ -7,6 +7,7 @@ import {
   osmtile,
   loadLeaflet,
   nearbyGroups,
+  INLINE_MAP_OPTIONS,
 } from '~/composables/useMap'
 
 // ============================================================
@@ -150,6 +151,19 @@ describe('attribution', () => {
 
   it('returns the same value on repeated calls (idempotent)', () => {
     expect(attribution()).toBe(attribution())
+  })
+})
+
+// ============================================================
+// INLINE_MAP_OPTIONS
+// ============================================================
+describe('INLINE_MAP_OPTIONS', () => {
+  it('disables wheel zoom so maps in a scrolling list do not steal the wheel', () => {
+    expect(INLINE_MAP_OPTIONS.scrollWheelZoom).toBe(false)
+  })
+
+  it('bounces at the zoom limits', () => {
+    expect(INLINE_MAP_OPTIONS.bounceAtZoomLimits).toBe(true)
   })
 })
 

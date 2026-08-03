@@ -636,6 +636,41 @@ describe('NewsReply', () => {
     })
   })
 
+  // Consecutive posts from one person render as a single block that keeps the
+  // FIRST post's id. Hanging a reply off that id drops it in before the rest of
+  // the run, so the person's own posts end up split apart by the reply. It has
+  // to attach to the last post in the run.
+  describe('replying to a combined block', () => {
+    const combinedReply = () => ({
+      ...mockReply,
+      isCombined: true,
+      combinedIds: [101, 102, 103],
+    })
+
+    it('sends the reply against the last post in the run', async () => {
+      mockNewsfeedSend.mockResolvedValue(999)
+      const combined = combinedReply()
+      const wrapper = createWrapper({ id: 101, replyData: combined }, combined)
+      await wrapper.find('.reply-action').trigger('click')
+      const ta = wrapper.findComponent({ name: 'AutoHeightTextarea' })
+      await ta.setValue('nice one')
+      ta.trigger('keyup.enter')
+      await flushPromises()
+      expect(mockNewsfeedSend).toHaveBeenCalledWith('nice one', 103, 1, null)
+    })
+
+    it('sends against the post itself when nothing was combined', async () => {
+      mockNewsfeedSend.mockResolvedValue(999)
+      const wrapper = createWrapper({ id: 100 })
+      await wrapper.find('.reply-action').trigger('click')
+      const ta = wrapper.findComponent({ name: 'AutoHeightTextarea' })
+      await ta.setValue('hello')
+      ta.trigger('keyup.enter')
+      await flushPromises()
+      expect(mockNewsfeedSend).toHaveBeenCalledWith('hello', 100, 1, null)
+    })
+  })
+
   describe('double-submit guard', () => {
     it('posts a reply only once when send fires twice (Enter keydown+keyup double-fire)', async () => {
       // Live bug (newsfeed 613876/613879): one Enter fires both the keydown (parent div) and keyup

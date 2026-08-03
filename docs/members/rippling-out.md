@@ -46,7 +46,8 @@ rippling:
   than instantly.
 - **If you were already on daily digest or no emails**, those settings are kept exactly
   as they are.
-- **Community events and volunteering emails** are left at whatever you already had. No change there.
+- **Community events and volunteering emails** carry over the setting you already use on
+  your own community, so you get no extra emails.
 
 You can adjust any of these settings yourself at any time - see below.
 
@@ -194,7 +195,7 @@ shows as "waiting to send" until then. Nothing is lost.
 | Browse filters | Remembered between visits, including the distance slider |
 | New communities | You are joined automatically so replies and contact work |
 | Email defaults | Immediate is switched to daily; no-email and daily are unchanged |
-| Community events/volunteering emails | Left at whatever you already had |
+| Community events/volunteering emails | Carried over from your own community's setting |
 | Intro email | One bundled email explains what happened and how to change things |
 | Repost reminders / check-ins | One per item, not one per community |
 | Leaving a community | Removes your post from it; you are not re-joined |

@@ -548,6 +548,10 @@ services:
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
+      # So the test runner can tell it is on CI. CI already builds the database
+      # fresh for every run, so the pre-run reset it does locally would just be
+      # repeating work - and the migrate is slow enough to time the run out.
+      - CI=${CI:-}
 
   ai-support-helper:
     build:
@@ -1607,6 +1611,12 @@ services:
       - FREEGLE_MOD_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
       - FREEGLE_API_BASE_URL=http://localhost:${PORT_APIV2:-8193}
       - FREEGLE_DELIVERY_URL=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      # Community News: research credential (metered key OR a `claude setup-token`
+      # subscription token, which wins when set) + global kill switch.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - COMMUNITY_NEWS_OAUTH_TOKEN=${COMMUNITY_NEWS_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+      - COMMUNITY_NEWS_ENABLED=${COMMUNITY_NEWS_ENABLED:-false}
+      - COMMUNITY_NEWS_MODEL=${COMMUNITY_NEWS_MODEL:-claude-opus-4-8}
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - AMP_API_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/amp
       - LOKI_ENABLED=true
@@ -1619,7 +1629,7 @@ services:
       - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
       - SPATIAL_KNN_URL=http://spatial-knn:8194
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
       - CI=${CI:-false}
@@ -1699,6 +1709,14 @@ services:
       # APP_KEY comes from env_file
       - LOG_CHANNEL=stack
       - LOG_LEVEL=debug
+      # Community News research credential: same compose substitution as the dev
+      # batch service. On the prod host CLAUDE_CODE_OAUTH_TOKEN lives in the
+      # project .env (it feeds ai-support-helper the same way), NOT in
+      # .env.background — so wire it through here rather than duplicating the
+      # secret into a second file. Empty defaults keep CI/dev unaffected.
+      - COMMUNITY_NEWS_OAUTH_TOKEN=${COMMUNITY_NEWS_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+      - COMMUNITY_NEWS_ENABLED=${COMMUNITY_NEWS_ENABLED:-false}
+      - COMMUNITY_NEWS_MODEL=${COMMUNITY_NEWS_MODEL:-claude-opus-4-8}
       # Database (production)
       - DB_CONNECTION=mysql
       - DB_HOST=db-host
@@ -1739,7 +1757,7 @@ services:
       # Freegle Mail Configuration
       - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
       - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest,Reengage
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest,Reengage,CommunityNews
       # Freegle Images
       - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
       - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org

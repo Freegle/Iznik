@@ -605,6 +605,12 @@ function runCheck() {
 
 // Watch selectedArea for changes
 watch(selectedArea, async () => {
+  if (!me.value) {
+    // Logout resets the auth store, which flips selectedArea to 0.  Fetching
+    // the feed then would go out without a JWT and 401 → fatal error page.
+    return
+  }
+
   await areaChange()
 })
 
@@ -893,13 +899,18 @@ if (me.value) {
     padding: 0;
   }
 
-  // Modernize post cards on mobile
+  // Modernize post cards on mobile.
+  //
+  // No overflow:hidden. The thread's ... menu is absolutely positioned inside
+  // this card, so clipping the card clipped the menu to the card's height: a
+  // moderator saw the first few entries and had to scroll inside the dropdown
+  // to reach Hide, Delete or Mute. Card children sit inside .card-body, which
+  // is padded, so nothing reaches the rounded corners for the clip to tidy up.
   :deep(.card) {
     border-radius: var(--radius-sm, 0.375rem);
     border: none;
     box-shadow: var(--shadow-sm);
     margin-bottom: 0.75rem;
-    overflow: hidden;
   }
 
   :deep(.card-body) {

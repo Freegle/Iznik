@@ -337,6 +337,74 @@ return [
 
     'srid' => env('FREEGLE_SRID', 3857),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Community News
+    |--------------------------------------------------------------------------
+    |
+    | The area-based local-news digest: a weekly Freegle-branded email plus a
+    | ChitChat (newsfeed) engagement trial. See docs/COMMUNITY-NEWS.md.
+    |
+    */
+    'communitynews' => [
+        // Global kill switch for the SCHEDULED runs (manual artisan invocation
+        // always works). Off by default so nothing fires until ops opts in.
+        'enabled' => (bool) env('COMMUNITY_NEWS_ENABLED', false),
+
+        // Anthropic key (shared with the eee reference labeller) + model for the
+        // research-and-write call. Defaults to Opus; override for cost/latency.
+        'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
+        'model'             => env('COMMUNITY_NEWS_MODEL', 'claude-opus-4-8'),
+
+        // Run the research on a Claude SUBSCRIPTION instead of a metered API key:
+        // set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`). When present it
+        // takes precedence over anthropic_api_key, and research shells out to the
+        // `claude` CLI (WebSearch tool) rather than the raw Messages API — a raw
+        // OAuth Bearer call to /v1/messages is not supported by Anthropic. Needs
+        // the `claude` CLI in the container (the batch image installs it).
+        'oauth_token' => env('COMMUNITY_NEWS_OAUTH_TOKEN', env('CLAUDE_CODE_OAUTH_TOKEN', '')),
+        // Override the CLI binary / its config dir (blank => a clean per-run temp
+        // dir, so this repo's Claude hooks/skills/settings don't load into the job).
+        'claude_bin'        => env('COMMUNITY_NEWS_CLAUDE_BIN', 'claude'),
+        'claude_config_dir' => env('COMMUNITY_NEWS_CLAUDE_CONFIG_DIR', ''),
+
+        // Post to ChitChat / send the digest AS this account ("Freegle").
+        'system_user_email' => env('COMMUNITY_NEWS_SYSTEM_USER_EMAIL', env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org')),
+
+        // Town assignment radius: an enabled group joins its nearest `towns`-table
+        // town within this many miles (the town names the area — the searchable
+        // unit); beyond it the group stands alone as its own area.
+        'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
+
+        // How many nuggets the researcher aims to produce per area.
+        'items_per_area' => (int) env('COMMUNITY_NEWS_ITEMS_PER_AREA', 6),
+
+        // ChitChat drip trial: items per post, and the minimum days between
+        // posts for one area.
+        'chitchat_items_per_post' => (int) env('COMMUNITY_NEWS_CHITCHAT_ITEMS', 1),
+        'chitchat_min_days'       => (int) env('COMMUNITY_NEWS_CHITCHAT_MIN_DAYS', 3),
+
+        // Weekly email: minimum days between digests for one area, and how many
+        // items to include.
+        'email_min_days'  => (int) env('COMMUNITY_NEWS_EMAIL_MIN_DAYS', 7),
+        'email_max_items' => (int) env('COMMUNITY_NEWS_EMAIL_MAX_ITEMS', 6),
+
+        // Safety bound on the Anthropic server-tool (web_search) loop.
+        'max_search_iterations' => (int) env('COMMUNITY_NEWS_MAX_SEARCH_ITER', 8),
+
+        // How many days a researched item stays eligible for posting/emailing.
+        'item_freshness_days' => (int) env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
+
+        // Curated per-place source store (JSON files). Research seeds the model
+        // with these known-good local feeds, health-checks them each run, and
+        // re-discovers new ones roughly quarterly. See
+        // data/community-news-sources/README.md.
+        'sources_path' => env('COMMUNITY_NEWS_SOURCES_PATH', base_path('data/community-news-sources')),
+        'source_recheck_hours' => (int) env('COMMUNITY_NEWS_SOURCE_RECHECK_HOURS', 24),
+        'source_dead_after' => (int) env('COMMUNITY_NEWS_SOURCE_DEAD_AFTER', 3),
+        'source_discovery_days' => (int) env('COMMUNITY_NEWS_SOURCE_DISCOVERY_DAYS', 90),
+    ],
+
     // The spatial-knn "finder" service (iznik-spatial-go). SPATIAL_KNN_URL is the
     // canonical name (also used by the Go client). NB: SPATIAL_SERVER_URL is taken
     // by the routing/isochrone server elsewhere, so it must NOT be relied on here —

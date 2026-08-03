@@ -1713,10 +1713,10 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
 
   {
     name: 'discover_active_topics',
-    description: 'Light pre-check: fetches Discourse /latest.json (one API call) and compares post counts against DB cursors to find topics with new posts. Used to decide which topics need a triage delegate. Returns {topics: [{id, title, cursor, postsCount, hasNew}]}.',
-    paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' } } },
+    description: 'Pre-check: fetches several pages of Discourse /latest.json (activity order) and compares post counts against DB cursors to find topics with new posts. Paginated so slow-but-recurring catch-all threads that fell below the first page of activity between runs are still discovered — a single page silently dropped their new member reports and their cursor never advanced (seen with topic 9481, cursor stuck at 630 while members posted to 635). Used to decide which topics need a triage delegate. Returns {topics: [{id, title, cursor, postsCount, hasNew}]}.',
+    paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' }, latestPages: { type: 'number', description: 'How many pages of /latest.json (activity order) to scan. Default 4 (~120 most-recently-active topics).' } } },
     handler: async (params) => {
-      const recentLimit = (params.recentLimit as number) ?? 30
+      const latestPages = (params.latestPages as number) ?? 4
       // Discourse rate-limits aggressively, and this GET runs in the same iteration
       // as a burst of reply POSTs — so a raw urlopen here regularly 429'd and the
       // step silently returned zero topics (missing genuinely-active bug reports).
@@ -1745,8 +1745,21 @@ def fetch(url, retries=4):
                 continue
             raise
 
-d = fetch('${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}')
-topics = [{'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']} for t in d['topic_list']['topics']]
+# Paginate the activity-ordered latest list. A single page (~30) misses slow-but-
+# recurring catch-all threads (e.g. "Testing please") that dropped below the first
+# page between runs, so their new reports were never triaged. De-dupe by id across
+# pages; stop early once a page is empty.
+seen = {}
+for page in range(${latestPages}):
+    d = fetch(f'${DISCOURSE_BASE}/latest.json?order=activity&page={page}')
+    batch = d.get('topic_list', {}).get('topics', [])
+    if not batch:
+        break
+    for t in batch:
+        seen[t['id']] = {'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']}
+    if page + 1 < ${latestPages}:
+        time.sleep(0.5)
+topics = list(seen.values())
 print(json.dumps(topics))
 `
       const { stdout, stderr, code } = await sh('python3', ['-c', script])

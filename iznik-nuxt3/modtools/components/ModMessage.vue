@@ -323,7 +323,7 @@
                 at
                 {{ datetimeshort(message.outcomes[0].timestamp) }}
               </NoticeMessage>
-              <div v-if="message.heldby">
+              <div v-if="contextGroup?.heldby">
                 <NoticeMessage variant="warning" class="mb-2">
                   <p v-if="me.id === heldbyId">
                     You held this. Other people will see a warning to check with
@@ -372,8 +372,8 @@
               </NoticeMessage>
             </div>
             <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
-              We couldn't work out where this post is (often an emailed post whose
-              subject has no recognised place name). Please click
+              We couldn't work out where this post is (often an emailed post
+              whose subject has no recognised place name). Please click
               <strong>Edit</strong> and add a postcode (it doesn't have to be
               exactly right - do your best) so members can find it.
             </NoticeMessage>
@@ -460,6 +460,7 @@
               "
               :messageid="message.id"
               :groupid="currentGroupid"
+              :covered="explainedElsewhere"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
@@ -727,7 +728,7 @@
         </b-row>
       </b-card-body>
       <b-card-footer v-if="!noactions && expanded">
-        <div v-if="message.heldby && heldbyId !== myid">
+        <div v-if="contextGroup?.heldby && heldbyId !== myid">
           This message is held by someone else. The buttons are hidden so you
           don't click them by accident. Please check with them before releasing
           the message.
@@ -741,9 +742,7 @@
         </NoticeMessage>
         <div
           v-if="
-            pending &&
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
+            pending && (!contextGroup?.heldby || heldbyId === myid) && !editing
           "
           class="text-end mb-1"
         >
@@ -752,10 +751,7 @@
           </b-button>
         </div>
         <ModMessageButtons
-          v-if="
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="(!contextGroup?.heldby || heldbyId === myid) && !editing"
           :messageid="message.id"
           :groupid="currentGroupid"
           :modconfigid="configid"
@@ -1027,6 +1023,28 @@ const contextGroup = computed(() => {
   )
 })
 
+// Hold reasons this component already explains with its own notices above, which
+// use live state - the location we resolved now, the member's current posting
+// status - rather than whatever the content check stored when it ran. Passing
+// them to ModMessageWorry stops the same cause being stated twice, once here and
+// once from the stored reason (Discourse #9989).
+const explainedElsewhere = computed(() => {
+  // Location is always better answered live than from the stored reason: either
+  // we still can't place the post, and the notice above says so in more helpful
+  // words, or a moderator has since added a postcode and the stored reason is
+  // stale - it would claim we don't know where a post with a visible postcode is.
+  const covered = ['NoLocation']
+
+  // Only claim this one when the notice above is actually rendering. The member's
+  // memberships may simply not have loaded, and a post held purely by a setting
+  // with nothing saying so is what Discourse #9987 was about.
+  if (pending.value && membership.value?.ourpostingstatus === 'MODERATED') {
+    covered.push('MemberModerated')
+  }
+
+  return covered
+})
+
 // The origin group: the earliest arrival across the post's groups (shown as "First
 // posted on ..."). Excluded from the "may also be shown" list so it isn't listed twice.
 const originGroupid = computed(() => {
@@ -1119,7 +1137,9 @@ const isRippledInToContextGroup = computed(() =>
 // (both fields non-null) when the routing server said quicker=true at ripple-in time.
 const rippleProximity = computed(() => {
   const gid = currentGroupid.value
-  const g = (message.value?.groups || []).find((row) => parseInt(row.groupid) === gid)
+  const g = (message.value?.groups || []).find(
+    (row) => parseInt(row.groupid) === gid
+  )
   if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
     return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
   }
@@ -1194,17 +1214,20 @@ const eBody = computed(() => {
   return twem(message.value.textbody)
 })
 
-// Handle heldby as either numeric ID (Go API) or object (PHP API).
+// heldby is per-group (messages_groups.heldby): a hold set by another team on a
+// group this post also rippled to must not block action on the copy being
+// administered here, so this reads contextGroup - the group behind currentGroupid -
+// rather than any message-wide flag (Discourse 9970/2, mods with several nearby
+// groups saw posts stuck "held" that were only held on a DIFFERENT one of their
+// groups). Handle heldby as either numeric ID (Go API) or object (PHP API).
 const heldbyId = computed(() => {
-  if (!message.value) return null
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return null
   return Number.isInteger(h) ? h : h.id
 })
 
 const heldbyName = computed(() => {
-  if (!message.value) return ''
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return ''
   if (Number.isInteger(h)) {
     const user = userStore.byId(h)
@@ -1466,9 +1489,9 @@ onMounted(() => {
       : []
     findHomeGroup()
 
-    // Fetch heldby user if message is held (Go API returns numeric ID).
-    if (message.value.heldby && Number.isInteger(message.value.heldby)) {
-      userStore.fetch(message.value.heldby)
+    // Fetch heldby user if the copy on the context group is held (Go API returns numeric ID).
+    if (heldbyId.value && Number.isInteger(heldbyId.value)) {
+      userStore.fetch(heldbyId.value)
     }
   }
 })

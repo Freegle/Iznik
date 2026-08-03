@@ -3,6 +3,15 @@ export function osmtile() {
   return runtimeConfig.public.OSM_TILE
 }
 
+// Options for the small maps we embed inside a scrolling list, e.g. the address
+// and postcode maps in chat. Leaflet grabs the wheel event by default, so
+// scrolling the conversation with the pointer over a map zooms the map out
+// instead of scrolling, one level per notch, until it's showing the whole world.
+export const INLINE_MAP_OPTIONS = {
+  scrollWheelZoom: false,
+  bounceAtZoomLimits: true,
+}
+
 export function attribution() {
   return 'Map data &copy; <a href="https://www.openstreetmap.org/" rel="noopener noreferrer">OpenStreetMap</a> contributors'
 }

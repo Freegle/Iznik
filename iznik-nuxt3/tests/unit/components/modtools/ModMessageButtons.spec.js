@@ -224,24 +224,43 @@ describe('ModMessageButtons', () => {
 
     it('shows hold button for pending messages without heldby', () => {
       const wrapper = mountComponent(
-        {},
+        { groupid: 456 },
         {
-          groups: [{ groupid: 456, collection: 'Pending' }],
-          heldby: null,
+          groups: [{ groupid: 456, collection: 'Pending', heldby: null }],
         }
       )
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
     })
 
-    it('hides hold button when message is held', () => {
+    it('hides hold button when the copy on THIS group is held', () => {
       const wrapper = mountComponent(
-        {},
+        { groupid: 456 },
         {
-          groups: [{ groupid: 456, collection: 'Pending' }],
-          heldby: { id: 1 },
+          groups: [{ groupid: 456, collection: 'Pending', heldby: 1 }],
         }
       )
       expect(wrapper.find('.mod-message-button.hold').exists()).toBe(false)
+    })
+
+    // Discourse 9970/2: heldby is per-group (messages_groups.heldby). A hold on a
+    // DIFFERENT group this rippled post is also on must not swap Hold for Release
+    // on the copy actually being administered (groupid prop).
+    it('still shows hold button when a DIFFERENT group on the same rippled post is held', () => {
+      const wrapper = mountComponent(
+        { groupid: 456 },
+        {
+          // The server ORs any held group into this message-wide flag, so the
+          // pre-fix code (which read message.heldby directly) would still hide
+          // Hold / show Release here even though group 456 itself is not held.
+          heldby: 1,
+          groups: [
+            { groupid: 456, collection: 'Pending', heldby: null },
+            { groupid: 457, collection: 'Pending', heldby: 1 },
+          ],
+        }
+      )
+      expect(wrapper.find('.mod-message-button.hold').exists()).toBe(true)
+      expect(wrapper.find('.mod-message-button.release').exists()).toBe(false)
     })
 
     it('shows spam button for pending messages', () => {

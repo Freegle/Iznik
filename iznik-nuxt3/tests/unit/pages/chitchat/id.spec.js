@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 
@@ -217,6 +217,43 @@ describe('chitchat/[[id]].vue loadMore', () => {
     wrapper.vm.loadMore(mockState)
 
     expect(mockState.complete).toHaveBeenCalled()
+  })
+
+  it('does not refetch feed when selectedArea changes because of logout', async () => {
+    // Regression: logout resets the auth store, nulling me.  For users with a
+    // newsfeedarea set that flips selectedArea to 0, and the watcher refetched
+    // the feed without a JWT → 401 → fatal "Oh dear" error page.
+    mockMe.value = {
+      id: 1,
+      displayname: 'Test User',
+      settings: { newsfeedarea: 12345 },
+    }
+    mountComponent()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    mockMe.value = null
+    await flushPromises()
+
+    expect(mockNewsfeedStore.reset).not.toHaveBeenCalled()
+    expect(mockNewsfeedStore.fetchFeed).not.toHaveBeenCalled()
+  })
+
+  it('refetches feed when a logged-in user changes area', async () => {
+    mockMe.value = {
+      id: 1,
+      displayname: 'Test User',
+      settings: { newsfeedarea: 0 },
+    }
+    mountComponent()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    mockMe.value.settings.newsfeedarea = 12345
+    await flushPromises()
+
+    expect(mockNewsfeedStore.reset).toHaveBeenCalled()
+    expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(12345)
   })
 
   it('does not hide consecutive posts from same user when message field is missing', () => {

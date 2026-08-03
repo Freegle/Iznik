@@ -69,6 +69,10 @@ import hasOwn from 'object.hasown'
 import * as Sentry from '@sentry/browser'
 import { uid } from '~/composables/useId'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
+import {
+  createHeicPreProcessor,
+  createHeicSafeCompressor,
+} from '~/composables/useUppyHeic'
 import { useMobileStore } from '@/stores/mobile' // APP...
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
@@ -431,13 +435,19 @@ onMounted(() => {
       allowedFileTypes: ['image/*', '.jpg', '.jpeg', '.png', '.gif', '.heic'],
       maxNumberOfFiles: props.multiple ? 10 : 1,
     },
+  }).use(Tus, {
+    endpoint: runtimeConfig.public.TUS_UPLOADER,
+    uploadDataDuringCreation: true,
+    retryDelays: [0, 3000, 5000, 10000, 20000],
   })
-    .use(Tus, {
-      endpoint: runtimeConfig.public.TUS_UPLOADER,
-      uploadDataDuringCreation: true,
-      retryDelays: [0, 3000, 5000, 10000, 20000],
-    })
-    .use(Compressor)
+  // Uppy runs pre-processors in the order they're added, so this has to go in
+  // before Compressor: it converts HEIC to JPEG so that Compressor's canvas
+  // re-encode has something the browser can actually draw, and the wrapped
+  // Compressor skips anything still HEIC. See useUppyHeic.
+  uppy.addPreProcessor(
+    createHeicPreProcessor({ getUppy: () => uppy, uploader: 'our' })
+  )
+  uppy.use(createHeicSafeCompressor(Compressor))
   uppy.on('file-added', (file) => {
     console.log('Added file', file)
     // Ships to Loki (event_type=action) so we can distinguish "opened the picker but

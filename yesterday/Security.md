@@ -191,8 +191,33 @@ Traefik sets `X-Forwarded-For` header with real client IP.
 
 **VM Configuration:**
 - Preemptible instance (cost optimization)
-- Firewall rules: Only ports 80/443 accessible
-- SSH access via GCP IAM and SSH keys
+- Instance: `yesterday-freegle-new` (europe-west2-a), tags `https-server`, `yesterday-freegle`
+- SSH access via GCP IAM and SSH keys (no OS Login; keys come from project
+  common metadata, plus any instance-level `ssh-keys` entry)
+
+**Ports actually reachable from the internet** (verified against live firewall
+rules 2026-07-30; every rule below has source range `0.0.0.0/0` unless stated):
+
+| Port(s) | Rule | Authenticated? |
+|---|---|---|
+| 22 | `allow-yesterday-ssh` **and** GCP's `default-allow-ssh` | SSH keys only |
+| 8095 | `allow-yesterday-services` | **No** — public by design (image delivery) |
+| 8444-8448, 8181, 8193 | `allow-yesterday-services` | Yes, password + TOTP via the gateway |
+| 3389 | GCP's `default-allow-rdp` | Nothing listens; default rule, unused |
+| 3306 | `yesterday-mysql-bulk3`, source `185.53.57.149/32` only | MySQL credentials only |
+
+The `allow-yesterday-dev` rule, which exposed the dev containers on ports 3002
+and 3003 to the internet with no authentication, was removed on 2026-07-30.
+Reach those services through the authenticated gateway on 8445/8446 instead.
+
+Two rules open port 22 and neither carries a target tag, so both apply to every
+instance in the project. Removing `allow-yesterday-ssh` alone changes nothing
+because `default-allow-ssh` still permits it.
+
+This matters more than on an ordinary dev box: the machine holds a full restore
+of the production database, so anything reachable here is reachable against real
+member data. Ports 80/443 are *not* open (Let's Encrypt uses the DNS-01
+challenge, so they are not needed).
 
 ## Security Best Practices
 

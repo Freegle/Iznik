@@ -11,11 +11,13 @@
 //   props        — { spatialUrl, jwt } from the host component
 //   digestModal  — ref to <RipplingDigestModal>; modal opening is delegated
 //   legendMode   — ref ('outbound' | 'inbound') flipped by view-toggle
+import { watch } from 'vue'
 import {
   chaikinSmooth,
   geoToLeaflet,
   pointInRing,
   reachedIdSet,
+  shouldAutoLocate,
 } from './geometry.js'
 import {
   hasRing,
@@ -24,6 +26,7 @@ import {
   distSq,
   homeGroupOverlapFraction,
 } from './polygon.js'
+import { updateActualReachLayer } from './actualreach.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 import { driveMinForAudience, clampAudienceMinutes } from './audience.js'
@@ -39,6 +42,11 @@ export async function setupRipplingExplorer({
 
   let map = null
   const cleanupFns = []
+
+  // Set by cleanup() when the explorer is torn down. Work that resumes after an
+  // await must check this: ModTools is a single-page app, so anything deferred
+  // can otherwise land on whatever page the moderator has since navigated to.
+  let destroyed = false
 
   function apiUrl(path) {
     const sep = path.includes('?') ? '&' : '?'
@@ -66,6 +74,28 @@ export async function setupRipplingExplorer({
       maxZoom: 19,
     }
   ).addTo(map)
+
+  // The ACTUAL stored reach outline (per-post reach modal only): what the engine actually
+  // holds, as opposed to what the schedule says it should - the two diverge when a reach is
+  // held, clipped where members left a group, or capped by the poster's distance preference,
+  // which is why the modal draws this instead of the projection. The host modal fetches it
+  // separately, so it arrives after mount: watch, and redraw on change.
+  let actualReachLayer = null
+  cleanupFns.push(
+    watch(
+      () => props.actualReach,
+      (raw) => {
+        actualReachLayer = updateActualReachLayer(
+          L,
+          map,
+          actualReachLayer,
+          raw,
+          props.hideProjection
+        )
+      },
+      { immediate: true }
+    )
+  )
 
   let currentLat = null
   let currentLng = null
@@ -1218,14 +1248,28 @@ export async function setupRipplingExplorer({
   // Defer until after onMounted's synchronous setup completes (so all the
   // let-bindings further down are reached) — setTimeout(0) is enough.
   setTimeout(async () => {
+    if (destroyed) return
     // Reflect the default view (catchment) in the DOM before URL/props may switch it —
     // applyViewMode is otherwise only called on a tab click, and the markup default view
     // is catchment (its panel starts hidden until applyViewMode shows it).
     if (!pendingView) applyViewMode()
     const urlSetLocation = await applyUrlInit()
-    if (!urlSetLocation && navigator.geolocation && currentLat === null) {
+    // applyUrlInit can await an external geocode lookup, so re-check: the
+    // moderator may have left the explorer while it was in flight. Asking the
+    // browser for their location at that point pops "Allow modtools.org to
+    // access your location?" over an unrelated page — reported on /settings,
+    // where it reads as a site doing something it has no business doing.
+    if (
+      shouldAutoLocate({
+        destroyed,
+        urlSetLocation,
+        hasGeolocation: navigator.geolocation,
+        currentLat,
+      })
+    ) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
+          if (destroyed) return
           if (currentLat === null)
             setLocation(pos.coords.latitude, pos.coords.longitude, true)
         },
@@ -1554,6 +1598,16 @@ export async function setupRipplingExplorer({
 
   function drawPolygons(data, transitionMs, skipStandard = false) {
     lastIsoData = data
+    // Projection suppressed (per-post reach modal): the actual stored reach is drawn
+    // instead, so don't put a modelled outline on the same map to argue with it. Clear
+    // anything already drawn - a pin move must not strand the previous projection.
+    if (props.hideProjection) {
+      Object.keys(layers).forEach((k) => {
+        if (map && map.hasLayer(layers[k])) map.removeLayer(layers[k])
+        delete layers[k]
+      })
+      return
+    }
     const dur = transitionMs || 0
     const outgoing = Object.assign({}, layers)
     const newLayers = {}
@@ -3188,6 +3242,7 @@ export async function setupRipplingExplorer({
   }
 
   return function cleanup() {
+    destroyed = true
     cleanupFns.forEach((fn) => fn())
     if (map) {
       map.remove()

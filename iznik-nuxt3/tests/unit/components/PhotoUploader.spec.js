@@ -67,6 +67,7 @@ vi.mock('tus-js-client', () => ({
 const mockUppyInstance = vi.hoisted(() => ({
   use: vi.fn().mockReturnThis(),
   on: vi.fn().mockReturnThis(),
+  addPreProcessor: vi.fn(),
   close: vi.fn(),
   clear: vi.fn(),
   retryAll: vi.fn(),
@@ -160,6 +161,7 @@ describe('PhotoUploader', () => {
     vi.clearAllMocks()
     mockUppyInstance.use.mockClear().mockReturnThis()
     mockUppyInstance.on.mockClear().mockReturnThis()
+    mockUppyInstance.addPreProcessor.mockClear()
     mockUppyInstance.close.mockClear()
     mockUppyInstance.clear.mockClear()
     mockUppyInstance.retryAll.mockClear()
@@ -1536,6 +1538,29 @@ describe('PhotoUploader', () => {
     })
   })
 
+  describe('HEIC handling', () => {
+    it('registers the HEIC pre-processor', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      expect(mockUppyInstance.addPreProcessor).toHaveBeenCalledTimes(1)
+      expect(mockUppyInstance.addPreProcessor.mock.calls[0][0]).toBeInstanceOf(
+        Function
+      )
+    })
+
+    it('registers the HEIC pre-processor before the Compressor plugin', () => {
+      // Uppy runs pre-processors in registration order, and Compressor cannot
+      // read HEIC through a canvas - so HEIC has to become JPEG first.
+      mockMobileStore.isApp = false
+      createWrapper()
+      const compressorRegistered =
+        mockUppyInstance.use.mock.invocationCallOrder.at(-1)
+      const heicRegistered =
+        mockUppyInstance.addPreProcessor.mock.invocationCallOrder[0]
+      expect(heicRegistered).toBeLessThan(compressorRegistered)
+    })
+  })
+
   describe('compression telemetry', () => {
     function getHandler(name) {
       return mockUppyInstance.on.mock.calls.find((c) => c[0] === name)?.[1]
@@ -1637,7 +1662,7 @@ describe('PhotoUploader', () => {
       )
     })
 
-    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', async () => {
+    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', () => {
       mockMobileStore.isApp = false
       const consoleError = vi
         .spyOn(console, 'error')
@@ -1670,7 +1695,7 @@ describe('PhotoUploader', () => {
       consoleError.mockRestore()
     })
 
-    it('counts retries so upload_failed reports the attempt number', async () => {
+    it('counts retries so upload_failed reports the attempt number', () => {
       mockMobileStore.isApp = false
       const consoleError = vi
         .spyOn(console, 'error')

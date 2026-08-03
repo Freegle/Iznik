@@ -84,6 +84,7 @@ type Newsfeed struct {
 	Imagemods      json.RawMessage   `json:"-"`
 	Image          *NewsImage        `json:"image" gorm:"-"`
 	Msgid          uint64            `json:"msgid"`
+	Msgtype        string            `json:"msgtype,omitempty" gorm:"-"`
 	Replyto        uint64            `json:"replyto"`
 	Groupid        uint64            `json:"groupid"`
 	Eventid        uint64            `json:"eventid"`
@@ -104,9 +105,16 @@ type Newsfeed struct {
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
 	const nearbyLimit = 10
-	// Over-fetch from the spatial index so that, after dropping alerts and posts
-	// older than the feed window, we still have at least nearbyLimit candidates.
-	const overFetch = 10
+	// Over-fetch from the spatial index so that, after dropping alerts, stale
+	// posts, the user's OWN posts and co-located duplicates, we still have at
+	// least nearbyLimit candidates. 100x reaches past the "wall" a long-time
+	// poster builds at their own coordinates: a member with years of posts
+	// geocoded to their home postcode can fill the first hundreds of KNN
+	// results with points ~0m away, which at 10x starved the walk before it
+	// ever saw another member's post (observed live: 100/100 results within
+	// 0.19km, radius clamped to the 1km floor, feed of 2 items).
+	// nearbyLimit*overFetch = 1000 is the spatial server's result limit.
+	const overFetch = 100
 	// maxNearbyKm bounds every radius computed below - the largest radius the
 	// pre-#459 doubling-box algorithm ever searched (1km doubling to 128km)
 	// before giving up. getFeed() treats a 0 return as "no geographic
@@ -138,25 +146,33 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 
 	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
 	if err == nil && len(results) >= nearbyLimit {
-		// The spatial "newsfeed" index has no type/timestamp columns, so it can't
-		// exclude alerts or stale posts — applying that here restores the
-		// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
-		// computed radius).
+		// The spatial "newsfeed" index has no type/timestamp/user columns, so it
+		// can't exclude alerts, stale posts or the user's own posts — applying
+		// that here restores the pre-spatial query's behaviour (otherwise those
+		// posts shrink the computed radius).
 		ids := make([]int64, len(results))
 		for i, r := range results {
 			ids[i] = r.ID
 		}
-		allowed := RecentNonAlertNewsfeedIDs(ids)
+		allowed := RecentNonAlertNewsfeedIDs(ids, uid)
 
-		// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
-		// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
+		// Walk the KNN results in distance order; the nearbyLimit-th allowed
+		// DISTINCT distance sets the radius (decimal degrees → km, 1 degree ≈
+		// 111 km). Distinct because many posts share one coordinate (a postcode
+		// centroid, a housebound poster): counting them individually measures
+		// one location's chattiness, not how far away the community is.
 		count := 0
 		distDeg := 0.0
+		lastCounted := -1.0
 		for _, r := range results {
 			if _, ok := allowed[r.ID]; !ok {
 				continue
 			}
+			if r.Distance <= lastCounted {
+				continue
+			}
 			count++
+			lastCounted = r.Distance
 			if count == nearbyLimit {
 				distDeg = r.Distance
 				break
@@ -164,13 +180,17 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 		}
 
 		if count == nearbyLimit {
-			// Enough recent, non-alert posts nearby - size the radius from their true density.
+			// Enough recent posts by other people nearby - size the radius from
+			// their true density.
 			distKm = distDeg * 111.0
 		} else {
-			// Too few passed the recency/alert filter, but there's still enough
-			// raw local density data (>= nearbyLimit raw candidates) to size a
-			// radius from, rather than falling straight back to the flat ceiling.
-			distKm = results[nearbyLimit-1].Distance * 111.0
+			// Too few distinct recent posts by others inside the fetch window.
+			// Size from the window's full reach: we know the index's activity
+			// (of any age) covers at least this far, and the furthest raw entry
+			// cannot be wall-dominated the way a near entry can. The old
+			// fallback used the nearbyLimit-th RAW entry, which against a
+			// co-located wall was ~0m and clamped the radius to the floor.
+			distKm = results[len(results)-1].Distance * 111.0
 		}
 	}
 
@@ -188,11 +208,14 @@ func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, flo
 }
 
 // RecentNonAlertNewsfeedIDs returns the subset of the given newsfeed ids that
-// are not ALERT-type and were posted within the feed window (31 days). The
+// are not ALERT-type, were posted within the feed window (31 days), and were
+// not authored by excludeUserid (pass 0 to keep everyone): a member's own
+// posts sit at their own coordinates and say nothing about how far away the
+// surrounding community's activity is. The
 // spatial "newsfeed" index omits the type and timestamp columns, so the
 // nearby-distance calculation applies these filters here (matching the old
 // MySQL query) rather than in the shared index.
-func RecentNonAlertNewsfeedIDs(ids []int64) map[int64]struct{} {
+func RecentNonAlertNewsfeedIDs(ids []int64, excludeUserid uint64) map[int64]struct{} {
 	allowed := make(map[int64]struct{}, len(ids))
 	if len(ids) == 0 {
 		return allowed
@@ -207,9 +230,9 @@ func RecentNonAlertNewsfeedIDs(ids []int64) map[int64]struct{} {
 
 	var found []int64
 	database.DBConn.Raw(fmt.Sprintf(
-		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ?",
+		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ? AND userid != ?",
 		strings.Join(idStrs, ","),
-	), utils.NEWSFEED_TYPE_ALERT, since).Scan(&found)
+	), utils.NEWSFEED_TYPE_ALERT, since, excludeUserid).Scan(&found)
 
 	for _, id := range found {
 		allowed[id] = struct{}{}
@@ -265,6 +288,11 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	var nelat, nelng, swlat, swlng float64
 	var userLat, userLng float64
 
+	// The "everywhere" feed is unfiltered as a whole, but unpinned alerts
+	// (Community News) must still stay in their geography - see below.
+	var alertNelat, alertNelng, alertSwlat, alertSwlng float64
+	var gotAlertBox bool
+
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -299,6 +327,30 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 				swlng = sw.Lng()
 				gotLatLng = true
 			}
+		} else {
+			// Explicit "anywhere" - which is also the DEFAULT for anyone who has
+			// never chosen a feed distance. The feed body is unfiltered, but we
+			// still need the user's location for the alert box below.
+			latlng := user.GetLatLng(myid)
+			userLat = float64(latlng.Lat)
+			userLng = float64(latlng.Lng)
+		}
+
+		// Unpinned alerts (Community News) stay in their geography whatever the
+		// distance toggle says. Their box is a fixed NEWSFEED_ALERT_RADIUS_KM
+		// around the member - the scale their news area is clustered at - NOT the
+		// feed's density-derived radius, which can collapse to its 1km floor and
+		// starve them of news (see the constant's comment). With no known
+		// location only pinned alerts are served.
+		if userLat != 0 || userLng != 0 {
+			p := geo.NewPoint(userLat, userLng)
+			ne := p.PointAtDistanceAndBearing(utils.NEWSFEED_ALERT_RADIUS_KM, 45)
+			sw := p.PointAtDistanceAndBearing(utils.NEWSFEED_ALERT_RADIUS_KM, 225)
+			gotAlertBox = true
+			alertNelat = ne.Lat()
+			alertNelng = ne.Lng()
+			alertSwlat = sw.Lat()
+			alertSwlng = sw.Lng()
 		}
 	}()
 
@@ -326,11 +378,15 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE_CHITCHAT).Format("2006-01-02")
 
 	if gotLatLng {
-		// Three-way UNION:
-		// 1. Regular posts (non-event types) in the user's geographic area, capped at 100.
+		// Four-way UNION:
+		// 1. Regular posts (non-event, non-alert types) in the user's geographic area, capped at 100.
 		// 2. Event/volunteering posts in the user's area, capped at NEWSFEED_EVENTS_PER_FEED so a
 		//    flood of these cannot push regular posts out of the feed (Discourse #9624).
-		// 3. Pinned alerts (any location), capped at 5.
+		// 3. Alerts in the user's ALERT box (fixed NEWSFEED_ALERT_RADIUS_KM), capped at
+		//    NEWSFEED_ALERTS_PER_FEED. Community News drip-posts as type Alert, so this is
+		//    the same flood guard as #2.
+		// 4. PINNED alerts (any location), capped at 5. Only pinned alerts - central Freegle
+		//    announcements - are allowed to escape the geographic filter.
 		db.Raw(
 			fmt.Sprintf(
 				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
@@ -348,7 +404,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
-					"AND newsfeed.type NOT IN (?, ?) "+
+					"AND newsfeed.type NOT IN (?, ?, ?) "+
 					"ORDER BY timestamp DESC "+
 					"LIMIT 100 "+
 					") UNION ("+
@@ -382,14 +438,36 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
 					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
 					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND "+
+					"newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"AND newsfeed.type = ? "+
+					"ORDER BY pinned DESC, timestamp DESC "+
+					"LIMIT %d "+
+					") UNION ("+
+					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (position) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
 					"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.type = ? AND "+
+					// Only PINNED alerts escape the geographic filter. Unpinned ones -
+					// Community News - are served by the in-area arm above.
+					"newsfeed.pinned = 1 AND "+
 					"newsfeed.deleted IS NULL AND reviewrequired = 0 "+
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
 					"ORDER BY pinned DESC, timestamp DESC "+
 					"LIMIT 5) "+
 					"ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED),
+				utils.NEWSFEED_EVENTS_PER_FEED, utils.NEWSFEED_ALERTS_PER_FEED),
 			// UNION 1: regular posts in geographic area
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
@@ -401,7 +479,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			swlng, swlat,
 			utils.SRID,
 			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
 			// UNION 2: event/volunteering posts in geographic area (flood-capped, proximity-sorted)
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
@@ -415,7 +493,21 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			start,
 			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
 			userLng, userLat, utils.SRID,
-			// UNION 3: pinned alerts (any location)
+			// UNION 3: alerts in the ALERT box (flood-capped) - Community News posts here.
+			// The alert box, not the feed box: the feed's density-derived radius can be
+			// far smaller than the ~20-mile scale news areas are clustered at.
+			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+			myid,
+			alertSwlng, alertSwlat,
+			alertSwlng, alertNelat,
+			alertNelng, alertNelat,
+			alertNelng, alertSwlat,
+			alertSwlng, alertSwlat,
+			utils.SRID,
+			start,
+			utils.NEWSFEED_TYPE_ALERT,
+			// UNION 4: pinned alerts only (any location)
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
 			myid,
@@ -423,9 +515,29 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			utils.NEWSFEED_TYPE_ALERT,
 		).Scan(&newsfeed)
 	} else {
-		// Two-way UNION for the no-location path:
-		// 1. Regular posts (non-event types), capped at 100.
+		// Three-way UNION for the "everywhere" path:
+		// 1. Regular posts (non-event, non-alert types), capped at 100.
 		// 2. Event/volunteering posts, capped at NEWSFEED_EVENTS_PER_FEED.
+		// 3. Alerts, capped at NEWSFEED_ALERTS_PER_FEED. Pinned alerts (central Freegle
+		//    announcements) come from anywhere; unpinned ones - Community News - only from
+		//    inside the user's own alert box, so "everywhere" (the default feed setting)
+		//    doesn't serve somebody in Cornwall news about Yorkshire. With no known
+		//    location only pinned alerts are served.
+		alertGeo := "AND newsfeed.pinned = 1 "
+		var alertGeoArgs []interface{}
+
+		if gotAlertBox {
+			alertGeo = "AND (newsfeed.pinned = 1 OR MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position)) "
+			alertGeoArgs = []interface{}{
+				alertSwlng, alertSwlat,
+				alertSwlng, alertNelat,
+				alertNelng, alertNelat,
+				alertNelng, alertSwlat,
+				alertSwlng, alertSwlat,
+				utils.SRID,
+			}
+		}
+
 		db.Raw(
 			fmt.Sprintf(
 				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
@@ -443,7 +555,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
-					"AND newsfeed.type NOT IN (?, ?) "+
+					"AND newsfeed.type NOT IN (?, ?, ?) "+
 					"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT 100 "+
 					") UNION ("+
 					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
@@ -463,21 +575,47 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"AND spam_users.id IS NULL "+
 					"AND newsfeed.type IN (?, ?) "+
 					"ORDER BY newsfeed.timestamp DESC LIMIT %d "+
+					") UNION ("+
+					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
+					"pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (timestamp) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"AND newsfeed.type = ? "+
+					"%s"+
+					"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT %d "+
 					") ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED),
-			// UNION 1: regular posts
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
-			// UNION 2: event/volunteering posts (flood-capped)
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
-		).Scan(&newsfeed)
+				utils.NEWSFEED_EVENTS_PER_FEED, alertGeo, utils.NEWSFEED_ALERTS_PER_FEED),
+			append([]interface{}{
+				// UNION 1: regular posts
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
+				// UNION 2: event/volunteering posts (flood-capped)
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+				// UNION 3: alerts (flood-capped) - Community News posts here
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_ALERT,
+			}, alertGeoArgs...)...).Scan(&newsfeed)
 	}
 
 	amAMod := me.Systemrole != utils.SYSTEMROLE_USER
@@ -661,6 +799,14 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 					PathThumb: "https://" + os.Getenv("IMAGE_DOMAIN") + "/tfimg_" + strconv.FormatUint(newsfeed.Imageid, 10) + ".jpg",
 				}
 			}
+		}
+
+		// A convert-to-post notice needs to say WHAT was posted for the member
+		// - "a WANTED" reads very differently from "an OFFER" - and the client
+		// can't look the message up itself: it's usually still pending, which
+		// only mods and the author can fetch.
+		if newsfeed.Type == "ConvertedToPost" && newsfeed.Msgid > 0 {
+			db.Raw("SELECT type FROM messages WHERE id = ?", newsfeed.Msgid).Scan(&newsfeed.Msgtype)
 		}
 
 		var wg2 sync.WaitGroup
@@ -901,6 +1047,9 @@ type PostRequest struct {
 	Reason  string `json:"reason"`
 	Replyto uint64 `json:"replyto"`
 	Imageid uint64 `json:"imageid"`
+	// Msgid carries the OFFER/WANTED just created for the poster by the
+	// ChitChat convert-to-post flow, so the note on the thread can point at it.
+	Msgid uint64 `json:"msgid"`
 }
 
 // canModifyPost checks if a user can edit/delete a newsfeed post.
@@ -929,16 +1078,9 @@ func canModifyPost(myid uint64, nfID uint64) bool {
 // Requires: isAdminOrSupport() OR member of "ChitChat Moderation" team.
 // This is stricter than canModifyPost - not all moderators can hide posts.
 func canHidePost(myid uint64) bool {
-	if auth.IsAdminOrSupport(myid) {
-		return true
-	}
-
-	// Check if user is a member of the ChitChat Moderation team
-	db := database.DBConn
-	var teamMemberCount int64
-	db.Raw("SELECT COUNT(*) FROM teams_members tm INNER JOIN teams t ON tm.teamid = t.id WHERE t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).Scan(&teamMemberCount)
-
-	return teamMemberCount > 0
+	// ChitChat Moderation team, or support/admin. Shared with the message
+	// package, which gates posting on a member's behalf on the same audience.
+	return auth.IsChitChatMod(myid)
 }
 
 func Post(c *fiber.Ctx) error {
@@ -1038,21 +1180,56 @@ func Post(c *fiber.Ctx) error {
 		} else if req.ID > 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
+	case "ConvertedToPost":
+		// Records on the thread that a ChitChat moderator has posted this as a
+		// real OFFER/WANTED for the member, so they can see what happened and
+		// go and find it. The post itself is created through the normal
+		// PUT /message + JoinAndPost route with ?onbehalfof=, which is where
+		// the permission to post as them is enforced; this only adds the note.
+		if req.ID == 0 || req.Msgid == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "id and msgid are required")
+		}
+
+		if !canHidePost(myid) {
+			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+		}
+
+		createRefer(db, myid, req.ID, "ConvertedToPost", req.Msgid)
+
+		// If the member put a photo on their ChitChat post, carry it onto the
+		// OFFER/WANTED - a photo is often the most useful part. Modern images
+		// live in the external store (externaluid); rows without one are
+		// legacy blobs which a fresh ChitChat post can't have.
+		db.Exec("INSERT INTO messages_attachments (msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
+			"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
+			"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+
+			"WHERE n.id = ? AND ni.externaluid IS NOT NULL "+
+			"AND NOT EXISTS (SELECT 1 FROM messages_attachments ma WHERE ma.msgid = ?)",
+			req.Msgid, req.ID, req.Msgid)
+
+		// The real post now exists, so the ChitChat copy is redundant: hide it
+		// exactly as the Hide action does, so it stops collecting replies. The
+		// member still sees their own hidden post, with the notice on it.
+		db.Exec("UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?", myid, req.ID)
+
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, ?)",
+			log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_CREATED, myid,
+			fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid))
 	case "ReferToWanted":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToWanted")
+			createRefer(db, myid, req.ID, "ReferToWanted", 0)
 		}
 	case "ReferToOffer":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToOffer")
+			createRefer(db, myid, req.ID, "ReferToOffer", 0)
 		}
 	case "ReferToTaken":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToTaken")
+			createRefer(db, myid, req.ID, "ReferToTaken", 0)
 		}
 	case "ReferToReceived":
 		if req.ID > 0 {
-			createRefer(db, myid, req.ID, "ReferToReceived")
+			createRefer(db, myid, req.ID, "ReferToReceived", 0)
 		}
 	case "AttachToThread":
 		// Mod-only: attach a newsfeed item to a different thread
@@ -1287,7 +1464,9 @@ func notifyThreadContributors(db *gorm.DB, posterUserid uint64, newPostID uint64
 }
 
 // createRefer creates a refer-type reply to a newsfeed post and notifies the original poster.
-func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string) {
+// msgid is only set for ConvertedToPost notices, where it names the OFFER/WANTED the notice
+// is about so the thread can say which kind of post was made; pass 0 for the ReferTo family.
+func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid uint64) {
 	// Get user's location
 	latlng := user.GetLatLng(myid)
 	lat := float64(latlng.Lat)
@@ -1302,8 +1481,8 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string) {
 	if err != nil {
 		return
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO newsfeed (type, userid, replyto, position) VALUES (?, ?, ?, %s)", pos),
-		referType, myid, nfID)
+	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO newsfeed (type, userid, replyto, msgid, position) VALUES (?, ?, ?, NULLIF(?, 0), %s)", pos),
+		referType, myid, nfID, msgid)
 	if err != nil {
 		return
 	}

@@ -276,7 +276,10 @@ class ChaseUpService
             ->whereNull('messages_outcomes.id')
             ->whereNull('messages_promises.id')
             ->whereNull('messages.deleted')
-            ->whereNull('messages.heldby')
+            // Per-group hold. The rows here are per-group, so the message-wide
+            // messages.heldby mirror skipped a poster's chase-up on a group whose copy
+            // nobody had held, because a different group's copy was (Discourse 9970/2).
+            ->whereNull('messages_groups.heldby')
             ->get();
 
         $languishing = [];

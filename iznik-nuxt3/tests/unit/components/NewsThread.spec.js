@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import NewsThread from '~/components/NewsThread.vue'
@@ -79,6 +79,9 @@ const mockNewsfeedStore = {
   convertToStory: mockConvertToStory,
   hide: mockHide,
   unhide: mockUnhide,
+  // Advisory duplicate-of-their-own-post lookup, moderators only. Defaults to
+  // "no duplicate" so existing cases render the thread unchanged.
+  duplicate: vi.fn().mockResolvedValue(null),
 }
 
 const mockMiscStore = {
@@ -1304,6 +1307,84 @@ describe('NewsThread', () => {
       mockMe.value.settings = undefined
       const wrapper = await createWrapper()
       expect(wrapper.find('.auto-height-textarea').exists()).toBe(true)
+    })
+  })
+
+  describe('duplicate-of-their-own-post notice (ChitChat moderators)', () => {
+    const dup = {
+      id: 42,
+      type: 'Offer',
+      subject: 'OFFER: dining chairs (Hove BN3)',
+      cosine: 0.91,
+    }
+
+    beforeEach(() => {
+      mockNewsfeed.value.hidden = false
+      mockNewsfeedStore.duplicate.mockResolvedValue(null)
+    })
+
+    afterEach(() => {
+      mockChitChatMod.value = false
+      mockNewsfeedStore.duplicate.mockResolvedValue(null)
+    })
+
+    it('names the post it repeats, for a moderator', async () => {
+      mockChitChatMod.value = true
+      mockNewsfeedStore.duplicate.mockResolvedValue(dup)
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('OFFER: dining chairs (Hove BN3)')
+      expect(wrapper.text()).toContain('Volunteers only')
+    })
+
+    // The notice names one of the poster's OTHER posts, so it must never reach
+    // an ordinary member. The server refuses the request for them too.
+    it('is never shown to a member, even if a duplicate exists', async () => {
+      mockChitChatMod.value = false
+      mockNewsfeedStore.duplicate.mockResolvedValue(dup)
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Volunteers only')
+      expect(wrapper.text()).not.toContain('OFFER: dining chairs (Hove BN3)')
+    })
+
+    it('is not looked up at all for a member', async () => {
+      mockChitChatMod.value = false
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+      expect(mockNewsfeedStore.duplicate).not.toHaveBeenCalled()
+    })
+
+    it('says nothing when there is no duplicate', async () => {
+      mockChitChatMod.value = true
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Volunteers only')
+    })
+
+    // Advisory information: losing it must not cost the moderator the thread.
+    it('still renders the thread when the lookup fails', async () => {
+      mockChitChatMod.value = true
+      mockNewsfeedStore.duplicate.mockRejectedValue(new Error('nope'))
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.find('.b-card').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('Volunteers only')
+    })
+
+    it('offers converting the post for them', async () => {
+      mockChitChatMod.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Post this as an OFFER/WANTED for them')
+    })
+
+    it('does not offer converting to a member', async () => {
+      mockChitChatMod.value = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain(
+        'Post this as an OFFER/WANTED for them'
+      )
     })
   })
 })

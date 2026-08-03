@@ -53,17 +53,29 @@
                   :key="'otheruser-' + chat.otheruid"
                   size="sm"
                 />
-                <span v-if="otheruser.lastaccess" class="stat-chip">
+                <span
+                  v-if="otheruser.lastaccess"
+                  v-b-tooltip.bottom="LAST_SEEN_TOOLTIP"
+                  class="stat-chip"
+                >
                   <v-icon icon="clock" class="stat-icon" />
-                  {{ otheraccessFull }}
+                  Last seen {{ lastSeenAgo }}
                 </span>
-                <span v-if="replytimeFull" class="stat-chip">
+                <span
+                  v-if="replytimeFull"
+                  v-b-tooltip.bottom="REPLY_TIME_TOOLTIP"
+                  class="stat-chip"
+                >
                   <v-icon icon="reply" class="stat-icon" />
-                  {{ replytimeFull }}
+                  Replies in {{ replytimeFull }}
                 </span>
-                <span v-if="milesaway" class="stat-chip">
+                <span
+                  v-if="milesaway"
+                  v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                  class="stat-chip"
+                >
                   <v-icon icon="map-marker-alt" class="stat-icon" />
-                  {{ milesaway }} miles
+                  {{ milesaway }} miles away
                 </span>
               </div>
             </div>
@@ -211,6 +223,11 @@ import { useUserStore } from '~/stores/user'
 import { useChatStore } from '~/stores/chat'
 import { setupChat } from '~/composables/useChat'
 import { timeago } from '~/composables/useTimeFormat'
+import {
+  LAST_SEEN_TOOLTIP,
+  REPLY_TIME_TOOLTIP,
+  DISTANCE_TOOLTIP,
+} from '~/constants'
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
 import ChatMessage from '~/components/ChatMessage.vue'
@@ -260,10 +277,11 @@ watch(unseen, () => {
   }
 })
 
-const otheraccessFull = computed(() => {
+// Keeps the "ago" so the chip reads "Last seen 2 hours ago", and copes with
+// timeago's non-numeric forms like "a few seconds ago".
+const lastSeenAgo = computed(() => {
   if (!otheruser.value?.lastaccess) return null
-  const full = timeago(otheruser.value.lastaccess)
-  return full.replace(/ ago$/, '')
+  return timeago(otheruser.value.lastaccess)
 })
 
 const replytimeFull = computed(() => {
@@ -698,11 +716,22 @@ function typing() {
   color: $color-gray--darker;
   font-weight: 500;
   border-radius: var(--radius-sm, 0.375rem);
+
+  /* Spelling the labels out costs width, so shrink rather than wrap on phones. */
+  @include media-breakpoint-down(sm) {
+    gap: 3px;
+    padding: 2px 6px;
+    font-size: 0.65rem;
+  }
 }
 
 .stat-icon {
   font-size: 0.7rem;
-  color: $color-green--dark;
+  color: $color-green--darker;
+
+  @include media-breakpoint-down(sm) {
+    font-size: 0.6rem;
+  }
 }
 
 .supporter-badge {

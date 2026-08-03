@@ -36,6 +36,13 @@ each digest a post sits in unanswered makes the offerer a little less likely to 
 the spreading happens early, while the offerer is still engaged. (We have clear figures for
 distance decay; the time-decay effect is observed but not separately quantified.)
 
+Those hours are **elapsed time, not wall-clock guarantees**: expansion only runs during
+active hours (`active_start_hour` 6 to `active_end_hour` 23, server local time - see
+`ExpandService::run`, which gates `advanceDue` on `inActiveHours()`). A tick falling
+overnight waits until 06:00, so a post made late in the evening does its 6h and 12h steps
+in the morning rather than at 02:00 and 08:00. Only expansion is gated - `initialiseNew`
+runs at any hour, so a post still gets its initial reach immediately whenever it is made.
+
 State lives in one row per active post in `rippling_reach` (msgid, origin lat/lng, current
 polygon, cached per-tick schedule, tick, status). `ripple:expand` runs every minute, so a new
 post starts spreading almost immediately (roughly 70% of its initial audience at tick 0), not

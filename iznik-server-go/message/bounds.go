@@ -5,10 +5,71 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 	"sort"
 	"strconv"
 	"time"
 )
+
+// boundsLikesChunk bounds how many msgids go into a single messages_likes IN (...) lookup used
+// to compute "unseen" for the spatial arm of Bounds(). A viewport-scale polygon only matches a
+// handful of messages_spatial rows, but the no-location myGroupsBoundingBox fallback (unioning
+// every group a member belongs to) can match most of the table, so this keeps that IN list - and
+// the statement - short regardless of how large the match set gets.
+const boundsLikesChunk = 1000
+
+// chunkWindows splits ids into consecutive windows of at most size, preserving order. Pure and
+// DB-free so it can be unit tested directly; size <= 0 is treated as "everything in one window"
+// rather than looping forever.
+func chunkWindows(ids []uint64, size int) [][]uint64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	if size <= 0 {
+		size = len(ids)
+	}
+
+	windows := make([][]uint64, 0, (len(ids)+size-1)/size)
+	for start := 0; start < len(ids); start += size {
+		end := start + size
+		if end > len(ids) {
+			end = len(ids)
+		}
+		windows = append(windows, ids[start:end])
+	}
+	return windows
+}
+
+// viewedMessageIDs returns the subset of ids that have a messages_likes row for (userid, type),
+// batching the lookup in boundsLikesChunk-sized IN (...) queries. Only the existing `userid`
+// secondary index on messages_likes is needed (InnoDB appends the clustering key
+// (msgid,userid,type) to it, so this is a covering scan) - no new index required.
+func viewedMessageIDs(db *gorm.DB, ids []uint64, userid uint64, likeType string) map[uint64]bool {
+	viewed := make(map[uint64]bool, len(ids))
+
+	for _, chunk := range chunkWindows(ids, boundsLikesChunk) {
+		var chunkIDs []uint64
+		db.Raw("SELECT msgid FROM messages_likes WHERE userid = ? AND type = ? AND msgid IN (?)",
+			userid, likeType, chunk).Scan(&chunkIDs)
+
+		for _, id := range chunkIDs {
+			viewed[id] = true
+		}
+	}
+
+	return viewed
+}
+
+// applyUnseen sets the Unseen flag on msgs to match the old LEFT JOIN's CASE semantics: unseen
+// when there is no messages_likes row for (msgid, myid, type). viewed is nil/empty for an
+// anonymous caller (myid == 0), which correctly makes every post unseen here too, since a nil map
+// read is always false - exactly what the old LEFT JOIN produced, as its ON clause could never
+// match userid = 0.
+func applyUnseen(msgs []MessageSummary, viewed map[uint64]bool) {
+	for ix := range msgs {
+		msgs[ix].Unseen = !viewed[msgs[ix].ID]
+	}
+}
 
 func Bounds(c *fiber.Ctx) error {
 	db := database.DBConn
@@ -38,15 +99,12 @@ func Bounds(c *fiber.Ctx) error {
 		"messages_spatial.promised, "+
 		"messages_spatial.groupid, "+
 		"messages_spatial.msgtype AS type, "+
-		"messages_spatial.arrival, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+		"messages_spatial.arrival "+
 		"FROM messages_spatial "+
 		// The groups join no longer filters on visibility, but is kept so that a post whose
 		// group has been deleted doesn't show up.
 		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
 		"WHERE ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), point)",
-		myid, utils.MESSAGE_LIKES_VIEW,
 		swlng, swlat,
 		swlng, nelat,
 		nelng, nelat,
@@ -54,6 +112,23 @@ func Bounds(c *fiber.Ctx) error {
 		swlng, swlat,
 		utils.SRID,
 	).Scan(&msgs)
+
+	// unseen used to come from a LEFT JOIN against messages_likes on every matched
+	// messages_spatial row. For a viewport-scale polygon that's a handful of rows and is cheap,
+	// but the no-location myGroupsBoundingBox fallback can send a polygon spanning most of the
+	// member's country, which matched most of messages_spatial and turned into tens of thousands
+	// of per-row point lookups into the 86M-row messages_likes table on every call. Computing it
+	// here instead, via one batched lookup scoped to just the ids this call matched, keeps the
+	// same result without that fan-out.
+	var viewed map[uint64]bool
+	if myid != 0 {
+		ids := make([]uint64, len(msgs))
+		for ix, m := range msgs {
+			ids[ix] = m.ID
+		}
+		viewed = viewedMessageIDs(db, ids, myid, utils.MESSAGE_LIKES_VIEW)
+	}
+	applyUnseen(msgs, viewed)
 
 	// We also want to include our own messages, so that it is less obvious if a message is delayed for approval and
 	// hasn't made it into messages_spatial yet. This arm queries the messages table directly, so it bypasses the

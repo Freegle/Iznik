@@ -271,6 +271,53 @@ export const useNewsfeedStore = defineStore({
       await api(this.config).news.referto(id, type)
       await this.fetch(id, true)
     },
+    // Whether this post repeats one of the poster's own live OFFER/WANTEDs.
+    // ChitChat moderators only; returns null for anyone else (the server 403s)
+    // so a member never learns anything about the poster's other posts.
+    async duplicate(id) {
+      try {
+        const ret = await api(this.config).news.duplicate(id)
+        return ret?.duplicate ?? null
+      } catch (e) {
+        return null
+      }
+    },
+    // Turn a ChitChat post into a real OFFER/WANTED belonging to the person who
+    // posted it. ChitChat moderators only.
+    //
+    // Deliberately drives the same two calls a member's own compose does —
+    // create the draft, then join-and-post — with ?onbehalfof= naming the
+    // member. Reimplementing posting here would skip the group, spatial,
+    // indexing and embedding work those routes do, and produce posts that look
+    // right but behave oddly. The server derives the member's location and
+    // group; we never send the moderator's.
+    //
+    // Errors propagate so the modal can say so rather than appearing to work.
+    async convertToPost(id, { type, item, body, userid }) {
+      const messageApi = api(this.config).message
+
+      const draft = await messageApi.put({
+        messagetype: type,
+        item,
+        textbody: body,
+        collection: 'Draft',
+        onbehalfof: userid,
+      })
+
+      const msgid = draft?.id
+
+      if (!msgid) {
+        throw new Error("Sorry, we couldn't create that post.")
+      }
+
+      await messageApi.joinAndPost(msgid, null, { onbehalfof: userid })
+
+      // Tell the member on the thread, and point them at My Posts.
+      await api(this.config).news.convertedToPost(id, msgid)
+      await this.fetch(id, true)
+
+      return msgid
+    },
     async report(id, reason) {
       await api(this.config).news.report(id, reason)
     },

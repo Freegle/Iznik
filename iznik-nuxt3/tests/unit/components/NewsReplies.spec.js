@@ -536,6 +536,92 @@ describe('NewsReplies', () => {
       const replyCount = wrapper.findAll('.news-reply').length
       expect(replyCount).toBe(2)
     })
+
+    // A reply hangs off the LAST post of a run (NewsReply's replyTarget), so the
+    // run's earlier posts still combine and the answer lands after all of them.
+    // Hanging it off the first used to leave the run reading post, answer, post.
+    it('keeps the run in order when the last post is the one replied to', () => {
+      const run = [
+        {
+          id: 50,
+          userid: 100,
+          displayname: 'Same User',
+          message: 'First',
+          added: '2024-01-15T10:00:00Z',
+          deleted: false,
+          type: 'Reply',
+          replies: [],
+        },
+        {
+          id: 51,
+          userid: 100,
+          displayname: 'Same User',
+          message: 'Second',
+          added: '2024-01-15T10:02:00Z',
+          deleted: false,
+          type: 'Reply',
+          replies: [],
+        },
+        {
+          id: 52,
+          userid: 100,
+          displayname: 'Same User',
+          message: 'Third',
+          added: '2024-01-15T10:04:00Z',
+          deleted: false,
+          type: 'Reply',
+          // Someone has answered this one, the last of the run.
+          replies: [99],
+        },
+      ]
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: [50, 51, 52] }
+        return run.find((r) => r.id === id)
+      })
+
+      const wrapper = createWrapper()
+      const blocks = wrapper.findAll('.news-reply')
+      // The two unanswered posts stay together; the answered one comes after.
+      expect(blocks.length).toBe(2)
+      expect(blocks[0].attributes('data-id')).toBe('50')
+      expect(blocks[0].text()).toContain('First')
+      expect(blocks[0].text()).toContain('Second')
+      expect(blocks[1].attributes('data-id')).toBe('52')
+    })
+
+    it('breaks the run where an EARLIER post was replied to', () => {
+      // The old behaviour, kept as a regression guard: an answer in the middle
+      // must not be swallowed by combining the posts either side of it.
+      const run = [
+        {
+          id: 60,
+          userid: 100,
+          displayname: 'Same User',
+          message: 'First',
+          added: '2024-01-15T10:00:00Z',
+          deleted: false,
+          type: 'Reply',
+          replies: [99],
+        },
+        {
+          id: 61,
+          userid: 100,
+          displayname: 'Same User',
+          message: 'Second',
+          added: '2024-01-15T10:02:00Z',
+          deleted: false,
+          type: 'Reply',
+          replies: [],
+        },
+      ]
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: [60, 61] }
+        return run.find((r) => r.id === id)
+      })
+
+      const wrapper = createWrapper()
+      expect(wrapper.findAll('.news-reply').length).toBe(2)
+    })
   })
 
   describe('empty state', () => {

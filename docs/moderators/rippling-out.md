@@ -38,8 +38,8 @@ What this means in practice:
   tools, exactly as you would for any other member.
 - The poster appears in your member list.
 - Your community's member count may include rippled members.
-- The join is recorded with reason **'Rippled'** in the membership log, so you can
-  distinguish it from a manual or organic join if you need to.
+- The join is recorded as **'Rippled'** in the membership log, so you can distinguish it
+  from a manual or organic join if you need to.
 
 ---
 
@@ -68,6 +68,17 @@ never a reason to reject.)
 On posts in your moderation screens there is a **"View rippling reach"** button (with a
 map-marker icon) that shows you on a map the area a post is currently visible in. This is
 useful for checking how far a post has spread or why it turned up on your list.
+
+The **blue area** is where the post has *actually* rippled out to, read from the engine
+rather than modelled from the schedule. That matters because the two can differ: if the
+reach was frozen (for example the origin copy went back to Pending) a warning above the map
+says so, and the reach can also be trimmed where members have left a community or capped by
+the poster's own distance preference. A post that has not rippled out yet says so instead of
+drawing an area.
+
+Any moderator can open this, not just moderators of the communities the post is on - since
+rippling is what carries posts beyond their original community, the person wondering how far
+one travelled is often not a mod of where it started.
 
 ### 3. A reminder when you edit a shared post
 
@@ -262,15 +273,27 @@ that point:
 ### When you (a moderator) report (also on the Freegle site)
 
 When you use **Report this post** on the Freegle site, the report dialog shows **every
-community the post is on** and lets you **choose which ones to report it on** - with an
+community the post is on** and lets you **choose which mod teams to notify** - with an
 **All communities** option to select them all at once.
 
-- Reporting it on a community moves **that community's copy** straight to Pending - your
-  moderator judgement counts on its own, no quorum needed.
-- Choose **All communities** to pull the post everywhere in one go (the same effect as Back
-  to Pending in ModTools) when it is bad for everyone.
-- Communities you **don't** pick are **left alone** - their copy stays live. If a post is
-  fine for one community but not another, report it only where it is a problem.
+Be clear about what that choice does, because it is narrower than it looks:
+
+- **The tick boxes control who gets told.** Each community you pick gets a message to its
+  mod team, so the right people see your reasons.
+- **The pend is always everywhere.** Whichever communities you tick, your report moves the
+  post to **Pending on every community it is on** - its home community and every rippled
+  copy. Your moderator judgement counts on its own, with no quorum needed, and it is *not*
+  scoped to the communities you picked.
+- Scoping the pend to just the reported community was tried and did not work: the other
+  copies stayed live in browse and went out in the next digest, so a post one moderator had
+  judged bad was still circulating everywhere else.
+- So a moderator's report has the **same reach as Back to Pending in ModTools**. Each
+  community's moderators then decide their own copy, and a copy that is fine locally is
+  simply approved again.
+
+If a post is fine for one community but not another, do not use Report to trim it -
+**reject your own community's copy** instead (the low-stakes secondary rejection described
+above). That removes it from your area and leaves every other community's copy live.
 
 ### Approving or rejecting a reported post (in ModTools)
 
@@ -362,7 +385,8 @@ Everything else about your day-to-day moderation routine stays the same.
 
 ## Reference: what the 'Rippled' log entry means
 
-The membership log shows `reason='Rippled'` for any join created by rippling out. This
+Any join created by rippling out is written to the membership log as a **Group / Joined**
+entry whose text is `Rippled` (`logs.text = 'Rippled'`, with no acting user). This
 is purely for provenance and audit - you do not need to do anything with it. It lets us
 distinguish ripple-joins from manual or organic joins, and it is used internally to
 suppress the per-group welcome email (replaced by a single bundled intro) and to exclude

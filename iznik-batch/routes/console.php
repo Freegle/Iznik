@@ -1356,3 +1356,61 @@ Schedule::command('eee:sync-mv-labels')
 // proposals) also exists but is left unscheduled for now. It is advisory only
 // (nothing it writes changes the engine until a proposal is promoted), and is
 // intended to run weekly once the production rollout decision is made.
+
+// ─── Community News ──────────────────────────────────────────────────────────
+// Area-based local-news digest: a ChitChat engagement trial + a weekly branded
+// email (docs/COMMUNITY-NEWS.md).
+//
+// Research auth on live: CLAUDE_CODE_OAUTH_TOKEN is set in .env.background
+// (subscription token — wins when present); ANTHROPIC_API_KEY is the metered
+// fallback. The ->when() gate keeps the schedule inert until ops sets
+// COMMUNITY_NEWS_ENABLED=true, and per-community opt-in is the `communitynews`
+// group setting (off by default).
+//
+// Both channels are scheduled: the daily ChitChat drip and the weekly email
+// (Fridays). The email additionally needs 'CommunityNews' in
+// FREEGLE_MAIL_ENABLED_TYPES (feature-flag gated on top of the kill switch).
+//
+// Manual runs (work regardless of the schedule and kill switch):
+//     php artisan community-news:research  --area=<id>            (or all enabled)
+//     php artisan community-news:post-chitchat --area=<id> --force [--count=N]
+//     php artisan community-news:engagement
+
+// Hourly, not daily: the commands self-gate per area (research and the drip
+// each skip areas acted on within their cadence), so the steady-state cost of
+// an hourly run is a few queries — but a group that enables Community News
+// gets researched within the hour and its first ChitChat post shortly after,
+// instead of waiting for tomorrow's run. Posts are kept to waking hours.
+Schedule::command('community-news:research')
+    ->hourlyAt(30)
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('community-news:research'))
+    ->runInBackground();
+
+Schedule::command('community-news:post-chitchat')
+    ->hourlyAt(45)
+    ->between('08:00', '21:00')
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('community-news:post-chitchat'))
+    ->runInBackground();
+
+// Weekly email — live since 2026-07-31, Fridays. Needs 'CommunityNews' in
+// FREEGLE_MAIL_ENABLED_TYPES as well as the kill switch. email_min_days is 6
+// on live so a Friday send can never make the next Friday's cron skip.
+Schedule::command('community-news:email')
+    ->weeklyOn(5, '11:00')
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('community-news:email'))
+    ->runInBackground();
+
+// Curated source store: health-check + discover new local feeds (~quarterly;
+// the command self-gates per place on source_discovery_days).
+Schedule::command('community-news:discover-sources')
+    ->quarterly()
+    ->when(fn () => config('freegle.communitynews.enabled', false))
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('community-news:discover-sources'))
+    ->runInBackground();

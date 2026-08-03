@@ -62,6 +62,79 @@ export default defineEventHandler(async (event) => {
   return { status: 'started', message: 'Playwright tests started successfully' }
 })
 
+/**
+ * Drop, migrate and re-seed the iznik test database.
+ *
+ * CI builds a fresh database for every run, so specs there always start from the
+ * captured fixtures. Locally the database persists between runs, and tests mutate
+ * it: they approve pending posts, and the content-check job auto-approves any
+ * clean pending post from an unmoderated member. Left alone, the pending queue
+ * the ModTools specs rely on drains away and those specs fail locally while
+ * passing in CI - which sends you hunting for a bug in the code under test. Reset
+ * before every run so local matches CI.
+ *
+ * `settleMs` gives MySQL a moment to flush after a heavy parallel run before we
+ * issue DDL; without it the DROP can sit on the DDL lock for minutes.
+ */
+async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
+  appendTestLogs('playwright', `${label}Resetting test database to clean state...\n`)
+
+  if (settleMs > 0) {
+    await new Promise((r) => setTimeout(r, settleMs))
+  }
+
+  // Kill active connections to iznik before dropping — avoids waiting for InnoDB
+  // to flush dirty pages. Best-effort: the DROP succeeds even if connections have
+  // already closed between the SELECT and the KILL.
+  try {
+    execSync(
+      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -u root -piznik"`,
+      { encoding: 'utf8', timeout: 10000 }
+    )
+  } catch {}
+
+  execSync(
+    `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+    { encoding: 'utf8', timeout: 300000 }
+  )
+  execSync(
+    `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
+    { encoding: 'utf8', timeout: 300000 }
+  )
+  // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
+  execSync(
+    `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
+    { encoding: 'utf8', timeout: 120000 }
+  )
+  // The Go V2 API maintains a MySQL connection pool. Dropping and recreating the
+  // database invalidates those connections. Restart the container so it starts
+  // fresh — otherwise the location typeahead (used by postcode validation in the
+  // /give flow) returns empty results and Playwright tests time out.
+  execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 60000 })
+
+  const apiv2Start = Date.now()
+  let apiv2Ready = false
+  while (Date.now() - apiv2Start < 60000) {
+    try {
+      const health = execSync(
+        `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
+        { encoding: 'utf8', timeout: 5000 }
+      ).trim()
+      if (health === 'healthy') { apiv2Ready = true; break }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  if (!apiv2Ready) {
+    throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+  }
+
+  // Clear the in-memory testEnv cache so the run re-reads the seeded postcode/ID
+  // data. The fixture reload restores the same ids, so cached values remain valid,
+  // but clearing keeps the cache honest after a DB reset.
+  clearTestEnvCache()
+  appendTestLogs('playwright', `${label}Test database reset complete (apiv2 healthy)\n`)
+}
+
 async function runPlaywrightTests(testFile: string | null, testName: string | null) {
   // Drives periodic background-task processing during the run (started/stopped below).
   let bgTasksInterval: ReturnType<typeof setInterval> | null = null
@@ -217,6 +290,32 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     }, 5000)
     appendTestLogs('playwright', 'Started chats:process-incoming processor for the run\n')
 
+    // Start from the same clean database CI does. Without this the local database
+    // drifts run by run and specs fail here that pass in CI.
+    //
+    // Not on CI, which has just built the database from scratch for this run.
+    // Repeating the migrate there is pure duplicated work, and it is slow enough
+    // that the run timed out before a single spec executed.
+    if (process.env.CI) {
+      appendTestLogs('playwright', 'CI: database already built fresh for this run, skipping reset\n')
+    } else {
+      setTestState('playwright', { message: 'Resetting test database...' })
+      try {
+        await resetTestDatabase(pfx, '')
+      } catch (dbResetError: any) {
+        // Running against a half-reset database would produce results nobody can
+        // trust, so stop rather than report failures caused by the reset.
+        appendTestLogs('playwright', `Database reset FAILED: ${(dbResetError as Error).message}\n`)
+        setTestState('playwright', {
+          status: 'failed',
+          message: `Database reset failed: ${(dbResetError as Error).message}`,
+          endTime: Date.now(),
+        })
+        if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
+        return
+      }
+    }
+
     setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
@@ -292,69 +391,13 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         appendTestLogs('playwright', `\n${retryMsg}: ${retryFiles}\n`)
         setTestState('playwright', { message: retryMsg })
 
-        // Reset the test database before retry. Tests that ran in the main suite
-        // have already modified the iznik database (created posts, replies, users).
-        // Re-running those spec files against a dirty database causes failures unrelated
-        // to the actual code under test. Drop + recreate + migrate + fixture reload restores
-        // the same clean state that the main run started from.
-        appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
-        // Brief pause to let MySQL connections from the completed test run settle
-        // before issuing DDL. After 11 parallel workers finish, InnoDB dirty pages
-        // and open transactions need a moment to flush; without this the DROP DATABASE
-        // can hold the DDL lock for > 2 minutes and timeout.
-        await new Promise((r) => setTimeout(r, 10000))
+        // The main suite has already modified the database by this point (created
+        // posts, replies, users), so re-running specs against it would produce
+        // failures unrelated to the code under test. Same reset the main run does -
+        // see resetTestDatabase. The pause lets MySQL settle after 11 parallel
+        // workers finish before we issue DDL.
         try {
-          // Kill all active connections to iznik before dropping — avoids waiting
-          // for InnoDB to flush dirty pages (DDL lock) after a heavy parallel run.
-          // KILL is best-effort; the DROP succeeds even if some connections have
-          // already closed between the SELECT and the KILL.
-          try {
-            execSync(
-              `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -u root -piznik"`,
-              { encoding: 'utf8', timeout: 10000 }
-            )
-          } catch {}
-          execSync(
-            `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
-            { encoding: 'utf8', timeout: 300000 }
-          )
-          execSync(
-            `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
-            { encoding: 'utf8', timeout: 300000 }
-          )
-          // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
-          execSync(
-            `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
-            { encoding: 'utf8', timeout: 120000 }
-          )
-          // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
-          // the database invalidates those connections. Restart the container so it
-          // starts fresh — otherwise the location typeahead (used by postcode validation
-          // in the /give flow) returns empty results and Playwright tests time out.
-          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 60000 })
-          // Wait up to 60s for the Go API to be healthy before running tests.
-          const apiv2Start = Date.now()
-          let apiv2Ready = false
-          while (Date.now() - apiv2Start < 60000) {
-            try {
-              const health = execSync(
-                `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
-                { encoding: 'utf8', timeout: 5000 }
-              ).trim()
-              if (health === 'healthy') { apiv2Ready = true; break }
-            } catch {}
-            await new Promise((r) => setTimeout(r, 2000))
-          }
-          if (!apiv2Ready) {
-            throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
-          }
-          // Clear the in-memory testEnv cache so the retry re-reads the seeded
-          // postcode/ID data. The fixture reload restores the same ids, so the
-          // cached values remain valid, but clearing keeps the cache honest after
-          // a DB reset (avoids serving data from a prior, differently-seeded run).
-          clearTestEnvCache()
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
+          await resetTestDatabase(pfx, `[Freeze-retry ${freezeRound + 1}/2] `, 10000)
         } catch (dbResetError: any) {
           // Database reset failure means the retry would run against dirty data — any
           // result would be unreliable. Fail the run so the root cause can be investigated.

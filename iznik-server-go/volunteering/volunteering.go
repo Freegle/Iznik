@@ -44,6 +44,11 @@ type Volunteering struct {
 	Canmodify      bool               `json:"canmodify" gorm:"-"`
 }
 
+// listLimit caps how many opportunities a member's list returns. National ops are taken
+// first, so a very large number of them could in principle crowd out local ones - there
+// are none live today, and any that appear are central Freegle asks worth seeing.
+const listLimit = 20
+
 func List(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
@@ -99,17 +104,53 @@ func List(c *fiber.Ctx) error {
 				}
 			}
 		}
-	} else if len(groupids) > 0 {
+	} else {
 		start := time.Now().Format("2006-01-02")
+		seen := make(map[uint64]bool)
 
+		// National opportunities have NO volunteering_groups row (that absence is what makes
+		// them national), so the group query below can never find them - they were missing
+		// from the list entirely. Fetch them separately and put them FIRST: they apply
+		// whoever is looking, whereas ordering everything by id DESC would bury them under
+		// whatever local ops happen to be newer.
+		var nationalIds []uint64
 		db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-			"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
+			"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
 			"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
 			"LEFT JOIN users ON volunteering.userid = users.id "+
-			"WHERE groupid IN (?) AND "+
+			"WHERE volunteering_groups.groupid IS NULL AND "+
 			"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) "+
 			"AND users.deleted IS NULL "+
-			"ORDER BY id DESC LIMIT 20", groupids, start, start, myid).Pluck("id", &ids)
+			"ORDER BY volunteering.id DESC LIMIT ?", start, start, myid, listLimit).Pluck("id", &nationalIds)
+
+		for _, id := range nationalIds {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+
+		if len(groupids) > 0 && len(ids) < listLimit {
+			var groupOpIds []uint64
+			db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
+				"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
+				"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
+				"LEFT JOIN users ON volunteering.userid = users.id "+
+				"WHERE groupid IN (?) AND "+
+				"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) "+
+				"AND users.deleted IS NULL "+
+				"ORDER BY id DESC LIMIT ?", groupids, start, start, myid, listLimit).Pluck("id", &groupOpIds)
+
+			for _, id := range groupOpIds {
+				if len(ids) >= listLimit {
+					break
+				}
+				if !seen[id] {
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
+		}
 	}
 
 	if len(ids) > 0 {

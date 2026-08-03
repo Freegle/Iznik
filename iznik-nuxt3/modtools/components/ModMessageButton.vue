@@ -241,9 +241,19 @@ const spinclass = computed(() => {
   return null
 })
 
+// heldby is per-group (messages_groups.heldby); a hold on a DIFFERENT group this
+// post also rippled to must not force a confirm on the copy being administered
+// here (Discourse 9970/2).
+const heldByOnThisGroup = computed(() => {
+  const g = message.value?.groups?.find(
+    (grp) => parseInt(grp.groupid) === parseInt(groupid.value)
+  )
+  return g?.heldby || null
+})
+
 const confirmButton = computed(() => {
   // We confirm any actions on held messages, except where we have a separate confirm.
-  return message.value?.heldby && !props.spam && !props.delete
+  return heldByOnThisGroup.value && !props.spam && !props.delete
 })
 
 async function approveIt() {

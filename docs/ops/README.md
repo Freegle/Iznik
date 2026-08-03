@@ -27,6 +27,8 @@ process level**.
    happening and find problems.
 4. **[Domains, services and runbooks](04-domains-services-and-runbooks.md)** - the
    public services, the spatial and mail stacks, backups, and operational runbooks.
+5. **[Production topology](production.md)** - the live deployment: what the machines
+   are, their roles, and what routes where.
 
 The single best technical reference for the container and environment architecture is
 [../developers/reference/architecture.md](../developers/reference/architecture.md). These pages summarise the operational shape

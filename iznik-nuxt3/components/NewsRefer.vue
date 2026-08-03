@@ -20,6 +20,10 @@
         section is just for chat and recommendations.
       </p>
     </notice-message>
+    <NewsConvertedNotice
+      v-if="type === 'ConvertedToPost'"
+      :msgtype="reply?.msgtype"
+    />
     <notice-message v-if="type === 'ReferToTaken'">
       <p>
         If your item has been taken, please go to My Posts, click on the item,
@@ -58,6 +62,7 @@
 <script setup>
 import { ref, computed, defineAsyncComponent } from 'vue'
 import NoticeMessage from './NoticeMessage'
+import NewsConvertedNotice from './NewsConvertedNotice'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMe } from '~/composables/useMe'
 

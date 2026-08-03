@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	user2 "github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/user"
+	user2 "github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -4875,4 +4876,67 @@ func TestPatchUserSettingsBySharedGroupModPersists(t *testing.T) {
 	notifications, ok := settings["notifications"].(map[string]interface{})
 	require.True(t, ok, "notifications object should be present")
 	assert.Equal(t, true, notifications["email"], "shared-group mod's settings write must persist")
+}
+
+// enrichUserForModtools resolves privateposition.name via a "nearest Postcode-type
+// location" fallback when there is no cached settings.mylocation.name and no
+// lastlocation. That fallback used to run an unindexed bounding-box + distance-sort
+// query directly against `locations`; it now calls location.ClosestPostcode, the
+// same spatial-sidecar-backed helper already used for publiclocation (user.go:1077),
+// guarded by the old query's ~0.1-degree bounding box so a position with no postcode
+// that close shows nothing rather than one from miles away (the KNN itself has no
+// distance cap). One user is placed exactly at a postcode the sidecar knows (guard
+// passes, name resolves); another at a probe point whose nearest fixture postcode
+// is far outside the box (guard rejects, name stays empty).
+func TestPrivateLocationName_FallsBackToClosestPostcode(t *testing.T) {
+	prefix := uniquePrefix("privlocfallback")
+	db := database.DBConn
+
+	// Find some full postcode the sidecar's dataset and this DB both know, by
+	// probing from central London. The sparse test fixtures put the nearest one
+	// far away (Wales), which is exactly what the far-case below relies on.
+	probeLat, probeLng := float32(51.5), float32(-0.1)
+	pc := location.ClosestPostcode(probeLat, probeLng)
+	require.NotEmpty(t, pc.Name, "test precondition: spatial sidecar must resolve a postcode")
+
+	makeUser := func(tag string, lat, lng float32) uint64 {
+		db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+			"VALUES ('Test', ?, ?, 'User', NULL, ?)", prefix+tag, "Test User "+prefix+tag,
+			fmt.Sprintf(`{"mylocation":{"lat":%v,"lng":%v}}`, lat, lng))
+		var id uint64
+		db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", "Test User "+prefix+tag).Scan(&id)
+		require.Greater(t, id, uint64(0))
+		return id
+	}
+
+	// privatePositionName fetches the modtools self-view (which satisfies
+	// enrichUserForModtools' modDataAuthz gate) and returns privateposition.name.
+	privatePositionName := func(id uint64) interface{} {
+		_, token := CreateTestSession(t, id)
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", id, token), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		privPos, ok := result["privateposition"].(map[string]interface{})
+		require.True(t, ok, "Expected privateposition in modtools self-view response")
+		return privPos["name"]
+	}
+
+	// At the postcode itself: nearest is that postcode at ~zero distance, well
+	// inside the guard, so the name resolves.
+	nearID := makeUser("near", pc.Lat, pc.Lng)
+	assert.Equal(t, pc.Name, privatePositionName(nearID),
+		"privateposition.name should be the nearest postcode when within the distance guard")
+
+	// At the probe point: only run the far-case when the fixture set really does
+	// leave the probe outside the guard box (true today: nearest resolves to a
+	// Welsh postcode from a London probe), so adding closer fixtures later can't
+	// silently invert this assertion's meaning.
+	if float64(pc.Lat-probeLat) > 0.1 || float64(pc.Lat-probeLat) < -0.1 ||
+		float64(pc.Lng-probeLng) > 0.1 || float64(pc.Lng-probeLng) < -0.1 {
+		farID := makeUser("far", probeLat, probeLng)
+		assert.Empty(t, privatePositionName(farID),
+			"privateposition.name should stay empty when the nearest postcode is outside the guard box")
+	}
 }
