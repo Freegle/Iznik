@@ -32,6 +32,16 @@
         <include>
             <directory>app</directory>
         </include>
+        <exclude>
+            <!-- OpenAPI-generated TrashNothing API client (lib/, test/, docs/
+                 produced by openapi-generator, not hand-written). Counting its
+                 thousands of generated lines as uncovered source dropped the
+                 whole suite's coverage figure by ~1.9% the moment it landed,
+                 which says nothing about the code we actually maintain. Our
+                 hand-written wrapper around the client stays included. -->
+            <directory>app/Services/TrashNothing/PublicApi/lib</directory>
+            <directory>app/Services/TrashNothing/PublicApi/test</directory>
+        </exclude>
     </source>
     <php>
         <ini name="memory_limit" value="2048M"/>
