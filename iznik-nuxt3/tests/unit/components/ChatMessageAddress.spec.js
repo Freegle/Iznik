@@ -222,7 +222,13 @@ describe('ChatMessageAddress', () => {
       mockChatmessage.value.userid = 2
       mockMe.value = { id: 1 }
       const wrapper = createWrapper()
-      await flushPromises()
+      // The map renders only once the mocked address fetch has resolved AND
+      // Vue has re-rendered the v-if="address?.postcode" block. A single
+      // flushPromises() raced that chain under CI worker load, so wait for
+      // the element itself rather than counting ticks.
+      await vi.waitFor(() => {
+        expect(wrapper.find('.l-map').exists()).toBe(true)
+      })
       expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
         'false'
       )
@@ -232,7 +238,9 @@ describe('ChatMessageAddress', () => {
       mockChatmessage.value.userid = 1
       mockMe.value = { id: 1 }
       const wrapper = createWrapper()
-      await flushPromises()
+      await vi.waitFor(() => {
+        expect(wrapper.find('.l-map').exists()).toBe(true)
+      })
       expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
         'false'
       )
