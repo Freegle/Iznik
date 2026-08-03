@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-08-03
 owner: Freegle dev team
 covers:
   - README.md
@@ -12,6 +12,23 @@ covers:
 The authoritative setup instructions are in the root [../../README.md](../../README.md)
 (Installation and Running sections). This page is the fast path and the things worth
 knowing that are easy to miss.
+
+## System requirements
+
+Measured on a working dev machine (August 2026), rounded up for headroom:
+
+- **RAM**: a full stack is ~29 containers using **15-19 GiB** when warm. 32 GB is a
+  realistic minimum for one stack; each extra worktree stack costs a similar amount
+  while running. On WSL2, raise the memory limit in `.wslconfig` — Docker Desktop's
+  default allocation is not enough.
+- **Disk**: allow **~100 GB free** for a first build (images plus volumes plus build
+  cache). This grows over time: build cache and superseded image layers accumulate, and
+  each worktree adds its own volumes. Reclaim space with `docker builder prune` and
+  `docker system df` to see where it has gone.
+- The heaviest single containers are the two spatial servers (~3 GiB RAM each) and the
+  embedding sidecar (~1.5 GiB); the Nuxt dev containers are ~1 GiB each.
+
+If that is more than your machine can give, see the lightweight setup below.
 
 ## The fast path
 
