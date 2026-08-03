@@ -5300,3 +5300,101 @@ type voicepostFinishResponse struct {
 // Responses:
 //
 //	200: successResponse
+
+// swagger:route GET /group/{id}/message/summary group getGroupMessageSummaries
+// Get id + subject for a group's live posts
+//
+// Backs the server-rendered, crawlable post list on the community page
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Group ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/sitemap message getMessageSitemap
+// Live posts for the search-engine sitemap
+//
+// Returns id + lastmod for every currently-live Offer/Wanted post, for building sitemap.xml
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/email/stats/reengage modtools getEmailStatsReengage
+// Get re-engagement email effectiveness
+//
+// Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: Start date (YYYY-MM-DD)
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date (YYYY-MM-DD)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /newsfeed/{id}/duplicate newsfeed getNewsfeedDuplicate
+// Whether a ChitChat post duplicates the poster's own live OFFER/WANTED
+//
+// Moderator-only. Names one of the poster's own live posts when the ChitChat
+// entry says the same thing, so it can be hidden.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Newsfeed ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /newsfeed/{id}/convertinfo newsfeed getNewsfeedConvertInfo
+// Where a convert-to-post would land
+//
+// Moderator-only. The postcode and community a post made for the member
+// would use, so the modal can show it before committing.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Newsfeed ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
