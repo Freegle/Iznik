@@ -2923,7 +2923,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'coverage_gate_decide',
-    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) PICKABLE (non-exhausted) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) PRs created this iteration → WRAP_UP; (4) else → WRITE_COVERAGE. Red PRs whose fix-attempt budget is exhausted are NOT counted as actionable CI (otherwise they ping-pong COVERAGE_GATE↔CI_ROUTER and starve coverage/Sentry).',
+    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) PICKABLE (non-exhausted) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) coverage-jitter PRs → WRITE_COVERAGE (STEP 0 boost — it pushes to an existing branch rather than creating a PR, so the WRAP_UP arms below must not pre-empt it, otherwise those PRs stay red forever); (4) CI still pending → WRAP_UP; (5) PRs created this iteration → WRAP_UP; (6) else → WRITE_COVERAGE. Red PRs whose fix-attempt budget is exhausted are NOT counted as actionable CI (otherwise they ping-pong COVERAGE_GATE↔CI_ROUTER and starve coverage/Sentry).',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
@@ -2971,9 +2971,18 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       let target: string
       if (pickableRedCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
+      // A coverage-jitter PR can ONLY be cleared by WRITE_COVERAGE's STEP 0 boost.
+      // check_my_open_pr_ci deliberately keeps these out of redPRs (their tests pass, so
+      // the fix-CI path has nothing to fix), and no other state pushes to their branch.
+      // Both WRAP_UP arms below exist to avoid *creating new PRs* — drain mode while CI
+      // is busy, and "this iteration already produced one". The boost creates no PR; it
+      // pushes to an existing branch. So neither reason applies to it, and letting them
+      // win means a jitter PR stays red indefinitely: any iteration with pending CI or a
+      // PR created wraps up before ever reaching the booster.
+      else if (coverageJitterPRs.length > 0) target = 'WRITE_COVERAGE'
       else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
-      else target = 'WRITE_COVERAGE'  // all red PRs exhausted/held → coverage (incl. jitter-boost, see WRITE_COVERAGE STEP 0); lets Sentry run too
+      else target = 'WRITE_COVERAGE'  // all red PRs exhausted/held → coverage; lets Sentry run too
       if (coverageJitterPRs.length > 0) {
         out(`coverage_gate_decide: ${coverageJitterPRs.length} coverage-jitter PR(s) [${coverageJitterPRs.map((p: any) => '#' + p.number).join(', ')}] — booster will add genuine coverage to clear the noise floor`)
       }

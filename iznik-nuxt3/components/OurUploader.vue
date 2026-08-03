@@ -184,6 +184,30 @@ function onDragEnter(event) {
   }
 }
 
+// Camera.pickImages() can hand back a webPath for a Photos-library asset that
+// iOS hasn't finished downloading from iCloud yet. fetch()-ing that webPath
+// then hangs forever - no resolve, no reject - so the picker silently "does
+// nothing" with no error and no console output (topic 9875/1). getPhoto()
+// (camera capture) never hits this because a just-taken photo is always
+// already local, but we apply the same guard there too for safety. Race a
+// timeout so a stuck fetch surfaces the normal "couldn't get that photo"
+// error instead of hanging the whole picker flow indefinitely.
+const FETCH_PICKED_PHOTO_TIMEOUT_MS = 20000
+
+function fetchPickedPhotoBlob(webPath) {
+  let timeoutId
+  const timeout = new Promise((resolve, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error('Timed out getting photo')),
+      FETCH_PICKED_PHOTO_TIMEOUT_MS
+    )
+  })
+  return Promise.race([
+    fetch(webPath).then((response) => response.blob()),
+    timeout,
+  ]).finally(() => clearTimeout(timeoutId))
+}
+
 async function openModal() {
   if (isApp.value) {
     // console.log('openModal A')
@@ -210,8 +234,7 @@ async function openModal() {
       // Can be set to the src of an image now
       // console.log('openModal D', image.webPath, image.format)
 
-      const response = await fetch(image.webPath)
-      const file = await response.blob()
+      const file = await fetchPickedPhotoBlob(image.webPath)
       await uploadOneFile(file)
     } catch (e) {
       loading.value = ''
@@ -386,8 +409,7 @@ async function choosePhoto() {
     console.log(images)
     for (const image of images.photos) {
       console.log(image.webPath)
-      const response = await fetch(image.webPath)
-      const file = await response.blob()
+      const file = await fetchPickedPhotoBlob(image.webPath)
       await uploadOneFile(file)
     }
   } catch (e) {
