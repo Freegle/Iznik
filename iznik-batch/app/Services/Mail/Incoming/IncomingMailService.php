@@ -3049,12 +3049,22 @@ class IncomingMailService
     /**
      * Check if email contains worry words.
      *
-     * Worry words are stored in the 'worrywords' database table with types:
-     * - Regulated: UK regulated substances
-     * - Reportable: UK reportable substances
-     * - Medicine: Medicines/supplements
-     * - Review: Just needs looking at
-     * - Allowed: Exclusions (removed from text before checking)
+     * Worry words are stored in the 'concern_keywords' database table (global
+     * scope) with categories:
+     * - substance_regulated: UK regulated substances
+     * - substance_reportable: UK reportable substances
+     * - substance_medicine: Medicines/supplements
+     * - review / scam: Just needs looking at
+     * - allowed: Exclusions (removed from text before checking)
+     *
+     * Reads concern_keywords rather than the legacy 'worrywords' table:
+     * worrywords was a one-time migration snapshot (see
+     * MigrateConcernKeywordsCommand) and is never written to again — every
+     * keyword/whitelist edit made via the current admin UI (ModSupportConcernKeywords)
+     * only reaches concern_keywords, so reading worrywords here meant a moderator
+     * whitelisting a phrase (e.g. 'Cashes Green', Discourse #9944) had no effect
+     * on posts arriving by email even after ac3f80c82 fixed the chat/post-content-check
+     * paths, which already read concern_keywords.
      */
     private function containsWorryWords(ParsedEmail $email): bool
     {
@@ -3062,7 +3072,7 @@ class IncomingMailService
         $body = $email->textBody ?? '';
 
         // Get worry words from database
-        $worryWords = DB::table('worrywords')->get();
+        $worryWords = DB::table('concern_keywords')->where('scope', 'global')->get();
 
         // Check for pound sign (£) as a special case
         if (str_contains($subject, '£') || str_contains($body, '£')) {
@@ -3071,9 +3081,9 @@ class IncomingMailService
             return true;
         }
 
-        // First, remove any ALLOWED type words from the text
+        // First, remove any ALLOWED category phrases from the text
         foreach ($worryWords as $worryWord) {
-            if ($worryWord->type === 'Allowed') {
+            if ($worryWord->category === 'allowed') {
                 $pattern = '/\b'.preg_quote($worryWord->keyword, '/').'\b/i';
                 $subject = preg_replace($pattern, '', $subject);
                 $body = preg_replace($pattern, '', $body);
@@ -3082,12 +3092,12 @@ class IncomingMailService
 
         // Check for phrases (words containing spaces) with literal matching
         foreach ($worryWords as $worryWord) {
-            if ($worryWord->type !== 'Allowed' && str_contains($worryWord->keyword, ' ')) {
+            if ($worryWord->category !== 'allowed' && str_contains($worryWord->keyword, ' ')) {
                 if (stripos($subject, $worryWord->keyword) !== false ||
                     stripos($body, $worryWord->keyword) !== false) {
                     Log::debug('Worry word phrase found', [
                         'keyword' => $worryWord->keyword,
-                        'type' => $worryWord->type,
+                        'category' => $worryWord->category,
                     ]);
 
                     return true;
@@ -3107,7 +3117,7 @@ class IncomingMailService
             }
 
             foreach ($worryWords as $worryWord) {
-                if ($worryWord->type !== 'Allowed' && ! empty($worryWord->keyword)) {
+                if ($worryWord->category !== 'allowed' && ! empty($worryWord->keyword)) {
                     // Check length ratio (0.75 to 1.25)
                     $ratio = strlen($word) / strlen($worryWord->keyword);
                     if ($ratio >= 0.75 && $ratio <= 1.25) {
@@ -3116,7 +3126,7 @@ class IncomingMailService
                             Log::debug('Worry word found', [
                                 'word' => $word,
                                 'keyword' => $worryWord->keyword,
-                                'type' => $worryWord->type,
+                                'category' => $worryWord->category,
                             ]);
 
                             return true;
