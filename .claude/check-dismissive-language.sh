@@ -40,8 +40,14 @@ DISMISSIVE_PATTERNS=(
   'unrelated.*(fail|test|error)'
   '(fail|test|error).*unrelated'
   'known (issue|failure|flak)'
-  'skip.*(fail|test)'
-  'ignore.*(fail|test)'
+  # The verb must directly govern the noun - "skip the failing test", "ignore
+  # these errors". The previous form was `skip.*(fail|test)`, which fired on any
+  # sentence containing both words however far apart, so it hit ordinary
+  # technical prose: quoting a tool that prints "skipping", or describing a
+  # coverage-ignore directive ("ignores v8 comments ... rather than hiding code
+  # from tests"). Neither dismisses anything, and a guard that cries wolf on
+  # normal writing gets read as noise.
+  '(skip|ignor)[a-z]* +(the |this |that |these |those |it |them |such )*(fail|test|error|red|break)'
   'not our (fault|problem|issue)'
   'nothing to do with'
   'beyond the scope'
