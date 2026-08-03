@@ -105,10 +105,11 @@ describe('Driver: iteration loop logic', () => {
     const MAX_FIX_ATTEMPTS = 3
 
     // Mirror of coverage_gate_decide's target selection.
-    const decide = (redPRs: Array<{ number: number; attempts: number }>, opts: { dirty?: boolean; pending?: number; prCount?: number } = {}) => {
+    const decide = (redPRs: Array<{ number: number; attempts: number }>, opts: { dirty?: boolean; pending?: number; prCount?: number; jitter?: number } = {}) => {
       const pickableRedCount = redPRs.filter(p => p.attempts < MAX_FIX_ATTEMPTS).length
       if (pickableRedCount > 0) return 'CI_ROUTER'
       if (opts.dirty) return 'REBASE_DIRTY_PRS'
+      if ((opts.jitter ?? 0) > 0) return 'WRITE_COVERAGE'
       if ((opts.pending ?? 0) > 0) return 'WRAP_UP'
       if ((opts.prCount ?? 0) > 0) return 'WRAP_UP'
       return 'WRITE_COVERAGE'
@@ -137,6 +138,51 @@ describe('Driver: iteration loop logic', () => {
 
     it('routes to WRITE_COVERAGE when there are no red PRs at all', () => {
       expect(decide([])).toBe('WRITE_COVERAGE')
+    })
+  })
+
+  describe('COVERAGE_GATE coverage-jitter routing', () => {
+    // Regression: a coverage-jitter PR (tests green, red only on a Coveralls delta) is
+    // excluded from redPRs on purpose, so the fix-CI path will never touch it. The ONLY
+    // thing that can clear it is WRITE_COVERAGE's STEP 0 boost, which pushes coverage to
+    // that same branch. Both WRAP_UP arms exist to avoid CREATING new PRs, which the
+    // boost does not do — so if they win, the jitter PR stays red forever. #1240, #1241
+    // and #1246 sat red across whole iterations for exactly this reason.
+    const MAX_FIX_ATTEMPTS = 3
+
+    const decide = (redPRs: Array<{ number: number; attempts: number }>, opts: { dirty?: boolean; pending?: number; prCount?: number; jitter?: number } = {}) => {
+      const pickableRedCount = redPRs.filter(p => p.attempts < MAX_FIX_ATTEMPTS).length
+      if (pickableRedCount > 0) return 'CI_ROUTER'
+      if (opts.dirty) return 'REBASE_DIRTY_PRS'
+      if ((opts.jitter ?? 0) > 0) return 'WRITE_COVERAGE'
+      if ((opts.pending ?? 0) > 0) return 'WRAP_UP'
+      if ((opts.prCount ?? 0) > 0) return 'WRAP_UP'
+      return 'WRITE_COVERAGE'
+    }
+
+    it('boosts a jitter PR even when this iteration already created a PR', () => {
+      expect(decide([], { jitter: 1, prCount: 1 })).toBe('WRITE_COVERAGE')
+    })
+
+    it('boosts a jitter PR even while other CI is still pending', () => {
+      // Drain mode is about not creating new coverage PRs; the boost creates none.
+      expect(decide([], { jitter: 3, pending: 2 })).toBe('WRITE_COVERAGE')
+    })
+
+    it('boosts a jitter PR when both wrap-up conditions hold at once', () => {
+      // The real starvation case: productive iteration, CI busy, jitter PRs waiting.
+      expect(decide([], { jitter: 3, pending: 2, prCount: 1 })).toBe('WRITE_COVERAGE')
+    })
+
+    it('still puts genuinely red CI and dirty branches first', () => {
+      expect(decide([{ number: 1245, attempts: 0 }], { jitter: 3 })).toBe('CI_ROUTER')
+      expect(decide([], { jitter: 3, dirty: true })).toBe('REBASE_DIRTY_PRS')
+    })
+
+    it('leaves the no-jitter behaviour exactly as it was', () => {
+      expect(decide([], { pending: 2 })).toBe('WRAP_UP')
+      expect(decide([], { prCount: 1 })).toBe('WRAP_UP')
+      expect(decide([], {})).toBe('WRITE_COVERAGE')
     })
   })
 

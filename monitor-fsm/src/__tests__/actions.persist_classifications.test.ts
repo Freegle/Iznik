@@ -238,6 +238,29 @@ describe('persist_classifications action', () => {
     expect(newBug?.state).toBe('fix-queued')
     expect(newBug?.pr_number).toBe(200)
   })
+
+  // 9982/12: a reporter's UNRELATED bug, posted in a topic that already has an
+  // active PR for a DIFFERENT symptom, must NOT be linked to that PR. Linking it
+  // makes queue_deployed_reply_drafts auto-post a "possible fix applied, please
+  // retest" reply threaded under THIS post once the (unrelated) PR deploys — the
+  // reply appears attached to the wrong post, claiming to fix something it didn't.
+  it('does not link an unrelated bug to an active same-topic PR when symptom tags share zero overlap', async () => {
+    upsertDiscourseBug(db, {
+      topic: 998, post: 5, state: 'fix-queued', prNumber: 500,
+      symptomTags: ['login', 'crash'],
+    })
+    const result = await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 998, post: 12, type: 'bug', user: 'Neville_Reid',
+        symptom_tags: ['photo', 'upload', 'fail'],
+        summary: 'Photo upload fails with a spinner that never completes',
+      }],
+    })
+    expect(result.upserted).toBe(1)
+    const newBug = getDiscourseBug(db, 998, 12)
+    expect(newBug?.state).toBe('open')
+    expect(newBug?.pr_number).toBeNull()
+  })
 })
 
 describe('regression detection in persist_classifications', () => {

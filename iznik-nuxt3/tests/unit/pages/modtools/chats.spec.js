@@ -29,6 +29,7 @@ vi.mock('~/stores/chat', () => ({
 // Mock auth store
 const mockAuthStore = {
   user: { id: 1, lat: 0, lng: 0 },
+  fetchUser: vi.fn(),
 }
 
 vi.mock('~/stores/auth', () => ({
@@ -139,6 +140,8 @@ describe('chats/[[id]].vue page', () => {
     mockRouteParams.value = { id: undefined }
     mockChatStore.list = []
     mockChatStore.searchSince = null
+    mockAuthStore.user = { id: 1, lat: 0, lng: 0 }
+    mockAuthStore.fetchUser = vi.fn().mockResolvedValue(mockAuthStore.user)
   })
 
   describe('initial state', () => {
@@ -224,6 +227,71 @@ describe('chats/[[id]].vue page', () => {
       const filtered = wrapper.vm.scanChats(false, chats)
       expect(filtered).toHaveLength(1)
       expect(filtered[0].name).toBe('Test Chat')
+    })
+  })
+
+  describe('session expiry on chat load (Discourse 9881)', () => {
+    // Mount first so the automatic onMounted() -> listChats() call consumes
+    // the default (resolving) mock, then queue the scenario for the explicit
+    // wrapper.vm.listChats() call made by each test below.
+    async function mountAndSettle() {
+      const wrapper = mountComponent()
+      await flushPromises()
+      return wrapper
+    }
+
+    it('redirects home instead of throwing a raw API error when the session has genuinely expired', async () => {
+      const wrapper = await mountAndSettle()
+
+      // Simulate a 401 from the chat list endpoint, as happens when the
+      // moderator's session has expired.
+      mockChatStore.listChatsMT.mockRejectedValueOnce({
+        response: { status: 401 },
+        message: 'API Error GET /chat?chattypes=... -> status: 401',
+      })
+
+      // The authoritative /session check (authStore.fetchUser) confirms the
+      // session really is dead by clearing the user.
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(() => {
+        mockAuthStore.user = null
+        return Promise.resolve(null)
+      })
+
+      // Should not reject / bubble up as an unhandled API error.
+      await expect(wrapper.vm.listChats()).resolves.toBeUndefined()
+
+      expect(mockAuthStore.fetchUser).toHaveBeenCalled()
+      expect(mockRouterPush).toHaveBeenCalledWith('/')
+    })
+
+    it('does not redirect when a 401 turns out to be transient (session still valid)', async () => {
+      const wrapper = await mountAndSettle()
+
+      mockChatStore.listChatsMT.mockRejectedValueOnce({
+        response: { status: 401 },
+        message: 'API Error GET /chat?chattypes=... -> status: 401',
+      })
+
+      // The authoritative /session check says we're still logged in - a
+      // background 401 elsewhere shouldn't force a redirect (Discourse #9893).
+      mockAuthStore.fetchUser = vi.fn().mockResolvedValue(mockAuthStore.user)
+
+      await expect(wrapper.vm.listChats()).resolves.toBeUndefined()
+
+      expect(mockAuthStore.fetchUser).toHaveBeenCalled()
+      expect(mockRouterPush).not.toHaveBeenCalledWith('/')
+    })
+
+    it('still throws (and does not redirect) for non-401 errors', async () => {
+      const wrapper = await mountAndSettle()
+
+      mockChatStore.listChatsMT.mockRejectedValueOnce(
+        new Error('Network error')
+      )
+
+      await expect(wrapper.vm.listChats()).rejects.toThrow('Network error')
+      expect(mockAuthStore.fetchUser).not.toHaveBeenCalled()
+      expect(mockRouterPush).not.toHaveBeenCalledWith('/')
     })
   })
 

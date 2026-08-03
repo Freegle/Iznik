@@ -88,9 +88,11 @@ import { ref, computed, watch, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { useRoute, useRouter } from '#imports'
 import { useChatStore } from '~/stores/chat'
+import { useAuthStore } from '~/stores/auth'
 
 // Stores
 const chatStore = useChatStore()
+const authStore = useAuthStore()
 
 // Route
 const route = useRoute()
@@ -145,6 +147,29 @@ watch(search, (newVal, oldVal) => {
 })
 
 // Methods
+
+// A 401 from a chat-list request doesn't by itself prove the session is
+// dead - BaseAPI deliberately leaves auth intact on a 401 from a
+// non-/session endpoint, since a single transient blip on one of
+// ModTools' many background calls shouldn't force a re-login (Discourse
+// #9893). Confirm against the authoritative /session check before
+// treating it as a real session expiry - otherwise a genuinely expired
+// session showed this page's raw "API Error ... status: 401" instead of
+// sending the moderator back to log in (Discourse #9881).
+async function redirectIfSessionExpired(e) {
+  if (e?.response?.status !== 401) {
+    return false
+  }
+
+  await authStore.fetchUser()
+
+  if (!authStore.user) {
+    router.push('/')
+  }
+
+  return true
+}
+
 async function listChats(age, searchTerm) {
   const params = {
     chattypes: ['User2Mod', 'Mod2Mod'],
@@ -156,7 +181,15 @@ async function listChats(age, searchTerm) {
     params.search = searchTerm
   }
 
-  await chatStore.listChatsMT(params, id.value)
+  try {
+    await chatStore.listChatsMT(params, id.value)
+  } catch (e) {
+    if (await redirectIfSessionExpired(e)) {
+      return
+    }
+    throw e
+  }
+
   bump.value++
 }
 
