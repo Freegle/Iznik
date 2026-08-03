@@ -3,6 +3,7 @@ package image
 import (
 	"database/sql"
 	"encoding/json"
+	stdlog "log"
 	"os"
 	"strconv"
 	"strings"
@@ -250,6 +251,7 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	// parallel load (GORM's connection pool may assign a different connection).
 	sqlDB, err := db.DB()
 	if err != nil {
+		stdlog.Printf("image doCreate: could not get sql.DB for imgtype %s: %v", imgType, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
 
@@ -267,6 +269,15 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	}
 
 	if err != nil {
+		// Log the real cause. Returning only the generic message made a genuine
+		// server-side fault indistinguishable from any other, and cost real
+		// diagnosis time: a NOT NULL violation on this INSERT surfaced in CI as a
+		// bare 500 with nothing in any log naming the column, so the failure had
+		// to be reproduced by hand against the schema to find out what it was.
+		// The client still gets the generic message - the detail goes to the log,
+		// not the response.
+		stdlog.Printf("image doCreate: INSERT into %s failed for imgtype %s (parent %v, uid %s): %v",
+			cfg.Table, imgType, parentIDParam, req.ExternalUID, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create image attachment")
 	}
 
@@ -311,6 +322,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	result := db.Exec("UPDATE `"+cfg.Table+"` SET externalmods = ? WHERE id = ?", modsJSON, req.ID)
 
 	if result.Error != nil {
+		stdlog.Printf("image doRotate: UPDATE %s id %d failed: %v", cfg.Table, req.ID, result.Error)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to rotate image")
 	}
 
