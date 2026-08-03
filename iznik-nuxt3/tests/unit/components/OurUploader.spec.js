@@ -1307,6 +1307,77 @@ describe('OurUploader', () => {
     })
   })
 
+  // AssertFlip test — Camera.pickImages()/getPhoto() can hand back a webPath
+  // for a photo that isn't fully local yet (e.g. a Photos-library asset still
+  // downloading from iCloud). fetch()-ing that webPath then hangs forever:
+  // no resolve, no reject, no console output - the picker just "does
+  // nothing", matching topic 9875/1. Verified against the pre-fix code: both
+  // tests here fail red (loading stays stuck on 'Uploading' and no error is
+  // ever shown, even after waiting far longer than any real network call)
+  // because the un-raced fetch() never settles; they pass once the fetch is
+  // raced against a timeout.
+  describe('picked-photo fetch never resolves (app mode)', () => {
+    beforeEach(() => {
+      mockIsApp.value = true
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      delete global.fetch
+    })
+
+    it('choosePhoto surfaces an error and resets loading instead of hanging forever', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.pickImages.mockResolvedValueOnce({
+        photos: [{ webPath: 'capacitor://photo1.jpeg' }],
+      })
+      // Simulates an iCloud-backed gallery photo that never finishes
+      // downloading - the fetch never resolves or rejects.
+      global.fetch = vi.fn(() => new Promise(() => {}))
+
+      const wrapper = await createWrapper({
+        multiple: true,
+        modelValue: [{ id: 1 }],
+      })
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      const choosePromise = uploaderComp.vm.choosePhoto()
+      await flushPromises()
+
+      // Advance far past any reasonable network wait.
+      await vi.advanceTimersByTimeAsync(60000)
+      await choosePromise
+      await flushPromises()
+
+      expect(uploaderComp.vm.loading).toBe('')
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+    })
+
+    it('openModal surfaces an error and resets loading instead of hanging forever', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockResolvedValueOnce({
+        webPath: 'capacitor://camera1.jpeg',
+      })
+      global.fetch = vi.fn(() => new Promise(() => {}))
+
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      const openPromise = uploaderComp.vm.openModal()
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(60000)
+      await openPromise
+      await flushPromises()
+
+      expect(uploaderComp.vm.loading).toBe('')
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+    })
+  })
+
   describe('TUS plugin retryDelays', () => {
     it('configures retryDelays on the Uppy TUS plugin', async () => {
       mockIsApp.value = false
