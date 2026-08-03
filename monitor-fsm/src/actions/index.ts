@@ -3248,23 +3248,38 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           : []
         const codeArea: string | null = typeof c.code_area === 'string' ? c.code_area : null
 
-        // Dedup level 1: same Discourse topic already has an active PR → link, don't open new
+        // Dedup level 1: same Discourse topic already has an active PR → link, don't open new.
+        // Only when the two reports aren't PROVABLY different bugs: if both have symptom_tags
+        // and share ZERO overlap, this is an independent bug that happens to share a topic, not
+        // a follow-up — linking it would make queue_deployed_reply_drafts auto-post a "possible
+        // fix applied, please retest" reply threaded under THIS post once the (unrelated) PR
+        // deploys, i.e. a reply that looks attached to the wrong post (9982/12). Mirrors the
+        // isIndependentBug check below for the already-fixed regression case. With no tag data
+        // on either side we can't tell them apart, so — as before — default to linking.
         const topicPrRow = db.prepare(
-          `SELECT pr_number FROM discourse_bug
+          `SELECT pr_number, symptom_tags FROM discourse_bug
            WHERE topic = ? AND post != ? AND pr_number IS NOT NULL
-           AND state IN ('open', 'investigating', 'fix-queued')`
-        ).get(c.topic, c.post) as { pr_number: number } | undefined
+           AND state IN ('open', 'investigating', 'fix-queued')
+           ORDER BY first_seen_at ASC LIMIT 1`
+        ).get(c.topic, c.post) as { pr_number: number; symptom_tags: string | null } | undefined
         if (topicPrRow) {
-          upsertDiscourseBug(db, {
-            topic: Number(c.topic), post: Number(c.post),
-            topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
-            excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
-            state: 'fix-queued', prNumber: topicPrRow.pr_number,
-            featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
-          })
-          out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
-          upserted++
-          continue
+          const topicPrTags: string[] = (() => {
+            try { return JSON.parse(topicPrRow.symptom_tags ?? '[]') } catch { return [] }
+          })()
+          const isIndependentBug = symptomTags.length > 0 && topicPrTags.length > 0 && tagJaccard(symptomTags, topicPrTags) === 0
+          if (!isIndependentBug) {
+            upsertDiscourseBug(db, {
+              topic: Number(c.topic), post: Number(c.post),
+              topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
+              excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+              state: 'fix-queued', prNumber: topicPrRow.pr_number,
+              featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
+            })
+            out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
+            upserted++
+            continue
+          }
+          out(`persist_classifications: topic ${c.topic}/${c.post} shares zero symptom tags with same-topic PR #${topicPrRow.pr_number} — treating as an independent bug, not linking`)
         }
 
         // Dedup level 2: cross-topic tag similarity — if an open bug in a DIFFERENT topic
