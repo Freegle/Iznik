@@ -222,11 +222,16 @@ workflows:
               only:
                 - production
 
-  # Manually-triggered ModTools production build and Play Store / TestFlight upload.
-  # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
-  # Does not run automatically — ModTools updates are infrequent and manually controlled.
-  # After building, attempts to submit immediately. If Apple hasn't finished processing the
-  # build yet, the submit step exits gracefully — re-trigger via manual-promote-submit later.
+  # ModTools production build and Play Store / TestFlight upload. Unlike FD, ModTools has
+  # NO per-push beta builds - this workflow is the only thing that builds it, and the
+  # Android side uploads straight to the Play production track.
+  # Runs weekly via the CircleCI scheduled pipeline "weekly-modtools-release-schedule"
+  # (Wednesday 20:00 UTC, parameters build_modtools_production: true, branch production),
+  # deliberately TWO HOURS BEFORE the FD "weekly-promote-schedule" (22:00): the inline
+  # submit below usually fires before Apple has processed the fresh build and exits
+  # gracefully, and it is the promote workflow's auto-submit-ios-modtools that then
+  # submits it the same night once processed. Can also be triggered manually by setting
+  # build_modtools_production: true in the pipeline parameters UI.
   modtools-production:
     when: << pipeline.parameters.build_modtools_production >>
     jobs:
