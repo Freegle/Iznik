@@ -45,6 +45,7 @@ import (
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
+	"github.com/freegle/iznik-server-go/handler"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
@@ -762,7 +763,9 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
-		rg.Post("/image", image.Post)
+		// Wrapped in WithRetry: a high-frequency write path is the most exposed
+		// to transient connection errors under concurrent load.
+		rg.Post("/image", handler.WithRetry(image.Post))
 
 		// Voice posting: stream audio chunks in while recording, then finalise.
 		// @Router /voicepost/chunk [post]
