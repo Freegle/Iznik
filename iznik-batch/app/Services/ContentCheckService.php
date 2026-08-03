@@ -587,17 +587,24 @@ class ContentCheckService
     }
 
     /**
-     * Return true if the group's rules have fullymoderated = true.
+     * Return true if the group's "All Posts Moderated" setting is on.
+     *
+     * This must read settings.moderated — the enforcement setting ModTools
+     * writes and apiv2 checks — NOT rules.fullymoderated, which is the
+     * member-facing rules questionnaire answer ("Do you moderate all posts?")
+     * and routinely disagrees with the real setting (Discourse #9987: groups
+     * with the setting off had every post held because their questionnaire
+     * said yes, and vice versa).
      */
     public function isGroupModerated(int $groupid): bool
     {
-        $rulesJson = DB::table('groups')->where('id', $groupid)->value('rules');
-        if (!$rulesJson) {
+        $settingsJson = DB::table('groups')->where('id', $groupid)->value('settings');
+        if (!$settingsJson) {
             return false;
         }
-        $rules = is_string($rulesJson) ? json_decode($rulesJson, true) : $rulesJson;
+        $settings = is_string($settingsJson) ? json_decode($settingsJson, true) : $settingsJson;
 
-        return !empty($rules['fullymoderated']);
+        return !empty($settings['moderated']);
     }
 
     // -------------------------------------------------------------------------

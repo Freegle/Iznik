@@ -1145,7 +1145,7 @@ class ContentCheckTest extends TestCase
 
     public function test_fully_moderated_group_keeps_message_pending(): void
     {
-        $group = $this->createTestGroup(['rules' => ['fullymoderated' => true]]);
+        $group = $this->createTestGroup(['settings' => ['moderated' => 1]]);
         $user  = $this->createTestUser();
         // User is non-moderated — but group is fully moderated.
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
@@ -2968,9 +2968,9 @@ class ContentCheckTest extends TestCase
 
     public function test_fully_moderated_group_hold_records_why(): void
     {
-        // Group::$casts has 'rules' => 'array', so pass an array - a pre-encoded
+        // Group::$casts has 'settings' => 'array', so pass an array - a pre-encoded
         // string gets encoded a second time and isGroupModerated() cannot read it.
-        $group = $this->createTestGroup(['rules' => ['fullymoderated' => true]]);
+        $group = $this->createTestGroup(['settings' => ['moderated' => 1]]);
         $user  = $this->createTestUser();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
