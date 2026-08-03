@@ -151,6 +151,12 @@ return [
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
     ],
 
+    'mod_welfare' => [
+        // Paused 2026-08-03: mentors asked us to stop the weekly "X does not
+        // have an active owner" alerts for now. Set to true to resume.
+        'notify_no_owner' => env('FREEGLE_MOD_WELFARE_NOTIFY_NO_OWNER', false),
+    ],
+
     'trashnothing' => [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
