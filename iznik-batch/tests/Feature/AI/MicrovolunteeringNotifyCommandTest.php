@@ -9,9 +9,13 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
 {
     private function createGroup(bool $microvolunteering = true): int
     {
+        $nameshort = 'TestGroup' . uniqid();
+
         return DB::table('groups')->insertGetId([
-            'nameshort'         => 'TestGroup' . uniqid(),
-            'namefull'          => 'Test Group',
+            'nameshort'         => $nameshort,
+            // namefull carries a unique key, so it must vary per group - the
+            // cross-group hold test creates two groups in one test.
+            'namefull'          => 'Test Group ' . $nameshort,
             'type'              => 'Freegle',
             'publish'           => 1,
             'onhere'            => 1,
