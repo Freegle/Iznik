@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref, computed } from 'vue'
 
 import PhotosPage from '~/pages/give/mobile/photos.vue'
 
@@ -20,6 +19,7 @@ const mockSetType = vi.fn()
 const mockSetAttachments = vi.fn()
 let mockComposeMessages = {}
 let mockComposeAll = []
+let mockComposeAttachments = []
 
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => ({
@@ -32,7 +32,7 @@ vi.mock('~/stores/compose', () => ({
     get all() {
       return mockComposeAll
     },
-    attachments: vi.fn().mockReturnValue([]),
+    attachments: vi.fn(() => mockComposeAttachments),
   }),
 }))
 
@@ -79,7 +79,12 @@ function mountPage() {
     global: {
       stubs: {
         PhotoUploader: PhotoUploaderStub,
-        'b-button': { template: '<button class="b-btn" @click="$emit(\'click\')"><slot /></button>', emits: ['click'] },
+        'b-button': {
+          template:
+            '<button class="b-btn" :disabled="disabled" @click="$emit(\'click\')"><slot /></button>',
+          props: ['variant', 'size', 'disabled'],
+          emits: ['click'],
+        },
         'v-icon': { template: '<i />' },
       },
     },
@@ -94,6 +99,7 @@ describe('pages/give/mobile/photos.vue', () => {
     mockPendingSharedImages = []
     mockComposeMessages = { 42: { id: 42, type: 'Offer' } }
     mockComposeAll = []
+    mockComposeAttachments = []
     mockComposeAdd.mockReturnValue(42)
     mockAuthUser = { id: 1 }
     mockStickyAdRendered = false
@@ -111,9 +117,7 @@ describe('pages/give/mobile/photos.vue', () => {
   })
 
   it('reuses an existing Offer message from the compose store', () => {
-    mockComposeAll = [
-      { id: 99, type: 'Offer', savedBy: 1 },
-    ]
+    mockComposeAll = [{ id: 99, type: 'Offer', savedBy: 1 }]
     mockComposeMessages = { 99: { id: 99 } }
     mountPage()
     expect(mockComposeAdd).not.toHaveBeenCalled()
@@ -125,10 +129,46 @@ describe('pages/give/mobile/photos.vue', () => {
     expect(wrapper.find('.b-btn').exists()).toBe(false)
   })
 
+  // The reported bug (shared photo -> Next tappable mid-upload): attachments
+  // gains a placeholder with uploading: true the moment PhotoUploader's
+  // processPhoto() runs, before the quality check or the TUS upload finish.
+  // Next must render (the user can see where they're going) but stay disabled
+  // until every attachment has completed its upload and has a real id.
+  describe('Next button upload gating', () => {
+    it('disables Next while an attachment is still uploading', () => {
+      mockComposeAttachments = [
+        { tempId: 'temp-1', uploading: true, progress: 40 },
+      ]
+      const wrapper = mountPage()
+      const next = wrapper.find('.b-btn')
+      expect(next.exists()).toBe(true)
+      expect(next.attributes('disabled')).toBeDefined()
+    })
+
+    it('disables Next when a later photo in a shared batch is still uploading', () => {
+      mockComposeAttachments = [
+        { id: 1, ouruid: 'abc', uploading: false },
+        { tempId: 'temp-2', uploading: true, progress: 10 },
+      ]
+      const wrapper = mountPage()
+      expect(wrapper.find('.b-btn').attributes('disabled')).toBeDefined()
+    })
+
+    it('enables Next once every attachment has finished uploading', () => {
+      mockComposeAttachments = [{ id: 1, ouruid: 'abc', uploading: false }]
+      const wrapper = mountPage()
+      const next = wrapper.find('.b-btn')
+      expect(next.exists()).toBe(true)
+      expect(next.attributes('disabled')).toBeUndefined()
+    })
+  })
+
   it('applies has-sticky-ad class when stickyAdRendered is true', () => {
     mockStickyAdRendered = true
     const wrapper = mountPage()
-    expect(wrapper.find('.app-give-photos').classes()).toContain('has-sticky-ad')
+    expect(wrapper.find('.app-give-photos').classes()).toContain(
+      'has-sticky-ad'
+    )
   })
 
   it('goNext() navigates to /give/mobile/details', async () => {

@@ -18,7 +18,13 @@
       class="app-footer"
       :class="{ 'has-sticky-ad': stickyAdRendered }"
     >
-      <b-button variant="primary" size="lg" class="w-100" @click="goNext">
+      <b-button
+        variant="primary"
+        size="lg"
+        class="w-100"
+        :disabled="anyUploading"
+        @click="goNext"
+      >
         Next <v-icon icon="arrow-right" />
       </b-button>
     </div>
@@ -88,6 +94,16 @@ const attachments = computed({
 
 // Track if we have photos (for showing Next button)
 const hasPhotos = computed(() => attachments.value.length > 0)
+
+// Any attachment still mid-upload (pushed into the list before the TUS
+// upload / imageStore.post() round-trip completes - see PhotoUploader.vue's
+// processPhoto()/uploadPhoto()). Gates Next so the user can't move on to
+// /give/mobile/details with a photo that has no real id yet. A shared-in
+// photo sits in this state for longer than a manually-picked one (quality
+// check + upload both run before the user has done anything else on this
+// page), which is why the share path hits this far more often - but the gap
+// exists for the manual add-photo flow too.
+const anyUploading = computed(() => attachments.value.some((a) => a.uploading))
 
 function onPhotoProcessed() {
   // Photo was added - hasPhotos will update automatically via computed
