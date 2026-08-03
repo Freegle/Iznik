@@ -1,8 +1,10 @@
 package image
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -194,4 +196,46 @@ func TestTypeConfigsOtherTablesHaveContentType(t *testing.T) {
 		}
 		assert.True(t, cfg.HasContentType, "%s should have HasContentType=true", name)
 	}
+}
+
+// A connection-level DB error is transient — image.Post is registered behind
+// handler.WithRetry, which only replays the request for an error carrying
+// the handler.Retryable marker (or a message matching a known transient
+// pattern). Regression guard: if this ever goes back to returning a plain
+// fiber.Error, a transient blip under heavy concurrent load turns into a
+// permanent upload failure with the real cause thrown away, exactly as
+// happened when this was fixed.
+func TestClassifyDBErrorRetryablePreservesUnderlyingError(t *testing.T) {
+	inner := errors.New("Lost connection to MySQL server during query")
+	result := classifyDBError(inner, "failed to create image attachment", "Failed to create image attachment")
+
+	var fe *fiber.Error
+	assert.False(t, errors.As(result, &fe),
+		"a retryable error must not be turned into a fiber.Error, or handler.WithRetry can't detect it")
+	assert.True(t, errors.Is(result, inner), "the original error must still be reachable via errors.Is/Unwrap")
+}
+
+func TestClassifyDBErrorDeadlockIsRetryable(t *testing.T) {
+	inner := errors.New("Error 1213: Deadlock found when trying to get lock")
+	result := classifyDBError(inner, "failed to rotate image", "Failed to rotate image")
+
+	var fe *fiber.Error
+	assert.False(t, errors.As(result, &fe))
+	assert.True(t, errors.Is(result, inner))
+}
+
+// A non-transient error (bad SQL, constraint violation, etc.) must not be
+// retried forever, and must not leak the raw DB error text to the client —
+// it becomes the generic fiber.Error message given by the caller.
+func TestClassifyDBErrorNonRetryableReturnsGenericFiberError(t *testing.T) {
+	inner := errors.New("Data too long for column 'externaluid' at row 1")
+	result := classifyDBError(inner, "failed to create image attachment", "Failed to create image attachment")
+
+	var fe *fiber.Error
+	if assert.True(t, errors.As(result, &fe)) {
+		assert.Equal(t, fiber.StatusInternalServerError, fe.Code)
+		assert.Equal(t, "Failed to create image attachment", fe.Message)
+	}
+	assert.NotContains(t, result.Error(), "Data too long",
+		"the underlying DB error text must not reach the client")
 }

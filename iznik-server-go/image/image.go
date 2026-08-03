@@ -3,12 +3,14 @@ package image
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/handler"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -193,6 +195,21 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	return owner != 0 && owner == myid
 }
 
+// classifyDBError turns a write failure into the right kind of error for the
+// caller. A connection-level error is transient, so it's wrapped as
+// handler.Retryable: this route is registered behind handler.WithRetry, which
+// replays the whole request on a fresh connection instead of failing the
+// upload outright. Anything else is logged (so the real cause isn't lost)
+// and turned into the given generic message, since a non-transient failure
+// shouldn't be retried or exposed to the client.
+func classifyDBError(err error, context, genericMessage string) error {
+	if database.IsRetryableDBError(err) {
+		return handler.Retryable(fmt.Errorf("%s: %w", context, err))
+	}
+	fmt.Printf("%s: %v\n", context, err)
+	return fiber.NewError(fiber.StatusInternalServerError, genericMessage)
+}
+
 func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	if req.ExternalUID == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "externaluid is required")
@@ -267,7 +284,7 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	}
 
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create image attachment")
+		return classifyDBError(err, "failed to create image attachment", "Failed to create image attachment")
 	}
 
 	var id uint64
@@ -311,7 +328,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	result := db.Exec("UPDATE `"+cfg.Table+"` SET externalmods = ? WHERE id = ?", modsJSON, req.ID)
 
 	if result.Error != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to rotate image")
+		return classifyDBError(result.Error, "failed to rotate image", "Failed to rotate image")
 	}
 
 	return c.JSON(fiber.Map{
