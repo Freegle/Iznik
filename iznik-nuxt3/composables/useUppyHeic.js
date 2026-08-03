@@ -125,8 +125,15 @@ export function createHeicPreProcessor({ getUppy, uploader }) {
 
         const name = toJpegName(file.meta?.name || file.name)
 
+        // Hand Compressor a named File, not a bare Blob. @uppy/compressor
+        // rebuilds the upload filename from its INPUT's name after
+        // compressing ("<meta name>.<compressed extension>"), and compressorjs
+        // gives a nameless output for a nameless input - so a bare Blob here
+        // ends up stored as e.g. "item1.undefined" instead of "item1.jpg".
+        const jpeg = new File([blob], name, { type: 'image/jpeg' })
+
         uppy.setFileState(file.id, {
-          data: blob,
+          data: jpeg,
           type: 'image/jpeg',
           extension: 'jpg',
           size: blob.size,
