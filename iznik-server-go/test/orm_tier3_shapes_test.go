@@ -657,17 +657,16 @@ func TestTier3Shapes_2ad46344c8b2(t *testing.T) {
 	ormharness.AssertGoldenShapes(t, "2ad46344c8b2", shapes)
 }
 
-// doCreate's two raw INSERTs split on cfg.HasContentType: every typeConfigs
-// entry except Message has a NOT NULL contenttype column, so site
-// 1571f00a4ce8 (WITH contenttype) is reachable from the 9 non-Message
-// entries and site b0445c89f59e (WITHOUT it) only from Message - see
-// image.go's typeConfigs and doCreate.
+// doCreate's INSERT always includes contenttype: every one of the 10
+// typeConfigs entries - messages_attachments (Message) included - has a NOT
+// NULL, no-default contenttype column, so site 1571f00a4ce8 is reachable from
+// all 10. See image.go's imageTypeConfig.TrustStoredContentType doc comment
+// for why Message used to be wrongly split off into its own shape,
+// b0445c89f59e (below), which omitted contenttype - that was a bug (an
+// INSERT failing under strict sql_mode), not a real schema difference.
 func TestTier3Shapes_1571f00a4ce8(t *testing.T) {
 	var shapes []ormharness.Shape
 	for _, e := range doRotateTables {
-		if e.name == "Message" {
-			continue // no contenttype column: covered by TestTier3Shapes_b0445c89f59e below
-		}
 		e := e
 		shapes = append(shapes, ormharness.Shape{Name: e.name, Build: func(tx *gorm.DB) *gorm.DB {
 			row := map[string]interface{}{
@@ -683,6 +682,12 @@ func TestTier3Shapes_1571f00a4ce8(t *testing.T) {
 	ormharness.AssertGoldenShapes(t, "1571f00a4ce8", shapes)
 }
 
+// b0445c89f59e was doCreate's Message-only INSERT that omitted contenttype -
+// the bug fixed above (see TestTier3Shapes_1571f00a4ce8's comment). doCreate
+// no longer produces this shape; Message now shares site 1571f00a4ce8's shape
+// with the other 9 types. The site id is kept pinned to its historical golden
+// SQL here, rather than deleted, so ci-ratchet.sh's gate (f) - every site
+// absent from the code must be named by a parity test - still finds it.
 func TestTier3Shapes_b0445c89f59e(t *testing.T) {
 	ormharness.AssertGoldenShapes(t, "b0445c89f59e", []ormharness.Shape{
 		{Name: "Message", Build: func(tx *gorm.DB) *gorm.DB {

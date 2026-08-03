@@ -16,22 +16,33 @@ import (
 
 // imageTypeConfig maps imgtype names to their database table and parent ID column.
 type imageTypeConfig struct {
-	Table          string
-	IDColumn       string
-	HasContentType bool // All image tables except messages_attachments have a NOT NULL contenttype column.
+	Table    string
+	IDColumn string
+	// TrustStoredContentType governs Get()'s legacy blob-read fallback only -
+	// it does NOT control whether doCreate writes contenttype. Every one of
+	// the 10 image tables, messages_attachments included, has a NOT NULL
+	// contenttype column with no default (confirmed via SHOW CREATE TABLE on
+	// all 10), so doCreate always writes one regardless of this field. It is
+	// false for Message because rows created before this field existed - when
+	// doCreate wrongly omitted contenttype for Message on the false belief
+	// that column was nullable there - may have an empty string stored: under
+	// a lenient sql_mode MySQL silently substituted '' for the missing value,
+	// while under strict mode (what Playwright's CI target runs) the INSERT
+	// failed outright. Get() must not trust an empty legacy value.
+	TrustStoredContentType bool
 }
 
 var typeConfigs = map[string]imageTypeConfig{
-	"Message":        {Table: "messages_attachments", IDColumn: "msgid", HasContentType: false},
-	"Group":          {Table: "groups_images", IDColumn: "groupid", HasContentType: true},
-	"Newsletter":     {Table: "newsletters_images", IDColumn: "articleid", HasContentType: true},
-	"CommunityEvent": {Table: "communityevents_images", IDColumn: "eventid", HasContentType: true},
-	"Volunteering":   {Table: "volunteering_images", IDColumn: "opportunityid", HasContentType: true},
-	"ChatMessage":    {Table: "chat_images", IDColumn: "chatmsgid", HasContentType: true},
-	"User":           {Table: "users_images", IDColumn: "userid", HasContentType: true},
-	"Newsfeed":       {Table: "newsfeed_images", IDColumn: "newsfeedid", HasContentType: true},
-	"Story":          {Table: "users_stories_images", IDColumn: "storyid", HasContentType: true},
-	"Noticeboard":    {Table: "noticeboards_images", IDColumn: "noticeboardid", HasContentType: true},
+	"Message":        {Table: "messages_attachments", IDColumn: "msgid", TrustStoredContentType: false},
+	"Group":          {Table: "groups_images", IDColumn: "groupid", TrustStoredContentType: true},
+	"Newsletter":     {Table: "newsletters_images", IDColumn: "articleid", TrustStoredContentType: true},
+	"CommunityEvent": {Table: "communityevents_images", IDColumn: "eventid", TrustStoredContentType: true},
+	"Volunteering":   {Table: "volunteering_images", IDColumn: "opportunityid", TrustStoredContentType: true},
+	"ChatMessage":    {Table: "chat_images", IDColumn: "chatmsgid", TrustStoredContentType: true},
+	"User":           {Table: "users_images", IDColumn: "userid", TrustStoredContentType: true},
+	"Newsfeed":       {Table: "newsfeed_images", IDColumn: "newsfeedid", TrustStoredContentType: true},
+	"Story":          {Table: "users_stories_images", IDColumn: "storyid", TrustStoredContentType: true},
+	"Noticeboard":    {Table: "noticeboards_images", IDColumn: "noticeboardid", TrustStoredContentType: true},
 }
 
 // PostRequest handles all POST /image operations.
@@ -258,16 +269,19 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 		"externaluid":  req.ExternalUID,
 		"externalmods": modsStr,
 		"hash":         utils.NilIfEmpty(req.Hash),
-	}
-	if cfg.HasContentType {
-		row["contenttype"] = gorm.Expr("'image/jpeg'")
+		// Every one of the 10 typeConfigs tables has a NOT NULL, no-default
+		// contenttype column - messages_attachments included, despite what
+		// this used to assume (see imageTypeConfig.TrustStoredContentType).
+		// Every uploaded image is normalised to JPEG before it reaches here.
+		"contenttype": gorm.Expr("'image/jpeg'"),
 	}
 
-	// ORM migration sites 1571f00a4ce8 (cfg.HasContentType true - 9 of the
-	// 10 typeConfigs entries) and b0445c89f59e (false - the Message entry
-	// only). cfg.Table/cfg.IDColumn are runtime-varying but bounded to
-	// exactly 10 combinations; see ormharness/shapes.json and
-	// TestTier3Shapes_1571f00a4ce8 / TestTier3Shapes_b0445c89f59e
+	// ORM migration site 1571f00a4ce8, now covering all 10 typeConfigs
+	// entries (previously split 9/1 against site b0445c89f59e, which omitted
+	// contenttype for Message - a bug, not a schema difference; see
+	// imageTypeConfig.TrustStoredContentType). cfg.Table/cfg.IDColumn are
+	// runtime-varying but bounded to exactly 10 combinations; see
+	// ormharness/shapes.json and TestTier3Shapes_1571f00a4ce8
 	// (iznik-server-go/test). Table()+map-Create reads the generated id
 	// back from the same sql.Result the INSERT returned, under the map key
 	// "@id" - no separate connection-scoped SELECT LAST_INSERT_ID() query.
@@ -485,7 +499,7 @@ func Get(c *fiber.Ctx) error {
 	// work again. We fetch `data` only HERE, not in the main SELECT above, so the
 	// common external/archived path never loads a longblob.
 	blobCols := "data"
-	if cfg.HasContentType {
+	if cfg.TrustStoredContentType {
 		blobCols += ", COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype"
 	} else {
 		blobCols += ", 'image/jpeg' AS contenttype"
@@ -495,9 +509,9 @@ func Get(c *fiber.Ctx) error {
 		Contenttype string
 	}
 	// ORM migration site 1606033fd8f7 (wave 5 shapes pilot). Same reasoning as
-	// 1be407fe0a15 above: blobCols is determined by cfg.HasContentType, which
-	// is itself a function of imgType (false only for Message), so this is
-	// again exactly one rendered form per typeConfigs entry - 10 shapes, all
+	// 1be407fe0a15 above: blobCols is determined by cfg.TrustStoredContentType,
+	// which is itself a function of imgType (false only for Message), so this
+	// is again exactly one rendered form per typeConfigs entry - 10 shapes, all
 	// declared in ormharness/shapes.json and proven by
 	// TestShapesPilot_1606033fd8f7 (iznik-server-go/test).
 	db.Table("`"+cfg.Table+"`").Select(blobCols).Where("id = ?", id).Scan(&blob)

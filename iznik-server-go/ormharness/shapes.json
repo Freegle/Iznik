@@ -1480,6 +1480,10 @@
     ],
     "1571f00a4ce8": [
       {
+        "name": "Message",
+        "sql": "INSERT INTO `messages_attachments` (`msgid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
         "name": "Group",
         "sql": "INSERT INTO `groups_images` (`groupid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
       },
