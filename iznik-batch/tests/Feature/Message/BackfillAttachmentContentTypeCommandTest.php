@@ -17,7 +17,7 @@ class BackfillAttachmentContentTypeCommandTest extends TestCase
     {
         return (int) DB::table('messages_attachments')->insertGetId(array_merge([
             'externaluid' => 'freegletusd-'.bin2hex(random_bytes(8)),
-            'contenttype' => null,
+            'contenttype' => '',
         ], $attrs));
     }
 
@@ -26,15 +26,19 @@ class BackfillAttachmentContentTypeCommandTest extends TestCase
         return DB::table('messages_attachments')->where('id', $id)->value('contenttype');
     }
 
-    public function testFillsNullAndEmptyContentTypes(): void
+    public function testFillsEmptyContentTypes(): void
     {
-        $nullOne = $this->attachment(['contenttype' => null]);
+        // The schema-parity migration made contenttype VARCHAR(80) NOT NULL, so the
+        // bug state the old create path left behind is '' (non-strict MySQL filled
+        // the omitted column with the implicit default), never NULL. The command
+        // still matches NULL as belt-and-braces for any pre-parity stragglers.
         $emptyOne = $this->attachment(['contenttype' => '']);
+        $emptyTwo = $this->attachment(['contenttype' => '']);
 
         $this->artisan('messages:backfill-attachment-contenttype')->assertSuccessful();
 
-        $this->assertSame('image/jpeg', $this->contentTypeOf($nullOne));
         $this->assertSame('image/jpeg', $this->contentTypeOf($emptyOne));
+        $this->assertSame('image/jpeg', $this->contentTypeOf($emptyTwo));
     }
 
     public function testLeavesRowsThatAlreadyHaveATypeAlone(): void
@@ -53,7 +57,7 @@ class BackfillAttachmentContentTypeCommandTest extends TestCase
 
         $this->artisan('messages:backfill-attachment-contenttype')->assertSuccessful();
 
-        $this->assertNull($this->contentTypeOf($legacy));
+        $this->assertSame('', $this->contentTypeOf($legacy), 'legacy row must be left untouched');
     }
 
     public function testIncludeLegacyOptFillsThoseRowsToo(): void
@@ -71,24 +75,41 @@ class BackfillAttachmentContentTypeCommandTest extends TestCase
 
         $this->artisan('messages:backfill-attachment-contenttype --dry-run')->assertSuccessful();
 
-        $this->assertNull($this->contentTypeOf($id));
+        $this->assertSame('', $this->contentTypeOf($id));
     }
 
     public function testLimitCapsTheRowsTouchedAndIsResumable(): void
     {
         $ids = [$this->attachment(), $this->attachment(), $this->attachment()];
 
+        // Assert on the global candidate count, not on which specific row was
+        // filled: the command walks by ascending id across the whole table, so
+        // under --limit=1 the row it fills may be a baseline row from the test
+        // database rather than one of ours.
+        $before = $this->candidateCount();
+        $this->assertGreaterThanOrEqual(3, $before);
+
         $this->artisan('messages:backfill-attachment-contenttype --limit=1 --chunk=1')->assertSuccessful();
 
-        $filled = collect($ids)->filter(fn ($id) => $this->contentTypeOf($id) === 'image/jpeg')->count();
-        $this->assertSame(1, $filled, 'exactly one row should be filled under --limit=1');
+        $this->assertSame($before - 1, $this->candidateCount(), 'exactly one candidate should be filled under --limit=1');
 
         // Running again picks up where it left off rather than redoing the same row.
         $this->artisan('messages:backfill-attachment-contenttype --chunk=1')->assertSuccessful();
 
+        $this->assertSame(0, $this->candidateCount());
         foreach ($ids as $id) {
             $this->assertSame('image/jpeg', $this->contentTypeOf($id));
         }
+    }
+
+    private function candidateCount(): int
+    {
+        return DB::table('messages_attachments')
+            ->where(function ($w) {
+                $w->whereNull('contenttype')->orWhere('contenttype', '');
+            })
+            ->whereNotNull('externaluid')->where('externaluid', '!=', '')
+            ->count();
     }
 
     public function testHonoursAnExplicitValue(): void
@@ -106,6 +127,6 @@ class BackfillAttachmentContentTypeCommandTest extends TestCase
 
         $this->artisan('messages:backfill-attachment-contenttype --value=" "')->assertFailed();
 
-        $this->assertNull($this->contentTypeOf($id));
+        $this->assertSame('', $this->contentTypeOf($id));
     }
 }
