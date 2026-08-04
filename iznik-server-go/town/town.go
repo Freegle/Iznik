@@ -54,7 +54,17 @@ func reachRadiusMiles(crowMilesReachable []float64, fallbackMiles float64) float
 			radius = d
 		}
 	}
-	if radius <= 0 {
+	// The road frontier is a LOWER BOUND on the radius, not just a no-towns
+	// fallback. The towns table is sparse in places, so the only reachable
+	// named town can be the member's OWN town a mile away - taking the
+	// crow-distance to it collapsed a 25-minute reach (frontier ~15 road
+	// miles) to a 1-mile cap, which then starved the member's feed and
+	// digests (ChitChat 616307: "I'm only seeing posts that are 2/3 weeks
+	// old"). Crow-flies distance never exceeds road distance, and this cap
+	// is documented above as a rough, GENEROUS tightening - the real
+	// drive-time isochrone still gates every post - so preferring the
+	// frontier when it is larger errs in the safe direction.
+	if fallbackMiles > radius {
 		radius = fallbackMiles
 	}
 	if radius < reachRadiusFloorMiles {
