@@ -598,6 +598,14 @@ return [
     // network); if the fetch fails the command warns and exits non-zero.
     'apiv2_deprecated_url' => env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/apiv2/deprecated'),
 
+    // The routing-backed town/near endpoint browse:backfill-max-distance uses to
+    // recompute the mile radius a travel-time budget reaches - the same source the
+    // frontend slider uses, so the derived cap matches what a member re-dragging
+    // the slider would get. Same reachability note as apiv2_deprecated_url: inside
+    // this compose network the batch container reaches apiv2 on port 8192, and
+    // batch-prod must set BROWSE_TOWN_NEAR_URL for its own network.
+    'town_near_url' => env('BROWSE_TOWN_NEAR_URL', 'http://apiv2:8192/api/town/near'),
+
     // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
     // max_query_length (~30d) — a longer since-sunset range 400s; this many days of
     // post-sunset silence is enough to call an endpoint retirable.
