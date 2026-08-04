@@ -190,6 +190,16 @@ Mobile-specific Stripe implementation:
    - Timing logic to avoid annoying users
    - Platform-specific app store links
 
+8. **Hardware Back Button (Android)**
+   - `initBackButton()` in `stores/mobile.js` listens for Capacitor's
+     `backButton` event (fired for both the back button and the back
+     gesture)
+   - Navigates back through webview history while there is any, then
+     backgrounds the app with `App.minimizeApp()` at the root — the
+     standard Android behaviour
+   - Without this listener Capacitor swallows back presses once history
+     is empty and the app cannot be exited
+
 </details>
 
 ---
@@ -223,6 +233,7 @@ A dedicated Pinia store handles all mobile-specific state and functionality:
 - `initPushNotifications()`: Configure push notification system
 - `checkForAppUpdate()`: Check for app updates
 - `initWakeUpActions()`: Handle app resume/wake events
+- `initBackButton()`: Android back button/gesture — history back, minimize at root
 
 </details>
 
