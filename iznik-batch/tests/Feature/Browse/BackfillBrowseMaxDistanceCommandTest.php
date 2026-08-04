@@ -110,6 +110,30 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function testOverridesALegacyMilesOnlyCapToUnlimited(): void
+    {
+        Http::fake(['*' => Http::response(['reach_radius_miles' => 8.5])]);
+        // Pre-2026-07-10 miles-slider write: distance set, no minutes. The
+        // time-based slider shows this member "no limit" - storage must match.
+        $id = $this->userWith(['browseMaxDistance' => 5]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(self::UNLIMITED, $this->distanceOf($id));
+        Http::assertNothingSent();
+    }
+
+    public function testLeavesALegacyAlreadyUnlimitedRowAlone(): void
+    {
+        Http::fake(['*' => Http::response(['reach_radius_miles' => 8.5])]);
+        $id = $this->userWith(['browseMaxDistance' => self::UNLIMITED]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(self::UNLIMITED, $this->distanceOf($id));
+        Http::assertNothingSent();
+    }
+
     public function testDryRunWritesNothing(): void
     {
         Http::fake(['*' => Http::response(['reach_radius_miles' => 8.5])]);

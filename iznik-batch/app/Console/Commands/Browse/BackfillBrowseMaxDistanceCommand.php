@@ -29,6 +29,13 @@ use Illuminate\Support\Facades\Log;
  *   - no known location, or the routing call fails: SKIPPED, never clobbered -
  *     a batch job must not loosen or tighten someone's feed on a lookup blip.
  *
+ * Users with a distance but NO minutes are pre-2026-07-10 miles-slider writes.
+ * Since the slider went time-based it has shown them "no limit" while their old
+ * cap silently kept filtering - so their stored state is overridden to the
+ * unlimited sentinel to match what the UI has been telling them (explicitly
+ * decided 2026-08-04). An old app bundle that still runs the miles slider may
+ * re-write a cap; that re-write is a current, deliberate act and stands.
+ *
  * Chunked by id and re-runnable: it only ever moves a pair TOWARDS the
  * invariant, so stopping and re-running is safe.
  */
@@ -70,7 +77,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
 
         User::query()
             ->whereNull('deleted')
-            ->whereRaw("JSON_EXTRACT(settings, '$.browseMaxMinutes') IS NOT NULL")
+            ->whereRaw("(JSON_EXTRACT(settings, '$.browseMaxMinutes') IS NOT NULL OR JSON_EXTRACT(settings, '$.browseMaxDistance') IS NOT NULL)")
             ->orderBy('id')
             ->chunkById($chunk, function ($users) use ($dryRun, $limit, $epsilon, $apiBase, &$stats) {
                 foreach ($users as $user) {
@@ -80,7 +87,9 @@ class BackfillBrowseMaxDistanceCommand extends Command
 
                     $stats['scanned']++;
                     $settings = $user->settings ?? [];
-                    $minutes = (int) ($settings['browseMaxMinutes'] ?? 0);
+                    $minutes = isset($settings['browseMaxMinutes'])
+                        ? (int) $settings['browseMaxMinutes']
+                        : null;
                     $current = $settings['browseMaxDistance'] ?? null;
 
                     $desired = $this->desiredDistance($user, $minutes, $apiBase, $stats);
@@ -134,8 +143,15 @@ class BackfillBrowseMaxDistanceCommand extends Command
      * determined honestly (no location / lookup failure) and the pair must be
      * left alone.
      */
-    private function desiredDistance(User $user, int $minutes, string $apiBase, array &$stats): int|float|null
+    private function desiredDistance(User $user, ?int $minutes, string $apiBase, array &$stats): int|float|null
     {
+        // No minutes at all: a pre-2026-07-10 miles-slider write. The time-based
+        // slider shows these members "no limit", so storage is overridden to
+        // match the UI (see class docblock). No routing call needed.
+        if ($minutes === null) {
+            return self::DISTANCE_UNLIMITED;
+        }
+
         if ($minutes >= self::MINUTES_NO_LIMIT) {
             return self::DISTANCE_UNLIMITED;
         }
