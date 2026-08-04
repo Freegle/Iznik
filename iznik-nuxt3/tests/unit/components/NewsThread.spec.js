@@ -97,6 +97,13 @@ const mockAuthStore = {
   saveAndGet: vi.fn(),
 }
 
+let mockIsApp = false
+const mockMobileStore = {
+  get isApp() {
+    return mockIsApp
+  },
+}
+
 const mockTeamStore = {
   fetch: mockTeamFetch,
 }
@@ -112,6 +119,10 @@ vi.mock('~/stores/newsfeed', () => ({
 
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
+}))
+
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => mockMobileStore,
 }))
 
 vi.mock('~/stores/auth', () => ({
@@ -292,6 +303,7 @@ vi.mock('vue', async (importOriginal) => {
 describe('NewsThread', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockIsApp = false
     mockNewsfeed.value = {
       id: 1,
       threadhead: 1,
@@ -525,6 +537,16 @@ describe('NewsThread', () => {
     it('shows "Open in new window" option', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Open in new window')
+    })
+
+    it('hides "Open in new window" in the app', async () => {
+      // target="_blank" has no browser to land in inside the app - the OS
+      // routes the URL straight back and just reopens the app.
+      mockIsApp = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Open in new window')
+      // The rest of the menu is unaffected.
+      expect(wrapper.text()).toContain('Unfollow this thread')
     })
 
     it('shows "Unfollow this thread" option', async () => {
