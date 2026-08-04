@@ -172,20 +172,31 @@ Mobile-specific Stripe implementation:
 4. **Pinch Zoom**
    - Enabled for Android
    - Native zoom gestures
+   - Transient magnifier: scales the whole WebView viewport (navbars included)
+     while zoomed; distinct from the permanent text-size preference below
 
-5. **Device Information**
+5. **System Text Size (accessibility)**
+   - `@capacitor/text-zoom`: on startup (and again on resume) the app reads
+     the OS-preferred text zoom - iOS Dynamic Type / Android font scale - and
+     applies it to the WebView (`stores/mobile.js` `initTextZoom()`)
+   - Without this, WKWebView ignores iOS Dynamic Type entirely, so the app
+     rendered at a fixed text size whatever the member set in Settings →
+     Accessibility
+   - Text grows with reflow, and the navbars are unaffected
+
+6. **Device Information**
    - Collect device details for debugging
    - Persistent device ID
    - OS version tracking
    - Send to Sentry for error context
 
-6. **App Updates**
+7. **App Updates**
    - Check for required updates
    - Check for available updates
    - Version comparison logic
    - Update prompts
 
-7. **Rate App**
+8. **Rate App**
    - Native rating prompts
    - Timing logic to avoid annoying users
    - Platform-specific app store links
