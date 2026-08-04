@@ -233,7 +233,7 @@
                   spellcheck="true"
                   :placeholder="commentPlaceholder"
                   class="p-0 ps-2 pt-2 entersend"
-                  autocapitalize="sentences"
+                  :autocapitalize="autocapitalizeMode"
                   @keydown.enter.shift.exact.prevent="newlineComment"
                   @keydown.alt.shift.enter.exact.prevent="newlineComment"
                   @focus="focusedComment"
@@ -336,6 +336,7 @@ import {
 } from '~/composables/useScrollAnchor'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
+import { isIOS } from '~/composables/useIsIOS'
 
 // Use standard import to avoid screen-flicker
 import NewsRefer from '~/components/NewsRefer'
@@ -370,6 +371,12 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['rendered', 'expand-duplicates'])
+
+// iOS auto-capitalise engages the virtual Shift key, so Return at a sentence
+// start arrives as shift+enter and the keydown.enter.exact send never fires
+// (angular/angular#32963 - iOS keyboard design, not a fixed bug). Keep the
+// autocapitalize="none" workaround on iOS only.
+const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
 
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
 const NewsConvertModal = defineAsyncComponent(() =>

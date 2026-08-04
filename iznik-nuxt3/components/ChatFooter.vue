@@ -111,7 +111,7 @@
             v-model="sendmessage"
             class="h-100"
             enterkeyhint="send"
-            autocapitalize="sentences"
+            :autocapitalize="autocapitalizeMode"
             @keydown="typing"
             @keydown.enter.exact.prevent
             @keyup.enter.exact="sendOnEnter"
@@ -381,6 +381,7 @@ import 'floating-vue/dist/style.css'
 import { action } from '~/composables/useClientLog'
 import { useMe } from '~/composables/useMe'
 import { useTypewriter } from '~/composables/useTypewriter'
+import { isIOS } from '~/composables/useIsIOS'
 import JumpingDots from '~/components/JumpingDots.vue'
 import ChatNotice from '~/components/ChatNotice.vue'
 
@@ -388,6 +389,14 @@ import ChatNotice from '~/components/ChatNotice.vue'
 const props = defineProps({
   id: { type: Number, required: true },
 })
+
+// iOS auto-capitalise engages the virtual Shift key, so Return at a sentence
+// start arrives as shift+enter: keyup.enter.exact never fires and
+// keydown.enter.shift inserts a newline instead of sending (the 2020 bug this
+// box's autocapitalize="none" was added for - angular/angular#32963). That is
+// iOS keyboard design, not a fixed WebKit bug, so keep the workaround there
+// and capitalise everywhere else.
+const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
 
 // Define emits
 const emit = defineEmits(['typing', 'scrollbottom'])

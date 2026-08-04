@@ -265,6 +265,11 @@ Several components have mobile-specific behavior:
 5. **Chat Components**
    - Optimized for mobile screens
    - Native sharing integration
+   - The chat box and ChitChat comment box use
+     `autocapitalize="sentences"` except on iOS (app and Safari), where
+     auto-capitalise engages the virtual Shift key so Return arrives as
+     shift+enter and breaks send-on-enter (`composables/useIsIOS.js`;
+     angular/angular#32963 — iOS keyboard design, not a fixed bug)
 
 ### Ads & Analytics
 
