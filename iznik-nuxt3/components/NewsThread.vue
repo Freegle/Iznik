@@ -233,7 +233,7 @@
                   spellcheck="true"
                   :placeholder="commentPlaceholder"
                   class="p-0 ps-2 pt-2 entersend"
-                  autocapitalize="none"
+                  autocapitalize="sentences"
                   @keydown.enter.shift.exact.prevent="newlineComment"
                   @keydown.alt.shift.enter.exact.prevent="newlineComment"
                   @focus="focusedComment"

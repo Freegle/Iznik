@@ -111,7 +111,7 @@
             v-model="sendmessage"
             class="h-100"
             enterkeyhint="send"
-            autocapitalize="none"
+            autocapitalize="sentences"
             @keydown="typing"
             @keydown.enter.exact.prevent
             @keyup.enter.exact="sendOnEnter"
