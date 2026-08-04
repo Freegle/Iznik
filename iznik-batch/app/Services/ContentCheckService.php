@@ -622,6 +622,41 @@ class ContentCheckService
 
     private const FUZZY_LEVENSHTEIN_MIN_KW_LEN = 8;
 
+    /**
+     * Strip every 'allowed'-category concern keyword (global, plus this
+     * group's, when a group is given) from the text, word-boundary anchored
+     * and case-insensitive. Run before any flagging scan so whitelisted
+     * phrases - typically place names like 'Cashes Green' or 'Butt Road' -
+     * can't feed their words to literal/regex/fuzzy keyword matches.
+     * Replaced with a space so the surrounding words stay separated.
+     */
+    private function removeAllowedKeywords(string $text, int $groupid): string
+    {
+        $allowed = DB::table('concern_keywords')
+            ->where(function ($q) use ($groupid) {
+                $q->where('scope', 'global')
+                  ->orWhere(function ($q2) use ($groupid) {
+                      $q2->where('scope', 'group')->where('group_id', $groupid);
+                  });
+            })
+            ->where('category', 'allowed')
+            ->pluck('keyword');
+
+        foreach ($allowed as $phrase) {
+            $phrase = trim((string) $phrase);
+            if ($phrase === '') {
+                continue;
+            }
+            $text = (string) preg_replace(
+                '/\b' . preg_quote($phrase, '/') . '\b/i',
+                ' ',
+                $text
+            );
+        }
+
+        return $text;
+    }
+
     private function matchesFuzzy(string $haystack, string $keyword): bool
     {
         $kwLower = strtolower($keyword);
@@ -806,8 +841,15 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
-        $haystack = strtolower($subject . ' ' . $textbody);
-        $original = $subject . ' ' . $textbody;
+        // 'allowed'-category entries are a whitelist: text matching them is
+        // removed BEFORE scanning, so a flagging keyword can't fire on a word
+        // inside a whitelisted phrase. V1's worry words and the Go display path
+        // both do this; this path only excluded allowed rows from the flagger
+        // list, which left the whitelist with no effect - 'Cashes Green' kept
+        // tripping the fuzzy keyword 'cash' via its 'cashes' inflection
+        // (Discourse 9944).
+        $original = $this->removeAllowedKeywords($subject . ' ' . $textbody, $groupid);
+        $haystack = strtolower($original);
 
         foreach ($keywords as $kw) {
             $word = trim($kw->keyword);
@@ -1266,7 +1308,10 @@ class ContentCheckService
         }
 
         $words    = array_filter(array_map('trim', explode(',', $raw)));
-        $haystack = strtolower($subject . ' ' . $textbody);
+        // Same whitelist cleaning as checkConcernKeywords: an allowed phrase
+        // must neutralise per-group worry words too (the Go display path
+        // applies Allowed removal to the combined global+group list).
+        $haystack = strtolower($this->removeAllowedKeywords($subject . ' ' . $textbody, $groupid));
 
         foreach ($words as $word) {
             if ($word === '') {

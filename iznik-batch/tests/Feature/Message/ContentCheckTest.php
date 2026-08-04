@@ -133,6 +133,100 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($match);
     }
 
+    /**
+     * 'allowed'-category entries are a whitelist: text matching them must be
+     * removed before the flagging keywords are scanned, exactly as V1's worry
+     * words and the Go display path do. Discourse 9944: 'Cashes Green' (a
+     * Stroud place name) was whitelisted, but posts and chats mentioning it
+     * kept being flagged because the fuzzy keyword 'cash' inflects to
+     * 'cashes' and the whitelist entry was never applied.
+     */
+    public function test_allowed_keyword_whitelists_phrase_from_fuzzy_match(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'cash',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'Cashes Green',
+            'category'   => 'allowed',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        // Diz's live example from Discourse 9944 post 9.
+        $result = $this->service->checkConcernKeywords('OFFER: Basin & Tap (Cashes Green GL6)', 'GL6 6EY', $group->id);
+
+        $this->assertNull($result);
+    }
+
+    public function test_fuzzy_match_still_fires_outside_allowed_phrase(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'cash',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'Cashes Green',
+            'category'   => 'allowed',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        // 'cashes' NOT followed by 'Green' is outside the whitelisted phrase
+        // and must still flag.
+        $result = $this->service->checkConcernKeywords('OFFER: lamp', 'cashes accepted', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertStringContainsString('cash', $result['detail']);
+    }
+
+    public function test_chat_message_respects_allowed_keyword(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'cash',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'Cashes Green',
+            'category'   => 'allowed',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        // Neville's live example from Discourse 9944 post 10: a chat message
+        // giving an address in Cashes Green, repeatedly held in Chat review.
+        $result = $this->service->checkChatMessage("It's 29 elm rd cashes green gl5 4nu, I'm in all morning");
+
+        $this->assertNull($result);
+    }
+
+    public function test_per_group_worry_word_respects_allowed_keyword(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'Cashes Green',
+            'category'   => 'allowed',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'cash']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: Basin & Tap (Cashes Green GL6)', '', $group->id);
+
+        $this->assertNull($result);
+    }
+
     public function test_concern_keyword_per_group_scope_only_fires_for_matching_group(): void
     {
         $group1 = $this->createTestGroup();
