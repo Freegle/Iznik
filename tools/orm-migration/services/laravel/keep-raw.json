@@ -1,0 +1,42 @@
+{
+  "_comment": "Deliberate deferral rules for the iznik-batch (Laravel) raw-SQL inventory, applied by tools/orm-migration/php-extractor/extract.php after each regeneration. Same contract as tools/orm-migration/keep-raw.json: every rule needs a non-empty reason AND a non-empty porting note (plan 7.4). A rule may set \"status\" explicitly (default keep-raw) - used below for the SQLite classification-store cluster, which gets \"excluded\" rather than \"keep-raw\": those sites are not deferred ORM work, they are a different database engine entirely and are not part of this migration's scope at all - see extract.php's header comment. A rule may also set \"surface\" to narrow a file/directory match to only that surface (statement|fragment|ddl|expression|pdo) - needed for app/Console/Commands/Eee/, which genuinely mixes excluded SQLite reads with real, in-scope MySQL writes in the same file (EeeBackfillClassifiedTableCommand.php does both), so an unqualified directory rule would have incorrectly excluded real production sites alongside the SQLite ones.",
+  "rules": [
+    {
+      "file": "iznik-batch/app/Services/EeeSqliteService.php",
+      "surface": "pdo",
+      "status": "excluded",
+      "reason": "Every raw call in this file runs against a separate, local SQLite database (config('freegle.eee.sqlite_path')), not the shared Percona/MySQL cluster. The file's own doc comment says why: \"Separate from MySQL... to keep the dataset portable for Python/pandas analysis\" - an experimental ML-classification cache, not app data. Out of scope for the MySQL-to-ORM rewrite and unaffected by the engine migration; the surface filter is defensive (narrows the match to the raw \\PDO::prepare/exec/query calls this extractor's PDO audit finds, so a future edit that added a real DB:: call to this file would not be silently swept into the exclusion).",
+      "porting": "Not applicable: this SQLite database is local, disposable, rebuildable state for an experimental pipeline. It is not part of the MySQL-to-PostgreSQL migration and should not be counted in any Phase 4 estimate - directly analogous to the existing iznik-spatial-go SQLite R-tree precedent (tools/orm-migration/services/spatial/keep-raw.json), except recorded here as \"excluded\" rather than \"keep-raw\" per this manifest's status convention.",
+      "category": "Not applicable: local SQLite store"
+    },
+    {
+      "file": "iznik-batch/app/Services/EeeComponentService.php",
+      "surface": "pdo",
+      "status": "excluded",
+      "reason": "Reads the same separate SQLite classification store as EeeSqliteService.php (via an injected EeeSqliteService, e.g. $this->sqlite->getPdo()), not the shared Percona/MySQL cluster. Same reasoning as the EeeSqliteService.php rule above.",
+      "porting": "Not applicable - see the EeeSqliteService.php rule above.",
+      "category": "Not applicable: local SQLite store"
+    },
+    {
+      "file": "iznik-batch/app/Console/Commands/Eee/",
+      "surface": "pdo",
+      "status": "excluded",
+      "reason": "Console commands under this directory read the same separate SQLite classification store (via an injected EeeSqliteService). The surface filter matters here specifically: EeeBackfillClassifiedTableCommand.php in this same directory ALSO writes real production MySQL rows via DB::table('eee_classified_attachments') and DB::statement(...) - those sites are NOT covered by this rule (different surface: statement, not pdo) and remain status raw for normal triage. A whole-directory exclusion with no surface filter would have silently dropped that file's genuine in-scope MySQL sites.",
+      "porting": "Not applicable - see the EeeSqliteService.php rule above.",
+      "category": "Not applicable: local SQLite store"
+    },
+    {
+      "file": "iznik-batch/database/migrations/",
+      "reason": "Laravel schema migrations - a one-shot, frozen historical record of schema/data changes already applied to the live database. Checked rather than assumed uniform (156 sites as of this rule's writing): 108 are genuine DDL (CREATE/ALTER/DROP/RENAME/TRUNCATE TABLE etc); 13 are one-off data backfill DML (UPDATE/DELETE - e.g. 2026_04_14_000002_copy_per_group_data_to_messages_groups.php copies heldby/spamtype from messages to messages_groups once, as part of that migration's own schema change); the remaining 35 are SELECT/SHOW guard-queries against information_schema or the database's own catalog (e.g. \"SHOW INDEX FROM ... WHERE Key_name = ?\", \"SELECT COUNT(*) FROM information_schema.statistics WHERE ...\"), used to make a schema change idempotent/conditional (\"does this index/column already exist\"), plus a handful of dynamically-built ALTER statements carrying MySQL's online-DDL algorithm hints (ALGORITHM=INSTANT/INPLACE, LOCK=NONE). All three categories share the same reason to stay raw regardless of DML-vs-DDL: a migration already ran, converting its SQL to ORM calls after the fact changes nothing about what happened and risks nothing but disturbing a file Laravel tracks by checksum/batch number. This is not the same claim as \"migrations are all DDL\" - it is checked, and the answer is they are not, but the reason to defer applies uniformly anyway.",
+      "porting": "DDL needs syntax translation per-statement at migration-authoring time on Postgres (this project already writes new migrations against the target dialect going forward per the DB migration plan, so this is a Phase-4-adjacent authoring concern, not a bulk-rewrite one). The information_schema/SHOW guard-queries need adapting: MySQL's information_schema.statistics has no direct Postgres equivalent for index existence checks (Postgres migrations typically use pg_indexes or a DO block with information_schema.columns for column checks) - each such guard needs a per-statement rewrite, not a mechanical one. The one-off backfill DML (UPDATE/DELETE) needs no changes in principle since it is standard SQL, but is frozen history and will never run again on the target database, so it does not need porting at all - it is listed here for completeness of the count, not as Phase 4 work.",
+      "category": "Schema migrations (DDL + one-off backfill DML + guard queries)"
+    },
+    {
+      "id": "27496bd44361",
+      "status": "retired",
+      "reason": "Renumbered, not converted and not deleted. This id named MicrovolunteeringNotifyService::notifyForMessages' \"please review this post\" SELECT. The merge that brought PR #1257 and PR #1230 together added an `AND messages_groups.heldby IS NULL` predicate to it - the per-group hold fix - which changed the recorded SQL text and therefore the id hash, so the same call site now appears as 4f242de92f6d and this id has no code behind it. Left as raw-and-absent it inflates the raw count by one against a statement that does not exist, and it was that phantom which the ceiling was raised to 570 to accommodate. The work it represented is not discharged: 4f242de92f6d carries it forward, still raw and still counted.",
+      "porting": "None of its own - see site 4f242de92f6d, which now names this statement and carries its porting note.",
+      "category": "Master merge: renumbered by a predicate change"
+    }
+  ]
+}

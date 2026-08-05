@@ -2,19 +2,31 @@
 # Keep new raw SQL out of the codebase - the guard that replaces the ORM
 # migration ratchet.
 #
-# The migration converted 1,593 Go call sites and left raw at zero there. What
-# held that line was ci-ratchet.sh's gate (b) - "the code contains a raw SQL
+# The migration converted 1,593 Go call sites. It did NOT reach zero raw SQL:
+# about 44 sites in iznik-server-go are deliberately still raw (index hints,
+# runtime-varying identifiers, statements GORM will not render). The manifest's
+# "raw: 0" meant "nothing left untriaged", which is a bookkeeping fact, not an
+# absence of raw SQL - worth stating plainly, because reading it as the latter
+# is exactly the mistake this comment exists to stop the next person making.
+#
+# What held the line was ci-ratchet.sh's gate (b) - "the code contains a raw SQL
 # call site whose ID is absent from the manifest" - backed by a 5,974-entry
 # inventory, an AST extractor and a golden-SQL parity harness. That machinery
-# existed to CARRY OUT a migration. Once the Go migration landed it was carrying
-# ~8MB of inventory to answer one question: did someone add raw SQL back? This
-# hook answers that at the point it happens, which is earlier and far cheaper.
+# existed to CARRY OUT a migration. Once the Go conversions landed it was
+# carrying ~8MB of inventory to answer one question: did someone add raw SQL
+# back? This hook answers that where it happens, earlier and far cheaper.
 #
-# Covers BOTH stacks, for different reasons:
-#   - iznik-server-go: raw is at 0. Anything new is a regression.
-#   - iznik-batch (Laravel): 569 raw sites, 0 converted - the migration has not
+# Covers BOTH stacks:
+#   - iznik-server-go: converted, bar the deliberate remainder above.
+#   - iznik-batch (Laravel): 569 raw sites, 0 converted - that work has not
 #     started. The hook is not trying to fix those; it stops the pile GROWING
 #     silently, and makes each new one carry a written reason.
+#
+# It WILL fire on an edit to one of the existing deliberate sites, because their
+# justifications lived in the inventory rather than inline. That is accepted:
+# the hook reads diffs, so it only ever interrupts someone actually editing one
+# of those queries, and an override is a sentence. Retro-fitting ~44 comments to
+# pre-empt it would be churn for a prompt nobody minds.
 #
 # It judges ONLY the text being written, never the whole file, so editing near
 # existing raw SQL is unaffected. Exemptions:
@@ -54,7 +66,13 @@ fi
 LANG=""
 case "$FILE" in
   *iznik-server-go/*.go)
-    case "$FILE" in *_test.go) exit 0 ;; esac
+    # *_test.go is obvious; iznik-server-go/test/ is the integration-test
+    # package, whose non-_test.go helpers (testUtils.go and friends) are
+    # fixture scaffolding and legitimately full of raw SQL.
+    case "$FILE" in
+      *_test.go) exit 0 ;;
+      */iznik-server-go/test/*) exit 0 ;;
+    esac
     LANG=go
     ;;
   *iznik-batch/*.php)
@@ -74,11 +92,10 @@ if [ "$LANG" = go ]; then
   # statements, not blocked.
   echo "$ADDED" | grep -qE '\.(Raw|Exec)\(|RetryExec\(|ExecInsertGetID\(' || exit 0
   cat >&2 <<'EOF'
-BLOCKED: this adds raw SQL to iznik-server-go, where the ORM migration left the
-count at zero.
+BLOCKED: this adds raw SQL to iznik-server-go.
 
-Use a GORM chain - db.Table(...).Select(...).Where(...) - as the other 1,593
-converted sites do. For a SQL fragment inside a chain (NOW(), a spatial
+Use a GORM chain - db.Table(...).Select(...).Where(...) - as the 1,593 converted
+sites do. For a SQL fragment inside a chain (NOW(), a spatial
 predicate, an index hint) use gorm.Expr / clause.Expr; those are not blocked.
 
 If it genuinely cannot go through GORM - dynamic table or column name, an index
