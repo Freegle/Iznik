@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:16:11Z",
+    "generated": "2026-08-05T17:17:42Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 86,
-        "raw": 229,
+        "converted": 87,
+        "raw": 228,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -10461,13 +10461,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT DISTINCT mg.msgid, m.subject, mg.arrival FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid LEFT JOIN messages_attachments ma ON ma.msgid = m.id LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id WHERE mg.arrival >= ? AND mg.collection IN ('Approved', 'Pending') AND ma.id IS NULL AND maid.msgid IS NULL AND m.subject IS NOT NULL AND m.subject != '' ORDER BY mg.arrival ASC, mg.msgid ASC LIMIT ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select distinct `mg`.`msgid`, `m`.`subject`, `mg`.`arrival` from `messages_groups` as `mg` inner join `messages` as `m` on `m`.`id` = `mg`.`msgid` inner join `messages_spatial` as `ms` on `ms`.`msgid` = `mg`.`msgid` left join `messages_attachments` as `ma` on `ma`.`msgid` = `m`.`id` left join `messages_ai_declined` as `maid` on `maid`.`msgid` = `m`.`id` where `mg`.`arrival` >= ? and `mg`.`collection` in (?, ?) and `ma`.`id` is null and `maid`.`msgid` is null and `m`.`subject` is not null and `m`.`subject` != ? order by `mg`.`arrival` asc, `mg`.`msgid` asc limit 100"
         },
         "1041efb8132d": {
             "id": "1041efb8132d",

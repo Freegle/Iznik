@@ -74,22 +74,27 @@ class MessageIllustrationsService
         $cachedHits = 0;
 
         while (true) {
-            $msgs = DB::select("
-                SELECT DISTINCT mg.msgid, m.subject, mg.arrival
-                FROM messages_groups mg
-                INNER JOIN messages m ON m.id = mg.msgid
-                INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
-                LEFT JOIN messages_attachments ma ON ma.msgid = m.id
-                LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-                WHERE mg.arrival >= ?
-                AND mg.collection IN ('Approved', 'Pending')
-                AND ma.id IS NULL
-                AND maid.msgid IS NULL
-                AND m.subject IS NOT NULL
-                AND m.subject != ''
-                ORDER BY mg.arrival ASC, mg.msgid ASC
-                LIMIT ?
-            ", [$lastArrival, self::BATCH_SIZE * 2]);
+            $msgs = DB::table('messages_groups as mg')
+                ->distinct()
+                ->select('mg.msgid', 'm.subject', 'mg.arrival')
+                ->join('messages as m', 'm.id', '=', 'mg.msgid')
+                ->join('messages_spatial as ms', 'ms.msgid', '=', 'mg.msgid')
+                // Two anti-joins: messages with no attachment and no prior AI
+                // decline. leftJoin + IS NULL, not join - an inner join would
+                // return exactly the messages we want to skip.
+                ->leftJoin('messages_attachments as ma', 'ma.msgid', '=', 'm.id')
+                ->leftJoin('messages_ai_declined as maid', 'maid.msgid', '=', 'm.id')
+                ->where('mg.arrival', '>=', $lastArrival)
+                ->whereIn('mg.collection', ['Approved', 'Pending'])
+                ->whereNull('ma.id')
+                ->whereNull('maid.msgid')
+                ->whereNotNull('m.subject')
+                ->where('m.subject', '!=', '')
+                ->orderBy('mg.arrival')
+                ->orderBy('mg.msgid')
+                ->limit(self::BATCH_SIZE * 2)
+                ->get()
+                ->all();
 
             if (empty($msgs)) {
                 break;
