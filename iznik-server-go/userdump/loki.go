@@ -80,6 +80,27 @@ func (l *httpLoki) query(logql string, startNs, endNs int64, limit int) ([]lokiE
 	return out, nil
 }
 
+// Sources whose lines carry user_id only inside the JSON payload, not as an
+// indexed stream label. Confirmed against production: api, chat_reply and
+// client label it; these do not. Keeping the expensive `| json` / regex passes
+// pinned to this set is what makes them affordable - it excludes the api and
+// client firehose, which pass A has already covered by label.
+const unlabelledSources = "api_headers|batch|batch_event|email|incoming_mail|similar_posts|vector_search"
+
+// maxLokiRange is how far back a single query_range may reach. Production Loki
+// enforces 30d1h and rejects anything longer with a 400, so asking for more is
+// not "get less back", it is "get nothing back".
+const maxLokiRange = 30 * 24 * time.Hour
+
+// clampLokiStart pulls start forward if the requested window is longer than
+// Loki will serve.
+func clampLokiStart(startNs, endNs int64) int64 {
+	if oldest := endNs - int64(maxLokiRange); startNs < oldest {
+		return oldest
+	}
+	return startNs
+}
+
 func escapeLokiRegex(s string) string {
 	for _, c := range []string{`\`, `.`, `+`, `*`, `?`, `^`, `$`, `(`, `)`, `[`, `]`, `{`, `}`, `|`, `"`} {
 		s = strings.ReplaceAll(s, c, `\`+c)
@@ -100,6 +121,14 @@ func escapeLokiRegex(s string) string {
 func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, startNs, endNs int64) (int, error) {
 	const perQuery = 5000
 
+	// Production Loki refuses any query_range longer than 30d1h outright. The
+	// dump's own default window is 90 days, so pass A came straight back with
+	// "the query time range exceeds the limit", the whole section was recorded
+	// as a warning, and EVERY dump has been arriving with no logs at all.
+	// Narrow the window to what Loki will serve and say so, rather than asking
+	// for something that can only fail.
+	startNs = clampLokiStart(startNs, endNs)
+
 	seen := map[string]bool{}
 	var all []lokiEntry
 	add := func(entries []lokiEntry) {
@@ -113,13 +142,30 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 		}
 	}
 
-	// Pass A.
+	// Pass A, in two parts, because `{app="freegle"} | json | user_id="..."`
+	// alone has to decompress and JSON-parse every Freegle log line in the
+	// window - over a minute for a single day against production.
+	//
+	// A1: user_id is an indexed STREAM LABEL on api, chat_reply and client,
+	// which is the bulk of the volume. As a label selector this is an index
+	// lookup: about a second for the same day.
 	uidStr := strconv.FormatUint(userID, 10)
-	entries, err := q.query(fmt.Sprintf(`{app="freegle"} | json | user_id="%s"`, uidStr), startNs, endNs, perQuery)
+	entries, err := q.query(fmt.Sprintf(`{app="freegle", user_id="%s"}`, uidStr), startNs, endNs, perQuery)
 	if err != nil {
 		return 0, err
 	}
 	add(entries)
+
+	// A2: the remaining sources carry user_id only as a JSON field, so they
+	// still need the parse - but restricted to those streams, which excludes
+	// the api/client firehose. Best effort: these are the sources that most
+	// often have nothing for a given member, and losing them is much better
+	// than losing the section.
+	if e1b, err := q.query(
+		fmt.Sprintf(`{app="freegle", source=~"%s"} | json | user_id="%s"`, unlabelledSources, uidStr),
+		startNs, endNs, perQuery); err == nil {
+		add(e1b)
+	}
 
 	// Harvest session ids from api lines.
 	sessions := map[string]bool{}
@@ -135,13 +181,19 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 		}
 	}
 
-	// Pass B.
+	// Pass B: catch lines that name the member by email rather than by id -
+	// mail delivery, incoming mail, batch jobs. Restricted to the sources that
+	// do NOT label user_id, because pass A has already covered the ones that do
+	// and a full-text regex across the api/client firehose is exactly the scan
+	// that made this section unusable.
 	for _, em := range emails {
 		em = strings.TrimSpace(em)
 		if em == "" {
 			continue
 		}
-		if e2, err := q.query(fmt.Sprintf(`{app="freegle"} |~ "(?i)%s"`, escapeLokiRegex(em)), startNs, endNs, perQuery); err == nil {
+		if e2, err := q.query(
+			fmt.Sprintf(`{app="freegle", source=~"%s"} |~ "(?i)%s"`, unlabelledSources, escapeLokiRegex(em)),
+			startNs, endNs, perQuery); err == nil {
 			add(e2)
 		}
 	}

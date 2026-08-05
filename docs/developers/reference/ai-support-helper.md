@@ -81,6 +81,22 @@ The investigation playbook (held chat replies, duplicate conversations, purged a
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
 `support-agent.js`.
 
+### What the user dump does and does not contain
+
+`get_user_dump` is served by `iznik-server-go/userdump`, and `?since=` (default 90 days) is
+a real bound, not a hint:
+
+- **Chat membership is complete** — every room the member is in. **Message bodies are
+  windowed** to the rooms active inside `since`. A moderator is in the roster of every
+  Mod2Mod and User2Mod chat on their groups (one real admin: 18,664 rooms, of which 332
+  had any activity in 90 days), and pulling every message for all of them could not finish
+  inside the caller's timeout — so that member could not be investigated at all.
+- **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
+  rejects any `query_range` longer than `30d1h` outright.
+- Anything the dump had to bound is recorded in its **`_sections`** table with
+  `status='warning'` and a note. Read it before concluding "there is nothing there" — an
+  empty table can mean *not collected*, not *did not happen*.
+
 ## Device summary panel
 
 `GET /api/device-summary?userId=` (`server.js`) is a deterministic, no-AI view shown as
