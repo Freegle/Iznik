@@ -23,6 +23,11 @@ class Wave2RosterTest extends TestCase
     private const SITE_ROSTER_MEMBER = '211ed1484c4b';
     private const SITE_ROSTER_MOD = '99d42e86b84c';
 
+    // The same statement again, in ChatRoom::getOrCreateUser2Mod - once for the
+    // member, once per group moderator.
+    private const SITE_ROSTER_MEMBER_2 = '4f88701abf8b';
+    private const SITE_ROSTER_MOD_2 = '0b34a7e081a2';
+
     public function test_roster_inserts(): void
     {
         $build = fn () => [
@@ -32,5 +37,7 @@ class Wave2RosterTest extends TestCase
 
         GoldenSql::assertInsertOrIgnore(self::SITE_ROSTER_MEMBER, $build);
         GoldenSql::assertInsertOrIgnore(self::SITE_ROSTER_MOD, $build);
+        GoldenSql::assertInsertOrIgnore(self::SITE_ROSTER_MEMBER_2, $build);
+        GoldenSql::assertInsertOrIgnore(self::SITE_ROSTER_MOD_2, $build);
     }
 }

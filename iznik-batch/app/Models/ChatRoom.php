@@ -239,7 +239,7 @@ class ChatRoom extends Model implements Auditable
         if ($room) {
             // Ensure the member and all group mods are in the roster so that
             // chat notifications reach everyone.
-            DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$room->id, $userId]);
+            DB::table('chat_roster')->insertOrIgnore(['chatid' => $room->id, 'userid' => $userId]);
 
             $modUserIds = DB::table('memberships')
                 ->where('groupid', $groupId)
@@ -247,7 +247,7 @@ class ChatRoom extends Model implements Auditable
                 ->pluck('userid');
 
             foreach ($modUserIds as $modUserId) {
-                DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$room->id, $modUserId]);
+                DB::table('chat_roster')->insertOrIgnore(['chatid' => $room->id, 'userid' => $modUserId]);
             }
         }
 
