@@ -111,13 +111,18 @@ class MigrateReachBoundsSchemaCommand extends Command
         do {
             $deltaIds = array_map(
                 fn ($r) => (int) $r->msgid,
-                DB::select(
-                    'SELECT rr.msgid FROM rippling_reach rr
-                      LEFT JOIN rippling_reach_shadow s ON s.msgid = rr.msgid
-                      WHERE s.msgid IS NULL OR rr.updated_at >= ? LIMIT ?',
-                    [$copyStart, $chunk],
-                    false
-                )
+                DB::table('rippling_reach as rr')
+                    ->select('rr.msgid')
+                    // leftJoin, not join: the whole point is finding rows with
+                    // NO shadow row, which an inner join would exclude.
+                    ->leftJoin('rippling_reach_shadow as s', 's.msgid', '=', 'rr.msgid')
+                    ->where(function ($q) use ($copyStart) {
+                        $q->whereNull('s.msgid')
+                          ->orWhere('rr.updated_at', '>=', $copyStart);
+                    })
+                    ->limit($chunk)
+                    ->get()
+                    ->all()
             );
             foreach ($deltaIds as $msgid) {
                 $this->replaceRow($msgid);

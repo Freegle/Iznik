@@ -162,6 +162,11 @@
       "id": "28717f6b9519",
       "sql": "(select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user1` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?) union (select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user2` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?)",
       "reason": "Two differences, neither semantic. The inlined constants (flaggedspam = 0, collection = 'Spammer') are now bound in each arm; and Laravel parenthesises each arm of a union, which MySQL parses identically to the bare form. What is deliberately unchanged is the pair that decides behaviour: UNION rather than UNION ALL, so a room whose BOTH participants are spammers is still de-duplicated rather than warned twice, and two arms joined on user1 and user2 separately rather than one join with an OR, which is what lets each arm use the index on its own column."
+    },
+    {
+      "id": "0f2ac58b064f",
+      "sql": "select `rr`.`msgid` from `rippling_reach` as `rr` left join `rippling_reach_shadow` as `s` on `s`.`msgid` = `rr`.`msgid` where (`s`.`msgid` is null or `rr`.`updated_at` >= ?) limit 1000",
+      "reason": "Laravel inlines LIMIT rather than binding it, so the golden's second placeholder becomes a literal - the test's representative value, since the diff is compared after bindings are substituted; the production call still passes $chunk. The parentheses around the OR are Laravel making explicit what the raw statement got from precedence, and are what the closure exists to preserve. LEFT JOIN and the IS NULL arm are unchanged, which is what makes this find rows with no shadow row."
     }
   ]
 }
