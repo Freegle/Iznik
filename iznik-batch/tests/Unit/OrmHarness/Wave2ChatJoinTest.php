@@ -37,6 +37,10 @@ class Wave2ChatJoinTest extends TestCase
     //   WHERE cm.userid = ? AND cm.date > ? AND cr.chattype = ? AND cm.type IN (?, ?)
     private const SITE_USER_MESSAGES = '3a4378f7f24e';
 
+    // SELECT users_emails.userid AS emailid, users_donations.id AS donationid
+    //   FROM users_donations INNER JOIN users_emails ON ... WHERE ...
+    private const SITE_DONATION_USERS = '7fa41827ba83';
+
     public function test_pending_expected_replies(): void
     {
         GoldenSql::assert(self::SITE_PENDING_EXPECTED, fn () => DB::table('chat_messages as cm')
@@ -57,5 +61,15 @@ class Wave2ChatJoinTest extends TestCase
             ->where('cm.date', '>', '2026-01-01 00:00:00')
             ->where('cr.chattype', ChatRoom::TYPE_USER2USER)
             ->whereIn('cm.type', [ChatMessage::TYPE_INTERESTED, ChatMessage::TYPE_DEFAULT]));
+    }
+
+    public function test_donations_missing_userid(): void
+    {
+        GoldenSql::assert(self::SITE_DONATION_USERS, fn () => DB::table('users_donations')
+            ->select('users_emails.userid as emailid', 'users_donations.id as donationid')
+            ->join('users_emails', 'users_emails.email', '=', 'users_donations.Payer')
+            ->whereNull('users_donations.userid')
+            ->where('users_donations.Payer', '!=', '')
+            ->where('users_emails.email', '!=', ''));
     }
 }

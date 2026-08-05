@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T16:59:17Z",
+    "generated": "2026-08-05T17:00:44Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 406,
-        "converted": 73,
-        "raw": 252,
+        "converted": 74,
+        "raw": 251,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -8994,13 +8994,13 @@
             "dynamic": false,
             "args": 0,
             "goldenSql": "SELECT users_emails.userid AS emailid, users_donations.id AS donationid FROM users_donations INNER JOIN users_emails ON users_emails.email = users_donations.Payer WHERE users_donations.userid IS NULL AND users_donations.Payer != '' AND users_emails.email != ''",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select `users_emails`.`userid` as `emailid`, `users_donations`.`id` as `donationid` from `users_donations` inner join `users_emails` on `users_emails`.`email` = `users_donations`.`Payer` where `users_donations`.`userid` is null and `users_donations`.`Payer` != ? and `users_emails`.`email` != ?"
         },
         "854e1ce3d702": {
             "id": "854e1ce3d702",

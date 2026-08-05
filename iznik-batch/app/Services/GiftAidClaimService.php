@@ -161,14 +161,14 @@ class GiftAidClaimService
      */
     public function correctUserIdInDonations(): int
     {
-        $missing = DB::select(
-            "SELECT users_emails.userid AS emailid, users_donations.id AS donationid
-             FROM users_donations
-             INNER JOIN users_emails ON users_emails.email = users_donations.Payer
-             WHERE users_donations.userid IS NULL
-               AND users_donations.Payer != ''
-               AND users_emails.email != ''"
-        );
+        $missing = DB::table('users_donations')
+            ->select('users_emails.userid as emailid', 'users_donations.id as donationid')
+            ->join('users_emails', 'users_emails.email', '=', 'users_donations.Payer')
+            ->whereNull('users_donations.userid')
+            ->where('users_donations.Payer', '!=', '')
+            ->where('users_emails.email', '!=', '')
+            ->get()
+            ->all();
 
         foreach ($missing as $m) {
             DB::table('users_donations')

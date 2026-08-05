@@ -152,6 +152,11 @@
       "id": "1a2fdf6e9cab",
       "sql": "select `cm`.`id`, `cm`.`userid`, `cm`.`chatid`, `cm`.`date`, `cr`.`user1`, `cr`.`user2` from `chat_messages` as `cm` inner join `chat_rooms` as `cr` on `cr`.`id` = `cm`.`chatid` where `cm`.`date` >= ? and `cm`.`replyexpected` = ? and `cm`.`replyreceived` = ? and `cr`.`chattype` = ?",
       "reason": "Inlined constants now bound: replyexpected = 1 and replyreceived = 0. What is deliberately NOT different is everything that decides which rows come back on a join - the INNER JOIN type, the ON clause, the column list and the remaining predicates all render identically, which is why Layer 1 is still adequate evidence for a plain join with no grouping."
+    },
+    {
+      "id": "7fa41827ba83",
+      "sql": "select `users_emails`.`userid` as `emailid`, `users_donations`.`id` as `donationid` from `users_donations` inner join `users_emails` on `users_emails`.`email` = `users_donations`.`Payer` where `users_donations`.`userid` is null and `users_donations`.`Payer` != ? and `users_emails`.`email` != ?",
+      "reason": "Inlined empty-string constants now bound: the two != '' guards become binds. The join type, ON clause, column aliases and the IS NULL predicate are unchanged, which is what decides the rows."
     }
   ]
 }
