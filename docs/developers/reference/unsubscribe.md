@@ -14,6 +14,7 @@ covers:
   - iznik-batch/tests/Unit/Mail/UnsubscribeCategoryCoverageTest.php
   - iznik-batch/tests/Unit/Mail/UnsubscribedNoticeTest.php
   - iznik-batch/resources/views/emails/mjml/session/unsubscribed-notice.blade.php
+  - iznik-batch/app/Console/Commands/Mail/TestMailCommand.php
 ---
 
 # Unsubscribing from email
@@ -177,6 +178,18 @@ replies, and they should still find out.
 
 If everything in scope was already off it says so rather than claiming to have changed
 something.
+
+### Previewing it
+
+```bash
+docker exec freegle-batch php artisan mail:test unsubscribed --user=<id> --send-to=you@example.com
+docker exec freegle-batch php artisan mail:test unsubscribed --user=<id> --send-to=you@example.com --unsubscribed-type=allexceptreplies
+```
+
+It lands in Mailpit. `--unsubscribed-type` takes any category and defaults to `digest`; the
+"what may still reach you" list is worked out from the member's real settings, so the
+preview shows what they would actually see. Nothing is changed — the command runs inside a
+transaction that is rolled back.
 
 Note the trade: an in-body link that acts on GET can be followed by a link scanner. That is
 the same trade `relevantoff` already makes in the matched-posts footer, and the blast radius
