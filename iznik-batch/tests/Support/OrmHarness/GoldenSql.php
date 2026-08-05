@@ -122,6 +122,39 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for an upsert site, i.e. one converted with ->upsert().
+     * $build returns [query, rows, uniqueBy, update].
+     *
+     * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array,2:array,3:array}  $build
+     */
+    public static function assertUpsert(string $siteId, callable $build): void
+    {
+        [$built, $rows, $uniqueBy, $update] = $build();
+        $query = self::normaliseBuiltQuery($siteId, $built);
+        $grammar = $query->getGrammar();
+
+        $sql = $grammar->compileUpsert($query, $rows, $uniqueBy, $update);
+
+        // compileUpsert emits the VALUES binds followed by the update binds, in
+        // that order - mirroring what Builder::upsert() passes to the
+        // connection. Building them here rather than reading getBindings()
+        // because the query itself carries none: everything is in $rows.
+        $bindings = [];
+        foreach ($rows as $row) {
+            foreach ($row as $v) {
+                $bindings[] = $v;
+            }
+        }
+        foreach ($update as $k => $v) {
+            if (! is_int($k)) {
+                $bindings[] = $v;
+            }
+        }
+
+        self::compareAndAssert($siteId, $sql, $query->cleanBindings($bindings));
+    }
+
+    /**
      * Layer 1 for an UPDATE-shaped site. $build returns [query, values]:
      * the query builder carrying the table and WHERE (built but, same
      * discipline as assert(), never executed - do not call ->update() on
