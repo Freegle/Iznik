@@ -125,6 +125,20 @@
       "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
       "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
       "category": "Scalar SQL function over a column"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*UPDATE\\s+IGNORE\\b/i",
+      "reason": "UPDATE IGNORE has no query-builder form. Laravel provides insertOrIgnore() for INSERT IGNORE - so the INSERT side of this pattern IS convertible and is not covered by this rule - but there is no updateOrIgnore(), and the modifier is load-bearing here rather than decorative: TnDedupCommand repoints messages_history and messages_postings rows at a surviving message id, and IGNORE is what lets the statement skip the rows that would collide with an existing (msgid, ...) unique key instead of aborting the whole update. Reproducing that in the builder means either pre-filtering the collisions with a second query (a different statement with a race between the two) or catching the integrity error per row. Both are worse than the statement that is there.",
+      "porting": "PostgreSQL: no IGNORE modifier exists. The equivalent is an explicit predicate excluding the rows that would collide, or ON CONFLICT DO NOTHING where the operation can be expressed as an upsert. This needs a per-statement rewrite with the unique key in mind, not a mechanical substitution.",
+      "category": "UPDATE IGNORE"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*SELECT\\s+NOW\\(\\)\\s+AS\\s+\\w+\\s*$/i",
+      "reason": "A statement whose entire select list is NOW() and which reads from no table - MigrateReachBoundsSchemaCommand uses it to stamp the database's clock either side of a long schema step. DB::table() needs a table, and there is none; the builder has no from-less select. Taking the time in PHP instead defeats the purpose, which is specifically to read the DATABASE's clock rather than the application's - the command is comparing timings across a migration that may span replicas.",
+      "porting": "PostgreSQL: SELECT NOW() works identically with no FROM clause. No change needed.",
+      "category": "From-less clock read"
     }
   ]
 }

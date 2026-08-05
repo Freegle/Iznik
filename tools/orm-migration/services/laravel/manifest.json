@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T16:50:34Z",
+    "generated": "2026-08-05T16:51:51Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 399,
+        "keep-raw": 403,
         "converted": 64,
-        "raw": 268,
+        "raw": 264,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -750,10 +750,10 @@
             "goldenSql": "UPDATE IGNORE messages_history SET msgid = ? WHERE msgid = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "UPDATE IGNORE has no query-builder form. Laravel provides insertOrIgnore() for INSERT IGNORE - so the INSERT side of this pattern IS convertible and is not covered by this rule - but there is no updateOrIgnore(), and the modifier is load-bearing here rather than decorative: TnDedupCommand repoints messages_history and messages_postings rows at a surviving message id, and IGNORE is what lets the statement skip the rows that would collide with an existing (msgid, ...) unique key instead of aborting the whole update. Reproducing that in the builder means either pre-filtering the collisions with a second query (a different statement with a race between the two) or catching the integrity error per row. Both are worse than the statement that is there.",
+            "porting": "PostgreSQL: no IGNORE modifier exists. The equivalent is an explicit predicate excluding the rows that would collide, or ON CONFLICT DO NOTHING where the operation can be expressed as an upsert. This needs a per-statement rewrite with the unique key in mind, not a mechanical substitution.",
+            "category": "UPDATE IGNORE",
             "approvedDiff": ""
         },
         "60ca6d314bb1": {
@@ -778,10 +778,10 @@
             "goldenSql": "UPDATE IGNORE messages_postings SET msgid = ? WHERE msgid = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "UPDATE IGNORE has no query-builder form. Laravel provides insertOrIgnore() for INSERT IGNORE - so the INSERT side of this pattern IS convertible and is not covered by this rule - but there is no updateOrIgnore(), and the modifier is load-bearing here rather than decorative: TnDedupCommand repoints messages_history and messages_postings rows at a surviving message id, and IGNORE is what lets the statement skip the rows that would collide with an existing (msgid, ...) unique key instead of aborting the whole update. Reproducing that in the builder means either pre-filtering the collisions with a second query (a different statement with a race between the two) or catching the integrity error per row. Both are worse than the statement that is there.",
+            "porting": "PostgreSQL: no IGNORE modifier exists. The equivalent is an explicit predicate excluding the rows that would collide, or ON CONFLICT DO NOTHING where the operation can be expressed as an upsert. This needs a per-statement rewrite with the unique key in mind, not a mechanical substitution.",
+            "category": "UPDATE IGNORE",
             "approvedDiff": ""
         },
         "e7c346356e22": {
@@ -2129,10 +2129,10 @@
             "goldenSql": "SELECT NOW() AS t",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A statement whose entire select list is NOW() and which reads from no table - MigrateReachBoundsSchemaCommand uses it to stamp the database's clock either side of a long schema step. DB::table() needs a table, and there is none; the builder has no from-less select. Taking the time in PHP instead defeats the purpose, which is specifically to read the DATABASE's clock rather than the application's - the command is comparing timings across a migration that may span replicas.",
+            "porting": "PostgreSQL: SELECT NOW() works identically with no FROM clause. No change needed.",
+            "category": "From-less clock read",
             "approvedDiff": ""
         },
         "f326d3d0e074": {
@@ -2290,10 +2290,10 @@
             "goldenSql": "SELECT NOW() AS t",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A statement whose entire select list is NOW() and which reads from no table - MigrateReachBoundsSchemaCommand uses it to stamp the database's clock either side of a long schema step. DB::table() needs a table, and there is none; the builder has no from-less select. Taking the time in PHP instead defeats the purpose, which is specifically to read the DATABASE's clock rather than the application's - the command is comparing timings across a migration that may span replicas.",
+            "porting": "PostgreSQL: SELECT NOW() works identically with no FROM clause. No change needed.",
+            "category": "From-less clock read",
             "approvedDiff": ""
         },
         "d0f0d5ecee46": {
