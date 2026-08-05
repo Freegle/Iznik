@@ -8,6 +8,14 @@ use Illuminate\Mail\Mailables\Envelope;
 
 class BoundaryErrorMail extends MjmlMailable
 {
+    /**
+     * Transactional - a moderator alert about their own community - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public int $groupId,
         public string $groupName,

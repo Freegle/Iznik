@@ -19,6 +19,7 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use App\Services\UnsubscribeService;
 
 /**
  * Unified Freegle digest email.
@@ -186,6 +187,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
             return $card;
         });
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_DIGEST;
     }
 
     /**

@@ -8,6 +8,14 @@ use Illuminate\Mail\Mailables\Envelope;
 
 class ClosedGroupReminderMail extends MjmlMailable
 {
+    /**
+     * Transactional - a moderator alert about their own community - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $groupName,

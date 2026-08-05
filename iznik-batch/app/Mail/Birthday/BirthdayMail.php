@@ -3,11 +3,17 @@
 namespace App\Mail\Birthday;
 
 use App\Mail\MjmlMailable;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
 class BirthdayMail extends MjmlMailable
 {
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
+    }
+
     public function __construct(
         public readonly string $groupName,
         public readonly string $groupNameShort,

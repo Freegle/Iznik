@@ -40,6 +40,14 @@ class GroupWelcomeMail extends MjmlMailable implements RetryableMailable
         parent::__construct();
     }
 
+    /**
+     * Transactional - a one-off welcome when they join a community - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id;

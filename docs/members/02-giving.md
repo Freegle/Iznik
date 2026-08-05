@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-30
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -66,6 +66,11 @@ From My Posts, or from the post itself, you can:
 - **Edit** the post if you got a detail wrong.
 - **Edit and resend** to freshen it up.
 - **Repost** to bump it back to the top.
+
+**Repost** appears once your post has been up for as long as your community's repost
+interval (often a few days). If your post has rippled out to other communities, you do not
+have to wait for the newest one to catch up: as soon as any community it is on has reached
+its interval, you can repost.
 
 Freegle is first come, not an auction. It is good manners to reply to everyone, even if
 just to say it has gone.

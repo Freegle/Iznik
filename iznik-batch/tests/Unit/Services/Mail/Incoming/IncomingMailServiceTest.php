@@ -226,6 +226,79 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
     }
 
+    /**
+     * @return array{0: \App\Models\User, 1: string}
+     */
+    private function unsubscribeByMail(string $type): array
+    {
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('unsub')]);
+        $userEmail = $user->emails->first()->email;
+        $group = $this->createTestGroup();
+
+        \App\Models\Membership::create([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'role' => \App\Models\Membership::ROLE_MEMBER,
+            'collection' => \App\Models\Membership::COLLECTION_APPROVED,
+            'emailfrequency' => 24,
+        ]);
+
+        $key = 'validkey123';
+        DB::table('users_logins')->insert([
+            'userid' => $user->id,
+            'type' => 'Link',
+            'credentials' => $key,
+            'added' => now(),
+            'lastaccess' => now(),
+        ]);
+
+        $to = "unsubscribe-{$user->id}-{$key}-{$type}@users.ilovefreegle.org";
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $to,
+            'Subject' => 'One-click unsubscribe',
+        ]);
+
+        $this->service->route($this->parser->parse($email, $userEmail, $to));
+
+        return [$user->fresh(), $userEmail];
+    }
+
+    public function test_oneclick_unsubscribe_turns_off_the_category_not_the_account(): void
+    {
+        // Previously this soft-deleted the account and ignored the category entirely, so
+        // "stop sending me digests" was answered by deleting the member.
+        [$user] = $this->unsubscribeByMail('digest');
+
+        $this->assertNull($user->deleted, 'Unsubscribing from digests must not delete the account');
+        $this->assertSame(
+            0,
+            \App\Models\Membership::where('userid', $user->id)->where('emailfrequency', '!=', 0)->count()
+        );
+        $this->assertEquals(1, $user->relevantallowed, 'Other categories must be untouched');
+    }
+
+    public function test_oneclick_unsubscribe_acknowledges_it(): void
+    {
+        Mail::fake();
+
+        [$user, $userEmail] = $this->unsubscribeByMail('digest');
+
+        Mail::assertSent(\App\Mail\Session\UnsubscribedNotice::class, function ($mail) use ($userEmail) {
+            return $mail->hasTo($userEmail);
+        });
+    }
+
+    public function test_oneclick_unsubscribe_with_unknown_category_falls_back_to_all(): void
+    {
+        // A mangled address must not silently do nothing - the member asked to stop.
+        [$user] = $this->unsubscribeByMail('somethingelse');
+
+        $this->assertEquals(0, $user->relevantallowed);
+        $this->assertEquals(0, $user->newslettersallowed);
+        $this->assertNull($user->deleted);
+    }
+
     public function test_routes_oneclick_unsubscribe_to_dropped_with_invalid_key(): void
     {
         $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('unsub')]);

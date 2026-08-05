@@ -3,6 +3,7 @@
 namespace App\Services\Mail\Incoming;
 
 use App\Mail\Fbl\FblNotification;
+use App\Mail\Session\UnsubscribedNotice;
 use App\Models\ChatImage;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
@@ -15,6 +16,7 @@ use App\Models\UserEmail;
 use App\Services\ItemService;
 use App\Services\Ripple\RippleReplyService;
 use App\Services\SpatialQueryService;
+use App\Services\UnsubscribeService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -987,8 +989,13 @@ class IncomingMailService
     /**
      * Handle one-click unsubscribe (RFC 8058).
      *
-     * Puts the user into "limbo" (soft delete) which allows them to recover their account.
-     * Format: unsubscribe-{userid}-{key}-{type}@users.ilovefreegle.org
+     * Format: unsubscribe-{userid}-{key}-{type}@users.ilovefreegle.org, which is the mailto:
+     * arm of the List-Unsubscribe header every bulk mailable carries.
+     *
+     * {type} says which category of email the member received, so we turn off that category
+     * rather than the whole account: someone who clicks "Unsubscribe" on a digest is telling
+     * us they don't want digests, not that they want to leave Freegle. We then acknowledge
+     * it, saying what is off and what may still arrive.
      */
     private function handleOneClickUnsubscribe(ParsedEmail $email): RoutingResult
     {
@@ -1041,21 +1048,73 @@ class IncomingMailService
             return $this->dropped("Invalid key for one-click unsubscribe");
         }
 
-        // Log old value for reversibility.
-        $oldDeleted = DB::table('users')->where('id', $userId)->value('deleted');
+        // An address we generated ourselves should always carry a known category, but a
+        // mangled or truncated one must not silently do nothing - fall back to turning
+        // everything off, which is what "unsubscribe" means to the member.
+        if (! UnsubscribeService::isValidType($type)) {
+            Log::warning('Unknown unsubscribe type - falling back to all', [
+                'user_id' => $userId,
+                'type' => $type,
+            ]);
+            $type = UnsubscribeService::TYPE_ALL;
+        }
 
-        // Put user into limbo (soft delete)
-        DB::table('users')
-            ->where('id', $userId)
-            ->update(['deleted' => now()]);
+        $service = app(UnsubscribeService::class);
+        $turnedOff = $service->apply($user, $type);
+        $stillOn = $service->stillOn($user);
 
-        Log::info('Put user into limbo via one-click unsubscribe', [
+        Log::info('Applied one-click unsubscribe from mailto arm', [
             'user_id' => $userId,
             'type' => $type,
-            'old_deleted' => $oldDeleted,
+            'turned_off' => $turnedOff,
+            'still_on' => $stillOn,
         ]);
 
+        $this->sendUnsubscribedNotice($user, $type, $turnedOff, $stillOn);
+
         return RoutingResult::TO_SYSTEM;
+    }
+
+    /**
+     * Acknowledge an unsubscribe: what we turned off, what may still arrive, and where to
+     * change it. Sent to the address the member actually reads, not whatever they mailed
+     * from, so it lands somewhere useful.
+     *
+     * @param  string[]  $turnedOff
+     * @param  string[]  $stillOn
+     */
+    private function sendUnsubscribedNotice(User $user, string $type, array $turnedOff, array $stillOn): void
+    {
+        $preferredEmail = $this->getPreferredEmail($user->id);
+
+        if (empty($preferredEmail)) {
+            Log::warning('No email to acknowledge unsubscribe to', ['user_id' => $user->id]);
+
+            return;
+        }
+
+        try {
+            MailFacade::send(new UnsubscribedNotice(
+                $user->id,
+                $preferredEmail,
+                $user->fullname ?? $user->firstname ?? null,
+                $type,
+                $turnedOff,
+                $stillOn
+            ));
+
+            Log::info('Sent unsubscribe acknowledgement', [
+                'user_id' => $user->id,
+                'type' => $type,
+            ]);
+        } catch (\Throwable $e) {
+            // The opt-out itself has already been applied and matters more than the
+            // acknowledgement, so a mail failure must not fail the routing.
+            Log::warning('Failed to send unsubscribe acknowledgement', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

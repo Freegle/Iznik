@@ -4,6 +4,7 @@ namespace App\Mail\Volunteering;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
@@ -11,6 +12,11 @@ use Illuminate\Support\Collection;
 class VolunteeringDigestMail extends MjmlMailable
 {
     use TrackableEmail;
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_VOLUNTEERING;
+    }
 
     /**
      * @param array $volunteerings Deduplicated opportunities across all the

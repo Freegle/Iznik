@@ -13,6 +13,14 @@ use Illuminate\Mail\Mailables\Envelope;
  */
 class ChaseupModsMail extends MjmlMailable
 {
+    /**
+     * Transactional - a chase-up to volunteers about their own queue - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $groupName,

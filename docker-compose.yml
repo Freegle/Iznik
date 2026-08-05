@@ -599,6 +599,15 @@ services:
       - DISCOURSE_API_USER=${DISCOURSE_API_USER:-Edward_Hibbert}
       # Audit trail (who investigated whom, with what) - durable on the audit volume.
       - AUDIT_LOG_PATH=/app/audit/audit.jsonl
+      # "Refer to geeks" email. The SMTP default is the local mailpit, so a
+      # referral sent while developing lands at mailpit.localhost and never
+      # reaches the real geeks list; edge/prod sets SUPPORT_SMTP_* to a relay.
+      - GEEKS_EMAIL=${GEEKS_EMAIL:-geeks@ilovefreegle.org}
+      - SUPPORT_REFERRAL_FROM=${SUPPORT_REFERRAL_FROM:-support@ilovefreegle.org}
+      - SUPPORT_SMTP_HOST=${SUPPORT_SMTP_HOST:-mailpit}
+      - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
+      - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}
+      - SUPPORT_SMTP_PASS=${SUPPORT_SMTP_PASS:-}
     volumes:
       # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
       # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This

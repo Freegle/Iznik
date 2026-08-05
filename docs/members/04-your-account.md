@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -53,6 +53,16 @@ moderators, so there is no benefit to joining everywhere.
 - Each community has its own email frequency, set in Email settings above.
 - To **leave** a community, use **Unsubscribe** (`/unsubscribe`) and pick the community.
   Leaving stops its posts reaching you.
+
+## The Unsubscribe link in our emails
+
+Most email apps show an **Unsubscribe** link at the top of, or inside, our emails. Clicking
+it turns off **the kind of email you were reading** — so unsubscribing from a What's New
+digest stops digests, and nothing else. It does not delete your account.
+
+Because of that, you may still get other kinds of email from us: chat messages, newsletters
+and so on. We will send you a note saying what we turned off and what is still switched on.
+You can change any of it, or turn everything off, on the Settings page.
 
 ## Your profile and ratings
 

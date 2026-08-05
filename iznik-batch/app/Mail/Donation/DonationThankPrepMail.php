@@ -15,6 +15,14 @@ use Illuminate\Mail\Mailables\Envelope;
 class DonationThankPrepMail extends MjmlMailable
 {
     /**
+     * Transactional - an internal thank-you preparation report - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * @param  array<int, array<string, mixed>>  $cards Per-donation context blocks
      */
     public function __construct(

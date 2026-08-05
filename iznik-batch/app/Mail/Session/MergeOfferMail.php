@@ -70,6 +70,14 @@ class MergeOfferMail extends MjmlMailable
             ->applyLogging('MergeOffer');
     }
 
+    /**
+     * Transactional - about their own accounts - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;
