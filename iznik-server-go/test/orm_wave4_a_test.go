@@ -562,9 +562,9 @@ func TestWave4A_490e45f9be50(t *testing.T) {
 	ormharness.AssertGoldenSQL(t, "490e45f9be50", func(tx *gorm.DB) *gorm.DB {
 		var dest []map[string]interface{}
 		return tx.Table("`groups`").
-			Select("messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts").
+			Select("messages_groups.groupid AS groupid, JSON_EXTRACT(settings, '$.reposts') AS reposts").
 			Joins("INNER JOIN messages_groups ON messages_groups.groupid = groups.id").
-			Where("msgid = ?", 1).
+			Where("msgid = ? AND messages_groups.deleted = 0", 1).
 			Find(&dest)
 	})
 }

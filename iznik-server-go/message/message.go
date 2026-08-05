@@ -877,36 +877,56 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					// arrival rather than collapsing onto the first group.
 					type repostRow struct {
 						Groupid uint64
-						Reposts string
+						Reposts *string
 					}
 					var rows []repostRow
 					// ORM migration site 490e45f9be50 (wave 4).
+					// The `reposts` JSON is selected as-is and defaulted in Go
+					// (see below) rather than via a SQL CASE WHEN.
 					db.Table("`groups`").
-						Select("messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts").
+						Select("messages_groups.groupid AS groupid, JSON_EXTRACT(settings, '$.reposts') AS reposts").
 						Joins("INNER JOIN messages_groups ON messages_groups.groupid = groups.id").
-						Where("msgid = ?", message.ID).
+						Where("msgid = ? AND messages_groups.deleted = 0", message.ID).
 						Scan(&rows)
 
 					settingsByGroup := make(map[uint64]group.RepostSettings, len(rows))
 					for _, r := range rows {
-						var rs group.RepostSettings
-						json.Unmarshal([]byte(r.Reposts), &rs)
+						// A group with no `reposts` setting gets V1's defaults.
+						// Keeping the fallback in Go rather than in the SQL
+						// matters: the old CASE WHEN emitted a PHP hash literal
+						// that didn't parse as JSON, silently yielding interval 0
+						// (always eligible).
+						rs := group.DefaultRepostSettings()
+						if r.Reposts != nil {
+							if err := json.Unmarshal([]byte(*r.Reposts), &rs); err != nil {
+								rs = group.DefaultRepostSettings()
+							}
+						}
 						settingsByGroup[r.Groupid] = rs
 					}
 
-					// The message is only repostable when it is valid for
-					// reposting in EVERY group it's on — each group must have
-					// passed its own repost interval (measured from that group's
-					// own arrival). repostAt is therefore the LATEST per-group
-					// repost time: the point at which the last group becomes
-					// eligible. A group with interval >= 365 has reposting
-					// disabled, which blocks reposting across all groups.
-					canRepost = len(message.MessageGroups) > 0
+					// The message is repostable as soon as ANY group it's on has
+					// passed that group's own repost interval, measured from that
+					// group's own arrival. This matches V1 (Message::canRepost),
+					// which ORs across groups, and matches how reposting actually
+					// works: AutoRepostService bumps each group's arrival
+					// independently, so eligibility is a per-group property.
+					//
+					// Requiring EVERY group to be eligible is wrong for rippled
+					// posts. Each ripple expansion inserts a messages_groups row
+					// with a fresh arrival, which under an AND rule pushes the
+					// gate back every time the post reaches somewhere new, so a
+					// widely-rippling post can stay un-repostable indefinitely
+					// even though its home group passed the interval days ago.
+					//
+					// repostAt is the EARLIEST per-group repost time: the point at
+					// which the message first becomes repostable, and the point at
+					// which auto-repost next fires on some group.
+					canRepost = false
 					for _, mg := range message.MessageGroups {
 						rs, ok := settingsByGroup[mg.Groupid]
 						if !ok {
-							canRepost = false
-							continue
+							rs = group.DefaultRepostSettings()
 						}
 
 						interval := rs.Wanted
@@ -915,19 +935,19 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						}
 
 						if interval >= 365 {
-							canRepost = false
+							// Some groups set a very high value as a way of
+							// turning reposting off. That switches it off for
+							// this group only; it doesn't block the others.
 							continue
 						}
 
 						ra := mg.Arrival.AddDate(0, 0, interval)
-						if repostAt == nil || ra.After(*repostAt) {
+						if repostAt == nil || ra.Before(*repostAt) {
 							raCopy := ra
 							repostAt = &raCopy
 						}
-						if ra.After(time.Now()) {
-							// This group hasn't reached its repost time yet, so
-							// the message isn't repostable everywhere.
-							canRepost = false
+						if ra.Before(time.Now()) {
+							canRepost = true
 						}
 					}
 				}()
