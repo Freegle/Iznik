@@ -43,6 +43,12 @@
       "reason": "DB::raw('NOW()') as the assigned value in GiftAidClaimService's \"mark this donation claimed\" UPDATE. The statement around it IS converted (site 029b3600e99d) - this is only the value expression, and it has to stay raw because NOW() must be evaluated by MySQL. The non-raw alternative, ->update(['giftaidclaimed' => now()]), binds a timestamp taken from the PHP process instead, which moves the clock from the database to the application on a claimed-at field that HMRC submissions are built from. That is a real behaviour change bought for a cosmetic win in this inventory, so it is declined.",
       "porting": "PostgreSQL: NOW() exists and behaves the same (transaction-start timestamp); no change needed. If the exact instant matters rather than the statement's transaction, clock_timestamp() is the closer equivalent - worth a look at porting time, not before.",
       "category": "Value expression the database must evaluate"
+    },
+    {
+      "id": "4d1f7c861c51",
+      "reason": "WhatJobsService::geocodePostcode's bounding-box lookup selects SIX aliased aggregates in one statement - AVG(lat), AVG(lng), MIN(lat), MIN(lng), MAX(lat), MAX(lng). Laravel's builder has first-class aggregates (->avg/->min/->max) but each computes ONE value and issues its own statement; there is no non-raw way to select several aliased aggregates together. The only conversion available is ->select(DB::raw('AVG(lat) AS lat'), ...), and DB::raw is itself a raw site in this inventory - that would move the site from surface \"statement\" to surface \"expression\" and convert nothing. Splitting it into six separate queries is not equivalent either: it would turn one scan of the postcode rows into six.",
+      "porting": "PostgreSQL: AVG/MIN/MAX are standard and the statement ports unchanged. The LIKE on name and the IS NOT NULL guard are standard too. No dialect work needed.",
+      "category": "Multiple aliased aggregates in one statement"
     }
   ]
 }

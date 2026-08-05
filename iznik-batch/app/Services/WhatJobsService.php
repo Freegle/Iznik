@@ -1547,7 +1547,7 @@ class WhatJobsService
         // freshly-swapped table is never touched again.
         $maxish   = $this->getMaxish();
         $keywords = [];
-        foreach (DB::select('SELECT keyword, count FROM jobs_keywords') as $row) {
+        foreach (DB::table('jobs_keywords')->select('keyword', 'count')->get() as $row) {
             $keywords[$row->keyword] = (int) $row->count;
         }
 
@@ -1617,7 +1617,7 @@ class WhatJobsService
     public function analyseClickability(): void
     {
         $cutoff = now()->subDays(31)->startOfDay()->format('Y-m-d H:i:s');
-        DB::statement('DELETE FROM logs_jobs WHERE timestamp < ?', [$cutoff]);
+        DB::table('logs_jobs')->where('timestamp', '<', $cutoff)->delete();
 
         // Back-fill missing jobid from URL
         $logs = DB::select(
@@ -1628,7 +1628,7 @@ class WhatJobsService
              ORDER BY logs_jobs.id DESC'
         );
         foreach ($logs as $log) {
-            DB::statement('UPDATE logs_jobs SET jobid = ? WHERE id = ?', [$log->jobid, $log->lid]);
+            DB::table('logs_jobs')->where('id', $log->lid)->update(['jobid' => $log->jobid]);
         }
 
         // Rebuild keyword frequency from clicked jobs
@@ -1652,18 +1652,18 @@ class WhatJobsService
     {
         $maxish = $this->getMaxish();
         $keywords = [];
-        foreach (DB::select('SELECT keyword, count FROM jobs_keywords') as $row) {
+        foreach (DB::table('jobs_keywords')->select('keyword', 'count')->get() as $row) {
             $keywords[$row->keyword] = (int) $row->count;
         }
 
-        $jobs = DB::select('SELECT id, title FROM jobs');
+        $jobs = DB::table('jobs')->select('id', 'title')->get()->all();
         foreach ($jobs as $job) {
             $score = 0;
             foreach ($this->getKeywords($job->title) as $kw) {
                 $score += $keywords[$kw] ?? 0;
             }
             $normalised = $maxish > 0 ? $score / $maxish : 0;
-            DB::statement('UPDATE jobs SET clickability = ? WHERE id = ?', [$normalised, $job->id]);
+            DB::table('jobs')->where('id', $job->id)->update(['clickability' => $normalised]);
         }
     }
 
