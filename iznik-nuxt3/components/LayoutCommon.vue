@@ -436,14 +436,6 @@ onBeforeUnmount(() => {
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/sticky-banner.scss';
 
-/* Light-grey background behind the sticky bottom ad (the "drop ads" / job ads)
-   so the advertising zone reads as visually distinct from the white bottom nav
-   bar sitting above it — otherwise both are white and the bar doesn't stand out.
-   #E9ECEF is $color-gray-3 (used by hex to avoid a colour-var import here). */
-.sticky-ad-zone {
-  background-color: #e9ecef;
-}
-
 html {
   box-sizing: border-box;
 }
@@ -496,6 +488,22 @@ body.modal-open {
 
   @include media-breakpoint-up(lg) {
     background-color: transparent;
+  }
+
+  /* Light-grey background behind the sticky bottom ad (the "drop ads" / job
+     ads) so the advertising zone reads as distinct from the white bottom nav
+     bar above it, and so the zone reads as one surface. The banner reserves a
+     fixed height (sticky-banner.scss) but the ad, or the jobs block standing
+     in for it, only takes its natural height. With few jobs the remainder was
+     left showing the page straight through a position:fixed banner. Same
+     $gray-200 as .jobs-slot in JobsDaSlot, so the leftover space reads as part
+     of the block rather than a hole.
+
+     Nested inside .sticky on purpose: as a flat .sticky-ad-zone rule it had
+     equal specificity to the lg transparent above and lost on source order,
+     so the tint was dead on desktop from the day it was added. */
+  &.sticky-ad-zone {
+    background-color: $gray-200;
   }
 
   z-index: 10000;
