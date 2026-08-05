@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Telling a few likely-interested people about a post nobody has replied to.
@@ -29,6 +30,32 @@ use Illuminate\Support\Facades\Log;
  * is picked, not how many. Ten well-chosen people is a different product from
  * "the digest, but sooner", and the per-member fatigue caps exist so that being
  * good at replying never turns into being punished for it.
+ *
+ * **What justifies the mail decides whether it may be an extra one.**
+ *
+ * A match on an outstanding post or a saved search is something the member asked
+ * for, item by item, so it may be an extra mail. It is gated on
+ * users.relevantallowed instead - the existing "Suggested posts for you" consent,
+ * which is precisely what this is, and which the engagement mails and
+ * non-essential admin mails already honour.
+ *
+ * "Replies to a lot of things" says nothing about THIS item, so it may only ever
+ * be that member's daily digest arriving early, never an extra mail: skipped if
+ * today's digest has already gone, and skipped if they take no post email
+ * anywhere, because then there is no digest to bring forward. Dropped candidates
+ * do not leave a hole - filtering happens before the top-N cap, so the next-best
+ * candidate takes the slot and the post still gets its full complement.
+ *
+ * One residual overlap on that weaker path, deliberately left: a post arriving
+ * before the daily digest cron has run can scout somebody whose digest then also
+ * goes out later the same morning. Closing it would mean suppressing their
+ * digest, trading a whole day's posts for one.
+ *
+ * **The mail itself is byte-for-byte an ordinary immediate digest** for that one
+ * post (UnifiedDigestService::mailPostToUsers). No scout-specific subject,
+ * preamble or footer, and nothing in it says how the recipient was chosen. A
+ * member should not be able to tell a scouted post from one the ripple reached
+ * normally, and nor should anyone they forward it to.
  *
  * Three signals, strongest first:
  *
@@ -283,10 +310,21 @@ class ScoutService
             return [];
         }
 
-        // Everything above except the frequent-replier query is unbounded
-        // geographically, so the reach test happens once here over the merged set
-        // rather than three times in three queries.
-        $eligible = $this->filterEligible($msgid, array_keys($scores), $cfg);
+        // Eligibility differs by how strong the signal is, because what justifies
+        // the mail differs. A match on an outstanding post or a saved search is
+        // something the member asked for, so it may be an extra mail. "You reply
+        // to a lot of things" is not, so it may only ever be their daily digest
+        // arriving early. `reason` holds the strongest signal that fired (they
+        // are applied strongest first above), so it is the right thing to split
+        // on. Two queries rather than one, but each candidate is still reach- and
+        // fatigue-tested exactly once.
+        $strong = array_keys(array_filter($scores, static fn ($c) => $c['reason'] !== 'frequent'));
+        $weak = array_keys(array_filter($scores, static fn ($c) => $c['reason'] === 'frequent'));
+
+        $eligible = array_merge(
+            $this->filterEligible($msgid, $strong, $cfg, true),
+            $this->filterEligible($msgid, $weak, $cfg, false)
+        );
 
         return array_intersect_key($scores, array_flip($eligible));
     }
@@ -390,10 +428,28 @@ class ScoutService
      * recently active, inside the post's eventual reach, and not already
      * over-scouted.
      *
+     * Called BEFORE the top-N cap, which is what makes "if they have had one,
+     * find other scouts" work: an excluded candidate does not leave a hole, the
+     * next-best candidate takes the slot.
+     *
+     * $strong says what justifies the mail, and therefore what else is checked:
+     *
+     *  true  - the member has an outstanding post of the opposite type that
+     *          matches, or a saved search that matches. They asked to be told
+     *          about things like this, so it may be an EXTRA mail. Gated on
+     *          users.relevantallowed, which is the existing consent for exactly
+     *          this ("Suggested posts for you"), also honoured by the engagement
+     *          mails and non-essential admin mails.
+     *  false - the member just replies to a lot of things. Nothing here is about
+     *          this item, so it may only ever be their daily digest arriving
+     *          early: skipped if today's digest has already gone, and skipped if
+     *          they accept no post email anywhere, because then there is no
+     *          digest to bring forward.
+     *
      * @param int[] $userIds
      * @return int[]
      */
-    private function filterEligible(int $msgid, array $userIds, array $cfg): array
+    private function filterEligible(int $msgid, array $userIds, array $cfg, bool $strong): array
     {
         if (empty($userIds) || !$this->maxReach->available()) {
             // No max_polygon yet means no basis for reaching beyond today's reach,
@@ -403,6 +459,40 @@ class ScoutService
 
         $cooldown = max(0, (int) ($cfg['user_cooldown_hours'] ?? 24));
         $weekCap = max(1, (int) ($cfg['user_max_per_week'] ?? 5));
+
+        // "Today" is the London calendar day, matching the daily digest's own
+        // once-per-day guard exactly (see UnifiedDigestService: a rolling 24h
+        // window was rejected there because off-schedule sends make the digest
+        // time drift later every day). The boundary is computed in PHP as a UTC
+        // instant rather than with CONVERT_TZ, because that needs MySQL's named
+        // timezone tables loaded and fails open to NULL where they are not.
+        $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')
+            ->startOfDay()
+            ->setTimezone('UTC')
+            ->toDateTimeString();
+
+        $extra = [];
+
+        if ($strong) {
+            $cadenceGate = 'AND u.relevantallowed = 1';
+        } else {
+            $cadenceGate = 'AND EXISTS (
+                     SELECT 1 FROM memberships mem
+                     WHERE mem.userid = u.id AND mem.collection = ?
+                       AND mem.emailfrequency <> 0
+                   )';
+            $extra[] = Membership::COLLECTION_APPROVED;
+
+            // Degrade rather than throw where the table has not been created.
+            if (Schema::hasTable('users_digests')) {
+                $cadenceGate .= "
+               AND NOT EXISTS (
+                     SELECT 1 FROM users_digests ud
+                     WHERE ud.userid = u.id AND ud.mode = 'daily' AND ud.lastsent >= ?
+                   )";
+                $extra[] = $londonDayStartUtc;
+            }
+        }
 
         // The reach test and the "is this a real, mailable member" test in one
         // pass. resolved_lat/lng follow the same "mylocation else lastlocation"
@@ -437,8 +527,9 @@ class ScoutService
                AND NOT EXISTS (
                      SELECT 1 FROM rippling_reach_notified rn
                      WHERE rn.msgid = ? AND rn.userid = u.id
-                   )",
-            array_merge([$msgid], $userIds, [self::SRID, $cooldown, $weekCap, $msgid])
+                   )
+               $cadenceGate",
+            array_merge([$msgid], $userIds, [self::SRID, $cooldown, $weekCap, $msgid], $extra)
         );
 
         return array_map(static fn ($r) => (int) $r->id, $rows);

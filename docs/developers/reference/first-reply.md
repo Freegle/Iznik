@@ -61,8 +61,9 @@ not count.
 ## 2. Scouts
 
 When a post has been quiet for `quiet_minutes`, pick a handful of members who look genuinely
-likely to want THIS item and mail them now, regardless of their digest frequency and
-regardless of whether the ripple has reached them yet.
+likely to want THIS item and mail them now, ahead of their digest and ahead of the ripple
+reaching them. How far ahead of their digest depends on what picked them - see
+[below](#what-justifies-the-mail-decides-whether-it-may-be-an-extra-one).
 
 Two problems, only one of which is about reach. Immediate mail on a rippling post goes only to
 members with `emailfrequency=IMMEDIATE`; everyone on the daily digest hears tomorrow,
@@ -74,9 +75,12 @@ Three signals, in `iznik-batch/app/Services/FirstReply/ScoutService.php`:
 
 | Signal | Source | Weight |
 |---|---|---|
-| `wanted` | an open post of the opposite type whose subject matches | 5 |
+| `wanted` | an open post of the **opposite** type whose subject matches | 5 |
 | `search` | a saved search (`users_searches`) that matches | 3 |
 | `frequent` | distinct Interested replies in 90 days, on this post's own communities | 1 |
+
+`wanted` is type-aware on purpose: a WANTED matches an OFFER and vice versa. Somebody else
+wanting the same thing you want is competition, not a lead.
 
 The geographic bound differs by signal on purpose. `wanted` and `search` start from a small
 national candidate set, so testing each against the eventual reach polygon is cheap and they
@@ -89,6 +93,43 @@ sooner", and `user_cooldown_hours` / `user_max_per_week` exist so that being goo
 never turns into being punished for it. Scouts are written to `rippling_reach_notified` as
 well as `firstreply_scouts`, so the reach mailer never sends the same post again later.
 
+### What justifies the mail decides whether it may be an extra one
+
+The two match signals and the propensity signal are held to different standards, because what
+they claim is different.
+
+| | `wanted` / `search` | `frequent` |
+|---|---|---|
+| What it claims | this member asked about **this thing** | this member replies to a lot of things |
+| May be an extra mail? | yes | **no** |
+| Consent gate | `users.relevantallowed` ("Suggested posts for you") | at least one community not set to "never" |
+| Cadence gate | none | skipped if today's daily digest has already gone |
+
+So a member who saved a search for "bookcase" can hear about a bookcase even if their digest
+has been today, because they asked for that, item by item. A member who is merely a good
+replier can only ever have their daily digest arriving **early**, never an additional mail.
+
+"Today" is the London calendar day, using the same boundary as the daily digest's own
+once-per-day guard. A rolling 24h window was rejected there because off-schedule sends make
+the digest time drift later every day, and the two must agree on what "today" means.
+
+A candidate dropped by either gate does not leave a hole: filtering happens **before** the
+top-N cap, so the next-best candidate takes the slot and the post still gets its full
+complement.
+
+One residual overlap on the `frequent` path is deliberately left. A post arriving before the
+daily digest cron has run can scout somebody whose digest then also goes out later the same
+morning. Closing it would mean suppressing their digest, trading a whole day's posts for one.
+
+### The mail is the ordinary digest mail
+
+A scout mail is byte-for-byte an immediate digest for that one post, via the shared
+`spoolPostToRecipients` the reach mailer uses: same Mailable, same `MODE_IMMEDIATE`, same
+`emailType: 'digest_immediate'`, and the same recipient checks (preferred address,
+`browseMaxDistance` slider) so the two cannot drift. There is no scout-specific subject,
+preamble or footer, and nothing in it reveals how the recipient was chosen. A member should not be able to tell a
+scouted post from one the ripple reached normally, and nor should anyone they forward it to.
+
 **One policy departure worth knowing about.** `UnifiedDigestService`'s reach mailer is
 deliberately members-only, on the rule that cold-emailing someone about a community they have
 not joined is not appropriate. `wanted` and `search` scouts can be members of a neighbouring
@@ -96,10 +137,6 @@ community, because they are not cold: they wrote down a WANTED for this item, or
 search for it. `frequent`, which carries no such request, stays inside the post's own
 communities exactly as the reach mailer does. Any new signal has to clear the same bar - an
 explicit request from the member, or membership.
-
-The mail itself is an ordinary immediate digest for that one post
-(`UnifiedDigestService::mailPostToUsers`), sharing the recipient checks - preferred address,
-`browseMaxDistance` slider - with the reach mailer so the two cannot drift.
 
 ## 3. The Freegle chat
 

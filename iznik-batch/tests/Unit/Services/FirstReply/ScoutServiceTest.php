@@ -105,6 +105,64 @@ class ScoutServiceTest extends TestCase
         return $user->fresh();
     }
 
+    /** Give this member a community, on a daily digest unless told otherwise. */
+    private function joinGroup(int $userId, int $groupId, int $emailFrequency = 24): void
+    {
+        Membership::create([
+            'userid' => $userId,
+            'groupid' => $groupId,
+            'collection' => Membership::COLLECTION_APPROVED,
+            'emailfrequency' => $emailFrequency,
+            'added' => now(),
+        ]);
+    }
+
+    /**
+     * A frequent replier on this post's own community: the WEAK signal, which may
+     * only ever be their daily digest arriving early.
+     */
+    private function frequentReplierOn(int $msgid, float $lat, float $lng, int $emailFrequency = 24): \App\Models\User
+    {
+        config(['freegle.firstreply.scouts.frequent_replier_min' => 1]);
+
+        $user = $this->memberAt($lat, $lng);
+        $groupid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $this->joinGroup((int) $user->id, $groupid, $emailFrequency);
+
+        // One Interested reply somewhere else, so they count as a replier.
+        $poster = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $poster);
+        $other = $this->createTestMessage($poster, $this->createTestGroup());
+        $this->createTestChatMessage($room, $user, [
+            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $other->id,
+        ]);
+
+        return $user;
+    }
+
+    /** Pretend this member's daily digest already went out at $when. */
+    private function digestSentAt(int $userId, \Carbon\Carbon $when): void
+    {
+        DB::table('users_digests')->insert([
+            'userid' => $userId,
+            'mode' => 'daily',
+            'lastsent' => $when->toDateTimeString(),
+        ]);
+    }
+
+    /** Now, London time, expressed as the UTC instant actually stored. */
+    private function earlierToday(): \Carbon\Carbon
+    {
+        return \Carbon\Carbon::now('Europe/London')->startOfDay()->addHours(8)->setTimezone('UTC');
+    }
+
+    /** The last instant that still counts as yesterday in London. */
+    private function yesterday(): \Carbon\Carbon
+    {
+        return \Carbon\Carbon::now('Europe/London')->startOfDay()->subMinute()->setTimezone('UTC');
+    }
+
     private function scoutsFor(int $msgid): array
     {
         return DB::table('firstreply_scouts')->where('msgid', $msgid)
@@ -266,29 +324,99 @@ class ScoutServiceTest extends TestCase
         // deliberately bounded to the communities the post is on rather than
         // being cast across the whole eventual reach.
         $message = $this->seedSilentOffer();
-        $groupid = DB::table('messages_groups')->where('msgid', $message->id)->value('groupid');
-
-        $replier = $this->memberAt(51.5, -0.1);
-        Membership::create([
-            'userid' => $replier->id,
-            'groupid' => $groupid,
-            'collection' => Membership::COLLECTION_APPROVED,
-            'added' => now(),
-        ]);
-
-        config(['freegle.firstreply.scouts.frequent_replier_min' => 1]);
-
-        $poster = $this->createTestUser();
-        $room = $this->createTestChatRoom($replier, $poster);
-        $group2 = $this->createTestGroup();
-        $other = $this->createTestMessage($poster, $group2);
-        $this->createTestChatMessage($room, $replier, [
-            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
-            'refmsgid' => $other->id,
-        ]);
+        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
 
         $this->service()->run();
 
         $this->assertArrayHasKey($replier->id, $this->scoutsFor((int) $message->id));
+    }
+
+    // --- What justifies the mail decides whether it may be an extra one -------
+
+    public function test_a_frequent_replier_who_already_had_todays_digest_is_not_mailed_again(): void
+    {
+        // Nothing about this signal is about THIS item, so the mail can only be
+        // their daily digest arriving early. Theirs has already been.
+        $message = $this->seedSilentOffer();
+        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $this->digestSentAt((int) $replier->id, $this->earlierToday());
+
+        $this->service()->run();
+
+        $this->assertArrayNotHasKey($replier->id, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_a_frequent_replier_whose_digest_has_not_been_today_is_mailed(): void
+    {
+        $message = $this->seedSilentOffer();
+        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $this->digestSentAt((int) $replier->id, $this->yesterday());
+
+        $this->service()->run();
+
+        $this->assertArrayHasKey($replier->id, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_a_frequent_replier_who_takes_no_post_email_anywhere_is_skipped(): void
+    {
+        // emailfrequency 0 is "never". There is no digest to bring forward.
+        $message = $this->seedSilentOffer();
+        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1, 0);
+
+        $this->service()->run();
+
+        $this->assertArrayNotHasKey($replier->id, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_a_matching_search_may_be_an_extra_mail_even_after_todays_digest(): void
+    {
+        // They saved a search for this. That is a request, item by item, so it is
+        // allowed to be a mail they would not otherwise have had today.
+        $message = $this->seedSilentOffer();
+        $searcher = $this->memberAt(51.9, 0.8);
+        DB::table('users_searches')->insert([
+            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
+        ]);
+        $this->digestSentAt((int) $searcher->id, $this->earlierToday());
+
+        $this->service()->run();
+
+        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_a_match_still_respects_the_suggested_posts_consent(): void
+    {
+        // relevantallowed is the existing "Suggested posts for you" setting, and a
+        // match-driven scout mail is exactly a suggested post.
+        $message = $this->seedSilentOffer();
+        $searcher = $this->memberAt(51.9, 0.8);
+        DB::table('users')->where('id', $searcher->id)->update(['relevantallowed' => 0]);
+        DB::table('users_searches')->insert([
+            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
+        ]);
+
+        $this->service()->run();
+
+        $this->assertArrayNotHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_a_skipped_candidate_is_replaced_rather_than_leaving_a_hole(): void
+    {
+        // "If they have had one, find other scouts" - the slot goes to the next
+        // candidate rather than going unused, so the post still gets its full
+        // complement. Filtering therefore has to happen before the cap.
+        config(['freegle.firstreply.scouts.max_per_post' => 1]);
+
+        $message = $this->seedSilentOffer();
+        $alreadyMailed = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $this->digestSentAt((int) $alreadyMailed->id, $this->earlierToday());
+        $available = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+
+        $this->service()->run();
+
+        $scouts = $this->scoutsFor((int) $message->id);
+        $this->assertArrayNotHasKey($alreadyMailed->id, $scouts);
+        $this->assertArrayHasKey($available->id, $scouts);
+        $this->assertCount(1, $scouts);
     }
 }
