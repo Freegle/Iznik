@@ -1633,10 +1633,12 @@ class WhatJobsService
 
         // Rebuild keyword frequency from clicked jobs
         DB::statement('TRUNCATE TABLE jobs_keywords');
-        $clicked = DB::select(
-            'SELECT DISTINCT jobs.title FROM logs_jobs
-             INNER JOIN jobs ON logs_jobs.jobid = jobs.id'
-        );
+        $clicked = DB::table('logs_jobs')
+            ->distinct()
+            ->select('jobs.title')
+            ->join('jobs', 'logs_jobs.jobid', '=', 'jobs.id')
+            ->get()
+            ->all();
         foreach ($clicked as $row) {
             foreach ($this->getKeywords($row->title) as $keyword) {
                 DB::statement(

@@ -64,11 +64,18 @@ class VisualiseService
                 continue;
             }
 
-            DB::statement(
-                "INSERT IGNORE INTO visualise (msgid, attid, timestamp, fromuser, touser, fromlat, fromlng, tolat, tolng, distance)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [$row->id, $row->attid, $row->timestamp, $row->fromuser, $row->touser, $flat, $flng, $tlat, $tlng, $metres]
-            );
+            DB::table('visualise')->insertOrIgnore([
+                'msgid' => $row->id,
+                'attid' => $row->attid,
+                'timestamp' => $row->timestamp,
+                'fromuser' => $row->fromuser,
+                'touser' => $row->touser,
+                'fromlat' => $flat,
+                'fromlng' => $flng,
+                'tolat' => $tlat,
+                'tolng' => $tlng,
+                'distance' => $metres,
+            ]);
 
             $count++;
         }

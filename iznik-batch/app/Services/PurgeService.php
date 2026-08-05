@@ -977,12 +977,13 @@ class PurgeService
         $cutoff = now()->subDays($daysOld)->startOfDay();
 
         if ($dryRun) {
-            $logs = DB::select(
-                "SELECT COUNT(*) as cnt FROM logs LEFT JOIN users ON users.id = logs.user WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL",
-                [$cutoff]
-            );
-
-            return $logs[0]->cnt;
+            // Anti-join: logs whose user has been deleted.
+            return DB::table('logs')
+                ->leftJoin('users', 'users.id', '=', 'logs.user')
+                ->where('timestamp', '<', $cutoff)
+                ->whereNotNull('logs.user')
+                ->whereNull('users.id')
+                ->count();
         }
 
         $total = 0;
