@@ -130,6 +130,14 @@ class ScoutServiceTest extends TestCase
      * A frequent replier on this post's own community: the WEAK signal, which may
      * only ever be their daily digest arriving early.
      */
+    /**
+     * A frequent replier on the post's own group.
+     *
+     * Callers place them OUTSIDE the current reach polygon and inside the
+     * eventual one, because that is what a scout is. Being on the group and
+     * outside the current polygon is the normal case rather than a contrivance:
+     * a group covers a wide area and tick 1 is a five-minute drive from the post.
+     */
     private function frequentReplierOn(int $msgid, float $lat, float $lng, int $emailFrequency = 24): \App\Models\User
     {
         config(['freegle.firstreply.scouts.frequent_replier_min' => 1]);
@@ -333,7 +341,7 @@ class ScoutServiceTest extends TestCase
         // deliberately bounded to the communities the post is on rather than
         // being cast across the whole eventual reach.
         $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
 
         $this->service()->run();
 
@@ -347,7 +355,7 @@ class ScoutServiceTest extends TestCase
         // Nothing about this signal is about THIS item, so the mail can only be
         // their daily digest arriving early. Theirs has already been.
         $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
         $this->digestSentAt((int) $replier->id, $this->earlierToday());
 
         $this->service()->run();
@@ -358,7 +366,7 @@ class ScoutServiceTest extends TestCase
     public function test_a_frequent_replier_whose_digest_has_not_been_today_is_mailed(): void
     {
         $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
         $this->digestSentAt((int) $replier->id, $this->yesterday());
 
         $this->service()->run();
@@ -370,7 +378,7 @@ class ScoutServiceTest extends TestCase
     {
         // emailfrequency 0 is "never". There is no digest to bring forward.
         $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1, 0);
+        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8, 0);
 
         $this->service()->run();
 
@@ -417,9 +425,9 @@ class ScoutServiceTest extends TestCase
         config(['freegle.firstreply.scouts.max_per_post' => 1]);
 
         $message = $this->seedSilentOffer();
-        $alreadyMailed = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $alreadyMailed = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
         $this->digestSentAt((int) $alreadyMailed->id, $this->earlierToday());
-        $available = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $available = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
 
         $this->service()->run();
 
@@ -434,7 +442,7 @@ class ScoutServiceTest extends TestCase
         // The mail they just got IS their digest, moved earlier, so today's must
         // not also go out.
         $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
 
         $this->service()->run();
 
@@ -541,5 +549,125 @@ class ScoutServiceTest extends TestCase
         $this->service()->run();
 
         $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+    }
+
+    /** An open WANTED at (lat,lng) that matches the offer's keywords. */
+    private function wantedAt(\App\Models\User $user, float $lat, float $lng): void
+    {
+        $group = $this->createTestGroup();
+        $wanted = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_WANTED,
+            'subject' => 'WANTED: Pine bookcase (TestLocation)',
+        ]);
+        DB::statement(
+            'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
+             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
+            [$wanted->id, $lng, $lat, $group->id, Message::TYPE_WANTED]
+        );
+    }
+
+    /**
+     * A scout is somebody the ripple has NOT reached yet.
+     *
+     * Tick 1 is the reach the post has now. Someone inside it will be told anyway
+     * on the ordinary schedule, so scouting them spends a scout slot, a mail and
+     * a per-member cooldown to change nothing. Reaching past the current edge is
+     * the entire point.
+     */
+    public function test_does_not_scout_someone_already_inside_the_current_reach(): void
+    {
+        $message = $this->seedSilentOffer();
+
+        $inside = $this->memberAt(51.50, -0.10);
+        $this->wantedAt($inside, 51.50, -0.10);
+
+        $outside = $this->memberAt(51.90, 0.80);
+        $this->wantedAt($outside, 51.90, 0.80);
+
+        $this->service()->run();
+
+        $scouts = $this->scoutsFor((int) $message->id);
+        $this->assertArrayNotHasKey($inside->id, $scouts, 'already in reach - the ripple has them');
+        $this->assertArrayHasKey($outside->id, $scouts, 'past the edge is the point of scouting');
+    }
+
+    /**
+     * A scout who replies pulls the reach out to cover them, so the people around
+     * them get the same chance instead of waiting on the clock.
+     *
+     * Recorded as a floor rather than written as a polygon: advancing reach means
+     * tick geometry, the origin-group union, bounds and rejection clips, and
+     * ExpandService already does all of it.
+     */
+    public function test_a_scout_who_replies_pulls_the_reach_out_to_them(): void
+    {
+        $message = $this->seedSilentOffer();
+
+        $scout = $this->memberAt(51.90, 0.80);
+        $this->wantedAt($scout, 51.90, 0.80);
+
+        $this->service()->run();
+        $this->assertArrayHasKey($scout->id, $this->scoutsFor((int) $message->id));
+
+        DB::table('chat_messages')->insert([
+            'chatid' => $this->chatRoomFor((int) $scout->id),
+            'userid' => $scout->id,
+            'refmsgid' => $message->id,
+            'message' => 'Is this still available?',
+            'type' => 'Interested',
+            'date' => now(),
+        ]);
+
+        $this->service()->attributeReplies();
+
+        $row = DB::table('rippling_reach')->where('msgid', $message->id)->first();
+        $this->assertNotNull($row->min_tick, 'the reply must set a floor');
+        $this->assertGreaterThan(1, (int) $row->min_tick, 'past the tick the post was on');
+        $this->assertNotNull($row->next_expansion_at, 'and it must be due to expand');
+    }
+
+    /** A reply from inside the current reach teaches nothing new, so moves nothing. */
+    public function test_a_reply_from_within_reach_does_not_move_the_floor(): void
+    {
+        $message = $this->seedSilentOffer();
+
+        $near = $this->memberAt(51.50, -0.10);
+        DB::table('firstreply_scouts')->insert([
+            'msgid' => $message->id,
+            'userid' => $near->id,
+            'reason' => 'wanted',
+            'score' => 5.0,
+            'sent_at' => now()->subHour(),
+        ]);
+
+        DB::table('chat_messages')->insert([
+            'chatid' => $this->chatRoomFor((int) $near->id),
+            'userid' => $near->id,
+            'refmsgid' => $message->id,
+            'message' => 'Yes please',
+            'type' => 'Interested',
+            'date' => now(),
+        ]);
+
+        $this->service()->attributeReplies();
+
+        $row = DB::table('rippling_reach')->where('msgid', $message->id)->first();
+        $this->assertNull($row->min_tick, 'tick 1 already covers them - nothing to pull out to');
+    }
+
+    /**
+     * A chat room to hang a reply off. Both sides are real users: chat_rooms has
+     * foreign keys onto users, so an invented id fails the insert rather than the
+     * assertion, which tells you nothing about the code under test.
+     */
+    private function chatRoomFor(int $userId): int
+    {
+        $other = $this->createTestUser();
+
+        return (int) DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $userId,
+            'user2' => $other->id,
+        ]);
     }
 }

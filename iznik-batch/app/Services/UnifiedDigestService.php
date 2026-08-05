@@ -700,7 +700,10 @@ class UnifiedDigestService
                 $lower = array_map('strtolower', $allowlist);
                 $recipientIds = DB::table('users_emails')
                     ->whereIn('userid', $recipientIds)
-                    ->whereIn(DB::raw('LOWER(email)'), $lower)
+                    // users_emails.email is utf8mb4_unicode_ci, so this is
+                    // already case-insensitive. The LOWER() wrapper bought
+                    // nothing and stopped the index being usable.
+                    ->whereIn('email', $lower)
                     ->pluck('userid')->unique()->map(fn ($v) => (int) $v)->all();
                 if (empty($recipientIds)) {
                     return 0;
@@ -874,11 +877,27 @@ class UnifiedDigestService
         // #0 / §15 instrumentation: count immediate mails sent on expansion.
         if (!empty($mailed) && !$dryRun) {
             $count = count($mailed);
-            DB::statement(
-                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                ['immediate_mailed', $count, $count]
-            );
+            $today = now()->toDateString();
+
+            $updated = DB::table('rippling_event_metrics')
+                ->where('day', $today)
+                ->where('event', 'immediate_mailed')
+                ->increment('count', $count);
+
+            if ($updated === 0) {
+                try {
+                    DB::table('rippling_event_metrics')->insert([
+                        'day' => $today,
+                        'event' => 'immediate_mailed',
+                        'count' => $count,
+                    ]);
+                } catch (\Throwable) {
+                    DB::table('rippling_event_metrics')
+                        ->where('day', $today)
+                        ->where('event', 'immediate_mailed')
+                        ->increment('count', $count);
+                }
+            }
         }
 
         return $mailed;

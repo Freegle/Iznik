@@ -27,6 +27,32 @@ one outside gets none of them. Split per lever instead and the arms overlap, so 
 be attributed to anything. Raising the percentage only ever adds posts, so a trial widens
 without shuffling anyone out of the arm they were being measured in.
 
+**The trial arm decides which QUESTIONS a post gets, not whether Freegle speaks to it at all.**
+
+| Question | Holdout | In trial |
+|---|---|---|
+| `delivery` | yes | yes |
+| `deadline` | yes | yes |
+| `photo` | no | yes |
+| `views` | no | yes |
+
+The split is whether the question changes the post itself. `delivery` and `deadline` set
+`messages.deliverypossible` and `messages.deadline`, which everyone browsing then sees - a
+product improvement in its own right, and not what this trial is measuring. Withholding them
+from the holdout arm would cost those posters something real and buy no experimental
+cleanliness, so they are asked of everyone. `photo` and `views` are about how the wait FEELS,
+which is exactly what is being measured, and neither changes anything a browser can see.
+
+The consequence for analysis is worth stating plainly: the comparison is **not** "chat versus
+nothing". It measures the passthrough, scouting and the two reassurance prompts. Any effect of
+the delivery and deadline questions themselves is present in both arms and therefore invisible
+to it.
+
+The filter lives in `EngagementService::applicable()` rather than on the candidate queries,
+because prompts are per-MEMBER while the rollout buckets per-POST: a member with some posts in
+the trial and some out gets the trial-only questions covering just their in-trial posts, and the
+universal ones covering all of them.
+
 The default of 0 means switching a lever on does nothing until a percentage is set as well.
 That is deliberate: forgetting the percentage costs a quiet run whose cron log says exactly
 why, where the opposite default would cost an unplanned full-network rollout of something that
@@ -103,11 +129,42 @@ Three signals, in `iznik-batch/app/Services/FirstReply/ScoutService.php`:
 `wanted` is type-aware on purpose: a WANTED matches an OFFER and vice versa. Somebody else
 wanting the same thing you want is competition, not a lead.
 
+### A scout is someone the ripple has NOT reached yet
+
+The geographic test is a band, not a radius: **outside `rippling_reach.polygon` (the reach the
+post has right now) and inside `max_polygon` (the reach it ends up with)**.
+
+Both halves matter. The upper bound stops us mailing someone the post will never legitimately
+reach. The lower bound is what makes a scout a scout: somebody already inside the current
+polygon is going to be told anyway, on the ordinary schedule, so scouting them spends a scout
+slot, a mail and a per-member cooldown to change nothing at all. Reaching past the current edge
+is the entire point.
+
 The geographic bound differs by signal on purpose. `wanted` and `search` start from a small
-national candidate set, so testing each against the eventual reach polygon is cheap and they
-get the full benefit of it. `frequent` starts from members of the post's own communities,
-because "every frequent replier in Britain" is not a set worth building to then discard
-99.9% of.
+national candidate set, so testing each against the reach polygons is cheap and they get the
+full benefit of it. `frequent` starts from members of the post's own communities, because
+"every frequent replier in Britain" is not a set worth building to then discard 99.9% of.
+
+### A scout who replies pulls the reach out to them
+
+A scout was picked precisely because the ripple had not got to them. So a reply from one is
+evidence the item is wanted at a distance the schedule had not yet allowed for - and the people
+around them deserve the same chance rather than waiting on the clock.
+
+`ScoutService::attributeReplies` therefore does more than record the reply. For each newly
+attributed one it finds the lowest tick of the post's schedule whose polygon covers that scout,
+and writes it to **`rippling_reach.min_tick`** with `next_expansion_at = NOW()`.
+`ExpandService::advanceDue` then takes `max(elapsed-time target, min_tick)`, capped at the
+post's own schedule length, so the next pass jumps out to cover them.
+
+A floor rather than a polygon write, deliberately. Advancing reach means resolving the tick's
+geometry, unioning the origin group's area, deriving bounds, re-applying rejected-group clips
+and upgrading routing-provided bounds - all of which `ExpandService` already does. Writing the
+polygon from `ScoutService` would be that same geometry implemented twice, which is a mistake
+this codebase has paid for before.
+
+It only ever moves forward, only while the post is still `expanding`, and a reply from someone
+already inside the current reach moves nothing, because there is nothing to pull out to.
 
 Small is the point. Ten well-chosen people is a different product from "the digest, but
 sooner", and `user_cooldown_hours` / `user_max_per_week` exist so that being good at replying
@@ -304,9 +361,10 @@ them in a quiet channel would mean nobody ever answers them.
 | Table | What |
 |---|---|
 | `rippling_reach.max_polygon` | the reach the post ends up with. NULL = not computed yet, and every reader falls back to current-reach behaviour |
+| `rippling_reach.min_tick` | a floor the expander must not sit below, set when a scout replies. NULL = expand on elapsed time alone, exactly as before |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
 | `firstreply_scouts` | who was scouted about what, why, and whether they then replied (`replied_at`). Doubles as the fatigue ledger |
-| `firstreply_prompts_sent` | which prompts a post has had. The `(msgid, kind)` unique key is what makes the cadence engine idempotent |
+| `firstreply_prompts_sent` | which prompts a MEMBER has had, with `postcount`. Keyed on the member rather than the post, because one message covers everything they have outstanding - so "have they been asked this lately" is a question about them |
 | `firstreply_passthroughs` | one row per reply let through, plus how long it would otherwise have waited (`waited_hours`, NULL until the sweep runs and when unanswerable) |
 | `firstreply_event_metrics` | daily counters, same shape as `rippling_event_metrics` |
 
@@ -318,7 +376,7 @@ All three are registered in `iznik-batch/routes/console.php` inside
 | Command | Cadence | What |
 |---|---|---|
 | `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
-| `firstreply:scout` | every minute | attributes replies to earlier scouts, then picks and mails new ones |
+| `firstreply:scout` | every minute | attributes replies to earlier scouts - pulling the post's reach out to cover any scout who replied - then picks and mails new ones |
 | `firstreply:engage` | every 5 min | sends the next due prompt |
 
 Each takes `--dry-run`.

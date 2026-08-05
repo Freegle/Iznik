@@ -160,15 +160,13 @@ class RippleReplyService
     private function distinctReplierCount(int $msgid): int
     {
         try {
-            $row = DB::selectOne(
-                'SELECT COUNT(DISTINCT cm.userid) AS repliers
-                 FROM chat_messages cm
-                 JOIN messages m ON m.id = cm.refmsgid
-                 WHERE cm.refmsgid = ? AND cm.type = ? AND cm.userid <> m.fromuser',
-                [$msgid, ChatMessage::TYPE_INTERESTED]
-            );
-
-            return (int) ($row->repliers ?? 0);
+            return DB::table('chat_messages as cm')
+                ->join('messages as m', 'm.id', '=', 'cm.refmsgid')
+                ->where('cm.refmsgid', $msgid)
+                ->where('cm.type', ChatMessage::TYPE_INTERESTED)
+                ->whereColumn('cm.userid', '<>', 'm.fromuser')
+                ->distinct()
+                ->count('cm.userid');
         } catch (\Throwable $e) {
             Log::warning("ripple: distinctReplierCount failed for {$msgid}: {$e->getMessage()}");
 

@@ -180,29 +180,27 @@ class EngagementService
      */
     private function membersWithSilentPosts(int $maxAgeHours, int $limit): array
     {
-        return array_map('intval', collect(DB::select(
-            "SELECT m.fromuser AS userid, MIN(ms.arrival) AS oldest
-             FROM messages_spatial ms
-             JOIN messages m ON m.id = ms.msgid
-             JOIN users u ON u.id = m.fromuser
-             WHERE ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
-               AND m.deleted IS NULL
-               AND u.deleted IS NULL
-               AND NOT EXISTS (
-                     SELECT 1 FROM chat_messages cm
-                     WHERE cm.refmsgid = ms.msgid
-                       AND cm.type = 'Interested'
-                       AND cm.userid <> m.fromuser
-                   )
-               AND NOT EXISTS (
-                     SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = ms.msgid
-                   )"
-             . Rollout::sqlFilter('ms.msgid') . '
-             GROUP BY m.fromuser
-             ORDER BY oldest ASC
-             LIMIT ?',
-            [$maxAgeHours, $limit]
-        ))->pluck('userid')->all());
+        $query = DB::table('messages_spatial as ms')
+            ->join('messages as m', 'm.id', '=', 'ms.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
+            ->where('ms.arrival', '>', now()->subHours($maxAgeHours))
+            ->whereNull('m.deleted')
+            ->whereNull('u.deleted')
+            ->whereNotExists(fn ($q) => $q->select('cm.id')
+                ->from('chat_messages as cm')
+                ->whereColumn('cm.refmsgid', 'ms.msgid')
+                ->where('cm.type', 'Interested')
+                ->whereColumn('cm.userid', '<>', 'm.fromuser'))
+            ->whereNotExists(fn ($q) => $q->select('mo.id')
+                ->from('messages_outcomes as mo')
+                ->whereColumn('mo.msgid', 'ms.msgid'))
+            ->groupBy('m.fromuser')
+            ->orderByRaw('MIN(ms.arrival) ASC')
+            ->limit($limit);
+
+        // Deliberately NOT filtered by the rollout. Holdout posts still get the
+        // delivery and deadline questions - see applicable().
+        return $query->pluck('m.fromuser')->map('intval')->all();
     }
 
     /**
@@ -213,31 +211,40 @@ class EngagementService
      */
     private function silentPostsFor(int $userId, int $maxAgeHours): array
     {
-        return DB::select(
-            "SELECT ms.msgid AS msgid, ms.arrival AS arrival, ms.msgtype AS msgtype,
-                    m.deliverypossible AS deliverypossible, m.deadline AS deadline,
-                    EXISTS (SELECT 1 FROM messages_attachments a WHERE a.msgid = ms.msgid) AS hasphoto,
-                    (SELECT COUNT(*) FROM messages_likes l
-                      WHERE l.msgid = ms.msgid AND l.type = 'View'
-                        AND l.pageview = 1 AND l.userid <> m.fromuser) AS views
-             FROM messages_spatial ms
-             JOIN messages m ON m.id = ms.msgid
-             WHERE m.fromuser = ?
-               AND ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
-               AND m.deleted IS NULL
-               AND NOT EXISTS (
-                     SELECT 1 FROM chat_messages cm
-                     WHERE cm.refmsgid = ms.msgid
-                       AND cm.type = 'Interested'
-                       AND cm.userid <> m.fromuser
-                   )
-               AND NOT EXISTS (
-                     SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = ms.msgid
-                   )"
-             . Rollout::sqlFilter('ms.msgid') . '
-             ORDER BY ms.arrival ASC',
-            [$userId, $maxAgeHours]
-        );
+        $query = DB::table('messages_spatial as ms')
+            ->join('messages as m', 'm.id', '=', 'ms.msgid')
+            ->select('ms.msgid', 'ms.arrival', 'ms.msgtype', 'm.deliverypossible', 'm.deadline')
+            // The attachment's id, or null - truthy either way, and no aggregate.
+            ->selectSub(
+                DB::table('messages_attachments as a')
+                    ->select('a.id')
+                    ->whereColumn('a.msgid', 'ms.msgid')
+                    ->limit(1),
+                'hasphoto'
+            )
+            ->selectSub(
+                DB::table('messages_likes as l')
+                    ->selectRaw('COUNT(*)')
+                    ->whereColumn('l.msgid', 'ms.msgid')
+                    ->where('l.type', 'View')
+                    ->where('l.pageview', 1)
+                    ->whereColumn('l.userid', '<>', 'm.fromuser'),
+                'views'
+            )
+            ->where('m.fromuser', $userId)
+            ->where('ms.arrival', '>', now()->subHours($maxAgeHours))
+            ->whereNull('m.deleted')
+            ->whereNotExists(fn ($q) => $q->select('cm.id')
+                ->from('chat_messages as cm')
+                ->whereColumn('cm.refmsgid', 'ms.msgid')
+                ->where('cm.type', 'Interested')
+                ->whereColumn('cm.userid', '<>', 'm.fromuser'))
+            ->whereNotExists(fn ($q) => $q->select('mo.id')
+                ->from('messages_outcomes as mo')
+                ->whereColumn('mo.msgid', 'ms.msgid'))
+            ->orderBy('ms.arrival');
+
+        return $query->get()->all();
     }
 
     /**
@@ -293,6 +300,30 @@ class EngagementService
      */
     private function applicable(string $kind, array $posts, array $cfg): array
     {
+        // The trial arm decides which QUESTIONS a post gets, not whether it is
+        // spoken to at all.
+        //
+        // `delivery` and `deadline` change the post itself - they set
+        // deliverypossible and deadline, which everyone browsing then sees. That
+        // is a product improvement in its own right, and it is not what the
+        // first-reply trial is measuring. Withholding them from the holdout arm
+        // would cost those posters something real to buy no experimental
+        // cleanliness, so they are asked of everyone.
+        //
+        // `photo` and `views` stay inside the trial: both are about how the wait
+        // FEELS rather than about what the post says, which is exactly what is
+        // being measured, and neither changes anything a browser can see.
+        if (!in_array($kind, [PromptService::KIND_DELIVERY, PromptService::KIND_DEADLINE], true)) {
+            $posts = array_values(array_filter(
+                $posts,
+                static fn ($p) => Rollout::includes((int) $p->msgid)
+            ));
+
+            if (empty($posts)) {
+                return [];
+            }
+        }
+
         switch ($kind) {
             case PromptService::KIND_PHOTO:
                 return array_values(array_filter($posts, static fn ($p) => !$p->hasphoto));
@@ -360,10 +391,13 @@ class EngagementService
 
             case PromptService::KIND_DELIVERY:
                 return [
+                    // "might", not "would". Nobody has replied, so there is no
+                    // evidence anyone wants these at all - claiming otherwise is
+                    // the same invention this whole feature refuses to make.
                     'text' => $many
-                        ? "Still nothing on {$n} of your offers. Some freeglers would love them but have"
+                        ? "Still nothing on {$n} of your offers. Some freeglers might love them but have"
                             . ' no way to collect. Could you drop things off, if it worked for you?'
-                        : 'Still nothing on this one. Some freeglers would love it but have no way to'
+                        : 'Still nothing on this one. Some freeglers might love it but have no way to'
                             . ' collect. Could you drop it off, if it worked for you?',
                     'options' => [
                         ['value' => 'maybe', 'label' => 'Maybe, if it works for me', 'variant' => 'primary'],

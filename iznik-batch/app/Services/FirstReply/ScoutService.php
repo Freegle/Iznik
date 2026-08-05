@@ -173,21 +173,128 @@ class ScoutService
     public function attributeReplies(int $lookbackDays = 7): int
     {
         try {
-            return DB::update(
-                "UPDATE firstreply_scouts fs
-                 JOIN chat_messages cm ON cm.refmsgid = fs.msgid
-                      AND cm.userid = fs.userid
-                      AND cm.type = ?
-                      AND cm.date >= fs.sent_at
-                 SET fs.replied_at = cm.date
-                 WHERE fs.replied_at IS NULL
-                   AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? DAY)",
-                ['Interested', max(1, $lookbackDays)]
-            );
+            $since = now()->subDays(max(1, $lookbackDays));
+
+            // Who is about to be attributed, captured BEFORE the update, because
+            // afterwards replied_at is set and they no longer match.
+            $newlyReplied = DB::table('firstreply_scouts as fs')
+                ->join('chat_messages as cm', function ($join) {
+                    $join->on('cm.refmsgid', '=', 'fs.msgid')
+                        ->on('cm.userid', '=', 'fs.userid')
+                        ->where('cm.type', 'Interested')
+                        ->whereColumn('cm.date', '>=', 'fs.sent_at');
+                })
+                ->whereNull('fs.replied_at')
+                ->where('fs.sent_at', '>', $since)
+                ->select('fs.msgid', 'fs.userid')
+                ->distinct()
+                ->get();
+
+            $attributed = DB::table('firstreply_scouts as fs')
+                ->join('chat_messages as cm', function ($join) {
+                    $join->on('cm.refmsgid', '=', 'fs.msgid')
+                        ->on('cm.userid', '=', 'fs.userid')
+                        ->where('cm.type', 'Interested')
+                        ->whereColumn('cm.date', '>=', 'fs.sent_at');
+                })
+                ->whereNull('fs.replied_at')
+                ->where('fs.sent_at', '>', $since)
+                ->update(['fs.replied_at' => DB::raw('cm.date')]);
+
+            foreach ($newlyReplied as $reply) {
+                $this->pullReachOutTo((int) $reply->msgid, (int) $reply->userid);
+            }
+
+            return $attributed;
         } catch (\Throwable $e) {
             Log::warning('firstreply: scout attribution failed', ['error' => $e->getMessage()]);
 
             return 0;
+        }
+    }
+
+    /**
+     * Where a member is, resolved the same "mylocation else lastlocation" way the
+     * reach query and the digest mailer resolve it - so a scout is measured from
+     * the point that decided their reach membership in the first place.
+     *
+     * @return array{lat:float,lng:float}|null
+     */
+    private function userPoint(int $userId): ?array
+    {
+        $row = DB::table('users as u')
+            ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
+            ->where('u.id', $userId)
+            ->selectRaw(
+                "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                      THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+                      ELSE l.lat END AS lat,
+                 CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                      THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+                      ELSE l.lng END AS lng"
+            )
+            ->first();
+
+        if ($row === null || $row->lat === null || $row->lng === null) {
+            return null;
+        }
+
+        return ['lat' => (float) $row->lat, 'lng' => (float) $row->lng];
+    }
+
+    /**
+     * A scout replied, so bring the post's reach out far enough to include them.
+     *
+     * Scouts are mailed to people OUTSIDE the current reach - that is the whole
+     * point of them - so a reply is evidence the item is wanted at a distance the
+     * ripple has not got to yet. Leaving the reach where it is would mean the one
+     * person we hand-picked can reply while their neighbours, who are just as
+     * close to it, keep waiting on the clock. So the tick that covers the scout
+     * becomes a floor, and the post expands to it on the next pass.
+     *
+     * Deliberately a floor rather than a polygon write: advancing reach means
+     * resolving tick geometry, unioning the origin group's area, deriving bounds
+     * and re-applying rejected-group clips, all of which ExpandService already
+     * does. Doing it here as well would be the same geometry in two places.
+     *
+     * Best-effort throughout: a post whose schedule cannot answer simply keeps
+     * expanding on time, which is what it did before any of this existed.
+     */
+    private function pullReachOutTo(int $msgid, int $userId): void
+    {
+        try {
+            $point = $this->userPoint($userId);
+            if ($point === null) {
+                return;
+            }
+
+            $tick = $this->maxReach->tickCovering($msgid, $point['lat'], $point['lng']);
+            if ($tick === null) {
+                return;
+            }
+
+            // Only ever forwards, and only while the post is still expanding: a
+            // stopped or completed post has left the ripple deliberately.
+            $affected = DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->where('status', 'expanding')
+                ->where(fn ($q) => $q->whereNull('min_tick')->orWhere('min_tick', '<', $tick))
+                ->where('tick', '<', $tick)
+                ->update([
+                    'min_tick' => $tick,
+                    'next_expansion_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            if ($affected > 0) {
+                $this->metrics->record('scout_reply_expanded_reach');
+            }
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: could not pull reach out to a scout who replied', [
+                'msgid' => $msgid, 'userid' => $userId, 'error' => $e->getMessage(),
+            ]);
         }
     }
 
@@ -608,6 +715,21 @@ class ScoutService
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id AND ue.preferred = 1)
                AND rr.max_polygon IS NOT NULL
+               -- OUTSIDE the reach the post has right now, INSIDE the reach it
+               -- will eventually have. Someone already inside the current
+               -- polygon is going to be told anyway, by the ordinary ripple, so
+               -- scouting them spends a scout slot and a mail to change nothing.
+               -- The whole point of a scout is to reach past the current edge.
+               AND NOT ST_Contains(rr.polygon, ST_SRID(POINT(
+                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+                          ELSE l.lng END,
+                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+                          ELSE l.lat END
+                   ), ?))
                AND ST_Contains(rr.max_polygon, ST_SRID(POINT(
                      CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
                                AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
@@ -629,7 +751,7 @@ class ScoutService
                      WHERE rn.msgid = ? AND rn.userid = u.id
                    )
                $cadenceGate",
-            array_merge([$msgid], $userIds, [self::SRID, $cooldown, $weekCap, $msgid], $extra)
+            array_merge([$msgid], $userIds, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
         );
 
         return array_map(static fn ($r) => (int) $r->id, $rows);

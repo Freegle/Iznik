@@ -25,12 +25,31 @@ class Metrics
             return;
         }
 
+        // The inner catch is not belt-and-braces: two workers can both find no
+        // row and both insert, and the loser must still land its count rather
+        // than lose it to a duplicate key. By then the row exists.
+        $today = now()->toDateString();
+
         try {
-            DB::statement(
-                'INSERT INTO firstreply_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?)
-                 ON DUPLICATE KEY UPDATE count = count + ?',
-                [$event, $count, $count]
-            );
+            $updated = DB::table('firstreply_event_metrics')
+                ->where('day', $today)
+                ->where('event', $event)
+                ->increment('count', $count);
+
+            if ($updated === 0) {
+                try {
+                    DB::table('firstreply_event_metrics')->insert([
+                        'day' => $today,
+                        'event' => $event,
+                        'count' => $count,
+                    ]);
+                } catch (\Throwable) {
+                    DB::table('firstreply_event_metrics')
+                        ->where('day', $today)
+                        ->where('event', $event)
+                        ->increment('count', $count);
+                }
+            }
         } catch (\Throwable) {
             // Deliberately silent. See the class comment.
         }

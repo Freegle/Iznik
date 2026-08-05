@@ -497,4 +497,50 @@ class EngagementServiceTest extends TestCase
         // And the record really is there, so the member is not asked again.
         $this->assertCount(1, $this->kindsAsked((int) $user->id));
     }
+
+    /**
+     * A holdout post still gets the two questions that change the post itself.
+     *
+     * `delivery` and `deadline` set deliverypossible and deadline, which everyone
+     * browsing then sees. That is a product improvement in its own right and not
+     * what the first-reply trial is measuring, so withholding it from the holdout
+     * arm would cost those posters something real and buy no experimental
+     * cleanliness. `photo` and `views` are about how the wait FEELS - which is
+     * exactly what is being measured - so they stay inside the trial.
+     */
+    public function test_holdout_posts_still_get_the_questions_that_change_the_post(): void
+    {
+        // Nobody is in the trial.
+        config(['freegle.firstreply.rollout_percent' => 0]);
+
+        // No photo and no deadline, so photo, delivery and deadline all apply on
+        // the merits - only the rollout should separate them.
+        [$user] = $this->seedMemberWithPosts(2);
+
+        $this->service()->run();
+
+        $asked = $this->kindsAsked((int) $user->id);
+        $this->assertNotEmpty($asked, 'a holdout is not simply ignored');
+        $this->assertNotContains('photo', $asked, 'photo is part of the trial');
+        $this->assertNotContains('views', $asked, 'views is part of the trial');
+        $this->assertContains(
+            $asked[0],
+            ['delivery', 'deadline'],
+            'a holdout is asked only the questions that change the post'
+        );
+    }
+
+    /** In the trial arm, the questions the holdouts do not get are available. */
+    public function test_a_post_in_the_trial_can_be_asked_the_trial_only_questions(): void
+    {
+        config(['freegle.firstreply.rollout_percent' => 100]);
+
+        [$user, , $posts] = $this->seedMemberWithPosts(2);
+        $this->givePhotos([]);   // leave them without photos so photo applies
+        $this->assertNotEmpty($posts);
+
+        $this->service()->run();
+
+        $this->assertContains('photo', $this->kindsAsked((int) $user->id));
+    }
 }

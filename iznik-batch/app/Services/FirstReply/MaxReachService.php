@@ -113,8 +113,9 @@ class MaxReachService
         }
 
         try {
-            $row = DB::selectOne('SELECT max_cumulative_users FROM rippling_reach WHERE msgid = ?', [$msgid]);
-            $val = $row->max_cumulative_users ?? null;
+            $val = DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->value('max_cumulative_users');
 
             return $val === null ? null : (int) $val;
         } catch (\Throwable) {
@@ -141,14 +142,14 @@ class MaxReachService
             return $stats;
         }
 
-        $rows = DB::select(
-            'SELECT msgid, lat, lng, schedule
-             FROM rippling_reach
-             WHERE max_polygon IS NULL AND schedule IS NOT NULL
-             ORDER BY updated_at DESC
-             LIMIT ?',
-            [$limit]
-        );
+        $rows = DB::table('rippling_reach')
+            ->select('msgid', 'lat', 'lng', 'schedule')
+            ->whereNull('max_polygon')
+            ->whereNotNull('schedule')
+            ->orderByDesc('updated_at')
+            ->limit($limit)
+            ->get()
+            ->all();
 
         foreach ($rows as $row) {
             $stats['scanned']++;
@@ -228,11 +229,12 @@ class MaxReachService
         }
 
         try {
-            $row = DB::selectOne(
-                'SELECT schedule FROM rippling_reach
-                 WHERE msgid = ? AND max_polygon IS NULL AND schedule IS NOT NULL',
-                [$msgid]
-            );
+            $row = DB::table('rippling_reach')
+                ->select('schedule')
+                ->where('msgid', $msgid)
+                ->whereNull('max_polygon')
+                ->whereNotNull('schedule')
+                ->first();
 
             if ($row === null) {
                 // Either no reach row, or it is already populated. Both are
@@ -358,6 +360,26 @@ class MaxReachService
     }
 
     /**
+     * The lowest tick of THIS post's schedule whose polygon covers (lat,lng),
+     * or null when the schedule cannot say. Wraps firstTickCovering so callers
+     * need not know how the schedule is stored or parsed.
+     */
+    public function tickCovering(int $msgid, float $lat, float $lng): ?int
+    {
+        $schedule = DB::table('rippling_reach')->where('msgid', $msgid)->value('schedule');
+        if (!$schedule) {
+            return null;
+        }
+
+        $ticks = json_decode((string) $schedule, true);
+        if (!is_array($ticks) || empty($ticks)) {
+            return null;
+        }
+
+        return $this->firstTickCovering($ticks, $lat, $lng);
+    }
+
+    /**
      * The lowest tick number whose polygon contains (lat,lng), or null when none
      * of them do (or none carries geometry to test).
      *
@@ -366,7 +388,7 @@ class MaxReachService
      *
      * @param array<int,mixed> $ticks
      */
-    private function firstTickCovering(array $ticks, float $lat, float $lng): ?int
+    public function firstTickCovering(array $ticks, float $lat, float $lng): ?int
     {
         $withGeometry = [];
         foreach ($ticks as $entry) {

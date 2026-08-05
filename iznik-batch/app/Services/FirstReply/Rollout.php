@@ -59,6 +59,29 @@ class Rollout
      *
      * @param string $col the msgid column to bucket on
      */
+    /**
+     * The same bucketing, applied to a query builder rather than concatenated
+     * into a SQL string - so it can be bound and composed.
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     */
+    public static function apply($query, string $col)
+    {
+        $percent = self::percent();
+
+        if ($percent >= 100) {
+            return $query;
+        }
+
+        if ($percent <= 0) {
+            // An empty whereIn renders as "0 = 1" - a first-class way to say
+            // "match nothing".
+            return $query->whereIn($col, []);
+        }
+
+        return $query->whereRaw("($col % 100) < ?", [$percent]);
+    }
+
     public static function sqlFilter(string $col): string
     {
         $percent = self::percent();
