@@ -82,15 +82,6 @@
           <div class="text-center mt-3">
             <b-button variant="secondary" @click="cancel"> Not now </b-button>
           </div>
-
-          <!-- Traditional variant: Show supporter badge info and footnotes -->
-          <DonationTraditionalExtras
-            v-if="!isMinimalVariant"
-            :groupid="groupid"
-            :groupname="groupname"
-            :target-met="targetMet"
-            :hide-thermometer="hideThermometer"
-          />
         </div>
         <!-- Traditional variant: Show thermometer inside container -->
         <DonationThermometer
@@ -100,6 +91,16 @@
           class="ml-md-4 flex-shrink-0"
         />
       </div>
+      <!-- Traditional variant: supporter badge info and footnotes. Outside the
+           two-column row so the text can use the full modal width. -->
+      <DonationTraditionalExtras
+        v-if="!isMinimalVariant"
+        :groupid="groupid"
+        :groupname="groupname"
+        :target-met="targetMet"
+        :hide-thermometer="hideThermometer"
+        class="text-center"
+      />
     </div>
   </div>
 </template>

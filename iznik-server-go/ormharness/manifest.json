@@ -5,7 +5,7 @@
     "converted": 1592,
     "keep-raw": 51,
     "retired": 41,
-    "test-fixture": 4272
+    "test-fixture": 4276
   },
   "ratchet": {
     "baseline": 0,
@@ -84,7 +84,7 @@
     "001f278f7332": {
       "id": "001f278f7332",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6660,
+      "line": 6700,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -152,7 +152,7 @@
     "003d10f8b7a5": {
       "id": "003d10f8b7a5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9756,
+      "line": 9796,
       "function": "TestPatchMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -935,7 +935,7 @@
     "01c9385b45d1": {
       "id": "01c9385b45d1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4402,
+      "line": 4442,
       "function": "TestPostMessageAddByUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -1197,7 +1197,7 @@
     "025c823171e2": {
       "id": "025c823171e2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7125,
+      "line": 7165,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -1489,7 +1489,7 @@
     "03107a123939": {
       "id": "03107a123939",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6552,
+      "line": 6592,
       "function": "TestRejectToDraftOwner",
       "receiver": "db",
       "method": "Raw",
@@ -1583,8 +1583,8 @@
     "0350c5a073dc": {
       "id": "0350c5a073dc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7398,
-      "function": "TestMessagePostWritesHistory",
+      "line": 7153,
+      "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -1627,7 +1627,7 @@
     "035a67037c3e": {
       "id": "035a67037c3e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7421,
+      "line": 7461,
       "function": "TestMessagePostWritesHistory",
       "receiver": "db",
       "method": "Raw",
@@ -1671,7 +1671,7 @@
     "036f7dabbd8c": {
       "id": "036f7dabbd8c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7678,
+      "line": 7718,
       "function": "TestPatchMessageEditNoReviewUnmoderatedMember",
       "receiver": "db",
       "method": "Exec",
@@ -1781,7 +1781,7 @@
     "03eb6c849448": {
       "id": "03eb6c849448",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8419,
+      "line": 8459,
       "function": "TestPostMessageReleasePerGroupClearsMessageWhenLastGroup",
       "receiver": "db",
       "method": "Raw",
@@ -1871,7 +1871,7 @@
     "0418a794232e": {
       "id": "0418a794232e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10728,
+      "line": 10768,
       "function": "TestListMessagesMT_OldSpamExcludedFromPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -1983,7 +1983,7 @@
     "046695c88f68": {
       "id": "046695c88f68",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8287,
+      "line": 8327,
       "function": "TestPatchMessagePartnerLatLng",
       "receiver": "db",
       "method": "Raw",
@@ -2477,7 +2477,7 @@
     "051bcca884f3": {
       "id": "051bcca884f3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9516,
+      "line": 9556,
       "function": "TestPatchMessageGroupidUpdatesDraft",
       "receiver": "db",
       "method": "Raw",
@@ -2967,7 +2967,7 @@
     "05f1a8a4ca22": {
       "id": "05f1a8a4ca22",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6271,
+      "line": 6311,
       "function": "TestMessagesMarkSeenBatchPreservesSemantics",
       "receiver": "db",
       "method": "Raw",
@@ -3593,7 +3593,7 @@
     "072e7f3c3825": {
       "id": "072e7f3c3825",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7396,
+      "line": 7436,
       "function": "TestMessagePostWritesHistory",
       "receiver": "db",
       "method": "Exec",
@@ -3681,7 +3681,7 @@
     "076295e688ef": {
       "id": "076295e688ef",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10578,
+      "line": 10618,
       "function": "TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments",
       "receiver": "db",
       "method": "Raw",
@@ -3703,7 +3703,7 @@
     "0766f04370bf": {
       "id": "0766f04370bf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7675,
+      "line": 7715,
       "function": "TestPatchMessageEditNoReviewUnmoderatedMember",
       "receiver": "db",
       "method": "Exec",
@@ -3749,7 +3749,7 @@
     "07738314315a": {
       "id": "07738314315a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6316,
+      "line": 6356,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Raw",
@@ -4015,7 +4015,7 @@
     "07dcf8986b64": {
       "id": "07dcf8986b64",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8929,
+      "line": 8969,
       "function": "TestPostMessageSpamLastGroupSoftDeletesMessage",
       "receiver": "db",
       "method": "Raw",
@@ -4237,7 +4237,7 @@
     "083b1dc50ed3": {
       "id": "083b1dc50ed3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6389,
+      "line": 6429,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Exec",
@@ -5144,7 +5144,7 @@
     "09fdb1faf03a": {
       "id": "09fdb1faf03a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7894,
+      "line": 7934,
       "function": "TestGetMessageTnpostid",
       "receiver": "db",
       "method": "Exec",
@@ -5344,7 +5344,7 @@
     "0a87beb19758": {
       "id": "0a87beb19758",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9503,
+      "line": 9543,
       "function": "TestPatchMessageGroupidUpdatesDraft",
       "receiver": "db",
       "method": "Raw",
@@ -5434,7 +5434,7 @@
     "0a99d63e15f0": {
       "id": "0a99d63e15f0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10651,
+      "line": 10691,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Raw",
@@ -5544,7 +5544,7 @@
     "0ad3dc889bf8": {
       "id": "0ad3dc889bf8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3677,
+      "line": 3717,
       "function": "TestPostMessageApproveAsAdmin",
       "receiver": "db",
       "method": "Raw",
@@ -5613,7 +5613,7 @@
     "0adfd739744d": {
       "id": "0adfd739744d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7953,
+      "line": 7993,
       "function": "TestGetMessageExpiresat",
       "receiver": "db",
       "method": "Raw",
@@ -5769,7 +5769,7 @@
     "0b40ff1dde21": {
       "id": "0b40ff1dde21",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9856,
+      "line": 9896,
       "function": "TestPostMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -5943,7 +5943,7 @@
     "0b82446a9109": {
       "id": "0b82446a9109",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9123,
+      "line": 9163,
       "function": "TestListMessagesMT_PaginationCursorUsesMaxArrival",
       "receiver": "db",
       "method": "Exec",
@@ -6077,7 +6077,7 @@
     "0c0dd45fc513": {
       "id": "0c0dd45fc513",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10662,
+      "line": 10702,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -6233,7 +6233,7 @@
     "0c4fc10a6cbf": {
       "id": "0c4fc10a6cbf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10260,
+      "line": 10300,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Exec",
@@ -6346,7 +6346,7 @@
     "0c8673f8ccb9": {
       "id": "0c8673f8ccb9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6344,
+      "line": 6384,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Raw",
@@ -6546,7 +6546,7 @@
     "0ccda46b359c": {
       "id": "0ccda46b359c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3866,
+      "line": 3906,
       "function": "TestApproveCrossPostOnlyAffectsOneGroup",
       "receiver": "db",
       "method": "Exec",
@@ -6590,7 +6590,7 @@
     "0cdfbc66da52": {
       "id": "0cdfbc66da52",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8638,
+      "line": 8678,
       "function": "TestPostMessageBackToPendingPullsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -6656,7 +6656,7 @@
     "0d00a6071315": {
       "id": "0d00a6071315",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4990,
+      "line": 5030,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -6904,7 +6904,7 @@
     "0d6e607e9852": {
       "id": "0d6e607e9852",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5508,
+      "line": 5548,
       "function": "TestPostMessageOutcomeNoHappiness",
       "receiver": "db",
       "method": "Raw",
@@ -6926,7 +6926,7 @@
     "0dcded6ee15f": {
       "id": "0dcded6ee15f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5228,
+      "line": 5268,
       "function": "TestMarkSeenSource",
       "receiver": "db",
       "method": "Raw",
@@ -6948,7 +6948,7 @@
     "0dd401e6dfb0": {
       "id": "0dd401e6dfb0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9639,
+      "line": 9679,
       "function": "TestPatchMessageByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -8205,7 +8205,7 @@
     "0ff77545225c": {
       "id": "0ff77545225c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6005,
+      "line": 6045,
       "function": "TestListMessagesAdminCanSeePending",
       "receiver": "db",
       "method": "Exec",
@@ -8386,8 +8386,8 @@
     "105912e3dab7": {
       "id": "105912e3dab7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10170,
-      "function": "TestContentcheckFallbackVisibleAfter30Minutes",
+      "line": 10172,
+      "function": "TestContentcheckProcessedVisibleInPendingQueue",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -8518,7 +8518,7 @@
     "108601d041c3": {
       "id": "108601d041c3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6943,
+      "line": 6983,
       "function": "TestRejectToDraftResetsAvailablenow",
       "receiver": "db",
       "method": "Raw",
@@ -8562,7 +8562,7 @@
     "10b86c77aa0f": {
       "id": "10b86c77aa0f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5345,
+      "line": 5385,
       "function": "TestPostMessageAddByHugeCount",
       "receiver": "db",
       "method": "Raw",
@@ -9278,7 +9278,7 @@
     "122b17cc9731": {
       "id": "122b17cc9731",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5073,
+      "line": 5113,
       "function": "TestPostMessageViewDedup",
       "receiver": "db",
       "method": "Exec",
@@ -9526,7 +9526,7 @@
     "12d3d69b3192": {
       "id": "12d3d69b3192",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5312,
+      "line": 5352,
       "function": "TestPostMessageAddByNegativeCount",
       "receiver": "db",
       "method": "Raw",
@@ -9614,7 +9614,7 @@
     "1325da5e296c": {
       "id": "1325da5e296c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4220,
+      "line": 4260,
       "function": "TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn",
       "receiver": "db",
       "method": "Exec",
@@ -9994,7 +9994,7 @@
     "13cb6e90f6fd": {
       "id": "13cb6e90f6fd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4951,
+      "line": 4991,
       "function": "TestApproveMessageQueuesFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -10128,7 +10128,7 @@
     "14089ddf8685": {
       "id": "14089ddf8685",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7813,
+      "line": 7853,
       "function": "TestPatchMessageTextEditResetsContentCheck",
       "receiver": "db",
       "method": "Raw",
@@ -10194,7 +10194,7 @@
     "140c036280ac": {
       "id": "140c036280ac",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9635,
+      "line": 9675,
       "function": "TestPatchMessageByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -10216,7 +10216,7 @@
     "140eb2d83dee": {
       "id": "140eb2d83dee",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7652,
+      "line": 7692,
       "function": "TestPatchMessageEditReviewRequiredModeratedMember",
       "receiver": "db",
       "method": "Raw",
@@ -10330,7 +10330,7 @@
     "1497cab4c0bc": {
       "id": "1497cab4c0bc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2872,
+      "line": 2912,
       "function": "TestPatchMessage",
       "receiver": "db",
       "method": "Raw",
@@ -10396,7 +10396,7 @@
     "1504906850dc": {
       "id": "1504906850dc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3145,
+      "line": 3185,
       "function": "TestPatchMessageSubjectUsesContextualGroupKeyword",
       "receiver": "db",
       "method": "Raw",
@@ -10803,7 +10803,7 @@
     "15d039ef60a2": {
       "id": "15d039ef60a2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7668,
+      "line": 7708,
       "function": "TestPatchMessageEditNoReviewUnmoderatedMember",
       "receiver": "db",
       "method": "Exec",
@@ -11377,7 +11377,7 @@
     "16d573c0de0d": {
       "id": "16d573c0de0d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10432,
+      "line": 10472,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -11468,7 +11468,7 @@
     "16eb1577b4d2": {
       "id": "16eb1577b4d2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7967,
+      "line": 8007,
       "function": "TestListMessagesTnpostid",
       "receiver": "db",
       "method": "Exec",
@@ -11490,7 +11490,7 @@
     "16f61dc0c4dd": {
       "id": "16f61dc0c4dd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7262,
+      "line": 7302,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -11558,7 +11558,7 @@
     "1711ba398eda": {
       "id": "1711ba398eda",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9324,
+      "line": 9364,
       "function": "TestPostMessageHoldCrossGroupAttack403",
       "receiver": "db",
       "method": "Exec",
@@ -11647,7 +11647,7 @@
     "1729e9ae0465": {
       "id": "1729e9ae0465",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9904,
+      "line": 9944,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",
@@ -11691,7 +11691,7 @@
     "1763bb177100": {
       "id": "1763bb177100",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6247,
+      "line": 6287,
       "function": "TestMessagesMarkSeenBatchPreservesSemantics",
       "receiver": "db",
       "method": "Raw",
@@ -11761,7 +11761,7 @@
     "178ee2bc7c80": {
       "id": "178ee2bc7c80",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2773,
+      "line": 2813,
       "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
       "receiver": "db",
       "method": "Exec",
@@ -12378,7 +12378,7 @@
     "18dc957313ec": {
       "id": "18dc957313ec",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4984,
+      "line": 5024,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -12400,7 +12400,7 @@
     "18de3f84ae03": {
       "id": "18de3f84ae03",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6522,
+      "line": 6562,
       "function": "TestRejectToDraftOwner",
       "receiver": "db",
       "method": "Raw",
@@ -12666,7 +12666,7 @@
     "19506bc28cc1": {
       "id": "19506bc28cc1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6644,
+      "line": 6684,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Exec",
@@ -12732,7 +12732,7 @@
     "1961b299bbd8": {
       "id": "1961b299bbd8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10478,
+      "line": 10518,
       "function": "TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit",
       "receiver": "db",
       "method": "Raw",
@@ -12798,7 +12798,7 @@
     "197fd6e2f55c": {
       "id": "197fd6e2f55c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2733,
+      "line": 2773,
       "function": "TestJoinAndPostForcePendingOverridesApproved",
       "receiver": "db",
       "method": "Exec",
@@ -12842,7 +12842,7 @@
     "1997acd58129": {
       "id": "1997acd58129",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7771,
+      "line": 7811,
       "function": "TestPatchMessageEditReviewRequiredGroupModerated",
       "receiver": "db",
       "method": "Raw",
@@ -12940,7 +12940,7 @@
     "19b43bee6269": {
       "id": "19b43bee6269",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8132,
+      "line": 8172,
       "function": "insertTestPartnerKeyMsg",
       "receiver": "db",
       "method": "Exec",
@@ -12964,7 +12964,7 @@
     "19d38c807150": {
       "id": "19d38c807150",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9840,
+      "line": 9880,
       "function": "TestPatchMessageByTnPostidScrapesPhotosForAllMessages",
       "receiver": "db",
       "method": "Raw",
@@ -13030,7 +13030,7 @@
     "19e5e4c52f80": {
       "id": "19e5e4c52f80",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3517,
+      "line": 3557,
       "function": "TestPutMessageSetsLatLngFromLocation",
       "receiver": "db",
       "method": "Raw",
@@ -13270,7 +13270,7 @@
     "1a3d3778c0ff": {
       "id": "1a3d3778c0ff",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2614,
+      "line": 2654,
       "function": "TestJoinAndPostBannedUserReturns403",
       "receiver": "db",
       "method": "Exec",
@@ -13427,7 +13427,7 @@
     "1a746a04ba7c": {
       "id": "1a746a04ba7c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6604,
+      "line": 6644,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -13880,7 +13880,7 @@
     "1b839be55347": {
       "id": "1b839be55347",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8955,
+      "line": 8995,
       "function": "TestPostMessageApprovePerGroupSpamtype",
       "receiver": "db",
       "method": "Exec",
@@ -13990,7 +13990,7 @@
     "1bd68080fe90": {
       "id": "1bd68080fe90",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10055,
+      "line": 10095,
       "function": "TestJoinAndPostUnmoderatedUserStartsPending",
       "receiver": "db",
       "method": "Exec",
@@ -14286,7 +14286,7 @@
     "1c641247cbea": {
       "id": "1c641247cbea",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10236,
+      "line": 10276,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Raw",
@@ -14561,7 +14561,7 @@
     "1cd22c49ea29": {
       "id": "1cd22c49ea29",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6437,
+      "line": 6477,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -14583,7 +14583,7 @@
     "1cd424effa40": {
       "id": "1cd424effa40",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4947,
+      "line": 4987,
       "function": "TestApproveMessageQueuesFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -14605,7 +14605,7 @@
     "1cd9a28ba443": {
       "id": "1cd9a28ba443",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9936,
+      "line": 9976,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Raw",
@@ -14627,7 +14627,7 @@
     "1ce9bdd800c7": {
       "id": "1ce9bdd800c7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7123,
+      "line": 7163,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -14649,7 +14649,7 @@
     "1cf50f3c44a1": {
       "id": "1cf50f3c44a1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4931,
+      "line": 4971,
       "function": "TestPostMessageOutcomeWithdrawnQueuesFreebieAlertsRemove",
       "receiver": "db",
       "method": "Raw",
@@ -14961,7 +14961,7 @@
     "1da316130d6a": {
       "id": "1da316130d6a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3032,
+      "line": 3072,
       "function": "TestPatchMessageRejectedToPending",
       "receiver": "db",
       "method": "Exec",
@@ -14983,7 +14983,7 @@
     "1da76c82d5d4": {
       "id": "1da76c82d5d4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10812,
+      "line": 10852,
       "function": "TestPostMessageRenegePartner",
       "receiver": "db",
       "method": "Exec",
@@ -15027,7 +15027,7 @@
     "1dad8482b993": {
       "id": "1dad8482b993",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3106,
+      "line": 3146,
       "function": "TestPatchMessageSubjectUsesContextualGroupKeyword",
       "receiver": "db",
       "method": "Exec",
@@ -15183,7 +15183,7 @@
     "1de7e639029b": {
       "id": "1de7e639029b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6441,
+      "line": 6481,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -15345,7 +15345,7 @@
     "1e08ce518e4e": {
       "id": "1e08ce518e4e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9733,
+      "line": 9773,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Raw",
@@ -15611,7 +15611,7 @@
     "1e816fb18f6b": {
       "id": "1e816fb18f6b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10369,
+      "line": 10409,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -15743,7 +15743,7 @@
     "1eb13750ec9b": {
       "id": "1eb13750ec9b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7124,
+      "line": 7164,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Raw",
@@ -15875,7 +15875,7 @@
     "1ef340f619fa": {
       "id": "1ef340f619fa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8645,
+      "line": 8685,
       "function": "TestPostMessageBackToPendingPullsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -16148,7 +16148,7 @@
     "1f68b250f2c3": {
       "id": "1f68b250f2c3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4869,
+      "line": 4909,
       "function": "TestPostMessageWithdrawnApproved",
       "receiver": "db",
       "method": "Raw",
@@ -16350,7 +16350,7 @@
     "1f9bc31d6f18": {
       "id": "1f9bc31d6f18",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6442,
+      "line": 6482,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -17349,7 +17349,7 @@
     "217be662c448": {
       "id": "217be662c448",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7360,
+      "line": 7400,
       "function": "TestGetMessageWorryWordsGroupMod",
       "receiver": "db",
       "method": "Exec",
@@ -17641,7 +17641,7 @@
     "21dfcbc1ca1c": {
       "id": "21dfcbc1ca1c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3885,
+      "line": 3925,
       "function": "TestApproveCrossPostOnlyAffectsOneGroup",
       "receiver": "db",
       "method": "Raw",
@@ -18087,7 +18087,7 @@
     "22adc090db41": {
       "id": "22adc090db41",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4362,
+      "line": 4402,
       "function": "TestPostMessageAddBy",
       "receiver": "db",
       "method": "Raw",
@@ -18222,7 +18222,7 @@
     "230924cb7f4f": {
       "id": "230924cb7f4f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9656,
+      "line": 9696,
       "function": "TestPatchMessageByTnPostid",
       "receiver": "db",
       "method": "Raw",
@@ -18446,7 +18446,7 @@
     "23501afbade2": {
       "id": "23501afbade2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8507,
+      "line": 8547,
       "function": "TestPostMessageDeletePerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -18512,7 +18512,7 @@
     "236bf8e9d1ad": {
       "id": "236bf8e9d1ad",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6277,
+      "line": 6317,
       "function": "TestMessagesMarkSeenBatchPreservesSemantics",
       "receiver": "db",
       "method": "Raw",
@@ -18578,7 +18578,7 @@
     "2378ba69e5f6": {
       "id": "2378ba69e5f6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10609,
+      "line": 10649,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -18624,7 +18624,7 @@
     "237f6872e0b8": {
       "id": "237f6872e0b8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9220,
+      "line": 9260,
       "function": "TestPostMessageApproveCrossGroupAttack403",
       "receiver": "db",
       "method": "Exec",
@@ -18759,7 +18759,7 @@
     "23c155551500": {
       "id": "23c155551500",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8790,
+      "line": 8830,
       "function": "TestPostMessageDeleteAfterSpamExcludesSoftDeleted",
       "receiver": "db",
       "method": "Raw",
@@ -18805,7 +18805,7 @@
     "23d7ee103f9b": {
       "id": "23d7ee103f9b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8259,
+      "line": 8299,
       "function": "TestPatchMessagePartnerLatLng",
       "receiver": "db",
       "method": "Exec",
@@ -18966,7 +18966,7 @@
     "2404ea1da515": {
       "id": "2404ea1da515",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7117,
+      "line": 7157,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -19078,7 +19078,7 @@
     "244360371255": {
       "id": "244360371255",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10335,
+      "line": 10375,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Exec",
@@ -19169,7 +19169,7 @@
     "2469e8a93348": {
       "id": "2469e8a93348",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5359,
+      "line": 5399,
       "function": "TestPostMessageAddBySomeoneElse",
       "receiver": "db",
       "method": "Exec",
@@ -19238,7 +19238,7 @@
     "2476e14ca832": {
       "id": "2476e14ca832",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2514,
+      "line": 2554,
       "function": "TestJoinAndPostNewUserPassword",
       "receiver": "db",
       "method": "Exec",
@@ -19747,7 +19747,7 @@
     "256b14022669": {
       "id": "256b14022669",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10096,
+      "line": 10136,
       "function": "TestContentcheckUnprocessedHiddenFromPendingQueue",
       "receiver": "db",
       "method": "Exec",
@@ -19769,7 +19769,7 @@
     "256dff8291f3": {
       "id": "256dff8291f3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4397,
+      "line": 4437,
       "function": "TestPostMessageAddByUpdate",
       "receiver": "db",
       "method": "Raw",
@@ -20268,7 +20268,7 @@
     "2655d8e3768e": {
       "id": "2655d8e3768e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2982,
+      "line": 3022,
       "function": "TestGetMessageReturnsLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -20334,7 +20334,7 @@
     "26966feda116": {
       "id": "26966feda116",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4953,
+      "line": 4993,
       "function": "TestApproveMessageQueuesFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -20356,7 +20356,7 @@
     "2698b06222f2": {
       "id": "2698b06222f2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5410,
+      "line": 5450,
       "function": "TestPostMessagePromiseToSelfNoUserid",
       "receiver": "db",
       "method": "Raw",
@@ -20694,7 +20694,7 @@
     "2742aa3aba27": {
       "id": "2742aa3aba27",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2986,
+      "line": 3026,
       "function": "TestGetMessageReturnsLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -21387,7 +21387,7 @@
     "28d6a127672c": {
       "id": "28d6a127672c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6543,
+      "line": 6583,
       "function": "TestRejectToDraftOwner",
       "receiver": "db",
       "method": "Raw",
@@ -21409,7 +21409,7 @@
     "28d92debebd4": {
       "id": "28d92debebd4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8043,
+      "line": 8083,
       "function": "TestExpiresatRespectsRepostsWantedKey",
       "receiver": "db",
       "method": "Exec",
@@ -21589,7 +21589,7 @@
     "2906641f60f2": {
       "id": "2906641f60f2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6547,
+      "line": 6587,
       "function": "TestRejectToDraftOwner",
       "receiver": "db",
       "method": "Raw",
@@ -22409,7 +22409,7 @@
     "2ab592f267cd": {
       "id": "2ab592f267cd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8037,
+      "line": 8077,
       "function": "TestExpiresatRespectsRepostsWantedKey",
       "receiver": "db",
       "method": "Exec",
@@ -22548,7 +22548,7 @@
     "2b29ca6dbce1": {
       "id": "2b29ca6dbce1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5009,
+      "line": 5049,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Raw",
@@ -23239,7 +23239,7 @@
     "2c9dd347378d": {
       "id": "2c9dd347378d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7359,
+      "line": 7399,
       "function": "TestGetMessageWorryWordsGroupMod",
       "receiver": "db",
       "method": "Exec",
@@ -23437,7 +23437,7 @@
     "2d190ad2b136": {
       "id": "2d190ad2b136",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10318,
+      "line": 10358,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Raw",
@@ -23593,7 +23593,7 @@
     "2d60e365c825": {
       "id": "2d60e365c825",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7510,
+      "line": 7550,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -23703,7 +23703,7 @@
     "2d7a846ce0bd": {
       "id": "2d7a846ce0bd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8587,
+      "line": 8627,
       "function": "TestPostMessageSpamPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -24042,7 +24042,7 @@
     "2e31c56a02c1": {
       "id": "2e31c56a02c1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10661,
+      "line": 10701,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -24064,7 +24064,7 @@
     "2e3b68bc6ee3": {
       "id": "2e3b68bc6ee3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9534,
+      "line": 9574,
       "function": "TestPatchMessageGroupidUpdatesDraft",
       "receiver": "db",
       "method": "Raw",
@@ -24264,7 +24264,7 @@
     "2e9297840f59": {
       "id": "2e9297840f59",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6704,
+      "line": 6744,
       "function": "TestRejectToDraftClearsExpiredDeadline",
       "receiver": "db",
       "method": "Raw",
@@ -24820,7 +24820,7 @@
     "2f538367bf93": {
       "id": "2f538367bf93",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10168,
+      "line": 10208,
       "function": "TestContentcheckFallbackVisibleAfter30Minutes",
       "receiver": "db",
       "method": "Exec",
@@ -25155,8 +25155,8 @@
     "3003b3593a1d": {
       "id": "3003b3593a1d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2516,
-      "function": "TestJoinAndPostNewUserPassword",
+      "line": 2514,
+      "function": "TestJoinAndPostSavesDeadlineISODatetime",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -25382,7 +25382,7 @@
     "3087c10eee0e": {
       "id": "3087c10eee0e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5377,
+      "line": 5417,
       "function": "TestPostMessageAddBySomeoneElse",
       "receiver": "db",
       "method": "Raw",
@@ -25499,7 +25499,7 @@
     "30ad83b1c60a": {
       "id": "30ad83b1c60a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10508,
+      "line": 10548,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Exec",
@@ -25568,7 +25568,7 @@
     "30e0d0ebc07d": {
       "id": "30e0d0ebc07d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9759,
+      "line": 9799,
       "function": "TestPatchMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -25590,7 +25590,7 @@
     "31059d945204": {
       "id": "31059d945204",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6665,
+      "line": 6705,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -25654,7 +25654,7 @@
     "3121e59f8708": {
       "id": "3121e59f8708",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6689,
+      "line": 6729,
       "function": "TestRejectToDraftClearsExpiredDeadline",
       "receiver": "db",
       "method": "Exec",
@@ -25788,7 +25788,7 @@
     "31739f09fa49": {
       "id": "31739f09fa49",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8334,
+      "line": 8374,
       "function": "TestPostMessageHoldPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -25810,7 +25810,7 @@
     "317c955eea1d": {
       "id": "317c955eea1d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6445,
+      "line": 6485,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -26457,7 +26457,7 @@
     "325a7742fdd4": {
       "id": "325a7742fdd4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3114,
+      "line": 3154,
       "function": "TestPatchMessageSubjectUsesContextualGroupKeyword",
       "receiver": "db",
       "method": "Exec",
@@ -26589,7 +26589,7 @@
     "32b1c1514cb6": {
       "id": "32b1c1514cb6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4676,
+      "line": 4716,
       "function": "TestPostMessageOutcomeReceivedMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Raw",
@@ -27022,7 +27022,7 @@
     "33800e44375e": {
       "id": "33800e44375e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10510,
+      "line": 10550,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Raw",
@@ -27382,7 +27382,7 @@
     "3410d8781b1b": {
       "id": "3410d8781b1b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6798,
+      "line": 6838,
       "function": "TestBackToDraftAlias",
       "receiver": "db",
       "method": "Raw",
@@ -27470,7 +27470,7 @@
     "34401893d2a0": {
       "id": "34401893d2a0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3215,
+      "line": 3255,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -27718,7 +27718,7 @@
     "34ad9ea4db4e": {
       "id": "34ad9ea4db4e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4985,
+      "line": 5025,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -28197,7 +28197,7 @@
     "359720cd0c6a": {
       "id": "359720cd0c6a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6670,
+      "line": 6710,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -28695,7 +28695,7 @@
     "36981e7b05e5": {
       "id": "36981e7b05e5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9460,
+      "line": 9500,
       "function": "TestMessagePostingsVisibleUnauthenticated",
       "receiver": "db",
       "method": "Exec",
@@ -28989,7 +28989,7 @@
     "3761364dd624": {
       "id": "3761364dd624",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3036,
+      "line": 3076,
       "function": "TestPatchMessageRejectedToPending",
       "receiver": "db",
       "method": "Raw",
@@ -29142,7 +29142,7 @@
     "37ae0ef9006d": {
       "id": "37ae0ef9006d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6620,
+      "line": 6660,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -29253,7 +29253,7 @@
     "37dde9d1917f": {
       "id": "37dde9d1917f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9670,
+      "line": 9710,
       "function": "TestPatchMessageByTnPostidNotFound",
       "receiver": "db",
       "method": "Exec",
@@ -29320,7 +29320,7 @@
     "381746b9dc55": {
       "id": "381746b9dc55",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7007,
+      "line": 7047,
       "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Exec",
@@ -29882,7 +29882,7 @@
     "394988215d48": {
       "id": "394988215d48",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6601,
+      "line": 6641,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -30107,7 +30107,7 @@
     "39b6cb8e42d2": {
       "id": "39b6cb8e42d2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6589,
+      "line": 6629,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -30129,7 +30129,7 @@
     "39ba611717c4": {
       "id": "39ba611717c4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2800,
+      "line": 2840,
       "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
       "receiver": "db",
       "method": "Raw",
@@ -30333,7 +30333,7 @@
     "3a46c7f6db1a": {
       "id": "3a46c7f6db1a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10366,
+      "line": 10406,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -30777,7 +30777,7 @@
     "3af93745b8a3": {
       "id": "3af93745b8a3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9796,
+      "line": 9836,
       "function": "TestPatchMessageByTnPostidScrapesPhotosForAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -30953,7 +30953,7 @@
     "3b590727fcf4": {
       "id": "3b590727fcf4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8076,
+      "line": 8116,
       "function": "TestExpiresatMaxagetoshowWins",
       "receiver": "db",
       "method": "Exec",
@@ -31195,7 +31195,7 @@
     "3bd34adb9501": {
       "id": "3bd34adb9501",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6903,
+      "line": 6943,
       "function": "TestRejectToDraftClearsOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -31531,7 +31531,7 @@
     "3c69abc38cbd": {
       "id": "3c69abc38cbd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4677,
+      "line": 4717,
       "function": "TestPostMessageOutcomeReceivedMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Exec",
@@ -31757,7 +31757,7 @@
     "3cea42b66db8": {
       "id": "3cea42b66db8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4782,
+      "line": 4822,
       "function": "TestPostMessageWithdrawnPending",
       "receiver": "db",
       "method": "Raw",
@@ -31871,7 +31871,7 @@
     "3d2cc68b72bb": {
       "id": "3d2cc68b72bb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4821,
+      "line": 4861,
       "function": "TestPostMessageWithdrawnPendingLogsDeleted",
       "receiver": "db",
       "method": "Raw",
@@ -32175,7 +32175,7 @@
     "3e357649847a": {
       "id": "3e357649847a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2611,
+      "line": 2651,
       "function": "TestJoinAndPostBannedUserReturns403",
       "receiver": "db",
       "method": "Exec",
@@ -32219,7 +32219,7 @@
     "3e5895f08a3e": {
       "id": "3e5895f08a3e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6985,
+      "line": 7025,
       "function": "TestJoinAndPostClearsOutcomeAndRecordsPosting",
       "receiver": "db",
       "method": "Raw",
@@ -32263,7 +32263,7 @@
     "3e66aab9c019": {
       "id": "3e66aab9c019",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9049,
+      "line": 9089,
       "function": "TestListMessagesMT_MultiGroupGlobalArrivalOrder",
       "receiver": "db",
       "method": "Exec",
@@ -32307,7 +32307,7 @@
     "3e89dc30781f": {
       "id": "3e89dc30781f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9458,
+      "line": 9498,
       "function": "TestMessagePostingsVisibleUnauthenticated",
       "receiver": "db",
       "method": "Raw",
@@ -32472,7 +32472,7 @@
     "3edf4dfdc46b": {
       "id": "3edf4dfdc46b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9048,
+      "line": 9088,
       "function": "TestListMessagesMT_MultiGroupGlobalArrivalOrder",
       "receiver": "db",
       "method": "Exec",
@@ -32980,7 +32980,7 @@
     "3f9d614b0446": {
       "id": "3f9d614b0446",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10534,
+      "line": 10574,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Raw",
@@ -33157,7 +33157,7 @@
     "40100605d1c3": {
       "id": "40100605d1c3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7256,
+      "line": 7296,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -33201,7 +33201,7 @@
     "401b0b97660e": {
       "id": "401b0b97660e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6673,
+      "line": 6713,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -33318,7 +33318,7 @@
     "40657312c4c6": {
       "id": "40657312c4c6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4531,
+      "line": 4571,
       "function": "TestPostMessageRemoveByNotYourMessage",
       "receiver": "db",
       "method": "Exec",
@@ -33602,7 +33602,7 @@
     "40da24a42417": {
       "id": "40da24a42417",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2638,
+      "line": 2678,
       "function": "TestJoinAndPostBannedUserReturns403",
       "receiver": "db",
       "method": "Raw",
@@ -33979,7 +33979,7 @@
     "416683def725": {
       "id": "416683def725",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4661,
+      "line": 4701,
       "function": "TestPostMessageOutcomeMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Raw",
@@ -34227,7 +34227,7 @@
     "41ec8b47acd0": {
       "id": "41ec8b47acd0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6927,
+      "line": 6967,
       "function": "TestRejectToDraftResetsAvailablenow",
       "receiver": "db",
       "method": "Exec",
@@ -35286,7 +35286,7 @@
     "440d80ad2fb4": {
       "id": "440d80ad2fb4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10561,
+      "line": 10601,
       "function": "TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -35308,7 +35308,7 @@
     "440e3c158d54": {
       "id": "440e3c158d54",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7118,
+      "line": 7158,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -35418,8 +35418,8 @@
     "445e17f6e070": {
       "id": "445e17f6e070",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2658,
-      "function": "TestJoinAndPostProhibitedUserReturns403",
+      "line": 2656,
+      "function": "TestJoinAndPostBannedUserReturns403",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -35528,7 +35528,7 @@
     "4491a0720b77": {
       "id": "4491a0720b77",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6010,
+      "line": 6050,
       "function": "TestListMessagesAdminCanSeePending",
       "receiver": "db",
       "method": "Exec",
@@ -35640,7 +35640,7 @@
     "44b448f80d3f": {
       "id": "44b448f80d3f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9909,
+      "line": 9949,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",
@@ -35664,7 +35664,7 @@
     "44c47a7da23e": {
       "id": "44c47a7da23e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4052,
+      "line": 4092,
       "function": "TestPostMessageRenege",
       "receiver": "db",
       "method": "Raw",
@@ -35686,7 +35686,7 @@
     "44d42ee210cf": {
       "id": "44d42ee210cf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8613,
+      "line": 8653,
       "function": "TestPostMessageBackToPendingPullsAllGroups",
       "receiver": "db",
       "method": "Exec",
@@ -35800,7 +35800,7 @@
     "44deb5307c17": {
       "id": "44deb5307c17",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6436,
+      "line": 6476,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Raw",
@@ -35844,7 +35844,7 @@
     "44f79395ba2f": {
       "id": "44f79395ba2f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2907,
+      "line": 2947,
       "function": "TestPatchMessageAsMod",
       "receiver": "db",
       "method": "Raw",
@@ -36813,7 +36813,7 @@
     "4748b86d5afb": {
       "id": "4748b86d5afb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7637,
+      "line": 7677,
       "function": "TestPatchMessageEditReviewRequiredModeratedMember",
       "receiver": "db",
       "method": "Exec",
@@ -37077,7 +37077,7 @@
     "47a3913f8901": {
       "id": "47a3913f8901",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3184,
+      "line": 3224,
       "function": "TestPatchMessageLocationName",
       "receiver": "db",
       "method": "Raw",
@@ -37143,7 +37143,7 @@
     "47ad9020abf2": {
       "id": "47ad9020abf2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8147,
+      "line": 8187,
       "function": "TestPatchMessagePartnerAuth",
       "receiver": "db",
       "method": "Exec",
@@ -37387,7 +37387,7 @@
     "47f179847ea4": {
       "id": "47f179847ea4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10707,
+      "line": 10747,
       "function": "TestListMessagesMT_SpamInPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -37477,7 +37477,7 @@
     "48454474e5da": {
       "id": "48454474e5da",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7793,
+      "line": 7833,
       "function": "TestPatchMessageTextEditResetsContentCheck",
       "receiver": "db",
       "method": "Exec",
@@ -37765,7 +37765,7 @@
     "48c2de9a8910": {
       "id": "48c2de9a8910",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4884,
+      "line": 4924,
       "function": "TestPostMessageOutcomeQueuesFreebieAlertsRemove",
       "receiver": "db",
       "method": "Exec",
@@ -37787,7 +37787,7 @@
     "48c5886f8eee": {
       "id": "48c5886f8eee",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5667,
+      "line": 5707,
       "function": "TestListMessagesMT_DeletedMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -37878,7 +37878,7 @@
     "4914b378dccb": {
       "id": "4914b378dccb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6721,
+      "line": 6761,
       "function": "TestRejectToDraftKeepsFutureDeadline",
       "receiver": "db",
       "method": "Exec",
@@ -38122,7 +38122,7 @@
     "498460f17f86": {
       "id": "498460f17f86",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6388,
+      "line": 6428,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Exec",
@@ -38195,8 +38195,8 @@
     "499f1611b6eb": {
       "id": "499f1611b6eb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7113,
-      "function": "TestGetMessageItemLocationForMod",
+      "line": 7102,
+      "function": "TestJoinAndPostInventsEmailWhenMissing",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -38217,7 +38217,7 @@
     "49a848b41049": {
       "id": "49a848b41049",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10808,
+      "line": 10848,
       "function": "TestPostMessageRenegePartner",
       "receiver": "db",
       "method": "Exec",
@@ -38283,7 +38283,7 @@
     "49e0a9a9f1bf": {
       "id": "49e0a9a9f1bf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7108,
+      "line": 7148,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -38486,8 +38486,8 @@
     "4a2f9bad95f9": {
       "id": "4a2f9bad95f9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2693,
-      "function": "TestJoinAndPostGroupDefaultModerated",
+      "line": 2698,
+      "function": "TestJoinAndPostProhibitedUserReturns403",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -38643,7 +38643,7 @@
     "4a63d2bfaa46": {
       "id": "4a63d2bfaa46",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4579,
+      "line": 4619,
       "function": "TestPostMessagePromiseCreatesChat",
       "receiver": "db",
       "method": "Raw",
@@ -39716,7 +39716,7 @@
     "4c57952a7549": {
       "id": "4c57952a7549",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3547,
+      "line": 3587,
       "function": "TestPutMessageSetsLatLngFromLocation",
       "receiver": "db",
       "method": "Raw",
@@ -39760,7 +39760,7 @@
     "4c66d5c07826": {
       "id": "4c66d5c07826",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3231,
+      "line": 3271,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -39892,7 +39892,7 @@
     "4cc65cd38f93": {
       "id": "4cc65cd38f93",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7169,
+      "line": 7209,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -40581,7 +40581,7 @@
     "4e09ce8cc227": {
       "id": "4e09ce8cc227",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4085,
+      "line": 4125,
       "function": "TestPostMessageOutcomeIntended",
       "receiver": "db",
       "method": "Raw",
@@ -40691,7 +40691,7 @@
     "4e3574f52138": {
       "id": "4e3574f52138",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10071,
+      "line": 10111,
       "function": "TestJoinAndPostUnmoderatedUserStartsPending",
       "receiver": "db",
       "method": "Raw",
@@ -40779,7 +40779,7 @@
     "4ea5bd0e26ba": {
       "id": "4ea5bd0e26ba",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5624,
+      "line": 5664,
       "function": "TestListMessagesPending",
       "receiver": "db",
       "method": "Raw",
@@ -41457,7 +41457,7 @@
     "502f51678370": {
       "id": "502f51678370",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10211,
+      "line": 10251,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Exec",
@@ -41592,7 +41592,7 @@
     "50723ac265ed": {
       "id": "50723ac265ed",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7059,
+      "line": 7099,
       "function": "TestJoinAndPostInventsEmailWhenMissing",
       "receiver": "db",
       "method": "Exec",
@@ -41747,7 +41747,7 @@
     "50c027eeb991": {
       "id": "50c027eeb991",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10313,
+      "line": 10353,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Raw",
@@ -41879,7 +41879,7 @@
     "516c095f8874": {
       "id": "516c095f8874",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3279,
+      "line": 3319,
       "function": "TestDeleteMessageMod",
       "receiver": "db",
       "method": "Raw",
@@ -42124,7 +42124,7 @@
     "51d14f0964a7": {
       "id": "51d14f0964a7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4775,
+      "line": 4815,
       "function": "TestPostMessageWithdrawnPending",
       "receiver": "db",
       "method": "Raw",
@@ -42437,7 +42437,7 @@
     "5276201f3381": {
       "id": "5276201f3381",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4440,
+      "line": 4480,
       "function": "TestPostMessageRemoveBy",
       "receiver": "db",
       "method": "Raw",
@@ -42481,7 +42481,7 @@
     "52899c172c4a": {
       "id": "52899c172c4a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9930,
+      "line": 9970,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Raw",
@@ -42503,7 +42503,7 @@
     "529e29f28157": {
       "id": "529e29f28157",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10809,
+      "line": 10849,
       "function": "TestPostMessageRenegePartner",
       "receiver": "db",
       "method": "Exec",
@@ -42684,7 +42684,7 @@
     "5306d4b915fe": {
       "id": "5306d4b915fe",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10424,
+      "line": 10464,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Raw",
@@ -42865,8 +42865,8 @@
     "53535662568e": {
       "id": "53535662568e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2780,
-      "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
+      "line": 2777,
+      "function": "TestJoinAndPostForcePendingOverridesApproved",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -43479,7 +43479,7 @@
     "54ca1d4752b7": {
       "id": "54ca1d4752b7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4991,
+      "line": 5031,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -43770,8 +43770,8 @@
     "551074af3124": {
       "id": "551074af3124",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2616,
-      "function": "TestJoinAndPostBannedUserReturns403",
+      "line": 2614,
+      "function": "TestJoinAndPostModeratedUserGoesToPending",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -44080,7 +44080,7 @@
     "559ee19bce81": {
       "id": "559ee19bce81",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10334,
+      "line": 10374,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Exec",
@@ -44190,7 +44190,7 @@
     "55f4698db6e0": {
       "id": "55f4698db6e0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7106,
+      "line": 7146,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Raw",
@@ -44212,7 +44212,7 @@
     "55fa8213cf76": {
       "id": "55fa8213cf76",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7490,
+      "line": 7530,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -44280,7 +44280,7 @@
     "560655e2900c": {
       "id": "560655e2900c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8767,
+      "line": 8807,
       "function": "TestPostMessageDeleteAfterSpamExcludesSoftDeleted",
       "receiver": "db",
       "method": "Raw",
@@ -44774,7 +44774,7 @@
     "5709a5663406": {
       "id": "5709a5663406",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5032,
+      "line": 5072,
       "function": "TestDeleteMessageQueuesFreebieAlertsRemove",
       "receiver": "db",
       "method": "Raw",
@@ -44905,7 +44905,7 @@
     "5765c1958631": {
       "id": "5765c1958631",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9553,
+      "line": 9593,
       "function": "TestPostMessagePartnerAuthPromise",
       "receiver": "db",
       "method": "Exec",
@@ -44995,7 +44995,7 @@
     "577f3d6a763d": {
       "id": "577f3d6a763d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9154,
+      "line": 9194,
       "function": "TestListMessagesMT_PaginationCursorUsesMaxArrival",
       "receiver": "db",
       "method": "Raw",
@@ -45770,7 +45770,7 @@
     "58bd4fa6c198": {
       "id": "58bd4fa6c198",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10173,
+      "line": 10213,
       "function": "TestContentcheckFallbackVisibleAfter30Minutes",
       "receiver": "db",
       "method": "Exec",
@@ -45908,7 +45908,7 @@
     "58ebad46f4df": {
       "id": "58ebad46f4df",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7572,
+      "line": 7612,
       "function": "TestMessageAiDeclinedWritesTable",
       "receiver": "db",
       "method": "Raw",
@@ -46042,7 +46042,7 @@
     "594aece0876a": {
       "id": "594aece0876a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6325,
+      "line": 6365,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Raw",
@@ -46263,7 +46263,7 @@
     "59e6da45f961": {
       "id": "59e6da45f961",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6404,
+      "line": 6444,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Raw",
@@ -46307,7 +46307,7 @@
     "5a143124033a": {
       "id": "5a143124033a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3212,
+      "line": 3252,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -46578,6 +46578,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "5aad2ed96727": {
+      "id": "5aad2ed96727",
+      "file": "iznik-server-go/test/message_test.go",
+      "line": 10210,
+      "function": "TestContentcheckFallbackVisibleAfter30Minutes",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "5aad9cd3e6b7": {
       "id": "5aad9cd3e6b7",
       "file": "iznik-server-go/test/user_test.go",
@@ -46647,7 +46669,7 @@
     "5ab7f08a55ec": {
       "id": "5ab7f08a55ec",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7011,
+      "line": 7051,
       "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Exec",
@@ -46738,7 +46760,7 @@
     "5ac563967bf3": {
       "id": "5ac563967bf3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5620,
+      "line": 5660,
       "function": "TestListMessagesPending",
       "receiver": "db",
       "method": "Exec",
@@ -47346,7 +47368,7 @@
     "5bdda419aced": {
       "id": "5bdda419aced",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7492,
+      "line": 7532,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -47588,7 +47610,7 @@
     "5c7ed3cfd819": {
       "id": "5c7ed3cfd819",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9791,
+      "line": 9831,
       "function": "TestPatchMessageByTnPostidScrapesPhotosForAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -47985,7 +48007,7 @@
     "5d46024bc53f": {
       "id": "5d46024bc53f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4116,
+      "line": 4156,
       "function": "TestPostMessageOutcomeIntendedRepost",
       "receiver": "db",
       "method": "Raw",
@@ -48275,7 +48297,7 @@
     "5dc8a3ad461e": {
       "id": "5dc8a3ad461e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10076,
+      "line": 10116,
       "function": "TestJoinAndPostUnmoderatedUserStartsPending",
       "receiver": "db",
       "method": "Raw",
@@ -48495,7 +48517,7 @@
     "5e48cfaf7091": {
       "id": "5e48cfaf7091",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8310,
+      "line": 8350,
       "function": "TestPostMessageHoldPerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -48607,7 +48629,7 @@
     "5e76606c7348": {
       "id": "5e76606c7348",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2572,
+      "line": 2612,
       "function": "TestJoinAndPostModeratedUserGoesToPending",
       "receiver": "db",
       "method": "Exec",
@@ -48741,7 +48763,7 @@
     "5e9879b7d6fb": {
       "id": "5e9879b7d6fb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6320,
+      "line": 6360,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Exec",
@@ -49014,7 +49036,7 @@
     "5f460dbe8398": {
       "id": "5f460dbe8398",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6572,
+      "line": 6612,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -49281,7 +49303,7 @@
     "5fb3661e7a01": {
       "id": "5fb3661e7a01",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6323,
+      "line": 6363,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Exec",
@@ -49438,7 +49460,7 @@
     "600c5cd1a830": {
       "id": "600c5cd1a830",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10889,
+      "line": 10929,
       "function": "TestPostMessagePromisePartnerWrongDomain",
       "receiver": "db",
       "method": "Exec",
@@ -49504,7 +49526,7 @@
     "602f09899903": {
       "id": "602f09899903",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10215,
+      "line": 10255,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Exec",
@@ -49695,7 +49717,7 @@
     "6085c4318fd0": {
       "id": "6085c4318fd0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10584,
+      "line": 10624,
       "function": "TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -49896,7 +49918,7 @@
     "60ea5d84b850": {
       "id": "60ea5d84b850",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6314,
+      "line": 6354,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Exec",
@@ -49993,7 +50015,7 @@
     "610cda0eb0aa": {
       "id": "610cda0eb0aa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10240,
+      "line": 10280,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Exec",
@@ -50352,7 +50374,7 @@
     "61a6fcfd7c1f": {
       "id": "61a6fcfd7c1f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9881,
+      "line": 9921,
       "function": "TestPostMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Raw",
@@ -50769,7 +50791,7 @@
     "628e3dedc1f7": {
       "id": "628e3dedc1f7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9587,
+      "line": 9627,
       "function": "TestPostMessagePartnerAuthByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -51290,7 +51312,7 @@
     "638ac9d51131": {
       "id": "638ac9d51131",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8046,
+      "line": 8086,
       "function": "TestExpiresatRespectsRepostsWantedKey",
       "receiver": "db",
       "method": "Raw",
@@ -51627,7 +51649,7 @@
     "641d95727368": {
       "id": "641d95727368",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3523,
+      "line": 3563,
       "function": "TestPutMessageSetsLatLngFromLocation",
       "receiver": "db",
       "method": "Raw",
@@ -52198,7 +52220,7 @@
     "65350e69fe8b": {
       "id": "65350e69fe8b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7127,
+      "line": 7167,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -52499,7 +52521,7 @@
     "658deafba288": {
       "id": "658deafba288",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9358,
+      "line": 9398,
       "function": "TestPostMessageSpamCrossGroupAttack403",
       "receiver": "db",
       "method": "Exec",
@@ -52615,7 +52637,7 @@
     "65effcc65c69": {
       "id": "65effcc65c69",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5382,
+      "line": 5422,
       "function": "TestPostMessageAddBySomeoneElse",
       "receiver": "db",
       "method": "Raw",
@@ -52820,7 +52842,7 @@
     "664828a08676": {
       "id": "664828a08676",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10330,
+      "line": 10370,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Raw",
@@ -53045,7 +53067,7 @@
     "66c504001504": {
       "id": "66c504001504",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5455,
+      "line": 5495,
       "function": "TestPostMessageDoublePromise",
       "receiver": "db",
       "method": "Raw",
@@ -53223,7 +53245,7 @@
     "66f41febe836": {
       "id": "66f41febe836",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9582,
+      "line": 9622,
       "function": "TestPostMessagePartnerAuthByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -53607,7 +53629,7 @@
     "67a4fb95aba1": {
       "id": "67a4fb95aba1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7211,
+      "line": 7251,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -53651,7 +53673,7 @@
     "67ab40537d3b": {
       "id": "67ab40537d3b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3056,
+      "line": 3096,
       "function": "TestPatchMessageRejectedToPending",
       "receiver": "db",
       "method": "Raw",
@@ -53719,7 +53741,7 @@
     "67d229450cb9": {
       "id": "67d229450cb9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3890,
+      "line": 3930,
       "function": "TestApproveCrossPostOnlyAffectsOneGroup",
       "receiver": "db",
       "method": "Raw",
@@ -53763,7 +53785,7 @@
     "67ec18cdc706": {
       "id": "67ec18cdc706",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9554,
+      "line": 9594,
       "function": "TestPostMessagePartnerAuthPromise",
       "receiver": "db",
       "method": "Exec",
@@ -53807,7 +53829,7 @@
     "68067e2b8faa": {
       "id": "68067e2b8faa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7020,
+      "line": 7060,
       "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Raw",
@@ -54382,7 +54404,7 @@
     "68ffabff4d9e": {
       "id": "68ffabff4d9e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9238,
+      "line": 9278,
       "function": "TestPostMessageApproveCrossGroupAttack403",
       "receiver": "db",
       "method": "Raw",
@@ -54470,7 +54492,7 @@
     "693d12e967bb": {
       "id": "693d12e967bb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7206,
+      "line": 7246,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -54558,7 +54580,7 @@
     "697b6d52a4a6": {
       "id": "697b6d52a4a6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5539,
+      "line": 5579,
       "function": "TestPostMessageOutcomeHappyNoComment",
       "receiver": "db",
       "method": "Raw",
@@ -54738,7 +54760,7 @@
     "69ea1c9889b6": {
       "id": "69ea1c9889b6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10708,
+      "line": 10748,
       "function": "TestListMessagesMT_SpamInPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -55078,7 +55100,7 @@
     "6a6a69c32de1": {
       "id": "6a6a69c32de1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6386,
+      "line": 6426,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Raw",
@@ -55656,7 +55678,7 @@
     "6b2a0329a2da": {
       "id": "6b2a0329a2da",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6502,
+      "line": 6542,
       "function": "TestPatchMessageTypeChangeModNoEditRecord",
       "receiver": "db",
       "method": "Raw",
@@ -55744,7 +55766,7 @@
     "6b6e00209eb6": {
       "id": "6b6e00209eb6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8446,
+      "line": 8486,
       "function": "TestPostMessageReleaseIgnoresDeletedGroupHold",
       "receiver": "db",
       "method": "Exec",
@@ -55766,7 +55788,7 @@
     "6b796b59c29c": {
       "id": "6b796b59c29c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5619,
+      "line": 5659,
       "function": "TestListMessagesPending",
       "receiver": "db",
       "method": "Raw",
@@ -55966,7 +55988,7 @@
     "6be70f500f7f": {
       "id": "6be70f500f7f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3363,
+      "line": 3403,
       "function": "TestPutMessage",
       "receiver": "db",
       "method": "Raw",
@@ -56169,7 +56191,7 @@
     "6c9c15a23433": {
       "id": "6c9c15a23433",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7506,
+      "line": 7546,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -56484,7 +56506,7 @@
     "6d02776a0472": {
       "id": "6d02776a0472",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3971,
+      "line": 4011,
       "function": "TestPostMessagePromise",
       "receiver": "db",
       "method": "Raw",
@@ -56669,7 +56691,7 @@
     "6d428538c7f6": {
       "id": "6d428538c7f6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10451,
+      "line": 10491,
       "function": "TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit",
       "receiver": "db",
       "method": "Exec",
@@ -56858,8 +56880,8 @@
     "6d7a9d9836f4": {
       "id": "6d7a9d9836f4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7064,
-      "function": "TestJoinAndPostInventsEmailWhenMissing",
+      "line": 7056,
+      "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -56902,8 +56924,8 @@
     "6da8205f1090": {
       "id": "6da8205f1090",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7400,
-      "function": "TestMessagePostWritesHistory",
+      "line": 7104,
+      "function": "TestJoinAndPostInventsEmailWhenMissing",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -57127,7 +57149,7 @@
     "6df4c3f8452e": {
       "id": "6df4c3f8452e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7501,
+      "line": 7541,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -57715,7 +57737,7 @@
     "6f3fc33cb8af": {
       "id": "6f3fc33cb8af",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10433,
+      "line": 10473,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -57937,7 +57959,7 @@
     "6fae2a836af6": {
       "id": "6fae2a836af6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10774,
+      "line": 10814,
       "function": "TestPostMessagePromisePartner",
       "receiver": "db",
       "method": "Exec",
@@ -58026,7 +58048,7 @@
     "6fcab3054ee0": {
       "id": "6fcab3054ee0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10732,
+      "line": 10772,
       "function": "TestListMessagesMT_OldSpamExcludedFromPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -58631,7 +58653,7 @@
     "70aab75e8e35": {
       "id": "70aab75e8e35",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6328,
+      "line": 6368,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Exec",
@@ -58699,7 +58721,7 @@
     "70d183c95c83": {
       "id": "70d183c95c83",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10963,
+      "line": 11003,
       "function": "TestModerationBlockedWhenHeldByAnotherMod",
       "receiver": "db",
       "method": "Raw",
@@ -58721,7 +58743,7 @@
     "70d612ccf4e4": {
       "id": "70d612ccf4e4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8749,
+      "line": 8789,
       "function": "TestPostMessageDeleteAfterSpamExcludesSoftDeleted",
       "receiver": "db",
       "method": "Exec",
@@ -59486,7 +59508,7 @@
     "72422e63a0fd": {
       "id": "72422e63a0fd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4968,
+      "line": 5008,
       "function": "TestApproveMessageQueuesFreebieAlertsAdd",
       "receiver": "db",
       "method": "Raw",
@@ -59860,7 +59882,7 @@
     "72d0ba72e48e": {
       "id": "72d0ba72e48e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5689,
+      "line": 5729,
       "function": "TestListMessagesMT_DeletedMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -59984,7 +60006,7 @@
     "731ddd6956c5": {
       "id": "731ddd6956c5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9710,
+      "line": 9750,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Exec",
@@ -60006,7 +60028,7 @@
     "7321e39a5a91": {
       "id": "7321e39a5a91",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10053,
+      "line": 10093,
       "function": "TestJoinAndPostUnmoderatedUserStartsPending",
       "receiver": "db",
       "method": "Exec",
@@ -60028,7 +60050,7 @@
     "73265c9ea7f3": {
       "id": "73265c9ea7f3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10602,
+      "line": 10642,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -60072,7 +60094,7 @@
     "7355bc5c05c7": {
       "id": "7355bc5c05c7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4274,
+      "line": 4314,
       "function": "TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn",
       "receiver": "db",
       "method": "Raw",
@@ -60389,7 +60411,7 @@
     "73b909b0b964": {
       "id": "73b909b0b964",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10970,
+      "line": 11010,
       "function": "TestModerationBlockedWhenHeldByAnotherMod",
       "receiver": "db",
       "method": "Raw",
@@ -60527,7 +60549,7 @@
     "7415ecc8472c": {
       "id": "7415ecc8472c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7085,
+      "line": 7125,
       "function": "TestJoinAndPostInventsEmailWhenMissing",
       "receiver": "db",
       "method": "Raw",
@@ -60874,7 +60896,7 @@
     "749658620c11": {
       "id": "749658620c11",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7415,
+      "line": 7455,
       "function": "TestMessagePostWritesHistory",
       "receiver": "db",
       "method": "Raw",
@@ -60962,8 +60984,8 @@
     "74abc0570764": {
       "id": "74abc0570764",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7446,
-      "function": "TestJoinAndPostLogsReceived",
+      "line": 7438,
+      "function": "TestMessagePostWritesHistory",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -61366,7 +61388,7 @@
     "7540ba365e1b": {
       "id": "7540ba365e1b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10504,
+      "line": 10544,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Exec",
@@ -61619,7 +61641,7 @@
     "75a31e10cfe8": {
       "id": "75a31e10cfe8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4681,
+      "line": 4721,
       "function": "TestPostMessageOutcomeReceivedMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Raw",
@@ -61773,7 +61795,7 @@
     "75f58864aa48": {
       "id": "75f58864aa48",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7709,
+      "line": 7749,
       "function": "TestPatchMessageEditNoReviewPendingMessage",
       "receiver": "db",
       "method": "Exec",
@@ -61839,7 +61861,7 @@
     "76143dbb6ae1": {
       "id": "76143dbb6ae1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9374,
+      "line": 9414,
       "function": "TestPostMessageSpamCrossGroupAttack403",
       "receiver": "db",
       "method": "Raw",
@@ -61905,7 +61927,7 @@
     "763b1a4aa07a": {
       "id": "763b1a4aa07a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10241,
+      "line": 10281,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Exec",
@@ -61949,7 +61971,7 @@
     "764fae3d6760": {
       "id": "764fae3d6760",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8355,
+      "line": 8395,
       "function": "TestPostMessageReleasePerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -62176,7 +62198,7 @@
     "76a56a9be547": {
       "id": "76a56a9be547",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9172,
+      "line": 9212,
       "function": "TestListMessagesGroupsIncludesHeldby",
       "receiver": "db",
       "method": "Exec",
@@ -62198,7 +62220,7 @@
     "76a67841a737": {
       "id": "76a67841a737",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7567,
+      "line": 7607,
       "function": "TestMessageAiDeclinedWritesTable",
       "receiver": "db",
       "method": "Exec",
@@ -62288,7 +62310,7 @@
     "76c46eb6d9ef": {
       "id": "76c46eb6d9ef",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4804,
+      "line": 4844,
       "function": "TestPostMessageWithdrawnPendingLogsDeleted",
       "receiver": "db",
       "method": "Exec",
@@ -62486,7 +62508,7 @@
     "76f68e746682": {
       "id": "76f68e746682",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6376,
+      "line": 6416,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Raw",
@@ -62508,7 +62530,7 @@
     "76fc9c203ed8": {
       "id": "76fc9c203ed8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4357,
+      "line": 4397,
       "function": "TestPostMessageAddBy",
       "receiver": "db",
       "method": "Raw",
@@ -62530,7 +62552,7 @@
     "76fd90f1edd3": {
       "id": "76fd90f1edd3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10872,
+      "line": 10912,
       "function": "TestPostMessagePromiseRenegePromisePartner",
       "receiver": "db",
       "method": "Raw",
@@ -63476,7 +63498,7 @@
     "78afc29069e6": {
       "id": "78afc29069e6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4585,
+      "line": 4625,
       "function": "TestPostMessagePromiseCreatesChat",
       "receiver": "db",
       "method": "Raw",
@@ -63675,7 +63697,7 @@
     "78f8300e262b": {
       "id": "78f8300e262b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6004,
+      "line": 6044,
       "function": "TestListMessagesAdminCanSeePending",
       "receiver": "db",
       "method": "Raw",
@@ -63815,7 +63837,7 @@
     "794422da5415": {
       "id": "794422da5415",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9957,
+      "line": 9997,
       "function": "TestMessageAttachmentHasAIField",
       "receiver": "db",
       "method": "Exec",
@@ -63969,7 +63991,7 @@
     "796578310f13": {
       "id": "796578310f13",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10550,
+      "line": 10590,
       "function": "TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -64283,8 +64305,8 @@
     "7a116428437b": {
       "id": "7a116428437b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2618,
-      "function": "TestJoinAndPostBannedUserReturns403",
+      "line": 2616,
+      "function": "TestJoinAndPostModeratedUserGoesToPending",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -64305,7 +64327,7 @@
     "7a273247d664": {
       "id": "7a273247d664",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5294,
+      "line": 5334,
       "function": "TestPostMessageAddByNegativeCount",
       "receiver": "db",
       "method": "Exec",
@@ -64481,8 +64503,8 @@
     "7a922846dbc5": {
       "id": "7a922846dbc5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10098,
-      "function": "TestContentcheckUnprocessedHiddenFromPendingQueue",
+      "line": 10097,
+      "function": "TestJoinAndPostUnmoderatedUserStartsPending",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -64503,7 +64525,7 @@
     "7a9695a7e98c": {
       "id": "7a9695a7e98c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4339,
+      "line": 4379,
       "function": "TestPostMessageAddBy",
       "receiver": "db",
       "method": "Exec",
@@ -64640,7 +64662,7 @@
     "7ac193be718f": {
       "id": "7ac193be718f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5628,
+      "line": 5668,
       "function": "TestListMessagesPending",
       "receiver": "db",
       "method": "Exec",
@@ -64706,7 +64728,7 @@
     "7ae38336046f": {
       "id": "7ae38336046f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3234,
+      "line": 3274,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -64772,7 +64794,7 @@
     "7af19fd8baba": {
       "id": "7af19fd8baba",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8687,
+      "line": 8727,
       "function": "TestPostMessageHoldPerGroupLogsCorrectGroup",
       "receiver": "db",
       "method": "Raw",
@@ -64947,7 +64969,7 @@
     "7b4eeb5816a6": {
       "id": "7b4eeb5816a6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6866,
+      "line": 6906,
       "function": "TestRejectToDraftFullRepostFlow",
       "receiver": "db",
       "method": "Raw",
@@ -65035,7 +65057,7 @@
     "7b70818a99a7": {
       "id": "7b70818a99a7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6884,
+      "line": 6924,
       "function": "TestRejectToDraftClearsOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -65260,7 +65282,7 @@
     "7bdc9f9d7004": {
       "id": "7bdc9f9d7004",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7512,
+      "line": 7552,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -65350,7 +65372,7 @@
     "7bf319faabbf": {
       "id": "7bf319faabbf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3105,
+      "line": 3145,
       "function": "TestPatchMessageSubjectUsesContextualGroupKeyword",
       "receiver": "db",
       "method": "Exec",
@@ -65396,7 +65418,7 @@
     "7bf556e3de13": {
       "id": "7bf556e3de13",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4503,
+      "line": 4543,
       "function": "TestPostMessageAddByNotYourMessage",
       "receiver": "db",
       "method": "Exec",
@@ -65418,7 +65440,7 @@
     "7bf6b9429542": {
       "id": "7bf6b9429542",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4719,
+      "line": 4759,
       "function": "TestPostMessageOutcomeWithdrawnDoesNotMarkSpatialSuccessful",
       "receiver": "db",
       "method": "Exec",
@@ -65625,7 +65647,7 @@
     "7c97423b11f1": {
       "id": "7c97423b11f1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8083,
+      "line": 8123,
       "function": "TestExpiresatMaxagetoshowWins",
       "receiver": "db",
       "method": "Raw",
@@ -65692,10 +65714,32 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "7c9d67cc76b8": {
+      "id": "7c9d67cc76b8",
+      "file": "iznik-server-go/test/message_test.go",
+      "line": 2511,
+      "function": "TestJoinAndPostSavesDeadlineISODatetime",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "messages"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Deadline ISO test', 'Item with deadline', 'Item with deadline', NOW(), NOW(), 'Platform')",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "7ca53f13d0bf": {
       "id": "7ca53f13d0bf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5690,
+      "line": 5730,
       "function": "TestListMessagesMT_DeletedMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -65717,7 +65761,7 @@
     "7cbcbbb80bdb": {
       "id": "7cbcbbb80bdb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10207,
+      "line": 10247,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Exec",
@@ -65873,7 +65917,7 @@
     "7d19fcebb077": {
       "id": "7d19fcebb077",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6590,
+      "line": 6630,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -65943,7 +65987,7 @@
     "7d2dc25374bc": {
       "id": "7d2dc25374bc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9698,
+      "line": 9738,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Exec",
@@ -66355,7 +66399,7 @@
     "7e4899ee4872": {
       "id": "7e4899ee4872",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10434,
+      "line": 10474,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -66677,7 +66721,7 @@
     "7e8cdec81928": {
       "id": "7e8cdec81928",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7595,
+      "line": 7635,
       "function": "TestGetMessagePostings",
       "receiver": "db",
       "method": "Exec",
@@ -66861,7 +66905,7 @@
     "7ed0a6cf937c": {
       "id": "7ed0a6cf937c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8378,
+      "line": 8418,
       "function": "TestPostMessageReleasePerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -66883,7 +66927,7 @@
     "7ed78b8767a7": {
       "id": "7ed78b8767a7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4188,
+      "line": 4228,
       "function": "TestPostMessageOutcomeDuplicate",
       "receiver": "db",
       "method": "Exec",
@@ -67095,7 +67139,7 @@
     "7f3fb1bf18db": {
       "id": "7f3fb1bf18db",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7427,
+      "line": 7467,
       "function": "TestMessagePostWritesHistory",
       "receiver": "db",
       "method": "Raw",
@@ -67754,7 +67798,7 @@
     "80c0d6f01fe6": {
       "id": "80c0d6f01fe6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7114,
+      "line": 7154,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -68327,7 +68371,7 @@
     "81ead9cb7ef9": {
       "id": "81ead9cb7ef9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4530,
+      "line": 4570,
       "function": "TestPostMessageRemoveByNotYourMessage",
       "receiver": "db",
       "method": "Exec",
@@ -68937,7 +68981,7 @@
     "83230991cb94": {
       "id": "83230991cb94",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6008,
+      "line": 6048,
       "function": "TestListMessagesAdminCanSeePending",
       "receiver": "db",
       "method": "Raw",
@@ -69189,7 +69233,7 @@
     "8389c9d10ddf": {
       "id": "8389c9d10ddf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10513,
+      "line": 10553,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Exec",
@@ -69299,7 +69343,7 @@
     "83c3bd0a2a19": {
       "id": "83c3bd0a2a19",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6308,
+      "line": 6348,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Exec",
@@ -69343,7 +69387,7 @@
     "83ca845cd694": {
       "id": "83ca845cd694",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3828,
+      "line": 3868,
       "function": "TestPostMessageBackToPendingNotMod",
       "receiver": "db",
       "method": "Exec",
@@ -69812,7 +69856,7 @@
     "84b53dc2e875": {
       "id": "84b53dc2e875",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6433,
+      "line": 6473,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Raw",
@@ -69904,7 +69948,7 @@
     "84ff57802750": {
       "id": "84ff57802750",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5788,
+      "line": 5828,
       "function": "TestListMessagesWithContext",
       "receiver": "db",
       "method": "Raw",
@@ -70194,8 +70238,8 @@
     "85c8f8fbe518": {
       "id": "85c8f8fbe518",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10132,
-      "function": "TestContentcheckProcessedVisibleInPendingQueue",
+      "line": 10138,
+      "function": "TestContentcheckUnprocessedHiddenFromPendingQueue",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -70260,7 +70304,7 @@
     "85e03cf995bf": {
       "id": "85e03cf995bf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7753,
+      "line": 7793,
       "function": "TestPatchMessageEditReviewRequiredGroupModerated",
       "receiver": "db",
       "method": "Exec",
@@ -70394,7 +70438,7 @@
     "86017ba400e5": {
       "id": "86017ba400e5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6856,
+      "line": 6896,
       "function": "TestRejectToDraftFullRepostFlow",
       "receiver": "db",
       "method": "Raw",
@@ -70663,7 +70707,7 @@
     "864cfd2f32aa": {
       "id": "864cfd2f32aa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8885,
+      "line": 8925,
       "function": "TestMessageRepostPerGroupArrival",
       "receiver": "db",
       "method": "Exec",
@@ -70795,7 +70839,7 @@
     "86826988a804": {
       "id": "86826988a804",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3769,
+      "line": 3809,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Raw",
@@ -71321,7 +71365,7 @@
     "8788336b4606": {
       "id": "8788336b4606",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2653,
+      "line": 2693,
       "function": "TestJoinAndPostProhibitedUserReturns403",
       "receiver": "db",
       "method": "Exec",
@@ -71881,7 +71925,7 @@
     "88cc39665c87": {
       "id": "88cc39665c87",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7207,
+      "line": 7247,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -72191,7 +72235,7 @@
     "8993b2f3e9fd": {
       "id": "8993b2f3e9fd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9912,
+      "line": 9952,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",
@@ -72323,7 +72367,7 @@
     "89efcfe872b1": {
       "id": "89efcfe872b1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2569,
+      "line": 2609,
       "function": "TestJoinAndPostModeratedUserGoesToPending",
       "receiver": "db",
       "method": "Exec",
@@ -72524,7 +72568,7 @@
     "8a47a55859c3": {
       "id": "8a47a55859c3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4685,
+      "line": 4725,
       "function": "TestPostMessageOutcomeReceivedMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Exec",
@@ -72929,7 +72973,7 @@
     "8b023808ad70": {
       "id": "8b023808ad70",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8612,
+      "line": 8652,
       "function": "TestPostMessageBackToPendingPullsAllGroups",
       "receiver": "db",
       "method": "Exec",
@@ -72973,7 +73017,7 @@
     "8b2d2ea42cff": {
       "id": "8b2d2ea42cff",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8401,
+      "line": 8441,
       "function": "TestPostMessageReleasePerGroupClearsMessageWhenLastGroup",
       "receiver": "db",
       "method": "Exec",
@@ -73216,7 +73260,7 @@
     "8bc9d6194d2a": {
       "id": "8bc9d6194d2a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7168,
+      "line": 7208,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -73326,7 +73370,7 @@
     "8c0428bf888a": {
       "id": "8c0428bf888a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2964,
+      "line": 3004,
       "function": "TestGetMessageReturnsEditsForMod",
       "receiver": "db",
       "method": "Exec",
@@ -73602,7 +73646,7 @@
     "8c7fcfa67a2b": {
       "id": "8c7fcfa67a2b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4172,
+      "line": 4212,
       "function": "TestPostMessageOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -73712,7 +73756,7 @@
     "8ca6dd9f28b2": {
       "id": "8ca6dd9f28b2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3551,
+      "line": 3591,
       "function": "TestPutMessageSetsLatLngFromLocation",
       "receiver": "db",
       "method": "Raw",
@@ -73831,7 +73875,7 @@
     "8ccd5cd9eb17": {
       "id": "8ccd5cd9eb17",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4377,
+      "line": 4417,
       "function": "TestPostMessageAddByUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -73905,7 +73949,7 @@
     "8ce29c0dc210": {
       "id": "8ce29c0dc210",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6967,
+      "line": 7007,
       "function": "TestJoinAndPostClearsOutcomeAndRecordsPosting",
       "receiver": "db",
       "method": "Exec",
@@ -74352,7 +74396,7 @@
     "8d7d64b86692": {
       "id": "8d7d64b86692",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8726,
+      "line": 8766,
       "function": "TestPostMessageApproveAllGroupsReleasesAllHolds",
       "receiver": "db",
       "method": "Raw",
@@ -75170,7 +75214,7 @@
     "8f0d0fd8ef7a": {
       "id": "8f0d0fd8ef7a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7041,
+      "line": 7081,
       "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Raw",
@@ -75324,7 +75368,7 @@
     "8f55cc3171b8": {
       "id": "8f55cc3171b8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5059,
+      "line": 5099,
       "function": "TestPostMessageView",
       "receiver": "db",
       "method": "Raw",
@@ -75346,7 +75390,7 @@
     "8f597d3f1d63": {
       "id": "8f597d3f1d63",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8182,
+      "line": 8222,
       "function": "TestPatchMessagePartnerWrongDomain",
       "receiver": "db",
       "method": "Exec",
@@ -75991,7 +76035,7 @@
     "909cd0f7b065": {
       "id": "909cd0f7b065",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10598,
+      "line": 10638,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -76129,7 +76173,7 @@
     "90ef313d3a0c": {
       "id": "90ef313d3a0c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3208,
+      "line": 3248,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -76359,7 +76403,7 @@
     "9160b7c8505d": {
       "id": "9160b7c8505d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9864,
+      "line": 9904,
       "function": "TestPostMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -76426,7 +76470,7 @@
     "91746981377e": {
       "id": "91746981377e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2686,
+      "line": 2726,
       "function": "TestJoinAndPostGroupDefaultModerated",
       "receiver": "db",
       "method": "Exec",
@@ -76560,7 +76604,7 @@
     "91a05465c467": {
       "id": "91a05465c467",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10256,
+      "line": 10296,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Exec",
@@ -76626,7 +76670,7 @@
     "91f8b4a66d6f": {
       "id": "91f8b4a66d6f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9583,
+      "line": 9623,
       "function": "TestPostMessagePartnerAuthByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -76785,7 +76829,7 @@
     "9247cd2fe522": {
       "id": "9247cd2fe522",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4454,
+      "line": 4494,
       "function": "TestPostMessageOutcomeTakenOnWanted",
       "receiver": "db",
       "method": "Exec",
@@ -76966,7 +77010,7 @@
     "9275b04ebe3b": {
       "id": "9275b04ebe3b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4292,
+      "line": 4332,
       "function": "TestPostMessageOutcomeRejectsTakenOverRealWithdrawn",
       "receiver": "db",
       "method": "Exec",
@@ -77418,7 +77462,7 @@
     "938446f003fd": {
       "id": "938446f003fd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4417,
+      "line": 4457,
       "function": "TestPostMessageRemoveBy",
       "receiver": "db",
       "method": "Exec",
@@ -77627,7 +77671,7 @@
     "93c12f452323": {
       "id": "93c12f452323",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8582,
+      "line": 8622,
       "function": "TestPostMessageSpamPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -77854,7 +77898,7 @@
     "94136a151899": {
       "id": "94136a151899",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10794,
+      "line": 10834,
       "function": "TestPostMessagePromisePartner",
       "receiver": "db",
       "method": "Raw",
@@ -78055,7 +78099,7 @@
     "947a59377135": {
       "id": "947a59377135",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7111,
+      "line": 7151,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -78233,7 +78277,7 @@
     "94f30360e6e9": {
       "id": "94f30360e6e9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10428,
+      "line": 10468,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Raw",
@@ -78692,7 +78736,7 @@
     "95bbc8abc333": {
       "id": "95bbc8abc333",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6928,
+      "line": 6968,
       "function": "TestRejectToDraftResetsAvailablenow",
       "receiver": "db",
       "method": "Exec",
@@ -78758,7 +78802,7 @@
     "95db2d5e5b04": {
       "id": "95db2d5e5b04",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7513,
+      "line": 7553,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -78802,7 +78846,7 @@
     "95fb2839e1df": {
       "id": "95fb2839e1df",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7515,
+      "line": 7555,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -79028,7 +79072,7 @@
     "9655b8ab2972": {
       "id": "9655b8ab2972",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3764,
+      "line": 3804,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Exec",
@@ -79094,7 +79138,7 @@
     "967d7a74e0e2": {
       "id": "967d7a74e0e2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6374,
+      "line": 6414,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Exec",
@@ -79116,7 +79160,7 @@
     "96943d929fd7": {
       "id": "96943d929fd7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2511,
+      "line": 2551,
       "function": "TestJoinAndPostNewUserPassword",
       "receiver": "db",
       "method": "Exec",
@@ -79138,7 +79182,7 @@
     "96a0cc4977f3": {
       "id": "96a0cc4977f3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10757,
+      "line": 10797,
       "function": "TestListMessagesMT_OldSpamExcludedFromPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -79384,7 +79428,7 @@
     "9716ac6805e1": {
       "id": "9716ac6805e1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10358,
+      "line": 10398,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -79406,7 +79450,7 @@
     "9719657bf081": {
       "id": "9719657bf081",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10455,
+      "line": 10495,
       "function": "TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit",
       "receiver": "db",
       "method": "Exec",
@@ -79538,8 +79582,8 @@
     "976a915ca803": {
       "id": "976a915ca803",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6734,
-      "function": "TestRejectToDraftKeepsFutureDeadline",
+      "line": 2532,
+      "function": "TestJoinAndPostSavesDeadlineISODatetime",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -79562,7 +79606,7 @@
     "976bd9794d73": {
       "id": "976bd9794d73",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6970,
+      "line": 7010,
       "function": "TestJoinAndPostClearsOutcomeAndRecordsPosting",
       "receiver": "db",
       "method": "Exec",
@@ -79720,7 +79764,7 @@
     "97cf60718f19": {
       "id": "97cf60718f19",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6431,
+      "line": 6471,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -80005,10 +80049,32 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "98929aa78d3a": {
+      "id": "98929aa78d3a",
+      "file": "iznik-server-go/test/message_test.go",
+      "line": 10099,
+      "function": "TestJoinAndPostUnmoderatedUserStartsPending",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "messages_drafts"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "98952905ecad": {
       "id": "98952905ecad",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6412,
+      "line": 6452,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Raw",
@@ -80304,7 +80370,7 @@
     "996b76ef44ea": {
       "id": "996b76ef44ea",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9127,
+      "line": 9167,
       "function": "TestListMessagesMT_PaginationCursorUsesMaxArrival",
       "receiver": "db",
       "method": "Exec",
@@ -80572,7 +80638,7 @@
     "99f2a6b7c2e3": {
       "id": "99f2a6b7c2e3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10579,
+      "line": 10619,
       "function": "TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments",
       "receiver": "db",
       "method": "Raw",
@@ -80907,8 +80973,8 @@
     "9ab656eb40d0": {
       "id": "9ab656eb40d0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2576,
-      "function": "TestJoinAndPostModeratedUserGoesToPending",
+      "line": 2558,
+      "function": "TestJoinAndPostNewUserPassword",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -80951,7 +81017,7 @@
     "9ac276a2798a": {
       "id": "9ac276a2798a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7630,
+      "line": 7670,
       "function": "TestPatchMessageEditReviewRequiredModeratedMember",
       "receiver": "db",
       "method": "Exec",
@@ -81132,7 +81198,7 @@
     "9b25b57635d3": {
       "id": "9b25b57635d3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4639,
+      "line": 4679,
       "function": "TestPostMessageOutcomeMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Exec",
@@ -81801,7 +81867,7 @@
     "9c583447f938": {
       "id": "9c583447f938",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9128,
+      "line": 9168,
       "function": "TestListMessagesMT_PaginationCursorUsesMaxArrival",
       "receiver": "db",
       "method": "Exec",
@@ -82094,7 +82160,7 @@
     "9d110c9f2511": {
       "id": "9d110c9f2511",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5023,
+      "line": 5063,
       "function": "TestDeleteMessageQueuesFreebieAlertsRemove",
       "receiver": "db",
       "method": "Exec",
@@ -82268,7 +82334,7 @@
     "9d657386709d": {
       "id": "9d657386709d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6645,
+      "line": 6685,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Exec",
@@ -82424,7 +82490,7 @@
     "9db2b42a7825": {
       "id": "9db2b42a7825",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4946,
+      "line": 4986,
       "function": "TestApproveMessageQueuesFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -82850,7 +82916,7 @@
     "9ef8e7d388bd": {
       "id": "9ef8e7d388bd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2776,
+      "line": 2816,
       "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
       "receiver": "db",
       "method": "Exec",
@@ -83474,7 +83540,7 @@
     "9fefbfbfd3b3": {
       "id": "9fefbfbfd3b3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7104,
+      "line": 7144,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -83584,7 +83650,7 @@
     "a01eda844e37": {
       "id": "a01eda844e37",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9839,
+      "line": 9879,
       "function": "TestPatchMessageByTnPostidScrapesPhotosForAllMessages",
       "receiver": "db",
       "method": "Raw",
@@ -83742,8 +83808,8 @@
     "a04de122d40a": {
       "id": "a04de122d40a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2778,
-      "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
+      "line": 2775,
+      "function": "TestJoinAndPostForcePendingOverridesApproved",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -83852,7 +83918,7 @@
     "a078bf0fa083": {
       "id": "a078bf0fa083",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4619,
+      "line": 4659,
       "function": "TestPostMessageOutcomeTakenWithUserRecordsBy",
       "receiver": "db",
       "method": "Raw",
@@ -83940,7 +84006,7 @@
     "a0a3a70ccfab": {
       "id": "a0a3a70ccfab",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4801,
+      "line": 4841,
       "function": "TestPostMessageWithdrawnPendingLogsDeleted",
       "receiver": "db",
       "method": "Exec",
@@ -84123,7 +84189,7 @@
     "a120ca267506": {
       "id": "a120ca267506",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8709,
+      "line": 8749,
       "function": "TestPostMessageApproveAllGroupsReleasesAllHolds",
       "receiver": "db",
       "method": "Exec",
@@ -84193,7 +84259,7 @@
     "a14c31793fa2": {
       "id": "a14c31793fa2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6381,
+      "line": 6421,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Exec",
@@ -84239,7 +84305,7 @@
     "a173b6561b39": {
       "id": "a173b6561b39",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8816,
+      "line": 8856,
       "function": "TestListMessagesMultiGroupNoDuplicates",
       "receiver": "db",
       "method": "Exec",
@@ -84574,7 +84640,7 @@
     "a1ea2ae89577": {
       "id": "a1ea2ae89577",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9899,
+      "line": 9939,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",
@@ -84882,7 +84948,7 @@
     "a298e2e195fe": {
       "id": "a298e2e195fe",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10362,
+      "line": 10402,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -85059,7 +85125,7 @@
     "a2cd026fc90d": {
       "id": "a2cd026fc90d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9392,
+      "line": 9432,
       "function": "TestPostMessageDeleteCrossGroupAttack403",
       "receiver": "db",
       "method": "Exec",
@@ -85103,7 +85169,7 @@
     "a2d0a6359742": {
       "id": "a2d0a6359742",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8592,
+      "line": 8632,
       "function": "TestPostMessageSpamPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -85459,7 +85525,7 @@
     "a3a65de78822": {
       "id": "a3a65de78822",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10771,
+      "line": 10811,
       "function": "TestPostMessagePromisePartner",
       "receiver": "db",
       "method": "Exec",
@@ -85616,7 +85682,7 @@
     "a3d3681d8a74": {
       "id": "a3d3681d8a74",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5743,
+      "line": 5783,
       "function": "TestListMessagesMT_LimboUserMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -86034,7 +86100,7 @@
     "a47e55caaf10": {
       "id": "a47e55caaf10",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5742,
+      "line": 5782,
       "function": "TestListMessagesMT_LimboUserMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -86164,7 +86230,7 @@
     "a4968fc3e67c": {
       "id": "a4968fc3e67c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4989,
+      "line": 5029,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -86412,8 +86478,8 @@
     "a53a5d465308": {
       "id": "a53a5d465308",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7062,
-      "function": "TestJoinAndPostInventsEmailWhenMissing",
+      "line": 7054,
+      "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -86544,7 +86610,7 @@
     "a58900dacc0e": {
       "id": "a58900dacc0e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8545,
+      "line": 8585,
       "function": "TestPostMessageDeletePerGroupLastGroupSoftDeletes",
       "receiver": "db",
       "method": "Raw",
@@ -86632,7 +86698,7 @@
     "a5d0cf78c6f1": {
       "id": "a5d0cf78c6f1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2984,
+      "line": 3024,
       "function": "TestGetMessageReturnsLocationForMod",
       "receiver": "db",
       "method": "Raw",
@@ -86984,8 +87050,8 @@
     "a6679d70318a": {
       "id": "a6679d70318a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2737,
-      "function": "TestJoinAndPostForcePendingOverridesApproved",
+      "line": 2735,
+      "function": "TestJoinAndPostGroupDefaultModerated",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -88234,7 +88300,7 @@
     "a88e4fa7792c": {
       "id": "a88e4fa7792c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4830,
+      "line": 4870,
       "function": "TestPostMessageWithdrawnPendingLogsDeleted",
       "receiver": "db",
       "method": "Raw",
@@ -88251,6 +88317,30 @@
       "dynamic": false,
       "args": 4,
       "goldenSql": "SELECT `user`, byuser, COALESCE(text, '') FROM logs WHERE msgid = ? AND groupid = ? AND type = ? AND subtype = ? LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "a89665275da0": {
+      "id": "a89665275da0",
+      "file": "iznik-server-go/test/message_test.go",
+      "line": 7359,
+      "function": "TestPatchMessageDeadline",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages"
+      ],
+      "mysqlisms": [
+        "date-format"
+      ],
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT DATE_FORMAT(deadline, '%Y-%m-%d') FROM messages WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -88370,7 +88460,7 @@
     "a8caf8aa2b5a": {
       "id": "a8caf8aa2b5a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7877,
+      "line": 7917,
       "function": "TestPatchMessageNonContentEditKeepsContentCheck",
       "receiver": "db",
       "method": "Raw",
@@ -88573,7 +88663,7 @@
     "a9864548251a": {
       "id": "a9864548251a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3205,
+      "line": 3245,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -88711,7 +88801,7 @@
     "a9afeb1aa9e1": {
       "id": "a9afeb1aa9e1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9434,
+      "line": 9474,
       "function": "TestMessagePostingsVisibleToRegularUser",
       "receiver": "db",
       "method": "Exec",
@@ -88733,7 +88823,7 @@
     "a9b90277664e": {
       "id": "a9b90277664e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10499,
+      "line": 10539,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Exec",
@@ -88777,8 +88867,8 @@
     "a9cecf190f35": {
       "id": "a9cecf190f35",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7319,
-      "function": "TestPatchMessageDeadline",
+      "line": 6774,
+      "function": "TestRejectToDraftKeepsFutureDeadline",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -89055,7 +89145,7 @@
     "aa48e42322ed": {
       "id": "aa48e42322ed",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3528,
+      "line": 3568,
       "function": "TestPutMessageSetsLatLngFromLocation",
       "receiver": "db",
       "method": "Raw",
@@ -89238,7 +89328,7 @@
     "aaa73d4bd902": {
       "id": "aaa73d4bd902",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10100,
+      "line": 10140,
       "function": "TestContentcheckUnprocessedHiddenFromPendingQueue",
       "receiver": "db",
       "method": "Exec",
@@ -89350,7 +89440,7 @@
     "aacb691d5232": {
       "id": "aacb691d5232",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9430,
+      "line": 9470,
       "function": "TestMessagePostingsVisibleToRegularUser",
       "receiver": "db",
       "method": "Raw",
@@ -89835,7 +89925,7 @@
     "abc2406e4e48": {
       "id": "abc2406e4e48",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5670,
+      "line": 5710,
       "function": "TestListMessagesMT_DeletedMessageNotReturned",
       "receiver": "db",
       "method": "Raw",
@@ -89991,7 +90081,7 @@
     "abfd554f0498": {
       "id": "abfd554f0498",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6283,
+      "line": 6323,
       "function": "TestMessagesMarkSeenBatchPreservesSemantics",
       "receiver": "db",
       "method": "Raw",
@@ -90035,7 +90125,7 @@
     "ac0ab383aea2": {
       "id": "ac0ab383aea2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4601,
+      "line": 4641,
       "function": "TestPostMessageOutcomeTakenWithUserRecordsBy",
       "receiver": "db",
       "method": "Exec",
@@ -90150,7 +90240,7 @@
     "ac29da723579": {
       "id": "ac29da723579",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4238,
+      "line": 4278,
       "function": "TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn",
       "receiver": "db",
       "method": "Raw",
@@ -90194,7 +90284,7 @@
     "ac3d30d5420c": {
       "id": "ac3d30d5420c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6623,
+      "line": 6663,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -90216,7 +90306,7 @@
     "ac3e9920a0fc": {
       "id": "ac3e9920a0fc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9772,
+      "line": 9812,
       "function": "TestPatchMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Raw",
@@ -90282,7 +90372,7 @@
     "ac5b59d9b3a9": {
       "id": "ac5b59d9b3a9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4221,
+      "line": 4261,
       "function": "TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn",
       "receiver": "db",
       "method": "Exec",
@@ -90417,7 +90507,7 @@
     "ace8b0eda679": {
       "id": "ace8b0eda679",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3206,
+      "line": 3246,
       "function": "TestPatchMessageExtendDeadlineClearsExpiredOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -90771,7 +90861,7 @@
     "ada3b99c684f": {
       "id": "ada3b99c684f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9715,
+      "line": 9755,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Exec",
@@ -90907,7 +90997,7 @@
     "ade1e0fed743": {
       "id": "ade1e0fed743",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10657,
+      "line": 10697,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Raw",
@@ -91355,7 +91445,7 @@
     "aec7a911cc8c": {
       "id": "aec7a911cc8c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3844,
+      "line": 3884,
       "function": "TestPostMessageBackToPendingNotMod",
       "receiver": "db",
       "method": "Raw",
@@ -91443,7 +91533,7 @@
     "af0d637313b1": {
       "id": "af0d637313b1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5673,
+      "line": 5713,
       "function": "TestListMessagesMT_DeletedMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -91644,7 +91734,7 @@
     "af598a80da6f": {
       "id": "af598a80da6f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9707,
+      "line": 9747,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Exec",
@@ -91829,7 +91919,7 @@
     "afb6a10f9445": {
       "id": "afb6a10f9445",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8385,
+      "line": 8425,
       "function": "TestPostMessageReleasePerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -92014,7 +92104,7 @@
     "b045d2d10950": {
       "id": "b045d2d10950",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6885,
+      "line": 6925,
       "function": "TestRejectToDraftClearsOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -92061,7 +92151,7 @@
     "b061ed29af9c": {
       "id": "b061ed29af9c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7756,
+      "line": 7796,
       "function": "TestPatchMessageEditReviewRequiredGroupModerated",
       "receiver": "db",
       "method": "Exec",
@@ -92443,7 +92533,7 @@
     "b0ed65f0bd5c": {
       "id": "b0ed65f0bd5c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7634,
+      "line": 7674,
       "function": "TestPatchMessageEditReviewRequiredModeratedMember",
       "receiver": "db",
       "method": "Exec",
@@ -92465,7 +92555,7 @@
     "b10fb0394528": {
       "id": "b10fb0394528",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10512,
+      "line": 10552,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Exec",
@@ -92487,8 +92577,8 @@
     "b1107f2ae1e7": {
       "id": "b1107f2ae1e7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2695,
-      "function": "TestJoinAndPostGroupDefaultModerated",
+      "line": 2700,
+      "function": "TestJoinAndPostProhibitedUserReturns403",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -92555,7 +92645,7 @@
     "b15cd5800706": {
       "id": "b15cd5800706",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6569,
+      "line": 6609,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -92599,7 +92689,7 @@
     "b167e68c3d03": {
       "id": "b167e68c3d03",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9538,
+      "line": 9578,
       "function": "TestPatchMessageGroupidUpdatesDraft",
       "receiver": "db",
       "method": "Raw",
@@ -92776,7 +92866,7 @@
     "b1b6b532cf43": {
       "id": "b1b6b532cf43",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6625,
+      "line": 6665,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -92956,7 +93046,7 @@
     "b2285d0f03ad": {
       "id": "b2285d0f03ad",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6462,
+      "line": 6502,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Raw",
@@ -93222,7 +93312,7 @@
     "b2a165b4d7a8": {
       "id": "b2a165b4d7a8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9667,
+      "line": 9707,
       "function": "TestPatchMessageByTnPostidNotFound",
       "receiver": "db",
       "method": "Exec",
@@ -93581,7 +93671,7 @@
     "b35f41e76c76": {
       "id": "b35f41e76c76",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10461,
+      "line": 10501,
       "function": "TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit",
       "receiver": "db",
       "method": "Exec",
@@ -93714,7 +93804,7 @@
     "b38015a5fbe4": {
       "id": "b38015a5fbe4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8864,
+      "line": 8904,
       "function": "TestMessageRepostPerGroupArrival",
       "receiver": "db",
       "method": "Exec",
@@ -93783,7 +93873,7 @@
     "b3a6d62b9bff": {
       "id": "b3a6d62b9bff",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9861,
+      "line": 9901,
       "function": "TestPostMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -94247,7 +94337,7 @@
     "b4ba946cf73d": {
       "id": "b4ba946cf73d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7443,
+      "line": 7483,
       "function": "TestJoinAndPostLogsReceived",
       "receiver": "db",
       "method": "Exec",
@@ -94291,7 +94381,7 @@
     "b4ceccba9288": {
       "id": "b4ceccba9288",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3165,
+      "line": 3205,
       "function": "TestPatchMessageLocationName",
       "receiver": "db",
       "method": "Raw",
@@ -94515,7 +94605,7 @@
     "b5023c4fb122": {
       "id": "b5023c4fb122",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2656,
+      "line": 2696,
       "function": "TestJoinAndPostProhibitedUserReturns403",
       "receiver": "db",
       "method": "Exec",
@@ -94692,8 +94782,8 @@
     "b53a38710171": {
       "id": "b53a38710171",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2821,
-      "function": "TestJoinAndPostRejectsEmptyDraft",
+      "line": 2818,
+      "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -94736,7 +94826,7 @@
     "b54d9ecc4e81": {
       "id": "b54d9ecc4e81",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9880,
+      "line": 9920,
       "function": "TestPostMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Raw",
@@ -94890,7 +94980,7 @@
     "b57e0054c7a2": {
       "id": "b57e0054c7a2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9954,
+      "line": 9994,
       "function": "TestMessageAttachmentHasAIField",
       "receiver": "db",
       "method": "Exec",
@@ -95183,7 +95273,7 @@
     "b638cc8149d4": {
       "id": "b638cc8149d4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8000,
+      "line": 8040,
       "function": "TestExpiresatRespectsRepostsOfferKey",
       "receiver": "db",
       "method": "Exec",
@@ -95317,7 +95407,7 @@
     "b67a3b2e59a5": {
       "id": "b67a3b2e59a5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5327,
+      "line": 5367,
       "function": "TestPostMessageAddByHugeCount",
       "receiver": "db",
       "method": "Exec",
@@ -95408,7 +95498,7 @@
     "b6b985814423": {
       "id": "b6b985814423",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8258,
+      "line": 8298,
       "function": "TestPatchMessagePartnerLatLng",
       "receiver": "db",
       "method": "Exec",
@@ -95518,7 +95608,7 @@
     "b6f155da3f74": {
       "id": "b6f155da3f74",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3396,
+      "line": 3436,
       "function": "TestPutMessageRecordsFromIP",
       "receiver": "db",
       "method": "Raw",
@@ -95562,7 +95652,7 @@
     "b70ab7d187a1": {
       "id": "b70ab7d187a1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8564,
+      "line": 8604,
       "function": "TestPostMessageSpamPerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -95584,7 +95674,7 @@
     "b710385716a7": {
       "id": "b710385716a7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7126,
+      "line": 7166,
       "function": "TestGetMessageItemLocationForMod",
       "receiver": "db",
       "method": "Exec",
@@ -95965,7 +96055,7 @@
     "b80c530bdb7b": {
       "id": "b80c530bdb7b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8502,
+      "line": 8542,
       "function": "TestPostMessageDeletePerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -96610,7 +96700,7 @@
     "b9236af5cc77": {
       "id": "b9236af5cc77",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8730,
+      "line": 8770,
       "function": "TestPostMessageApproveAllGroupsReleasesAllHolds",
       "receiver": "db",
       "method": "Raw",
@@ -96808,7 +96898,7 @@
     "b99a28124cde": {
       "id": "b99a28124cde",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8649,
+      "line": 8689,
       "function": "TestPostMessageBackToPendingPullsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -96976,7 +97066,7 @@
     "b9cd007fb2bd": {
       "id": "b9cd007fb2bd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3189,
+      "line": 3229,
       "function": "TestPatchMessageLocationName",
       "receiver": "db",
       "method": "Raw",
@@ -96998,7 +97088,7 @@
     "b9d2e2534822": {
       "id": "b9d2e2534822",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6814,
+      "line": 6854,
       "function": "TestRejectToDraftFullRepostFlow",
       "receiver": "db",
       "method": "Exec",
@@ -97042,7 +97132,7 @@
     "ba13b17f75c8": {
       "id": "ba13b17f75c8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8993,
+      "line": 9033,
       "function": "TestListMessagesMTMultiGroupNoDuplicates",
       "receiver": "db",
       "method": "Exec",
@@ -97086,7 +97176,7 @@
     "ba193d1150fc": {
       "id": "ba193d1150fc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4915,
+      "line": 4955,
       "function": "TestPostMessageOutcomeWithdrawnQueuesFreebieAlertsRemove",
       "receiver": "db",
       "method": "Exec",
@@ -97292,7 +97382,7 @@
     "ba7ddc50b12f": {
       "id": "ba7ddc50b12f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3805,
+      "line": 3845,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Raw",
@@ -97493,7 +97583,7 @@
     "baef0b6addf4": {
       "id": "baef0b6addf4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7258,
+      "line": 7298,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -97678,7 +97768,7 @@
     "bb6c93d32e47": {
       "id": "bb6c93d32e47",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10847,
+      "line": 10887,
       "function": "TestPostMessagePromiseRenegePromisePartner",
       "receiver": "db",
       "method": "Exec",
@@ -97766,7 +97856,7 @@
     "bb7f435ea7a8": {
       "id": "bb7f435ea7a8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6434,
+      "line": 6474,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -97987,7 +98077,7 @@
     "bc0bfd3b6639": {
       "id": "bc0bfd3b6639",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7500,
+      "line": 7540,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -98075,7 +98165,7 @@
     "bc2d44f1bce6": {
       "id": "bc2d44f1bce6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7693,
+      "line": 7733,
       "function": "TestPatchMessageEditNoReviewUnmoderatedMember",
       "receiver": "db",
       "method": "Raw",
@@ -98535,7 +98625,7 @@
     "bd01fde615e7": {
       "id": "bd01fde615e7",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7532,
+      "line": 7572,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -98671,7 +98761,7 @@
     "bd77665c758f": {
       "id": "bd77665c758f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2838,
+      "line": 2878,
       "function": "TestJoinAndPostRejectsEmptyDraft",
       "receiver": "db",
       "method": "Raw",
@@ -98883,7 +98973,7 @@
     "bde985e05cc0": {
       "id": "bde985e05cc0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5415,
+      "line": 5455,
       "function": "TestPostMessagePromiseToSelfNoUserid",
       "receiver": "db",
       "method": "Raw",
@@ -98927,7 +99017,7 @@
     "bdfd46329aee": {
       "id": "bdfd46329aee",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9558,
+      "line": 9598,
       "function": "TestPostMessagePartnerAuthPromise",
       "receiver": "db",
       "method": "Exec",
@@ -99147,7 +99237,7 @@
     "be65d097d6b2": {
       "id": "be65d097d6b2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3811,
+      "line": 3851,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Raw",
@@ -99575,7 +99665,7 @@
     "bf6e58898b77": {
       "id": "bf6e58898b77",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6907,
+      "line": 6947,
       "function": "TestRejectToDraftClearsOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -100134,7 +100224,7 @@
     "c0674365b878": {
       "id": "c0674365b878",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6438,
+      "line": 6478,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Exec",
@@ -100310,7 +100400,7 @@
     "c0f2eef27113": {
       "id": "c0f2eef27113",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4057,
+      "line": 4097,
       "function": "TestPostMessageRenege",
       "receiver": "db",
       "method": "Raw",
@@ -100354,7 +100444,7 @@
     "c1005b4e9345": {
       "id": "c1005b4e9345",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9935,
+      "line": 9975,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Raw",
@@ -100619,7 +100709,7 @@
     "c17060d8d51e": {
       "id": "c17060d8d51e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9799,
+      "line": 9839,
       "function": "TestPatchMessageByTnPostidScrapesPhotosForAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -100887,7 +100977,7 @@
     "c1e9e27ce56c": {
       "id": "c1e9e27ce56c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7730,
+      "line": 7770,
       "function": "TestPatchMessageEditNoReviewPendingMessage",
       "receiver": "db",
       "method": "Raw",
@@ -101022,7 +101112,7 @@
     "c204ad7fbd31": {
       "id": "c204ad7fbd31",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2931,
+      "line": 2971,
       "function": "TestGetMessageReturnsEditsForMod",
       "receiver": "db",
       "method": "Exec",
@@ -101220,7 +101310,7 @@
     "c259ac266d44": {
       "id": "c259ac266d44",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5090,
+      "line": 5130,
       "function": "TestPostMessageViewDedup",
       "receiver": "db",
       "method": "Raw",
@@ -101330,7 +101420,7 @@
     "c2962375c383": {
       "id": "c2962375c383",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9711,
+      "line": 9751,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Exec",
@@ -101531,7 +101621,7 @@
     "c2d4b40c8da4": {
       "id": "c2d4b40c8da4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6310,
+      "line": 6350,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Raw",
@@ -101751,8 +101841,8 @@
     "c36b2530c2bf": {
       "id": "c36b2530c2bf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7014,
-      "function": "TestJoinAndPostSetsFromaddr",
+      "line": 2861,
+      "function": "TestJoinAndPostRejectsEmptyDraft",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -101905,7 +101995,7 @@
     "c3cdf5c33016": {
       "id": "c3cdf5c33016",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8171,
+      "line": 8211,
       "function": "TestPatchMessagePartnerAuth",
       "receiver": "db",
       "method": "Raw",
@@ -101973,7 +102063,7 @@
     "c3ebfc0529ce": {
       "id": "c3ebfc0529ce",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9996,
+      "line": 10036,
       "function": "TestMessagePartnerKeyBypassesBodyMasking",
       "receiver": "db",
       "method": "Exec",
@@ -102108,7 +102198,7 @@
     "c416df55f838": {
       "id": "c416df55f838",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6384,
+      "line": 6424,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Exec",
@@ -102230,7 +102320,7 @@
     "c433759f4057": {
       "id": "c433759f4057",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7715,
+      "line": 7755,
       "function": "TestPatchMessageEditNoReviewPendingMessage",
       "receiver": "db",
       "method": "Exec",
@@ -102587,7 +102677,7 @@
     "c4b5275a6196": {
       "id": "c4b5275a6196",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10135,
+      "line": 10175,
       "function": "TestContentcheckProcessedVisibleInPendingQueue",
       "receiver": "db",
       "method": "Exec",
@@ -102891,7 +102981,7 @@
     "c57370109796": {
       "id": "c57370109796",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9129,
+      "line": 9169,
       "function": "TestListMessagesMT_PaginationCursorUsesMaxArrival",
       "receiver": "db",
       "method": "Exec",
@@ -102913,7 +103003,7 @@
     "c5895254250e": {
       "id": "c5895254250e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10990,
+      "line": 11030,
       "function": "TestReleaseAllowedWhenHeldByAnotherMod",
       "receiver": "db",
       "method": "Raw",
@@ -103278,7 +103368,7 @@
     "c66d71173bb4": {
       "id": "c66d71173bb4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4736,
+      "line": 4776,
       "function": "TestPostMessageOutcomeWithdrawnDoesNotMarkSpatialSuccessful",
       "receiver": "db",
       "method": "Raw",
@@ -103630,7 +103720,7 @@
     "c713bf4a16d4": {
       "id": "c713bf4a16d4",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9998,
+      "line": 10038,
       "function": "TestMessagePartnerKeyBypassesBodyMasking",
       "receiver": "db",
       "method": "Exec",
@@ -104051,7 +104141,7 @@
     "c7e5c6e5f215": {
       "id": "c7e5c6e5f215",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9408,
+      "line": 9448,
       "function": "TestPostMessageDeleteCrossGroupAttack403",
       "receiver": "db",
       "method": "Raw",
@@ -104097,7 +104187,7 @@
     "c829a69c1581": {
       "id": "c829a69c1581",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9340,
+      "line": 9380,
       "function": "TestPostMessageHoldCrossGroupAttack403",
       "receiver": "db",
       "method": "Raw",
@@ -104185,7 +104275,7 @@
     "c83caafa0e7f": {
       "id": "c83caafa0e7f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9274,
+      "line": 9314,
       "function": "TestPostMessageGlobalApproveNarrowsToAuthorizedGroups",
       "receiver": "db",
       "method": "Raw",
@@ -104253,7 +104343,7 @@
     "c87000ac2ef2": {
       "id": "c87000ac2ef2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4901,
+      "line": 4941,
       "function": "TestPostMessageOutcomeQueuesFreebieAlertsRemove",
       "receiver": "db",
       "method": "Raw",
@@ -104319,7 +104409,7 @@
     "c87262154994": {
       "id": "c87262154994",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4704,
+      "line": 4744,
       "function": "TestPostMessageOutcomeReceivedMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Raw",
@@ -104363,7 +104453,7 @@
     "c88253614ded": {
       "id": "c88253614ded",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5727,
+      "line": 5767,
       "function": "TestListMessagesMT_LimboUserMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -104475,7 +104565,7 @@
     "c8b58cd583a3": {
       "id": "c8b58cd583a3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7079,
+      "line": 7119,
       "function": "TestJoinAndPostInventsEmailWhenMissing",
       "receiver": "db",
       "method": "Raw",
@@ -104497,7 +104587,7 @@
     "c8b801898c9a": {
       "id": "c8b801898c9a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8354,
+      "line": 8394,
       "function": "TestPostMessageReleasePerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -105123,7 +105213,7 @@
     "c9f11975ec38": {
       "id": "c9f11975ec38",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4435,
+      "line": 4475,
       "function": "TestPostMessageRemoveBy",
       "receiver": "db",
       "method": "Raw",
@@ -105145,7 +105235,7 @@
     "c9f375f65478": {
       "id": "c9f375f65478",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9992,
+      "line": 10032,
       "function": "TestMessagePartnerKeyBypassesBodyMasking",
       "receiver": "db",
       "method": "Exec",
@@ -105335,7 +105425,7 @@
     "ca75a0a7528c": {
       "id": "ca75a0a7528c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6948,
+      "line": 6988,
       "function": "TestRejectToDraftResetsAvailablenow",
       "receiver": "db",
       "method": "Raw",
@@ -105379,7 +105469,7 @@
     "ca8e1310151c": {
       "id": "ca8e1310151c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10482,
+      "line": 10522,
       "function": "TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit",
       "receiver": "db",
       "method": "Exec",
@@ -105470,7 +105560,7 @@
     "caaa60afea63": {
       "id": "caaa60afea63",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2757,
+      "line": 2797,
       "function": "TestJoinAndPostForcePendingOverridesApproved",
       "receiver": "db",
       "method": "Raw",
@@ -106054,7 +106144,7 @@
     "cb96247d3a00": {
       "id": "cb96247d3a00",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6990,
+      "line": 7030,
       "function": "TestJoinAndPostClearsOutcomeAndRecordsPosting",
       "receiver": "db",
       "method": "Raw",
@@ -106076,7 +106166,7 @@
     "cb9646fec500": {
       "id": "cb9646fec500",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5709,
+      "line": 5749,
       "function": "TestListMessagesMT_LimboUserMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -106436,7 +106526,7 @@
     "cc958edcb442": {
       "id": "cc958edcb442",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5103,
+      "line": 5143,
       "function": "TestMessagePageviewSemantics",
       "receiver": "db",
       "method": "Raw",
@@ -106592,7 +106682,7 @@
     "cd0f4331d755": {
       "id": "cd0f4331d755",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8858,
+      "line": 8898,
       "function": "TestMessageRepostPerGroupArrival",
       "receiver": "db",
       "method": "Exec",
@@ -106865,7 +106955,7 @@
     "cd88ad715a58": {
       "id": "cd88ad715a58",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10959,
+      "line": 10999,
       "function": "TestModerationBlockedWhenHeldByAnotherMod",
       "receiver": "db",
       "method": "Raw",
@@ -106998,7 +107088,7 @@
     "cdffd4e654a6": {
       "id": "cdffd4e654a6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8796,
+      "line": 8836,
       "function": "TestPostMessageDeleteAfterSpamExcludesSoftDeleted",
       "receiver": "db",
       "method": "Raw",
@@ -107439,7 +107529,7 @@
     "ce93469fb3bf": {
       "id": "ce93469fb3bf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9258,
+      "line": 9298,
       "function": "TestPostMessageGlobalApproveNarrowsToAuthorizedGroups",
       "receiver": "db",
       "method": "Exec",
@@ -107461,7 +107551,7 @@
     "ce9896494dcc": {
       "id": "ce9896494dcc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8669,
+      "line": 8709,
       "function": "TestPostMessageHoldPerGroupLogsCorrectGroup",
       "receiver": "db",
       "method": "Exec",
@@ -108071,7 +108161,7 @@
     "cf866997f79d": {
       "id": "cf866997f79d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10231,
+      "line": 10271,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Raw",
@@ -108472,7 +108562,7 @@
     "d044b0b1150a": {
       "id": "d044b0b1150a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7234,
+      "line": 7274,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -109210,8 +109300,8 @@
     "d18ba86048df": {
       "id": "d18ba86048df",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7448,
-      "function": "TestJoinAndPostLogsReceived",
+      "line": 7440,
+      "function": "TestMessagePostWritesHistory",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -109254,7 +109344,7 @@
     "d198e34d367d": {
       "id": "d198e34d367d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7746,
+      "line": 7786,
       "function": "TestPatchMessageEditReviewRequiredGroupModerated",
       "receiver": "db",
       "method": "Exec",
@@ -109652,7 +109742,7 @@
     "d22b71732d34": {
       "id": "d22b71732d34",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3790,
+      "line": 3830,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Raw",
@@ -109942,7 +110032,7 @@
     "d2bdd6a9c18a": {
       "id": "d2bdd6a9c18a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10832,
+      "line": 10872,
       "function": "TestPostMessageRenegePartner",
       "receiver": "db",
       "method": "Raw",
@@ -109986,7 +110076,7 @@
     "d2f5aa83b50e": {
       "id": "d2f5aa83b50e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9751,
+      "line": 9791,
       "function": "TestPatchMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Exec",
@@ -110481,7 +110571,7 @@
     "d4330da5782a": {
       "id": "d4330da5782a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7257,
+      "line": 7297,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -110594,7 +110684,7 @@
     "d45bb67f185c": {
       "id": "d45bb67f185c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8465,
+      "line": 8505,
       "function": "TestPostMessageReleaseIgnoresDeletedGroupHold",
       "receiver": "db",
       "method": "Raw",
@@ -110707,7 +110797,7 @@
     "d4740da7d7a8": {
       "id": "d4740da7d7a8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10268,
+      "line": 10308,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Exec",
@@ -110755,7 +110845,7 @@
     "d494ff33b118": {
       "id": "d494ff33b118",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6440,
+      "line": 6480,
       "function": "TestPatchMessageTypeChangeCreatesEditRecord",
       "receiver": "db",
       "method": "Raw",
@@ -110799,7 +110889,7 @@
     "d4a7e2fa2a99": {
       "id": "d4a7e2fa2a99",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8973,
+      "line": 9013,
       "function": "TestPostMessageApprovePerGroupSpamtype",
       "receiver": "db",
       "method": "Raw",
@@ -111054,7 +111144,7 @@
     "d515b56a7275": {
       "id": "d515b56a7275",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8328,
+      "line": 8368,
       "function": "TestPostMessageHoldPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -111120,7 +111210,7 @@
     "d52b3ebfb50e": {
       "id": "d52b3ebfb50e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 11011,
+      "line": 11051,
       "function": "TestModerationAllowedWhenHeldBySelf",
       "receiver": "db",
       "method": "Raw",
@@ -111391,7 +111481,7 @@
     "d5fb8345a533": {
       "id": "d5fb8345a533",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4643,
+      "line": 4683,
       "function": "TestPostMessageOutcomeMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Raw",
@@ -111653,7 +111743,7 @@
     "d64abeac1fdb": {
       "id": "d64abeac1fdb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10756,
+      "line": 10796,
       "function": "TestListMessagesMT_OldSpamExcludedFromPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -111899,8 +111989,8 @@
     "d6b3aa24d1c0": {
       "id": "d6b3aa24d1c0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2660,
-      "function": "TestJoinAndPostProhibitedUserReturns403",
+      "line": 2658,
+      "function": "TestJoinAndPostBannedUserReturns403",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -112076,7 +112166,7 @@
     "d6ff4e94a756": {
       "id": "d6ff4e94a756",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7487,
+      "line": 7527,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -112098,7 +112188,7 @@
     "d706baac12bc": {
       "id": "d706baac12bc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9929,
+      "line": 9969,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Raw",
@@ -112367,8 +112457,8 @@
     "d77798964b36": {
       "id": "d77798964b36",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10059,
-      "function": "TestJoinAndPostUnmoderatedUserStartsPending",
+      "line": 7488,
+      "function": "TestJoinAndPostLogsReceived",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -112683,7 +112773,7 @@
     "d84e798ef2d2": {
       "id": "d84e798ef2d2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3129,
+      "line": 3169,
       "function": "TestPatchMessageSubjectUsesContextualGroupKeyword",
       "receiver": "db",
       "method": "Raw",
@@ -112906,7 +112996,7 @@
     "d8aff19cf9b5": {
       "id": "d8aff19cf9b5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10850,
+      "line": 10890,
       "function": "TestPostMessagePromiseRenegePromisePartner",
       "receiver": "db",
       "method": "Exec",
@@ -113018,7 +113108,7 @@
     "d907adc05baa": {
       "id": "d907adc05baa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9152,
+      "line": 9192,
       "function": "TestListMessagesMT_PaginationCursorUsesMaxArrival",
       "receiver": "db",
       "method": "Raw",
@@ -113219,8 +113309,8 @@
     "d928dc1a10c1": {
       "id": "d928dc1a10c1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2518,
-      "function": "TestJoinAndPostNewUserPassword",
+      "line": 2516,
+      "function": "TestJoinAndPostSavesDeadlineISODatetime",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -113823,7 +113913,7 @@
     "da9167a6911f": {
       "id": "da9167a6911f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10925,
+      "line": 10965,
       "function": "heldByOtherSetup",
       "receiver": "db",
       "method": "Exec",
@@ -113867,7 +113957,7 @@
     "dab708d59747": {
       "id": "dab708d59747",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9590,
+      "line": 9630,
       "function": "TestPostMessagePartnerAuthByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -113889,7 +113979,7 @@
     "dac515d6a6de": {
       "id": "dac515d6a6de",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10686,
+      "line": 10726,
       "function": "TestListMessagesMT_SpamInPendingList",
       "receiver": "db",
       "method": "Exec",
@@ -113911,7 +114001,7 @@
     "dad29927c5ec": {
       "id": "dad29927c5ec",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9709,
+      "line": 9749,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Raw",
@@ -114699,7 +114789,7 @@
     "dc6bb9dcd671": {
       "id": "dc6bb9dcd671",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7863,
+      "line": 7903,
       "function": "TestPatchMessageNonContentEditKeepsContentCheck",
       "receiver": "db",
       "method": "Exec",
@@ -114904,7 +114994,7 @@
     "dce138094b08": {
       "id": "dce138094b08",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6861,
+      "line": 6901,
       "function": "TestRejectToDraftFullRepostFlow",
       "receiver": "db",
       "method": "Raw",
@@ -114993,7 +115083,7 @@
     "dcf6665fc6f2": {
       "id": "dcf6665fc6f2",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3966,
+      "line": 4006,
       "function": "TestPostMessagePromise",
       "receiver": "db",
       "method": "Raw",
@@ -115170,7 +115260,7 @@
     "dd56baeba0d1": {
       "id": "dd56baeba0d1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7036,
+      "line": 7076,
       "function": "TestJoinAndPostSetsFromaddr",
       "receiver": "db",
       "method": "Raw",
@@ -115216,7 +115306,7 @@
     "dd592cb342c9": {
       "id": "dd592cb342c9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4241,
+      "line": 4281,
       "function": "TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn",
       "receiver": "db",
       "method": "Raw",
@@ -115370,7 +115460,7 @@
     "ddb00f0ade44": {
       "id": "ddb00f0ade44",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3256,
+      "line": 3296,
       "function": "TestDeleteMessageOwner",
       "receiver": "db",
       "method": "Raw",
@@ -115593,7 +115683,7 @@
     "de27a03ccefb": {
       "id": "de27a03ccefb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10264,
+      "line": 10304,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Exec",
@@ -116237,7 +116327,7 @@
     "df7fb30e444c": {
       "id": "df7fb30e444c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9908,
+      "line": 9948,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",
@@ -116261,7 +116351,7 @@
     "df91a83bd87a": {
       "id": "df91a83bd87a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9294,
+      "line": 9334,
       "function": "TestPostMessageRejectCrossGroupAttack403",
       "receiver": "db",
       "method": "Exec",
@@ -116600,7 +116690,7 @@
     "e036b38e29a1": {
       "id": "e036b38e29a1",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5741,
+      "line": 5781,
       "function": "TestListMessagesMT_LimboUserMessageNotReturned",
       "receiver": "db",
       "method": "Exec",
@@ -117342,7 +117432,7 @@
     "e18d7a8b196c": {
       "id": "e18d7a8b196c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6596,
+      "line": 6636,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -117410,7 +117500,7 @@
     "e19bf60fd11f": {
       "id": "e19bf60fd11f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7831,
+      "line": 7871,
       "function": "TestPatchMessageSubjectEditResetsContentCheck",
       "receiver": "db",
       "method": "Exec",
@@ -117454,7 +117544,7 @@
     "e1bb41c530cd": {
       "id": "e1bb41c530cd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2877,
+      "line": 2917,
       "function": "TestPatchMessage",
       "receiver": "db",
       "method": "Raw",
@@ -117722,7 +117812,7 @@
     "e24c102f1229": {
       "id": "e24c102f1229",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6370,
+      "line": 6410,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Exec",
@@ -117766,7 +117856,7 @@
     "e27fbcb611e8": {
       "id": "e27fbcb611e8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2595,
+      "line": 2635,
       "function": "TestJoinAndPostModeratedUserGoesToPending",
       "receiver": "db",
       "method": "Raw",
@@ -118092,7 +118182,7 @@
     "e3237dac57d6": {
       "id": "e3237dac57d6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3308,
+      "line": 3348,
       "function": "TestDeleteMessageModCreatesAuditLog",
       "receiver": "db",
       "method": "Raw",
@@ -118246,7 +118336,7 @@
     "e353f20e667e": {
       "id": "e353f20e667e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9047,
+      "line": 9087,
       "function": "TestListMessagesMT_MultiGroupGlobalArrivalOrder",
       "receiver": "db",
       "method": "Exec",
@@ -119365,7 +119455,7 @@
     "e580f638d216": {
       "id": "e580f638d216",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6766,
+      "line": 6806,
       "function": "TestRejectToDraftForbiddenForOtherUser",
       "receiver": "db",
       "method": "Raw",
@@ -119703,7 +119793,7 @@
     "e64fd2dc521f": {
       "id": "e64fd2dc521f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5176,
+      "line": 5216,
       "function": "TestMessagePageviewSource",
       "receiver": "db",
       "method": "Raw",
@@ -119747,7 +119837,7 @@
     "e66088234dfc": {
       "id": "e66088234dfc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8229,
+      "line": 8269,
       "function": "TestPatchMessagePartnerNotOwner",
       "receiver": "db",
       "method": "Exec",
@@ -120176,8 +120266,8 @@
     "e7725c1c329b": {
       "id": "e7725c1c329b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2735,
-      "function": "TestJoinAndPostForcePendingOverridesApproved",
+      "line": 2733,
+      "function": "TestJoinAndPostGroupDefaultModerated",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -120423,7 +120513,7 @@
     "e7bd8633d984": {
       "id": "e7bd8633d984",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4418,
+      "line": 4458,
       "function": "TestPostMessageRemoveBy",
       "receiver": "db",
       "method": "Exec",
@@ -120467,7 +120557,7 @@
     "e7c8643dae72": {
       "id": "e7c8643dae72",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3474,
+      "line": 3514,
       "function": "TestPutMessageAvailableNowSetsInitially",
       "receiver": "db",
       "method": "Raw",
@@ -120825,7 +120915,7 @@
     "e852a00e8db0": {
       "id": "e852a00e8db0",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9917,
+      "line": 9957,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",
@@ -121572,7 +121662,7 @@
     "e9b5ca589216": {
       "id": "e9b5ca589216",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9642,
+      "line": 9682,
       "function": "TestPatchMessageByTnPostid",
       "receiver": "db",
       "method": "Exec",
@@ -122076,7 +122166,7 @@
     "ea737d7e9d4a": {
       "id": "ea737d7e9d4a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4864,
+      "line": 4904,
       "function": "TestPostMessageWithdrawnApproved",
       "receiver": "db",
       "method": "Raw",
@@ -122276,7 +122366,7 @@
     "eac15d6b57be": {
       "id": "eac15d6b57be",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9433,
+      "line": 9473,
       "function": "TestMessagePostingsVisibleToRegularUser",
       "receiver": "db",
       "method": "Raw",
@@ -122366,7 +122456,7 @@
     "eb09934fa674": {
       "id": "eb09934fa674",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8484,
+      "line": 8524,
       "function": "TestPostMessageDeletePerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -122476,8 +122566,8 @@
     "eb44b5bcaa1a": {
       "id": "eb44b5bcaa1a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2823,
-      "function": "TestJoinAndPostRejectsEmptyDraft",
+      "line": 2820,
+      "function": "TestJoinAndPostForcePendingFalseDoesNotOverride",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -122498,7 +122588,7 @@
     "eb45d9253298": {
       "id": "eb45d9253298",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8634,
+      "line": 8674,
       "function": "TestPostMessageBackToPendingPullsAllGroups",
       "receiver": "db",
       "method": "Raw",
@@ -123022,7 +123112,7 @@
     "ec3016261442": {
       "id": "ec3016261442",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2714,
+      "line": 2754,
       "function": "TestJoinAndPostGroupDefaultModerated",
       "receiver": "db",
       "method": "Raw",
@@ -123603,7 +123693,7 @@
     "ed7be91ffb2c": {
       "id": "ed7be91ffb2c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3800,
+      "line": 3840,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Raw",
@@ -123691,7 +123781,7 @@
     "edd097951663": {
       "id": "edd097951663",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10391,
+      "line": 10431,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Raw",
@@ -123779,7 +123869,7 @@
     "ee0403bb1106": {
       "id": "ee0403bb1106",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6966,
+      "line": 7006,
       "function": "TestJoinAndPostClearsOutcomeAndRecordsPosting",
       "receiver": "db",
       "method": "Exec",
@@ -123913,7 +124003,7 @@
     "ee4cafc5a3aa": {
       "id": "ee4cafc5a3aa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6573,
+      "line": 6613,
       "function": "TestRejectToDraftPerGroup",
       "receiver": "db",
       "method": "Exec",
@@ -124136,7 +124226,7 @@
     "eed770cfc5d9": {
       "id": "eed770cfc5d9",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3436,
+      "line": 3476,
       "function": "TestPutMessageGeneratesSyntheticMessageID",
       "receiver": "db",
       "method": "Raw",
@@ -124312,7 +124402,7 @@
     "ef23d8178f89": {
       "id": "ef23d8178f89",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3491,
+      "line": 3531,
       "function": "TestPutMessageSetsLatLngFromLocation",
       "receiver": "db",
       "method": "Raw",
@@ -124601,7 +124691,7 @@
     "ef762df5233d": {
       "id": "ef762df5233d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8772,
+      "line": 8812,
       "function": "TestPostMessageDeleteAfterSpamExcludesSoftDeleted",
       "receiver": "db",
       "method": "Raw",
@@ -124667,7 +124757,7 @@
     "ef9d650dcf55": {
       "id": "ef9d650dcf55",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8373,
+      "line": 8413,
       "function": "TestPostMessageReleasePerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -124821,7 +124911,7 @@
     "eff71dc8f8eb": {
       "id": "eff71dc8f8eb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8042,
+      "line": 8082,
       "function": "TestExpiresatRespectsRepostsWantedKey",
       "receiver": "db",
       "method": "Exec",
@@ -124909,7 +124999,7 @@
     "f020155e0342": {
       "id": "f020155e0342",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10365,
+      "line": 10405,
       "function": "TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped",
       "receiver": "db",
       "method": "Exec",
@@ -124976,7 +125066,7 @@
     "f02d92bd5452": {
       "id": "f02d92bd5452",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6327,
+      "line": 6367,
       "function": "TestPatchMessageReconstructsSubjectFromItemLocation",
       "receiver": "db",
       "method": "Exec",
@@ -125180,7 +125270,7 @@
     "f072060b4cc5": {
       "id": "f072060b4cc5",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6888,
+      "line": 6928,
       "function": "TestRejectToDraftClearsOutcome",
       "receiver": "db",
       "method": "Raw",
@@ -125292,7 +125382,7 @@
     "f0c0f300cb1f": {
       "id": "f0c0f300cb1f",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7671,
+      "line": 7711,
       "function": "TestPatchMessageEditNoReviewUnmoderatedMember",
       "receiver": "db",
       "method": "Exec",
@@ -125316,7 +125406,7 @@
     "f0c97a08bb10": {
       "id": "f0c97a08bb10",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8708,
+      "line": 8748,
       "function": "TestPostMessageApproveAllGroupsReleasesAllHolds",
       "receiver": "db",
       "method": "Exec",
@@ -125360,7 +125450,7 @@
     "f0ce8552e0fb": {
       "id": "f0ce8552e0fb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7749,
+      "line": 7789,
       "function": "TestPatchMessageEditReviewRequiredGroupModerated",
       "receiver": "db",
       "method": "Exec",
@@ -125406,7 +125496,7 @@
     "f10ff3ca6159": {
       "id": "f10ff3ca6159",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10203,
+      "line": 10243,
       "function": "TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks",
       "receiver": "db",
       "method": "Exec",
@@ -125497,7 +125587,7 @@
     "f12fcee6192d": {
       "id": "f12fcee6192d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 5108,
+      "line": 5148,
       "function": "TestMessagePageviewSemantics",
       "receiver": "db",
       "method": "Raw",
@@ -125519,7 +125609,7 @@
     "f15a7ca33f86": {
       "id": "f15a7ca33f86",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9771,
+      "line": 9811,
       "function": "TestPatchMessageByTnPostidUpdatesAllMessages",
       "receiver": "db",
       "method": "Raw",
@@ -125966,7 +126056,7 @@
     "f27493e52730": {
       "id": "f27493e52730",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3088,
+      "line": 3128,
       "function": "TestPatchMessageLogEntry",
       "receiver": "db",
       "method": "Raw",
@@ -126040,7 +126130,7 @@
     "f28964409a7d": {
       "id": "f28964409a7d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10886,
+      "line": 10926,
       "function": "TestPostMessagePromisePartnerWrongDomain",
       "receiver": "db",
       "method": "Exec",
@@ -126062,7 +126152,7 @@
     "f28afffaedcd": {
       "id": "f28afffaedcd",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8007,
+      "line": 8047,
       "function": "TestExpiresatRespectsRepostsOfferKey",
       "receiver": "db",
       "method": "Raw",
@@ -126306,7 +126396,7 @@
     "f30f83210c11": {
       "id": "f30f83210c11",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7797,
+      "line": 7837,
       "function": "TestPatchMessageTextEditResetsContentCheck",
       "receiver": "db",
       "method": "Raw",
@@ -126396,7 +126486,7 @@
     "f33f810d0b8d": {
       "id": "f33f810d0b8d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4994,
+      "line": 5034,
       "function": "TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd",
       "receiver": "db",
       "method": "Exec",
@@ -126748,7 +126838,7 @@
     "f3da91eb2561": {
       "id": "f3da91eb2561",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7056,
+      "line": 7096,
       "function": "TestJoinAndPostInventsEmailWhenMissing",
       "receiver": "db",
       "method": "Exec",
@@ -127159,7 +127249,7 @@
     "f4768edbe10d": {
       "id": "f4768edbe10d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7232,
+      "line": 7272,
       "function": "TestGetMessageWorryWords",
       "receiver": "db",
       "method": "Exec",
@@ -127227,7 +127317,7 @@
     "f4887983a289": {
       "id": "f4887983a289",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7467,
+      "line": 7507,
       "function": "TestJoinAndPostLogsReceived",
       "receiver": "db",
       "method": "Raw",
@@ -127635,7 +127725,7 @@
     "f54f34a1f734": {
       "id": "f54f34a1f734",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4683,
+      "line": 4723,
       "function": "TestPostMessageOutcomeReceivedMarksSpatialSuccessful",
       "receiver": "db",
       "method": "Exec",
@@ -127814,7 +127904,7 @@
     "f5a799f3fa21": {
       "id": "f5a799f3fa21",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7494,
+      "line": 7534,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -128455,7 +128545,7 @@
     "f70f891ddc5c": {
       "id": "f70f891ddc5c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7504,
+      "line": 7544,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Exec",
@@ -128565,7 +128655,7 @@
     "f73e43aa026b": {
       "id": "f73e43aa026b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10323,
+      "line": 10363,
       "function": "TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent",
       "receiver": "db",
       "method": "Raw",
@@ -128633,7 +128723,7 @@
     "f74d2d1abfd8": {
       "id": "f74d2d1abfd8",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2691,
+      "line": 2731,
       "function": "TestJoinAndPostGroupDefaultModerated",
       "receiver": "db",
       "method": "Exec",
@@ -128743,7 +128833,7 @@
     "f771b5ba1e99": {
       "id": "f771b5ba1e99",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10554,
+      "line": 10594,
       "function": "TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments",
       "receiver": "db",
       "method": "Exec",
@@ -129143,8 +129233,8 @@
     "f8087faccb01": {
       "id": "f8087faccb01",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2574,
-      "function": "TestJoinAndPostModeratedUserGoesToPending",
+      "line": 2556,
+      "function": "TestJoinAndPostNewUserPassword",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -129209,7 +129299,7 @@
     "f81dda2b0342": {
       "id": "f81dda2b0342",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4047,
+      "line": 4087,
       "function": "TestPostMessageRenege",
       "receiver": "db",
       "method": "Raw",
@@ -129321,7 +129411,7 @@
     "f85693d0a749": {
       "id": "f85693d0a749",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8954,
+      "line": 8994,
       "function": "TestPostMessageApprovePerGroupSpamtype",
       "receiver": "db",
       "method": "Exec",
@@ -129368,7 +129458,7 @@
     "f85c0334f7aa": {
       "id": "f85c0334f7aa",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 3795,
+      "line": 3835,
       "function": "TestPostMessageBackToPending",
       "receiver": "db",
       "method": "Raw",
@@ -129521,8 +129611,8 @@
     "f8a39152430c": {
       "id": "f8a39152430c",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7016,
-      "function": "TestJoinAndPostSetsFromaddr",
+      "line": 2863,
+      "function": "TestJoinAndPostRejectsEmptyDraft",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -129609,7 +129699,7 @@
     "f8e3c0e5323d": {
       "id": "f8e3c0e5323d",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6372,
+      "line": 6412,
       "function": "TestPatchMessageItemCaseCorrection",
       "receiver": "db",
       "method": "Raw",
@@ -129654,7 +129744,7 @@
     "f8f095bdfbeb": {
       "id": "f8f095bdfbeb",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10650,
+      "line": 10690,
       "function": "TestPatchMessageByTN_NewPicLinkReplacesOldAttachments",
       "receiver": "db",
       "method": "Raw",
@@ -129966,7 +130056,7 @@
     "f98d9efce94a": {
       "id": "f98d9efce94a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4277,
+      "line": 4317,
       "function": "TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn",
       "receiver": "db",
       "method": "Raw",
@@ -130010,8 +130100,8 @@
     "f9ace57dc259": {
       "id": "f9ace57dc259",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10057,
-      "function": "TestJoinAndPostUnmoderatedUserStartsPending",
+      "line": 7486,
+      "function": "TestJoinAndPostLogsReceived",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -130166,7 +130256,7 @@
     "f9f3a9e90b10": {
       "id": "f9f3a9e90b10",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9275,
+      "line": 9315,
       "function": "TestPostMessageGlobalApproveNarrowsToAuthorizedGroups",
       "receiver": "db",
       "method": "Raw",
@@ -130188,7 +130278,7 @@
     "f9fc175a2bcc": {
       "id": "f9fc175a2bcc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7845,
+      "line": 7885,
       "function": "TestPatchMessageSubjectEditResetsContentCheck",
       "receiver": "db",
       "method": "Raw",
@@ -130298,7 +130388,7 @@
     "fa2763270604": {
       "id": "fa2763270604",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2634,
+      "line": 2674,
       "function": "TestJoinAndPostBannedUserReturns403",
       "receiver": "db",
       "method": "Raw",
@@ -130521,7 +130611,7 @@
     "fa66119ca7ec": {
       "id": "fa66119ca7ec",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8934,
+      "line": 8974,
       "function": "TestPostMessageSpamLastGroupSoftDeletesMessage",
       "receiver": "db",
       "method": "Raw",
@@ -130587,7 +130677,7 @@
     "fa9195fa59e6": {
       "id": "fa9195fa59e6",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10517,
+      "line": 10557,
       "function": "TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype",
       "receiver": "db",
       "method": "Exec",
@@ -130771,7 +130861,7 @@
     "fac0946e0b38": {
       "id": "fac0946e0b38",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 8512,
+      "line": 8552,
       "function": "TestPostMessageDeletePerGroup",
       "receiver": "db",
       "method": "Raw",
@@ -131570,7 +131660,7 @@
     "fc141ecb0735": {
       "id": "fc141ecb0735",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7496,
+      "line": 7536,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -131747,7 +131837,7 @@
     "fcaa5117a564": {
       "id": "fcaa5117a564",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9734,
+      "line": 9774,
       "function": "TestPatchMessageByTnPostidUpdatesLocationFromCoordinates",
       "receiver": "db",
       "method": "Raw",
@@ -131973,7 +132063,7 @@
     "fd2f858c4387": {
       "id": "fd2f858c4387",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4258,
+      "line": 4298,
       "function": "TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn",
       "receiver": "db",
       "method": "Exec",
@@ -132195,7 +132285,7 @@
     "fda481c8f983": {
       "id": "fda481c8f983",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4378,
+      "line": 4418,
       "function": "TestPostMessageAddByUpdate",
       "receiver": "db",
       "method": "Exec",
@@ -132305,7 +132395,7 @@
     "fdce57e9f274": {
       "id": "fdce57e9f274",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 6643,
+      "line": 6683,
       "function": "TestRejectToDraftOwnerWithdrawsAllGroups",
       "receiver": "db",
       "method": "Exec",
@@ -132443,7 +132533,7 @@
     "fdf21311c91a": {
       "id": "fdf21311c91a",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 10130,
+      "line": 10170,
       "function": "TestContentcheckProcessedVisibleInPendingQueue",
       "receiver": "db",
       "method": "Exec",
@@ -132555,7 +132645,7 @@
     "fe0d4ac14939": {
       "id": "fe0d4ac14939",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 2819,
+      "line": 2859,
       "function": "TestJoinAndPostRejectsEmptyDraft",
       "receiver": "db",
       "method": "Exec",
@@ -132753,7 +132843,7 @@
     "fe478dff174e": {
       "id": "fe478dff174e",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7489,
+      "line": 7529,
       "function": "TestMessageEditRecordsAllColumns",
       "receiver": "db",
       "method": "Raw",
@@ -132841,7 +132931,7 @@
     "fe78462096cf": {
       "id": "fe78462096cf",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4754,
+      "line": 4794,
       "function": "TestPostMessageWithdrawnPending",
       "receiver": "db",
       "method": "Exec",
@@ -132975,7 +133065,7 @@
     "feb1981b1769": {
       "id": "feb1981b1769",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 7337,
+      "line": 7377,
       "function": "TestPatchMessageDeadline",
       "receiver": "db",
       "method": "Raw",
@@ -133155,7 +133245,7 @@
     "fed817abd10b": {
       "id": "fed817abd10b",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4029,
+      "line": 4069,
       "function": "TestPostMessageRenege",
       "receiver": "db",
       "method": "Exec",
@@ -133179,7 +133269,7 @@
     "fee0b5f236c3": {
       "id": "fee0b5f236c3",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 4560,
+      "line": 4600,
       "function": "TestPostMessagePromiseCreatesChat",
       "receiver": "db",
       "method": "Raw",
@@ -133253,7 +133343,7 @@
     "ff119a39e7bc": {
       "id": "ff119a39e7bc",
       "file": "iznik-server-go/test/message_test.go",
-      "line": 9913,
+      "line": 9953,
       "function": "TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection",
       "receiver": "db",
       "method": "Exec",

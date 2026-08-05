@@ -164,12 +164,27 @@ Mobile-specific Stripe implementation:
    - Share posts using native share sheet
    - Platform-specific share UI
 
-3. **Calendar Integration**
+3. **Share Into the App (photo → give flow)**
+   - Android: `ACTION_SEND`/`ACTION_SEND_MULTIPLE` handled by `MainActivity`,
+     which copies images to cache and exposes them via the
+     `window.FreegleShare` bridge; iOS mirrors this with a
+     `freegleshare://` deep link
+   - `stores/mobile.js` consumes pending shares as soon as the App plugin
+     import resolves (early in `initApp()`), and routes to
+     `/give/mobile/photos`
+   - The photos page attaches each shared image through the same
+     `PhotoUploader.processPhoto()` path as manual picks; Next is disabled
+     while any attachment is still uploading
+   - The photo-quality image loaders are bounded (8s timeout) so a
+     `capacitor://` file URL that never fires load/error cannot hang the
+     upload
+
+4. **Calendar Integration**
    - Add events to native calendar
    - Permission handling (iOS requires multiple permission types)
    - Uses Cordova Calendar plugin
 
-4. **Pinch Zoom**
+5. **Pinch Zoom**
    - Enabled for Android
    - Native zoom gestures
    - Transient magnifier: scales the whole WebView viewport (navbars included)
@@ -200,6 +215,16 @@ Mobile-specific Stripe implementation:
    - Native rating prompts
    - Timing logic to avoid annoying users
    - Platform-specific app store links
+
+8. **Hardware Back Button (Android)**
+   - `initBackButton()` in `stores/mobile.js` listens for Capacitor's
+     `backButton` event (fired for both the back button and the back
+     gesture)
+   - Navigates back through webview history while there is any, then
+     backgrounds the app with `App.minimizeApp()` at the root — the
+     standard Android behaviour
+   - Without this listener Capacitor swallows back presses once history
+     is empty and the app cannot be exited
 
 </details>
 
@@ -234,6 +259,7 @@ A dedicated Pinia store handles all mobile-specific state and functionality:
 - `initPushNotifications()`: Configure push notification system
 - `checkForAppUpdate()`: Check for app updates
 - `initWakeUpActions()`: Handle app resume/wake events
+- `initBackButton()`: Android back button/gesture — history back, minimize at root
 
 </details>
 
@@ -265,6 +291,11 @@ Several components have mobile-specific behavior:
 5. **Chat Components**
    - Optimized for mobile screens
    - Native sharing integration
+   - The chat box and ChitChat comment box use
+     `autocapitalize="sentences"` except on iOS (app and Safari), where
+     auto-capitalise engages the virtual Shift key so Return arrives as
+     shift+enter and breaks send-on-enter (`composables/useIsIOS.js`;
+     angular/angular#32963 — iOS keyboard design, not a fixed bug)
 
 ### Ads & Analytics
 

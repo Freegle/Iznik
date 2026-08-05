@@ -3230,6 +3230,17 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "messagetype": msgType})
 }
 
+// deadlineDate reduces a client-supplied deadline to its date part.
+// messages.deadline is a DATE column; bundled apps send a full ISO datetime
+// ("2026-07-15T00:00:00.000Z"), which strict sql_mode rejects as a DATE
+// literal. Current clients send plain YYYY-MM-DD, which passes through.
+func deadlineDate(deadline string) string {
+	if len(deadline) > 10 {
+		return deadline[:10]
+	}
+	return deadline
+}
+
 // handleJoinAndPost joins a group and posts a message in one action.
 func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -3371,7 +3382,12 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Save deadline and deliverypossible if provided.
 	if req.Deadline != nil && *req.Deadline != "" {
 		// ORM migration site 8c57c53511ec (wave 2).
-		db.Table("messages").Where("id = ?", req.ID).Update("deadline", *req.Deadline)
+		// messages.deadline is a DATE column and bundled apps send a full ISO
+		// datetime, which strict sql_mode rejects outright - and with the error
+		// unchecked the deadline was silently lost (Discourse #9481).
+		if err := db.Table("messages").Where("id = ?", req.ID).Update("deadline", deadlineDate(*req.Deadline)).Error; err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid deadline")
+		}
 	}
 	if req.Deliverypossible != nil {
 		// ORM migration site 4754a3558c44 (wave 2).
@@ -3594,7 +3610,10 @@ func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *s
 		if *deadline == "" || *deadline == "null" {
 			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: gorm.Expr("NULL")})
 		} else {
-			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: *deadline})
+			// messages.deadline is a DATE column and bundled apps send a full ISO
+			// datetime, which strict sql_mode rejects outright, silently losing the
+			// deadline (Discourse #9481). Narrow it to a date before assigning.
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: deadlineDate(*deadline)})
 		}
 	}
 	if locationid != nil {
@@ -3687,6 +3706,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		// ORM migration site 69685398ad05 (wave 2).
 		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
 	}
+	// Master's availablenow/deadline SET entries are not repeated here: this
+	// branch assembles the whole SET list in
+	// buildApplyPatchMessageCoreUpdateSet, which already covers both columns
+	// with the same NULL-on-empty rule. Master's deadlineDate() conversion is
+	// applied there rather than at this call site.
 	// Resolve location name to locationid if provided.
 	if req.Location != nil && *req.Location != "" && (req.Locationid == nil || *req.Locationid == 0) {
 		var locID uint64

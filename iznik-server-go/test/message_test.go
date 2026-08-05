@@ -2494,6 +2494,46 @@ func TestJoinAndPostSavesDeadline(t *testing.T) {
 	assert.Equal(t, "2026-07-15", *deadline)
 }
 
+// Bundled apps (pre-fix webview bundles) send the deadline as a full ISO
+// datetime. messages.deadline is a DATE column: under STRICT_TRANS_TABLES the
+// datetime literal is rejected outright and, with the Exec error unchecked,
+// the deadline was silently lost (Discourse #9481). The handler must
+// normalise to the date part so both client generations save correctly.
+func TestJoinAndPostSavesDeadlineISODatetime(t *testing.T) {
+	prefix := uniquePrefix("msgmod_jap_dliso")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Create a draft message.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Deadline ISO test', 'Item with deadline', 'Item with deadline', NOW(), NOW(), 'Platform')",
+		userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	// JoinAndPost with an ISO datetime deadline, as bundled apps send it.
+	body := map[string]interface{}{
+		"id":       msgID,
+		"action":   "JoinAndPost",
+		"deadline": "2026-07-15T00:00:00.000Z",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var deadline *string
+	db.Raw("SELECT DATE_FORMAT(deadline, '%Y-%m-%d') FROM messages WHERE id = ?", msgID).Scan(&deadline)
+	require.NotNil(t, deadline, "ISO datetime deadline must not be silently lost")
+	assert.Equal(t, "2026-07-15", *deadline)
+}
+
 // TestJoinAndPostNewUserPassword verifies that when a new user (no password)
 // posts via JoinAndPost, the generated password can be used to log in.
 func TestJoinAndPostNewUserPassword(t *testing.T) {

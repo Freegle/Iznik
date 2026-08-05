@@ -791,6 +791,56 @@ describe('mobile store', () => {
     })
   })
 
+  describe('initBackButton hardware back handler', () => {
+    let store
+    let capturedListener
+    let mockApp
+    let historyBackSpy
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'backButton') capturedListener = fn
+        }),
+        minimizeApp: vi.fn(),
+      }
+      historyBackSpy = vi
+        .spyOn(window.history, 'back')
+        .mockImplementation(() => {})
+      process.client = true
+    })
+
+    afterEach(() => {
+      historyBackSpy.mockRestore()
+      delete process.client
+    })
+
+    it('registers a backButton listener', () => {
+      store.initBackButton(mockApp)
+      expect(mockApp.addListener).toHaveBeenCalledWith(
+        'backButton',
+        expect.any(Function)
+      )
+      expect(capturedListener).not.toBeNull()
+    })
+
+    it('navigates back in history when the webview can go back', () => {
+      store.initBackButton(mockApp)
+      capturedListener({ canGoBack: true })
+      expect(historyBackSpy).toHaveBeenCalled()
+      expect(mockApp.minimizeApp).not.toHaveBeenCalled()
+    })
+
+    it('minimizes the app at the root of the history', () => {
+      store.initBackButton(mockApp)
+      capturedListener({ canGoBack: false })
+      expect(historyBackSpy).not.toHaveBeenCalled()
+      expect(mockApp.minimizeApp).toHaveBeenCalled()
+    })
+  })
+
   describe('handleNotification — new_posts channel', () => {
     let store
 
