@@ -391,4 +391,171 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertStringContainsString('X-Trashnothing-Post-Id: ' . $postId, $message->message);
         $this->assertStringContainsString('OFFER: Bicycle', $message->message);
     }
+
+    // -------------------------------------------------------------------------
+    // Repost detection — TN gives no explicit link between a repost and its
+    // original (new post_id, new date), so a matching live message (same
+    // poster/group/subject/nearby coordinates) is bumped instead of a new
+    // message being created.
+    // -------------------------------------------------------------------------
+
+    public function test_repost_bumps_existing_message_instead_of_creating_new(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        // arrival explicitly in the past — createTestMessage() defaults it to
+        // now(), and arrival is second-precision, so a same-second bump would
+        // make a strict "later than" comparison flaky.
+        $original = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: Old wooden bookshelf',
+            'lat'     => 55.9533,
+            'lng'     => -3.1883,
+            'arrival' => now()->subMinutes(10),
+        ]);
+        $originalArrival = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first()->arrival;
+
+        $postId = 'tn-repost-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'title'     => 'Old wooden bookshelf',
+            'latitude'  => 55.9534, // ~11m away — within the match radius, same item
+            'longitude' => -3.1882,
+            'date'      => now()->addMinute()->toIso8601String(),
+        ]);
+
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $this->assertSame('reposted', $result);
+
+        // No new messages row for this tnpostid.
+        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A repost must not create a new messages row');
+
+        $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
+        $this->assertSame(1, $mg->autoreposts, 'autoreposts should be incremented on the bumped message');
+        $this->assertTrue($mg->arrival->gt($originalArrival), 'arrival should be bumped forward');
+
+        $this->assertSame(1, DB::table('logs')->where('msgid', $original->id)->where('subtype', 'Repost')->count());
+        $this->assertSame(
+            1,
+            DB::table('messages_postings')->where('msgid', $original->id)->where('repost', 1)->where('autorepost', 0)->count(),
+        );
+    }
+
+    public function test_repost_is_idempotent_when_already_bumped_past_the_new_posts_date(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $newPostDate = now();
+
+        // Simulate an earlier/overlapping sync run having already bumped this
+        // message past the new post's own date — idempotency compares against
+        // messages.date (the latest TN content date applied), not
+        // messages_groups.arrival (ingestion wall-clock time, always "now").
+        $original = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: Old wooden bookshelf',
+            'lat'     => 55.9533,
+            'lng'     => -3.1883,
+            'date'    => $newPostDate->copy()->addHour(),
+        ]);
+        MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->update([
+            'autoreposts' => 1,
+        ]);
+
+        $postId = 'tn-repost-idem-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'title'     => 'Old wooden bookshelf',
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+            'date'      => $newPostDate->toIso8601String(),
+        ]);
+
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $this->assertSame('duplicate', $result);
+
+        $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
+        $this->assertSame(1, $mg->autoreposts, 'Already-bumped message must not be bumped again');
+    }
+
+    public function test_different_subject_at_same_location_does_not_trigger_repost(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: A completely different item',
+            'lat'     => 55.9533,
+            'lng'     => -3.1883,
+        ]);
+
+        $postId = 'tn-notrepost-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'title'     => 'Old wooden bookshelf',
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+        ]);
+
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $this->assertSame('approved', $result);
+        $this->assertNotNull(Message::where('tnpostid', $postId)->first(), 'A genuinely different item must create its own new message');
+    }
+
+    public function test_repost_matches_across_different_resolved_users(): void
+    {
+        // TN's numeric user id is scoped per group-affiliation, not stable per
+        // real person — confirmed live: the same real poster's repost of the
+        // same item resolved to a different Freegle stub user than the
+        // original. The match must not require fromuser to be the same.
+        $locationId = $this->createTestLocation();
+        $originalPoster = $this->createTestUser(['lastlocation' => $locationId]);
+        $repostPoster   = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($repostPoster, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $original = $this->createTestMessage($originalPoster, $group, [
+            'subject' => 'OFFER: Old wooden bookshelf',
+            'lat'     => 55.9533,
+            'lng'     => -3.1883,
+            'arrival' => now()->subMinutes(10),
+        ]);
+
+        $postId = 'tn-repost-crossuser-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $repostPoster->id,
+            'title'     => 'Old wooden bookshelf',
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+            'date'      => now()->addMinute()->toIso8601String(),
+        ]);
+
+        $result = $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $this->assertSame('reposted', $result);
+        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A cross-user repost match must still bump, not create new');
+
+        $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
+        $this->assertSame(1, $mg->autoreposts);
+
+        // Logged against the original message's own poster, not the repost's
+        // resolved user.
+        $this->assertSame(
+            1,
+            DB::table('logs')->where('msgid', $original->id)->where('subtype', 'Repost')->where('user', $originalPoster->id)->count(),
+        );
+    }
 }

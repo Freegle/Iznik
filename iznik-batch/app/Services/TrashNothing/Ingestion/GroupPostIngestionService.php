@@ -29,6 +29,13 @@ use Illuminate\Support\Facades\Log;
  */
 class GroupPostIngestionService
 {
+    // How close (in metres) a candidate message's coordinates must be to a new
+    // TN post's coordinates to be considered a repost of it, once fromuser/
+    // group/subject already match. Generous enough to absorb GPS/geocoding
+    // jitter between two posts of the same item, tight enough not to match a
+    // different item at a similar address.
+    private const REPOST_MATCH_RADIUS_METERS = 50;
+
     public function __construct(
         private readonly bool $dryRun,
         private readonly LokiService $loki,
@@ -41,7 +48,7 @@ class GroupPostIngestionService
      * @param  mixed  $post  OpenAPI Post object or fixture array
      * @param  Group  $group  Resolved Freegle group
      * @param  bool  $modMessagingAllowed  Whether mods on $group may message this poster directly
-     * @return string  'approved'|'pending'|'duplicate'|'dropped'|'skipped'
+     * @return string  'approved'|'pending'|'duplicate'|'dropped'|'skipped'|'reposted'
      */
     public function ingest(mixed $post, Group $group, bool $modMessagingAllowed = true): string
     {
@@ -78,6 +85,50 @@ class GroupPostIngestionService
         Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         if (!$this->dryRun) {
             DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()]);
+        }
+
+        // Repost detection: TN gives no explicit link between a repost and its
+        // original post — reposting on TN creates an entirely new post_id with a
+        // new published date, not a mutation of the original (confirmed by the TN
+        // team). We detect it by matching an existing live message in the same
+        // group, with a normalized-matching subject and coordinates within
+        // REPOST_MATCH_RADIUS_METERS — deliberately NOT requiring the same
+        // resolved fromuser, since TN's numeric user id is scoped per
+        // group-affiliation, not stable per real person (see
+        // findRepostCandidate()'s docblock for the live example that proved
+        // this). When matched, bump the EXISTING message (same DB pattern as
+        // AutoRepostService::repost(), which handles Freegle's own
+        // inactivity-triggered auto-reposts) rather than creating a duplicate
+        // new one — Freegle already has its own reposting/rippling mechanisms,
+        // so a second independent message for the same real-world donation
+        // would just be redundant clutter for mods and members. Skips entirely
+        // if $lat/$lng are missing — no coordinates, no reliable match.
+        $repostCandidate = $this->findRepostCandidate($group->id, $subject, $lat, $lng);
+        if ($repostCandidate !== null) {
+            $postDate = $this->normalizePostDate($date);
+            // Idempotency compares against the candidate's own `date` (the latest
+            // known TN content date it reflects), NOT messages_groups.arrival —
+            // arrival is the ingestion/bump wall-clock time, which is always "now"
+            // and therefore always >= any TN post's own (necessarily past) date;
+            // comparing against it would make every genuine repost look
+            // "already bumped". `date` starts as the original post's date and is
+            // advanced to the repost's date by bumpAsRepost() below, so comparing
+            // against it correctly distinguishes "this exact repost (or a later
+            // one) was already applied" from "this is newer than what we have".
+            if ($postDate !== null && $repostCandidate->date !== null && $repostCandidate->date->gte($postDate)) {
+                Log::info('TN-SYNC-TRACE [POST-SKIP] reason=repost-already-bumped tnpostid=' . $postId . ' msgid=' . $repostCandidate->msgid);
+                return 'duplicate';
+            }
+
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $repostCandidate->msgid . ',groupid=' . $group->id . ' set=arrival=now(),autoreposts+1 (tn-repost)');
+            if (!$this->dryRun) {
+                // Logged against the ORIGINAL message's own poster, not this repost's
+                // resolved user — see findRepostCandidate()'s docblock on why the two
+                // can legitimately be different Freegle stub users for the same person.
+                $this->bumpAsRepost($repostCandidate->msgid, $group->id, $repostCandidate->fromuser, $postDate);
+            }
+            $this->loki->logEvent('tn-sync', 'post-repost-bump', ['tn_post_id' => $postId, 'msg_id' => $repostCandidate->msgid, 'group_id' => $group->id]);
+            return 'reposted';
         }
 
         // No membership gate: the group here was chosen for the post (via
@@ -429,6 +480,145 @@ class GroupPostIngestionService
             ->where('messages.tnpostid', $tnPostId)
             ->where('messages_groups.groupid', $groupId)
             ->exists();
+    }
+
+    /**
+     * Finds an existing live message in the same group, with a
+     * normalized-matching subject and coordinates within
+     * REPOST_MATCH_RADIUS_METERS, to detect a TN repost. "Live" means still
+     * Approved/Pending, not deleted, and with no outcome recorded (an
+     * already-taken/withdrawn item isn't a repost target — a new post with
+     * the same subject/location after that is a fresh item, not a repost).
+     *
+     * Deliberately does NOT filter by fromuser. TN's own numeric user id is
+     * scoped per group-affiliation, not stable per real person — confirmed
+     * live: two TN post_ids for the same "Electric sander" item, same
+     * subject/coordinates/group, resolved to two different Freegle stub
+     * users (99010031 vs 5595742) because TN supplied two different
+     * fd_user_ids for what all other evidence points to being the same
+     * poster. Matching on subject + tight coordinate radius + group is
+     * accepted as sufficient — the risk of two different real people
+     * independently posting identical subject text at the same ~50m spot is
+     * negligible.
+     *
+     * @return object{msgid: int, date: ?\Illuminate\Support\Carbon, fromuser: int}|null
+     */
+    private function findRepostCandidate(int $groupId, string $subject, mixed $lat, mixed $lng): ?object
+    {
+        if ($lat === null || $lng === null) {
+            return null;
+        }
+
+        $normalizedSubject = $this->normalizeSubjectForRepostMatch($subject);
+
+        $candidates = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->leftJoin('messages_outcomes as mo', 'mo.msgid', '=', 'mg.msgid')
+            ->where('mg.groupid', $groupId)
+            ->where('mg.deleted', 0)
+            ->whereIn('mg.collection', [MessageGroup::COLLECTION_APPROVED, MessageGroup::COLLECTION_PENDING])
+            ->whereNull('mo.id')
+            ->whereNotNull('m.lat')
+            ->whereNotNull('m.lng')
+            ->orderByDesc('mg.arrival')
+            ->limit(50)
+            ->select(['mg.msgid', 'm.date', 'm.subject', 'm.lat', 'm.lng', 'm.fromuser'])
+            ->get();
+
+        foreach ($candidates as $candidate) {
+            if ($this->normalizeSubjectForRepostMatch((string) $candidate->subject) !== $normalizedSubject) {
+                continue;
+            }
+            if ($this->haversineMeters((float) $lat, (float) $lng, (float) $candidate->lat, (float) $candidate->lng) <= self::REPOST_MATCH_RADIUS_METERS) {
+                return (object) [
+                    'msgid'    => (int) $candidate->msgid,
+                    'date'     => $candidate->date ? \Illuminate\Support\Carbon::parse($candidate->date) : null,
+                    'fromuser' => (int) $candidate->fromuser,
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeSubjectForRepostMatch(string $subject): string
+    {
+        return strtolower(trim((string) preg_replace('/\s+/', ' ', $subject)));
+    }
+
+    private function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $earthRadiusMeters = 6371000;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $earthRadiusMeters * $c;
+    }
+
+    private function normalizePostDate(mixed $date): ?\Illuminate\Support\Carbon
+    {
+        if ($date instanceof \DateTime) {
+            return \Illuminate\Support\Carbon::instance($date);
+        }
+        if (is_string($date) && $date !== '') {
+            try {
+                return \Illuminate\Support\Carbon::parse($date);
+            } catch (\Exception $e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Bumps an existing message on $groupId to represent a TN repost —
+     * updates its `arrival`/`autoreposts`, advances its `date` to $postDate
+     * (used by the idempotency check in ingest(), see there), logs it, and
+     * records a messages_postings row — mirroring AutoRepostService::
+     * repost()'s DB pattern (Freegle's own inactivity-triggered auto-repost),
+     * but with subtype='Repost' (not 'Autoreposted') and repost=1/
+     * autorepost=0, since this is triggered by the poster reposting on TN,
+     * not Freegle's own inactivity timer.
+     */
+    private function bumpAsRepost(int $msgId, int $groupId, int $fromUser, ?\Illuminate\Support\Carbon $postDate): void
+    {
+        DB::table('messages_groups')
+            ->where('msgid', $msgId)
+            ->where('groupid', $groupId)
+            ->update([
+                'arrival'     => now(),
+                'autoreposts' => DB::raw('autoreposts + 1'),
+            ]);
+
+        // Advances the message's own `date` to this repost's TN content date, so
+        // the idempotency check in ingest() (comparing a future repost's date
+        // against this field) correctly recognizes this specific repost as
+        // applied — see the comment at the call site for why `arrival` can't be
+        // used for that comparison.
+        if ($postDate !== null) {
+            DB::table('messages')->where('id', $msgId)->update(['date' => $postDate]);
+        }
+
+        DB::table('logs')->insert([
+            'timestamp' => now(),
+            'type'      => 'Message',
+            'subtype'   => 'Repost',
+            'msgid'     => $msgId,
+            'groupid'   => $groupId,
+            'user'      => $fromUser,
+            'text'      => 'TN repost',
+        ]);
+
+        DB::table('messages_postings')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $groupId,
+            'repost'     => 1,
+            'autorepost' => 0,
+            'date'       => now(),
+        ]);
     }
 
     /**

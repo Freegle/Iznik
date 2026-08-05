@@ -71,7 +71,7 @@ class ParityComparer
      * @param  string[]  $apiLines
      * @return array{
      *     emailPostIdCount: int, apiCoveredCount: int,
-     *     emailIngestedCount: int, apiIngestedCount: int,
+     *     emailIngestedCount: int, apiIngestedCount: int, apiDuplicatesDropped: string[],
      *     layer2ExtraIngested: string[],
      *     layer1Missing: string[], layer1Details: array<string, string>,
      *     layer2Extra: string[],
@@ -86,8 +86,22 @@ class ParityComparer
         $emailMessages     = $this->parseMessages($emailLines);
         $apiMessages       = $this->parseMessages($apiLines);
         $emailPostDetails  = $this->parsePostDetails($emailLines);
+        $apiPostDetails    = $this->parsePostDetails($apiLines);
         $emailStubUserIds  = $this->parseStubUserIds($emailLines);
         $apiStubUserIds    = $this->parseStubUserIds($apiLines);
+
+        // Collapse TN API crosspost/repost duplicates before anything else uses
+        // apiResults/apiMessages — see dedupeApiCrosspostsAndReposts() docblock.
+        // Layer 1 coverage is computed against apiResultPostIds too, but a
+        // dropped duplicate can never cause a false Layer 1 miss: if the email
+        // path saw that exact post_id, it wasn't a candidate for dedup removal
+        // in the first place (post_ids are TN-API-only identifiers the email
+        // path never has).
+        [$apiResults, $apiMessages, $apiDuplicatesDropped] = $this->dedupeApiCrosspostsAndReposts(
+            $apiResults,
+            $apiMessages,
+            $apiPostDetails,
+        );
 
         $emailPostIds     = array_keys($emailResults);
         $apiResultPostIds = array_keys($apiResults);
@@ -149,18 +163,81 @@ class ParityComparer
         $apiIngestedCount   = count(array_filter($apiResults, static fn (string $r) => in_array($r, self::INGESTED_RESULTS, true)));
 
         return [
-            'emailPostIdCount'    => count($emailPostIds),
-            'apiCoveredCount'     => count($apiResultPostIds),
-            'emailIngestedCount'  => $emailIngestedCount,
-            'apiIngestedCount'    => $apiIngestedCount,
-            'layer2ExtraIngested' => $layer2ExtraIngested,
-            'layer1Missing'       => $layer1Missing,
-            'layer1Details'       => $layer1Details,
-            'layer2Extra'         => $layer2Extra,
+            'emailPostIdCount'      => count($emailPostIds),
+            'apiCoveredCount'       => count($apiResultPostIds),
+            'emailIngestedCount'    => $emailIngestedCount,
+            'apiIngestedCount'      => $apiIngestedCount,
+            'apiDuplicatesDropped'  => $apiDuplicatesDropped,
+            'layer2ExtraIngested'   => $layer2ExtraIngested,
+            'layer1Missing'         => $layer1Missing,
+            'layer1Details'         => $layer1Details,
+            'layer2Extra'           => $layer2Extra,
             'overlapCount'        => count($overlap),
             'layer3Mismatches'    => $layer3Mismatches,
             'layer4Divergences'   => $layer4Divergences,
         ];
+    }
+
+    /**
+     * Collapses TN API crosspost/repost duplicates: TN returns a distinct
+     * post_id per group a poster cross-posted to, and — per confirmation
+     * from the TN team — a repost also creates an entirely new post_id with
+     * a new published date, rather than mutating the original. Freegle
+     * already has its own cross-posting (rippling) and reposting mechanisms,
+     * so counting each of these TN-side duplicates as a separate "new" post
+     * would inflate Layer 2 / the ingestion-gain stat with the same
+     * real-world donation counted multiple times. This has no email-path
+     * equivalent to worry about: TN's partner email feed reuses the *same*
+     * post_id across a crosspost's emails (confirmed early in this project),
+     * so email-side duplicates already collapse naturally when parseResults()
+     * builds its post_id-keyed map — only the API path needs this.
+     *
+     * Groups ingested posts (a messages row must exist — nothing to compare
+     * without one) by (fromuser, subject, rounded lat, rounded lng) and keeps
+     * only the earliest-dated post_id per group as canonical; every other
+     * post_id in that group is dropped entirely from apiResults/apiMessages,
+     * removing it from every layer, not just Layer 2.
+     *
+     * @param  array<string, string>  $apiResults
+     * @param  array<string, array<string, mixed>>  $apiMessages
+     * @param  array<string, array{type: string, group_id: string, date: string, title: string}>  $apiPostDetails
+     * @return array{0: array<string, string>, 1: array<string, array<string, mixed>>, 2: string[]}
+     *   [dedupedResults, dedupedMessages, droppedPostIds]
+     */
+    private function dedupeApiCrosspostsAndReposts(array $apiResults, array $apiMessages, array $apiPostDetails): array
+    {
+        $canonicalPostIdByKey = [];
+        $earliestDateByKey    = [];
+
+        foreach ($apiMessages as $postId => $msg) {
+            $key = implode('|', [
+                $msg['fromuser'] ?? '',
+                strtolower(trim((string) ($msg['subject'] ?? ''))),
+                is_numeric($msg['lat'] ?? null) ? round((float) $msg['lat'], self::COORDINATE_PRECISION) : ($msg['lat'] ?? ''),
+                is_numeric($msg['lng'] ?? null) ? round((float) $msg['lng'], self::COORDINATE_PRECISION) : ($msg['lng'] ?? ''),
+            ]);
+            $date = $apiPostDetails[$postId]['date'] ?? '';
+
+            if (!isset($earliestDateByKey[$key]) || $date < $earliestDateByKey[$key]) {
+                $earliestDateByKey[$key]    = $date;
+                $canonicalPostIdByKey[$key] = $postId;
+            }
+        }
+
+        $canonicalPostIds = array_fill_keys(array_values($canonicalPostIdByKey), true); // post_id => true, for O(1) lookup
+        $dropped          = [];
+
+        foreach (array_keys($apiMessages) as $postId) {
+            if (!isset($canonicalPostIds[$postId])) {
+                $dropped[] = $postId;
+            }
+        }
+
+        foreach ($dropped as $postId) {
+            unset($apiResults[$postId], $apiMessages[$postId]);
+        }
+
+        return [$apiResults, $apiMessages, $dropped];
     }
 
     /**
