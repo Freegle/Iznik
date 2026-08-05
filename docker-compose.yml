@@ -1558,17 +1558,6 @@ services:
       # Read-only monorepo .git so deploy:record-commit can read HEAD via the
       # RecordCommitCommand walk-up from base_path() (= /var/www/html).
       - ./.git:/var/www/.git:ro
-      # Read-only: the ORM migration harness (tests/Support/OrmHarness/) needs
-      # to read the raw-SQL inventory this manifest is the single source of
-      # truth for. iznik-batch alone is otherwise all this container can see,
-      # so a relative path from inside tests/ trying to escape upward to
-      # tools/orm-migration/ resolves to nothing - found the hard way, the
-      # harness's Layer 1/2 tests erroring with "file_get_contents(...):
-      # Failed to open stream" before this mount existed. A bind mount of the
-      # real manifest is the honest fix (not a copy into iznik-batch/tests/
-      # fixtures/, which would fork the contract this whole programme rests
-      # on and drift from the source of truth silently).
-      - ./tools/orm-migration/services/laravel:/var/www/orm-migration-manifest:ro
       - apiv2_logs:/var/log/freegle
     depends_on:
       percona:
