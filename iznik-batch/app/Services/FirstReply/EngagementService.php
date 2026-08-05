@@ -272,7 +272,7 @@ class EngagementService
 
             case PromptService::KIND_VIEWS:
                 $views = $this->viewCount((int) $post->msgid, (int) $post->fromuser);
-                $text = "Good news: {$views} freeglers have opened your post about {$item}. Nobody's replied yet,"
+                $text = "Good news: {$views} freeglers have looked at {$item}. Nobody's replied yet,"
                     . ' but people are definitely looking.';
 
                 $stillToCome = $this->stillToCome($post);
