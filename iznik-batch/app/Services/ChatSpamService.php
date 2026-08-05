@@ -40,18 +40,20 @@ class ChatSpamService
     {
         $since = now()->subDays(7)->toDateTimeString();
 
-        $rooms = DB::select(
-            "SELECT chat_rooms.id, spam_users.userid AS spammer_id, user1, user2
-             FROM chat_rooms
-             INNER JOIN spam_users ON user1 = spam_users.userid
-             WHERE latestmessage >= ? AND flaggedspam = 0 AND spam_users.collection = 'Spammer'
-             UNION
-             SELECT chat_rooms.id, spam_users.userid AS spammer_id, user1, user2
-             FROM chat_rooms
-             INNER JOIN spam_users ON user2 = spam_users.userid
-             WHERE latestmessage >= ? AND flaggedspam = 0 AND spam_users.collection = 'Spammer'",
-            [$since, $since]
-        );
+        // One arm per side of the room: a spammer can be user1 or user2, and
+        // the raw statement UNIONed the two rather than using an OR so that
+        // each arm can use the index on its own join column.
+        $arm = fn (string $side) => DB::table('chat_rooms')
+            ->select('chat_rooms.id', 'spam_users.userid as spammer_id', 'user1', 'user2')
+            ->join('spam_users', $side, '=', 'spam_users.userid')
+            ->where('latestmessage', '>=', $since)
+            ->where('flaggedspam', 0)
+            ->where('spam_users.collection', 'Spammer');
+
+        // ->union(), not ->unionAll(): the raw statement said UNION, which
+        // de-duplicates. A room where BOTH users are spammers appears in both
+        // arms, so unionAll would double-warn it.
+        $rooms = $arm('user1')->union($arm('user2'))->get()->all();
 
         $sent = 0;
 

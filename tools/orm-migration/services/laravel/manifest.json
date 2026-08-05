@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:00:44Z",
+    "generated": "2026-08-05T17:02:20Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 406,
-        "converted": 74,
-        "raw": 251,
+        "converted": 75,
+        "raw": 250,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -5589,13 +5589,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT chat_rooms.id, spam_users.userid AS spammer_id, user1, user2 FROM chat_rooms INNER JOIN spam_users ON user1 = spam_users.userid WHERE latestmessage >= ? AND flaggedspam = 0 AND spam_users.collection = 'Spammer' UNION SELECT chat_rooms.id, spam_users.userid AS spammer_id, user1, user2 FROM chat_rooms INNER JOIN spam_users ON user2 = spam_users.userid WHERE latestmessage >= ? AND flaggedspam = 0 AND spam_users.collection = 'Spammer'",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "(select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user1` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?) union (select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user2` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?)"
         },
         "167eea65c5ac": {
             "id": "167eea65c5ac",
@@ -5628,7 +5628,7 @@
         "79d07afa9a1d": {
             "id": "79d07afa9a1d",
             "file": "iznik-batch/app/Services/ChatSpamService.php",
-            "line": 123,
+            "line": 125,
             "class": "ChatSpamService",
             "function": "autoMarkSpam",
             "receiver": "Illuminate\\Support\\Facades\\DB",

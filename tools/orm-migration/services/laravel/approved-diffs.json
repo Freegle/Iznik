@@ -157,6 +157,11 @@
       "id": "7fa41827ba83",
       "sql": "select `users_emails`.`userid` as `emailid`, `users_donations`.`id` as `donationid` from `users_donations` inner join `users_emails` on `users_emails`.`email` = `users_donations`.`Payer` where `users_donations`.`userid` is null and `users_donations`.`Payer` != ? and `users_emails`.`email` != ?",
       "reason": "Inlined empty-string constants now bound: the two != '' guards become binds. The join type, ON clause, column aliases and the IS NULL predicate are unchanged, which is what decides the rows."
+    },
+    {
+      "id": "28717f6b9519",
+      "sql": "(select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user1` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?) union (select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user2` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?)",
+      "reason": "Two differences, neither semantic. The inlined constants (flaggedspam = 0, collection = 'Spammer') are now bound in each arm; and Laravel parenthesises each arm of a union, which MySQL parses identically to the bare form. What is deliberately unchanged is the pair that decides behaviour: UNION rather than UNION ALL, so a room whose BOTH participants are spammers is still de-duplicated rather than warned twice, and two arms joined on user1 and user2 separately rather than one join with an OR, which is what lets each arm use the index on its own column."
     }
   ]
 }
