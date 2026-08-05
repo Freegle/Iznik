@@ -6,6 +6,9 @@ covers:
   - claude-agent-sdk/tools.js
   - claude-agent-sdk/server.js
   - claude-agent-sdk/auth.js
+  - claude-agent-sdk/device-summary.js
+  - iznik-nuxt3/stores/mobile.js
+  - iznik-nuxt3/composables/useClientLog.js
   - claude-agent-sdk/referral-mjml.js
   - claude-agent-sdk/referral-email.js
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
@@ -110,6 +113,20 @@ it — so a member can be fully active with zero device sessions. When that happ
 endpoint falls back to the member's newest `source="api"` Loki line (`lastApiActivity`)
 and the panel says so explicitly, rather than showing a bare "no sessions" that misreads
 as "not active".
+
+**Freshness** answers two different questions. For the **web** it is the age of the loaded
+bundle (`build_date`): more than a couple of days old means a refresh will update them. For
+the **app** it is a version comparison of the member's installed version against
+`MOBILE_VERSION` in `iznik-nuxt3/config.js`, which is hand-bumped in step with each app
+release. Either input missing yields `unknown`, which shows no badge rather than a wrong one.
+
+**Where the app version comes from.** Only the native app knows its installed version, and
+only after Capacitor's `App.getInfo()` returns — long after the client-logging plugin starts.
+So the app logs `session_start` **twice** for one session: once immediately (no app version
+yet), then again from `stores/mobile.js` `logAppSession()` once `App.getInfo()` and
+`Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
+merges them into one record — keeping the session count honest and making the app version
+independent of the order Loki returns the lines in.
 
 ## Refer to geeks
 

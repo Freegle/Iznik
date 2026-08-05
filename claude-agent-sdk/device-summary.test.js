@@ -4,6 +4,7 @@ const { test } = require('node:test')
 const assert = require('node:assert')
 const {
   parseSessionStart,
+  dedupeSessions,
   classifyDevice,
   buildDeviceSummary,
   compareVersion,
@@ -188,21 +189,86 @@ test('versionFreshness flags stale / current / unknown', () => {
   assert.equal(versionFreshness('3.2.28', null), 'unknown')
 })
 
-test('APP surfaces its native version but freshness is unknown (no ref yet)', () => {
-  const rec = {
+test('APP freshness compares the native version against the current release', () => {
+  const rec = (appVersion) => ({
     userAgent: UA.androidApp,
     platform: '',
     viewport: { w: 384, h: 700 },
     ts: '2026-07-27T13:00:00Z',
     sessionId: 'a',
-    appVersion: '3.2.27',
+    appVersion,
+  })
+  const [behind] = buildDeviceSummary([rec('3.2.27')], '3.2.28')
+  assert.equal(behind.isApp, true)
+  assert.equal(behind.appVersion, '3.2.27', 'native app version is surfaced')
+  assert.equal(behind.freshness, 'stale', 'behind the release -> update the app')
+
+  const [current] = buildDeviceSummary([rec('3.2.28')], '3.2.28')
+  assert.equal(current.freshness, 'current')
+
+  // Sessions logged before the app reported its version must show no badge
+  // rather than a wrong one.
+  const [unknown] = buildDeviceSummary([rec(null)], '3.2.28')
+  assert.equal(unknown.freshness, 'unknown')
+})
+
+test('dedupeSessions merges the app second session_start into the first', () => {
+  // The app logs session_start twice for ONE session: an early one with no app
+  // version, then a richer one once Capacitor has answered. Loki returns newest
+  // first, but we must not depend on that.
+  const early = {
+    sessionId: 's1',
+    ts: '2026-07-27T13:00:00Z',
+    userAgent: UA.androidApp,
+    appVersion: null,
+    viewport: { w: 384, h: 700 },
   }
-  const [dev] = buildDeviceSummary([rec], '3.2.28')
-  assert.equal(dev.isApp, true)
-  assert.equal(dev.appVersion, '3.2.27', 'native app version is surfaced')
-  // We have the member's version but not the current released one to compare to
-  // (currentVersion is the web build constant), so we don't assert freshness.
-  assert.equal(dev.freshness, 'unknown')
+  const augmented = {
+    sessionId: 's1',
+    ts: '2026-07-27T13:00:02Z',
+    userAgent: UA.androidApp,
+    appVersion: '3.2.28',
+    platform: 'Linux aarch64',
+    viewport: { w: 384, h: 700 },
+  }
+
+  for (const order of [
+    [early, augmented],
+    [augmented, early],
+  ]) {
+    const out = dedupeSessions(order)
+    assert.equal(out.length, 1, 'one session stays one session')
+    assert.equal(out[0].appVersion, '3.2.28', 'the version survives either order')
+    assert.equal(out[0].platform, 'Linux aarch64')
+    assert.equal(out[0].ts, '2026-07-27T13:00:02Z', 'latest timestamp wins')
+  }
+})
+
+test('dedupeSessions leaves distinct sessions and id-less records alone', () => {
+  const out = dedupeSessions([
+    { sessionId: 's1', ts: '2026-07-27T13:00:00Z' },
+    { sessionId: 's2', ts: '2026-07-27T14:00:00Z' },
+    { sessionId: null, ts: '2026-07-27T15:00:00Z' },
+    null,
+  ])
+  assert.equal(out.length, 3)
+})
+
+test('dedupeSessions keeps an app session counted once', () => {
+  const mk = (ts, appVersion) => ({
+    sessionId: 's1',
+    ts,
+    userAgent: UA.androidApp,
+    platform: '',
+    viewport: { w: 384, h: 700 },
+    screen: { w: 384, h: 832 },
+    appVersion,
+  })
+  const records = dedupeSessions([mk('2026-07-27T13:00:02Z', '3.2.28'), mk('2026-07-27T13:00:00Z', null)])
+  const [dev] = buildDeviceSummary(records, '3.2.28')
+  assert.equal(dev.sessions, 1, 'the duplicate log must not inflate the session count')
+  assert.equal(dev.appVersion, '3.2.28')
+  assert.equal(dev.freshness, 'current')
 })
 
 test('WEB freshness is a build-date age, not a version comparison', () => {

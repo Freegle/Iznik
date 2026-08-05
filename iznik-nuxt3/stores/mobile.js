@@ -18,7 +18,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
 import { useDebugStore } from '~/stores/debug'
-import { setAppVersion } from '~/composables/useClientLog'
+import { setAppVersion, useClientLog } from '~/composables/useClientLog'
 import api from '~/api'
 
 // Helper to get debug store safely (may not be initialized early)
@@ -139,6 +139,8 @@ export const useMobileStore = defineStore({
       }
 
       await this.getDeviceInfo(Device)
+      this.logAppSession()
+
       this.fixWindowOpen(AppLauncher)
       this.initDeepLinks(App)
       this.initTextZoom(App)
@@ -146,6 +148,30 @@ export const useMobileStore = defineStore({
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
       this.initBackButton(App)
+    },
+
+    // Log a second session_start now that we know both the real installed app
+    // version (App.getInfo above, pushed into the client logger by
+    // setAppVersion) and the Capacitor device details, so support can see which
+    // app build a member is actually running.
+    //
+    // This has to happen here rather than in the client-logging plugin: the
+    // plugin runs long before Capacitor has answered, so the version simply
+    // does not exist yet at that point. The plugin used to attempt it anyway,
+    // gated on isApp && deviceinfo, which were still false/null - so the log
+    // never fired and every app session_start in production carried
+    // app_version:null.
+    //
+    // getEnvironmentInfo() reads app_version from setAppVersion, so we pass no
+    // app_version override: the previous attempt passed MOBILE_VERSION, which
+    // is a hand-bumped web build constant, not the version on the device.
+    logAppSession() {
+      try {
+        useClientLog().sessionStart({}, this.deviceinfo)
+      } catch (e) {
+        // Logging must never break app startup.
+        dbg()?.debug('session_start app augmentation failed', e?.message)
+      }
     },
 
     async initTextZoom(App) {
