@@ -142,8 +142,8 @@
     },
     {
       "surface": "statement",
-      "sqlMatches": "/^\\s*(INSERT|REPLACE|UPDATE)\\b[\\s\\S]*\\bNOW\\(\\)/i",
-      "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(). The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+      "sqlMatches": "/^\\s*(INSERT|REPLACE|UPDATE)\\b[\\s\\S]*\\b(NOW|CURDATE|CURTIME|CURRENT_DATE|CURRENT_TIMESTAMP|UTC_TIMESTAMP|UTC_DATE)\\s*\\(/i",
+      "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
       "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
       "category": "Write storing the database clock"
     },
@@ -216,6 +216,13 @@
       "reason": "INSERT IGNORE combined WITH ON DUPLICATE KEY UPDATE. Laravel can express either alone - insertOrIgnore() and upsert() - but not both: upsert() emits 'insert ... on duplicate key update' with no IGNORE, and that is not a cosmetic loss. Once ON DUPLICATE KEY UPDATE is present the IGNORE no longer governs duplicate keys at all; what it still does is downgrade OTHER errors on the row - a foreign-key violation, a truncated value - from a failure into a warning. Dropping it turns statements that currently skip a bad row into statements that abort the surrounding work, which on ChatExpectedService's reply tracking would fail a batch run rather than lose one row.",
       "porting": "PostgreSQL: neither modifier exists in this form. ON CONFLICT DO UPDATE covers the duplicate-key half; the error-tolerance half has no equivalent and has to be decided explicitly - either accept that these rows now raise, or filter the offending cases beforehand. Worth deciding per statement rather than inheriting, since the current behaviour may itself be accidental.",
       "category": "INSERT IGNORE with ON DUPLICATE KEY UPDATE"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bUPDATE\\b[\\s\\S]*?\\b(\\w+)\\s*=\\s*\\1\\s*[+\\-]|ON\\s+DUPLICATE\\s+KEY\\s+UPDATE[\\s\\S]*?\\b(\\w+)\\s*=\\s*\\2\\s*[+\\-]/i",
+      "reason": "A counter increment expressed in SQL - 'ON DUPLICATE KEY UPDATE count = count + ?'. The value is a function OF THE EXISTING ROW, which is exactly what makes it correct under concurrency: the database reads and writes it inside one statement, so two workers incrementing the same metric row cannot lose an update. Laravel's ->increment() exists for a bare UPDATE but not inside an upsert's update clause, where the only route is DB::raw - a raw site here. Reading the current value and writing back a computed one is NOT a conversion of this: it is the lost-update bug the SQL form exists to avoid, and these are event-metric counters written from several concurrent batch paths.",
+      "porting": "PostgreSQL: 'count = count + ?' inside ON CONFLICT DO UPDATE is standard, written against the EXCLUDED pseudo-row where the new value is needed. Ports directly, with the same concurrency guarantee.",
+      "category": "SQL-side counter increment"
     }
   ]
 }

@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-05T17:34:46Z",
+    "generated": "2026-08-05T17:35:53Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 467,
+        "keep-raw": 471,
         "converted": 96,
         "excluded": 70,
-        "raw": 168,
+        "raw": 164,
         "retired": 1,
         "test-fixture": 352
     },
@@ -2076,7 +2076,7 @@
             "presentInCode": true,
             "hasParityTest": false,
             "status": "keep-raw",
-            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(). The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
             "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
             "category": "Write storing the database clock",
             "approvedDiff": ""
@@ -11466,7 +11466,7 @@
             "presentInCode": true,
             "hasParityTest": false,
             "status": "keep-raw",
-            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(). The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
             "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
             "category": "Write storing the database clock",
             "approvedDiff": ""
@@ -11498,7 +11498,7 @@
             "presentInCode": true,
             "hasParityTest": false,
             "status": "keep-raw",
-            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(). The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
             "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
             "category": "Write storing the database clock",
             "approvedDiff": ""
@@ -13414,10 +13414,10 @@
             "goldenSql": "INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) ON DUPLICATE KEY UPDATE count = count + ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+            "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
+            "category": "Write storing the database clock",
             "approvedDiff": ""
         },
         "c0ed26daf239": {
@@ -14210,10 +14210,10 @@
             "goldenSql": "INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) ON DUPLICATE KEY UPDATE count = count + 1",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+            "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
+            "category": "Write storing the database clock",
             "approvedDiff": ""
         },
         "d018a3745038": {
@@ -15827,10 +15827,10 @@
             "goldenSql": "INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) ON DUPLICATE KEY UPDATE count = count + ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(), and the rest of that family - CURDATE, CURTIME, CURRENT_TIMESTAMP, UTC_TIMESTAMP. Named as a family rather than enumerated one at a time because the first version of this rule said only NOW() and missed CURDATE() sitting in the very next statement. The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+            "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
+            "category": "Write storing the database clock",
             "approvedDiff": ""
         },
         "258a916b9e74": {
@@ -17655,10 +17655,10 @@
             "goldenSql": "INSERT INTO jobs_keywords (keyword, count) VALUES (?,1) ON DUPLICATE KEY UPDATE count = count + 1",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A counter increment expressed in SQL - 'ON DUPLICATE KEY UPDATE count = count + ?'. The value is a function OF THE EXISTING ROW, which is exactly what makes it correct under concurrency: the database reads and writes it inside one statement, so two workers incrementing the same metric row cannot lose an update. Laravel's ->increment() exists for a bare UPDATE but not inside an upsert's update clause, where the only route is DB::raw - a raw site here. Reading the current value and writing back a computed one is NOT a conversion of this: it is the lost-update bug the SQL form exists to avoid, and these are event-metric counters written from several concurrent batch paths.",
+            "porting": "PostgreSQL: 'count = count + ?' inside ON CONFLICT DO UPDATE is standard, written against the EXCLUDED pseudo-row where the new value is needed. Ports directly, with the same concurrency guarantee.",
+            "category": "SQL-side counter increment",
             "approvedDiff": ""
         },
         "fc9b72f253b8": {
