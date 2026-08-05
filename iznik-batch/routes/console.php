@@ -166,10 +166,11 @@ if (config('freegle.firstreply.enabled')) {
         ->runInBackground();
 
     // Tell a handful of likely-interested people about posts nobody has replied to. Every
-    // five minutes rather than every minute: posts have to sit quiet for a while first, so a
-    // per-minute cadence would only add load without making anything arrive sooner.
+    // minute, because the whole point is speed and a post is now scouted as soon as it is
+    // seen (scouts.quiet_minutes = 0). Cheap in steady state: a post is only ever scouted
+    // once, so each run only does real work for whatever arrived in the last minute.
     Schedule::command('firstreply:scout')
-        ->everyFiveMinutes()
+        ->everyMinute()
         ->withoutOverlapping(15)
         ->sendOutputTo(cronLog('firstreply:scout'))
         ->runInBackground();

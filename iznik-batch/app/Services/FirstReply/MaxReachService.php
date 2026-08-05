@@ -207,6 +207,72 @@ class MaxReachService
     }
 
     /**
+     * Fill in one post's max_polygon right now, from its cached schedule only.
+     *
+     * Exists because scouting fires as soon as a post is seen, and both it and
+     * the background populate pass run every minute - so a brand-new post is
+     * regularly considered for scouting a beat before its eventual reach is
+     * known, and without that nobody is eligible at all. Rather than make the
+     * post wait a minute for the next tick of a different cron, the scout path
+     * asks for it directly.
+     *
+     * Never calls the routing server: this is on the path of a job we want to
+     * stay fast, and the posts that need a routing call are exactly the ones
+     * worth leaving to the background pass. Returns false when it could not fill
+     * it, and the caller simply finds nobody eligible this time round.
+     */
+    public function populateForPost(int $msgid): bool
+    {
+        if (!$this->available()) {
+            return false;
+        }
+
+        try {
+            $row = DB::selectOne(
+                'SELECT schedule FROM rippling_reach
+                 WHERE msgid = ? AND max_polygon IS NULL AND schedule IS NOT NULL',
+                [$msgid]
+            );
+
+            if ($row === null) {
+                // Either no reach row, or it is already populated. Both are
+                // "nothing to do here" rather than a failure.
+                return false;
+            }
+
+            $ticks = json_decode((string) $row->schedule, true);
+            if (!is_array($ticks) || empty($ticks)) {
+                return false;
+            }
+
+            $final = $this->finalTick($ticks);
+            if ($final === null || empty($final['wkt'])) {
+                return false;
+            }
+
+            DB::statement(
+                'UPDATE rippling_reach
+                 SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
+                     max_cumulative_users = ?
+                 WHERE msgid = ?',
+                [
+                    (string) $final['wkt'],
+                    isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null,
+                    $msgid,
+                ]
+            );
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: could not fill max reach on demand', [
+                'msgid' => $msgid, 'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
      * Work out how long each recorded passthrough would have waited, had it been
      * held.
      *

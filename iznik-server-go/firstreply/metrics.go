@@ -55,7 +55,12 @@ type ScoutSignal struct {
 	// MedianHours is the typical gap between the mail and the reply. Slow
 	// replies still count, but a signal that only ever produces them is not
 	// doing what this feature exists to do.
-	MedianHours *float64 `json:"medianhours"`
+	//
+	// Explicit column tag: GORM derives snake_case from the field name, so this
+	// would look for median_hours and silently leave the field nil against the
+	// medianhours alias - a dash in the table that reads as "no data" rather
+	// than as a mapping mistake.
+	MedianHours *float64 `json:"medianhours" gorm:"column:medianhours"`
 }
 
 // PromptKind is how one kind of Freegle prompt performed.
@@ -86,6 +91,13 @@ type PassthroughSummary struct {
 	// passthrough that saves twenty minutes is worth much less than one that
 	// saves three days, and an average alone hides which kind these are.
 	SameDay int64 `json:"sameday"`
+	// Unsized is passthroughs the sweep looked at but could not answer: the
+	// post's schedule could not say which tick would have covered the replier.
+	// Counted from the passthrough rows themselves rather than by subtracting
+	// Sized from the daily counters - those are a different table and can
+	// legitimately diverge (retention, a counter written where the row insert
+	// failed), which would put a wrong number in front of the reader.
+	Unsized int64 `json:"unsized"`
 	// HeldReleased is holds that still happened in the window, for context on
 	// how much of the problem the passthrough is actually catching.
 	HeldReleased int64 `json:"heldreleased"`
@@ -115,6 +127,19 @@ func Metrics(c *fiber.Ctx) error {
 		end = time.Now().Format("2006-01-02 15:04:05")
 	}
 
+	// The dashboard's date filter sends bare dates. A bare end date means midnight,
+	// so a plain BETWEEN against a datetime column silently drops everything that
+	// happened TODAY - which is the most interesting part and the least likely to
+	// be questioned, because the panel still looks perfectly plausible. Widen a
+	// date-only bound to cover its whole day. The daily-counter query is unaffected
+	// (it compares DATE() to DATE()), but these row-level ones are not.
+	if len(start) == 10 {
+		start += " 00:00:00"
+	}
+	if len(end) == 10 {
+		end += " 23:59:59"
+	}
+
 	daily := []DayCount{}
 	db.Raw("SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count "+
 		"FROM firstreply_event_metrics "+
@@ -135,17 +160,20 @@ func Metrics(c *fiber.Ctx) error {
 		AvgHrs  *float64 `gorm:"column:avghrs"`
 		MaxHrs  *float64 `gorm:"column:maxhrs"`
 		SameDay int64    `gorm:"column:sameday"`
+		Unsized int64    `gorm:"column:unsized"`
 	}
 	db.Raw("SELECT COUNT(waited_hours) AS sized, "+
 		"AVG(waited_hours) AS avghrs, "+
 		"MAX(waited_hours) AS maxhrs, "+
-		"SUM(waited_hours < 24) AS sameday "+
+		"COALESCE(SUM(waited_hours < 24), 0) AS sameday, "+
+		"COALESCE(SUM(waited_hours IS NULL AND computed_at IS NOT NULL), 0) AS unsized "+
 		"FROM firstreply_passthroughs "+
 		"WHERE created_at BETWEEN ? AND ?", start, end).Scan(&sized)
 	passthrough.Sized = sized.Sized
 	passthrough.AvgHoursEarlier = sized.AvgHrs
 	passthrough.MaxHoursEarlier = sized.MaxHrs
 	passthrough.SameDay = sized.SameDay
+	passthrough.Unsized = sized.Unsized
 
 	// Holds that still happened, for context on how much of the problem the
 	// passthrough is catching.

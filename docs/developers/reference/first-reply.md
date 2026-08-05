@@ -19,6 +19,20 @@ sooner, and when there isn't one, make the wait informative rather than blank.
 Everything here ships dark behind `freegle.firstreply.*`. With the switches off, none of it
 runs and nothing else behaves differently.
 
+**It also rolls out by percentage.** `freegle.firstreply.rollout_percent` (default **0**)
+buckets on `msgid % 100`, so a post is in or out for its whole life and across **all three
+levers at once** - a post in the trial gets the passthrough, scouting and the Freegle chat, and
+one outside gets none of them. Split per lever instead and the arms overlap, so nothing could
+be attributed to anything. Raising the percentage only ever adds posts, so a trial widens
+without shuffling anyone out of the arm they were being measured in.
+
+The default of 0 means switching a lever on does nothing until a percentage is set as well.
+That is deliberate: forgetting the percentage costs a quiet run whose cron log says exactly
+why, where the opposite default would cost an unplanned full-network rollout of something that
+sends mail. Both `firstreply:scout` and `firstreply:engage` print the active percentage every
+run. The Go API reads the same `FIRSTREPLY_ROLLOUT_PERCENT` and buckets identically, because
+otherwise a post would be in the trial for an emailed reply and out of it for an in-app one.
+
 ## The two kinds of silence
 
 **Manufactured silence** is when somebody did reply and the system held it. Rippling grows a
@@ -61,9 +75,14 @@ not count.
 
 ## 2. Scouts
 
-When a post has been quiet for `quiet_minutes`, pick a handful of members who look genuinely
-likely to want THIS item and mail them now, ahead of their digest and ahead of the ripple
-reaching them. How far ahead of their digest depends on what picked them - see
+As soon as a post with no reply is seen, pick a handful of members who look genuinely likely to
+want THIS item and mail them now, ahead of their digest and ahead of the ripple reaching them.
+
+`quiet_minutes` defaults to **0**. An earlier version waited 45 minutes to avoid spending mail
+on posts about to get a reply anyway; that does not survive the timings, because whatever the
+wait saves is dwarfed by how long the scout then takes to read the mail and reply. The knob
+remains for rationing. The cron runs every minute to match, and the scout path fills in a
+brand-new post's eventual reach itself rather than waiting for the background pass. How far ahead of their digest depends on what picked them - see
 [below](#what-justifies-the-mail-decides-whether-it-may-be-an-extra-one).
 
 Two problems, only one of which is about reach. Immediate mail on a rippling post goes only to
@@ -139,13 +158,16 @@ A scout mail is byte-for-byte an immediate digest for that one post, via the sha
 preamble or footer, and nothing in it reveals how the recipient was chosen. A member should not be able to tell a
 scouted post from one the ripple reached normally, and nor should anyone they forward it to.
 
-**One policy departure worth knowing about.** `UnifiedDigestService`'s reach mailer is
-deliberately members-only, on the rule that cold-emailing someone about a community they have
-not joined is not appropriate. `wanted` and `search` scouts can be members of a neighbouring
-community, because they are not cold: they wrote down a WANTED for this item, or saved a
-search for it. `frequent`, which carries no such request, stays inside the post's own
-communities exactly as the reach mailer does. Any new signal has to clear the same bar - an
-explicit request from the member, or membership.
+**Membership is not required.** `UnifiedDigestService`'s reach mailer is members-only;
+scouting deliberately is not. Anyone inside the post's eventual reach may be told about it
+whether or not they have joined the community it was posted to, because replying joins them -
+the in-app path calls `AddMembership` as part of creating the reply, and an emailed reply is
+joined on its way in. The membership follows the interest rather than gating it. (Product
+decision, Edward, 2026-08-05.)
+
+`frequent` is still drawn from members of the post's own communities, but that is a **cost**
+bound, not a permission one: "every frequent replier in Britain" is not a set worth building in
+order to discard 99.9% of it. It widens on its own as the post ripples into more communities.
 
 ## 3. The Freegle chat
 
@@ -164,12 +186,61 @@ message, so email, push, mod review and search render something sensible knowing
 prompts. A side table rather than columns on `chat_messages` because that table is one of the
 largest here and a vanishing fraction of rows will ever be prompts.
 
+### It talks about a member's posts as a set
+
+**The unit is the member, not the post** - the same shape as bulk freegling, where a clearance
+is one conversation about many items rather than one conversation per item. `chat_prompts.msgids`
+holds the set a question covers, and answering applies to all of them.
+
+Per-post messaging was tried first and is wrong. Somebody clearing a house has six posts going;
+a question about each produces a thread where every message opens "still nothing on this one"
+about a different thing, half of them concern items that have since gone, and the member has to
+hold the mapping in their head. Grouped, the same information is one message that is actually
+useful:
+
+- *"your 3 outstanding posts have been looked at 12 times between them"* - the number that
+  means something. Per post it is three separately discouraging small numbers.
+- *"Still nothing on 4 of your offers. Could you drop things off?"* - one question, four posts
+  patched by one answer.
+
+Each question covers only the posts it applies to (photo covers the ones without photos,
+delivery covers the OFFERs), and the card lists them - collapsing past three, because a house
+clearance would otherwise be a wall of cards. That is also why the wording never names an item:
+the cards say which posts, so the text does not have to, which disposes of the fact that an
+item name reads fine as "your dining chairs" and badly as whatever someone actually typed.
+
 | Kind | Asked when | Answering does |
 |---|---|---|
-| `photo` | 1.5h, no attachment | records intent; the button opens the post |
-| `delivery` | 3h, OFFER without `deliverypossible` | sets `messages.deliverypossible` |
-| `views` | 8h, once `views_min` people have opened it | nothing - it is information |
-| `deadline` | 24h, no deadline set | sets `messages.deadline` |
+| `photo` | 1.5h, posts with no attachment | records intent; the button opens the posts |
+| `delivery` | 3h, OFFERs without `deliverypossible` | sets `deliverypossible` on all of them |
+| `views` | 8h, once the total across their posts passes `views_min` | nothing - it is information |
+| `deadline` | 24h, posts with no deadline | sets `deadline` on all of them, from a date picker |
+
+Cadence follows the same unit: a member gets a given question at most once per
+`kind_cooldown_days` (default 14) however many posts they have, so volume is bounded by the
+member rather than by how much they are giving away. Due-ness is judged on their **oldest**
+silent post, so posting something new cannot reset a clock they have already earned.
+
+`deadline` takes a **date picker**, not fixed timescales: "by this weekend" is wrong for
+somebody moving house on the 14th, and the poster already knows their own date. The server
+validates by shape and range (a bare date, today or later, within a year) rather than against
+the option list, and still accepts the older named timescales so prompts sent before the picker
+remain answerable.
+
+**Questions that stop applying are retired.** A prompt is expired once **all** of its posts have
+stopped being silent - replied to, given an outcome, or deleted. While any of them is still
+waiting the question still means something, and answering applies to whichever remain. A live
+"could you deliver?" under items collected yesterday is not clutter, it is wrong: answering it
+would edit finished posts. They expire rather than vanish so the thread still reads back in
+order, and an already-answered prompt is never rewritten.
+
+### The chat header
+
+A Freegle chat gets its own header (`chat.systemchat`, set by the API when the other party is
+the Freegle account). Rating, blocking and reporting are dropped, because almost nothing here is
+a conversation and none of those verbs mean anything pointed at Freegle. The "these are
+automated" note lives there **once** rather than on every message, and Hide is offered plainly -
+as is the settings toggle that stops them entirely.
 
 `delivery` and `deadline` were modals fired the instant someone finished posting.
 `DeliveryAskModal.vue` and `DeadlineAskModal.vue` are still in the tree and neither is wired
@@ -202,15 +273,19 @@ The documented failure mode for helper bots in this space is Olio's: messages th
 told apart from a real reply and cannot be turned off, which trains people to ignore the
 notification that matters. Against that:
 
-- `user_gap_hours` is per MEMBER, not per post, so clearing out a house does not start ten
-  conversations at once.
-- `max_per_post` caps how much any one post can generate.
-- `users.settings.freeglechat = false` stops them entirely.
-- Prompts expire (`expiry_days`) and stop offering buttons, but still render, because a
-  conversation with holes in it is more confusing than a stale question.
+- **Grouping is the main control.** One message covers everything a member has outstanding, so
+  clearing out a house produces the same volume as posting one thing.
+- `kind_cooldown_days` bounds how often the same question can come back, per member.
+- `user_gap_hours` is a backstop on top of that.
+- `users.settings.freeglechat = false` stops them entirely, from Settings.
+- The chat header says once that these are automated and that replies there are not read - it
+  is not repeated on every message - and offers Hide.
+- Prompts expire (`expiry_days`, or sooner once their posts are no longer waiting) and stop
+  offering buttons, but still render, because a conversation with holes in it is more confusing
+  than a stale question.
 
 Freegle chat messages DO count towards the unread badge and DO push, like any other message.
-That is a deliberate product decision: these are messages to you, about your post, and burying
+That is a deliberate product decision: these are messages to you, about your posts, and burying
 them in a quiet channel would mean nobody ever answers them.
 
 ## Schema
@@ -232,7 +307,7 @@ All three are registered in `iznik-batch/routes/console.php` inside
 | Command | Cadence | What |
 |---|---|---|
 | `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
-| `firstreply:scout` | every 5 min | attributes replies to earlier scouts, then picks and mails new ones |
+| `firstreply:scout` | every minute | attributes replies to earlier scouts, then picks and mails new ones |
 | `firstreply:engage` | every 5 min | sends the next due prompt |
 
 Each takes `--dry-run`.
@@ -241,6 +316,8 @@ Each takes `--dry-run`.
 
 `FIRSTREPLY_ENABLED` is the master switch; `FIRSTREPLY_PASSTHROUGH_ENABLED`,
 `FIRSTREPLY_SCOUTS_ENABLED` and `FIRSTREPLY_CHAT_ENABLED` gate the three levers independently.
+**`FIRSTREPLY_ROLLOUT_PERCENT` decides how much of the network sees any of it, and defaults to
+0 - set it or nothing happens.**
 The Go API needs `FIRSTREPLY_ENABLED` and `FIRSTREPLY_PASSTHROUGH_ENABLED` too, since the
 in-app reply path is enforced there.
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
@@ -25,6 +26,7 @@ func ensureFirstReplyTables(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS chat_prompts (
 		chatmsgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		msgid BIGINT UNSIGNED NULL,
+		msgids JSON NULL,
 		kind VARCHAR(32) NOT NULL,
 		options JSON NULL,
 		answer VARCHAR(64) NULL,
@@ -90,6 +92,8 @@ func TestFirstReplyPassthrough_FirstReplyInsideEventualReach(t *testing.T) {
 
 	t.Setenv("FIRSTREPLY_ENABLED", "true")
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
@@ -109,6 +113,8 @@ func TestFirstReplyPassthrough_SecondReplyIsStillHeld(t *testing.T) {
 
 	t.Setenv("FIRSTREPLY_ENABLED", "true")
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
@@ -136,6 +142,8 @@ func TestFirstReplyPassthrough_OutsideEventualReachIsHeld(t *testing.T) {
 
 	t.Setenv("FIRSTREPLY_ENABLED", "true")
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
@@ -167,6 +175,8 @@ func TestFirstReplyPassthrough_DisabledAndUnpopulatedBothHold(t *testing.T) {
 	// every row is in until the backfill drains. Must also be unchanged.
 	t.Setenv("FIRSTREPLY_ENABLED", "true")
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 	seedRipplingReach(t, msgID, false)
 	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 }
@@ -186,9 +196,9 @@ func seedPrompt(t *testing.T, chatID uint64, freegleID uint64, msgID uint64, kin
 	var chatMsgID uint64
 	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&chatMsgID)
 
-	db.Exec("INSERT INTO chat_prompts (chatmsgid, msgid, kind, options, expires_at, created_at) "+
-		"VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())",
-		chatMsgID, msgID, kind, options)
+	db.Exec("INSERT INTO chat_prompts (chatmsgid, msgid, msgids, kind, options, expires_at, created_at) "+
+		"VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())",
+		chatMsgID, msgID, fmt.Sprintf("[%d]", msgID), kind, options)
 
 	return chatMsgID
 }
@@ -410,4 +420,101 @@ func TestFetchChatMessages_PromptIsServedWithItsOptions(t *testing.T) {
 	}
 
 	assert.True(t, found, "the prompt message should be in the fetch")
+}
+
+// TestAnswerChatPrompt_AcceptsAPickedDate: the deadline prompt takes a date
+// rather than fixed timescales, so the answer cannot be checked against a list.
+func TestAnswerChatPrompt_AcceptsAPickedDate(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpromptpick")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: picked date", 51.5, -0.1)
+
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	options := `[{"value":"date","label":"Pick a date","input":"date"},{"value":"norush","label":"There's no rush"}]`
+	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
+	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+
+	_, token := CreateTestSession(t, posterID)
+	want := time.Now().AddDate(0, 0, 9).Format("2006-01-02")
+
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/chat/%d/message/%d/prompt?jwt=%s", chatID, chatMsgID, token),
+		strings.NewReader(`{"answer":"`+want+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var deadline string
+	db.Raw("SELECT COALESCE(DATE_FORMAT(deadline, '%Y-%m-%d'), '') FROM messages WHERE id = ?", msgID).Scan(&deadline)
+	assert.Equal(t, want, deadline, "the date the poster picked should be the deadline")
+}
+
+// A date in the past, or absurdly far ahead, is not a date the poster meant.
+func TestAnswerChatPrompt_RejectsAnOutOfRangeDate(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpromptbaddate")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: bad date", 51.5, -0.1)
+
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	options := `[{"value":"date","label":"Pick a date","input":"date"}]`
+	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
+	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+
+	_, token := CreateTestSession(t, posterID)
+	past := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/chat/%d/message/%d/prompt?jwt=%s", chatID, chatMsgID, token),
+		strings.NewReader(`{"answer":"`+past+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+// The rollout split has to agree with the batch side's msgid % 100 bucketing, or
+// a post would be in the trial for an emailed reply and out of it for an in-app
+// one - which would make the arms meaningless.
+func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frrollout")
+
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: rollout", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	seedRipplingReach(t, msgID, true)
+
+	// Default is nobody, so enabling the lever alone changes nothing.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "0")
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9),
+		"a zero rollout must select nothing, not everything")
+
+	// Full rollout includes every post.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+	assert.True(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+
+	// A partial rollout agrees with msgid % 100, the same bucket the batch app uses.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "50")
+	assert.Equal(t, msgID%100 < 50, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 }

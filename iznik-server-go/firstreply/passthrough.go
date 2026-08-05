@@ -3,6 +3,7 @@ package firstreply
 import (
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
@@ -41,6 +42,41 @@ func envTrue(name string) bool {
 	return v == "true" || v == "1"
 }
 
+// rolloutPercent is the share of POSTS in the trial, 0-100, matching
+// freegle.firstreply.rollout_percent on the batch side. Both doors have to bucket
+// posts identically or a post would be in the trial for an emailed reply and out
+// of it for an in-app one, which would make the arms meaningless.
+//
+// Defaults to 0 for the same reason the batch side does: forgetting to set it
+// costs a quiet run, where the opposite default costs an unplanned full rollout.
+func rolloutPercent() int {
+	if v := os.Getenv("FIRSTREPLY_ROLLOUT_PERCENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n < 0 {
+				return 0
+			}
+			if n > 100 {
+				return 100
+			}
+			return n
+		}
+	}
+	return 0
+}
+
+// inRollout buckets on msgid % 100, exactly as App\Services\FirstReply\Rollout
+// does, so a post is in or out for its whole life and on both paths.
+func inRollout(msgid uint64) bool {
+	p := rolloutPercent()
+	if p >= 100 {
+		return true
+	}
+	if p <= 0 {
+		return false
+	}
+	return int(msgid%100) < p
+}
+
 // maxExistingRepliers is how many distinct repliers a post may already have and
 // still get the passthrough. Kept in step with
 // freegle.firstreply.passthrough.max_existing_repliers; 1 means only the very
@@ -64,6 +100,12 @@ func maxExistingRepliers() int {
 // being wrong the other way would deliver a reply the reach never covers.
 func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	if !Enabled() {
+		return false
+	}
+
+	// Trial arm: a post outside the rollout behaves exactly as it did before any
+	// of this existed, which is what makes it a usable control.
+	if !inRollout(refmsgid) {
 		return false
 	}
 
@@ -97,4 +139,33 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	}
 
 	return within == 1
+}
+
+// SystemUserID is the id of the Freegle account, resolved once from its
+// well-known address and cached for the life of the process.
+//
+// Exists so the client can be told that a chat is with Freegle rather than with
+// a person. That matters for the header: most of what Freegle says is not a
+// conversation, so offering to rate, block or report it is nonsense, and the
+// "this is automated" note belongs in the header once rather than on every
+// single message.
+//
+// Returns 0 when the account does not exist yet (it is created lazily by the
+// batch app on first use), which callers treat as "no chat is a Freegle chat".
+var systemUserID uint64
+var systemUserOnce sync.Once
+
+func SystemUserID(db *gorm.DB) uint64 {
+	systemUserOnce.Do(func() {
+		email := os.Getenv("FIRSTREPLY_SYSTEM_USER_EMAIL")
+		if email == "" {
+			email = "freegle@ilovefreegle.org"
+		}
+
+		var id uint64
+		db.Raw("SELECT userid FROM users_emails WHERE email = ? LIMIT 1", email).Scan(&id)
+		systemUserID = id
+	})
+
+	return systemUserID
 }

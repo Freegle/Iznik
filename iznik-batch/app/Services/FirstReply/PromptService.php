@@ -60,9 +60,16 @@ class PromptService
      * room's latestmessage so it appears in the chat list, queues the push, and
      * ChatNotificationService emails it. Nothing here duplicates any of that.
      *
+     * $msgids is the SET of posts the answer applies to. Freegle talks about a
+     * member's outstanding posts together, the way a clearance treats its items,
+     * so one question usually covers several. The chat message's refmsgid is set
+     * only when there is exactly one - that drives the single item card in the
+     * notification email, and there is no sensible single card for six.
+     *
      * @param array<int,array{value:string,label:string,variant?:string,action?:string}> $options
+     * @param int[] $msgids
      */
-    public function send(int $userId, string $kind, string $text, array $options = [], ?int $msgid = null): ?int
+    public function send(int $userId, string $kind, string $text, array $options = [], array $msgids = []): ?int
     {
         $freegleId = $this->freegle->userId();
         if ($freegleId === null || $freegleId === $userId) {
@@ -76,14 +83,17 @@ class PromptService
 
         $expiryDays = max(1, (int) config('freegle.firstreply.chat.expiry_days', 7));
 
+        $msgids = array_values(array_unique(array_map('intval', $msgids)));
+        $single = count($msgids) === 1 ? $msgids[0] : null;
+
         try {
-            return DB::transaction(function () use ($chatId, $freegleId, $kind, $text, $options, $msgid, $expiryDays) {
+            return DB::transaction(function () use ($chatId, $freegleId, $kind, $text, $options, $msgids, $single, $expiryDays) {
                 $chatMsgId = DB::table('chat_messages')->insertGetId([
                     'chatid' => $chatId,
                     'userid' => $freegleId,
                     'message' => $text,
                     'type' => ChatMessage::TYPE_PROMPT,
-                    'refmsgid' => $msgid,
+                    'refmsgid' => $single,
                     'date' => now(),
                     'processingrequired' => 1,
                     // Not sent from a browser or app - same as the tryst reminder.
@@ -92,7 +102,8 @@ class PromptService
 
                 DB::table('chat_prompts')->insert([
                     'chatmsgid' => $chatMsgId,
-                    'msgid' => $msgid,
+                    'msgid' => $single,
+                    'msgids' => json_encode($msgids),
                     'kind' => $kind,
                     'options' => json_encode(array_values($options)),
                     'expires_at' => now()->addDays($expiryDays),

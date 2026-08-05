@@ -35,6 +35,8 @@ class FirstReplyPassthroughTest extends TestCase
 
         config([
             'freegle.firstreply.enabled' => true,
+            // Whole-network arm: the rollout percentage is exercised separately.
+            'freegle.firstreply.rollout_percent' => 100,
             'freegle.firstreply.passthrough.enabled' => true,
             'freegle.firstreply.passthrough.max_existing_repliers' => 1,
         ]);

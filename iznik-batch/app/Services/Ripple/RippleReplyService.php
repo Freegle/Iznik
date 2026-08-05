@@ -5,6 +5,7 @@ namespace App\Services\Ripple;
 use App\Models\ChatMessage;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FirstReply\Metrics;
+use App\Services\FirstReply\Rollout;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -109,6 +110,12 @@ class RippleReplyService
     public function qualifiesForFirstReplyPassthrough(int $msgid, float $lat, float $lng): bool
     {
         if (!config('freegle.firstreply.enabled') || !config('freegle.firstreply.passthrough.enabled')) {
+            return false;
+        }
+
+        // Trial arm: a post outside the rollout behaves exactly as it did before
+        // any of this existed, which is what makes it a usable control.
+        if (!Rollout::includes($msgid)) {
             return false;
         }
 

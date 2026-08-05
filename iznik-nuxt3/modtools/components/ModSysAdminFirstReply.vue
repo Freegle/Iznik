@@ -211,10 +211,11 @@ const passthroughTotal = computed(() =>
 
 const passthroughUsed = computed(() => passthroughTotal.value > 0)
 
-// Sized covers both doors, so anything unsized is a passthrough whose saving we
-// could not work out - worth showing rather than quietly averaging over.
+// Counted server-side from the passthrough rows themselves, not by subtracting
+// sized from the daily counters: those are a different table and can legitimately
+// diverge, which would put a wrong number in front of the reader.
 const unsizedPassthroughs = computed(() =>
-  stats.value ? Math.max(0, passthroughTotal.value - stats.value.passthrough.sized) : 0
+  stats.value ? stats.value.passthrough.unsized : 0
 )
 
 const SIGNAL_LABELS = {

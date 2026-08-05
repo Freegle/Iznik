@@ -596,6 +596,16 @@ return [
         // Master switch. Off means none of the below runs, whatever they say.
         'enabled' => filter_var(env('FIRSTREPLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
 
+        // Share of POSTS in the trial, 0-100. A post is in or out for its whole
+        // life and across all three levers at once, so the arms never overlap and
+        // an effect can actually be attributed. See App\Services\FirstReply\Rollout.
+        //
+        // DEFAULTS TO 0: switching a lever on does nothing until a percentage is
+        // set too. Forgetting the percentage then costs a quiet run that says so
+        // in the cron log, where the opposite default would cost an unplanned
+        // full-network rollout of something that sends mail.
+        'rollout_percent' => (int) env('FIRSTREPLY_ROLLOUT_PERCENT', 0),
+
         // Let a post's first reply through even when the replier is outside the
         // reach the post has RIGHT NOW, as long as they are inside the reach it
         // will eventually have. Holding them buys nothing - they were always
@@ -614,8 +624,18 @@ return [
         'scouts' => [
             'enabled' => filter_var(env('FIRSTREPLY_SCOUTS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
             // How long a post gets to attract a reply on its own before we help.
-            // Zero would fire on posts that were about to get a reply anyway.
-            'quiet_minutes' => (int) env('FIRSTREPLY_SCOUTS_QUIET_MINUTES', 45),
+            // ZERO: scout as soon as the post is seen.
+            //
+            // An earlier version waited 45 minutes on the theory that it would
+            // avoid spending mail on posts that were about to get a reply anyway.
+            // That theory does not survive contact with the timings: whatever we
+            // save by holding back is dwarfed by how long the scout then takes to
+            // read their mail and reply. The wait removed nothing from the mail
+            // bill and added itself to every reply.
+            //
+            // Kept as a knob rather than deleted, because it is the natural lever
+            // if scout mail ever needs rationing.
+            'quiet_minutes' => (int) env('FIRSTREPLY_SCOUTS_QUIET_MINUTES', 0),
             // Give up after this: a day-old silent post is a job for reposting and
             // better post quality, not for more notifications.
             'max_age_hours' => (int) env('FIRSTREPLY_SCOUTS_MAX_AGE_HOURS', 24),
@@ -646,12 +666,15 @@ return [
             'system_user_email' => env('FIRSTREPLY_SYSTEM_USER_EMAIL', 'freegle@ilovefreegle.org'),
             'system_user_name' => env('FIRSTREPLY_SYSTEM_USER_NAME', 'Freegle'),
 
-            // Minimum gap between two Freegle messages to the SAME member, across
-            // all their posts. Without this, someone who posts five things in an
-            // evening gets five conversations started at once.
+            // Minimum gap between two Freegle messages to the same member. With
+            // grouping this is a backstop rather than the main control - one
+            // message already covers everything they have outstanding.
             'user_gap_hours' => (int) env('FIRSTREPLY_CHAT_USER_GAP_HOURS', 6),
-            // Most prompts one post will ever generate.
-            'max_per_post' => (int) env('FIRSTREPLY_CHAT_MAX_PER_POST', 4),
+            // How long before the same question can be asked again. The unit is
+            // the MEMBER, not the post: one message covers everything they have
+            // outstanding, so "have they been asked this lately" is a question
+            // about them. Long, because these are nudges, not a conversation.
+            'kind_cooldown_days' => (int) env('FIRSTREPLY_CHAT_KIND_COOLDOWN_DAYS', 14),
             // Prompts stop being answerable after this - a week-old "could you
             // deliver?" on a long-gone item should not still have live buttons.
             'expiry_days' => (int) env('FIRSTREPLY_CHAT_EXPIRY_DAYS', 7),

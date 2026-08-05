@@ -3,6 +3,7 @@
 namespace App\Console\Commands\FirstReply;
 
 use App\Services\FirstReply\ScoutService;
+use App\Services\FirstReply\Rollout;
 use Illuminate\Console\Command;
 
 /**
@@ -22,6 +23,8 @@ class ScoutCommand extends Command
     public function handle(ScoutService $service): int
     {
         $dryRun = (bool) $this->option('dry-run');
+
+        $this->info(Rollout::describe());
 
         // Attribute first, so a scout mailed on the previous run is credited
         // before this run reports. Cheap, and the only thing that says whether

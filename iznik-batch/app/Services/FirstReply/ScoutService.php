@@ -73,16 +73,18 @@ use Illuminate\Support\Facades\Schema;
  * mailer already walks, because "every frequent replier in Britain" is not a set
  * worth building to then throw 99.9% of away.
  *
- * NOTE, and read this before widening anything: UnifiedDigestService's reach
- * mailer is deliberately members-only, on the rule that cold-emailing somebody
- * about a community they have not joined is not appropriate. The wanted and
- * search signals here CAN mail a member of a neighbouring community, because
- * they are not cold: that member has written down a WANTED for this item, or
- * saved a search for it. They asked to be told. The frequent signal, which
- * carries no such request, stays inside the post's own communities exactly as
- * the reach mailer does. Any new signal has to clear the same bar - an explicit
- * request from the member, or membership - and if it cannot, it belongs inside
- * the post's own groups.
+ * Membership is NOT required. UnifiedDigestService's reach mailer is
+ * members-only, and scouting deliberately is not: anyone inside the post's
+ * eventual reach may be told about it, whether or not they have joined the
+ * community it was posted to. Replying joins them - the in-app path calls
+ * AddMembership as part of creating the reply, and an emailed reply is joined on
+ * its way in - so the membership follows the interest instead of gating it.
+ * (Product decision, Edward, 2026-08-05.)
+ *
+ * The frequent signal is still drawn from members of the post's own communities,
+ * but that is a COST bound rather than a permission one: "every frequent replier
+ * in Britain" is not a set worth building in order to discard 99.9% of it. It
+ * widens on its own as the post ripples into more communities.
  */
 class ScoutService
 {
@@ -115,7 +117,7 @@ class ScoutService
     }
 
     /**
-     * One pass over posts that have been quiet long enough to be worth helping.
+     * One pass over live posts with no reply.
      *
      * @return array{considered:int, posts_scouted:int, mailed:int}
      */
@@ -194,6 +196,14 @@ class ScoutService
     {
         $msgid = (int) $post->msgid;
         $keywords = $this->keywords((string) ($post->subject ?? ''));
+
+        // Scouting fires as soon as a post is seen, which can be a beat before the
+        // background pass has worked out the post's eventual reach - and without
+        // that nobody is eligible. Ask for it directly rather than making the post
+        // wait a minute for a different cron. Schedule-only, so it costs a JSON
+        // decode and an UPDATE; posts that need a routing call are left to the
+        // background pass and simply get no scouts this time round.
+        $this->maxReach->populateForPost($msgid);
 
         $candidates = $this->candidates($post, $keywords, $cfg);
         if (empty($candidates)) {
@@ -309,12 +319,18 @@ class ScoutService
     }
 
     /**
-     * Posts that have been up long enough to have attracted a reply on their own,
-     * young enough for a nudge to still help, and have no reply.
+     * Live posts with no reply, young enough for a nudge to still help.
      *
-     * quiet_minutes is not a formality: firing the instant a post lands would
-     * spend scout mails on posts that were about to get a reply anyway, and would
-     * make the whole thing look like a worse digest.
+     * quiet_minutes defaults to 0, so a post is scouted on the first run after it
+     * appears. Holding back was tried and dropped: the point of scouting is speed,
+     * and whatever a delay saves in mail is dwarfed by how long the scout then
+     * takes to read it and reply. The wait removed nothing and added itself to
+     * every reply.
+     *
+     * A post that yields no scouts writes no ledger row, so it stays a candidate
+     * and is reconsidered next run. That matters at zero delay, because a
+     * brand-new post can be seen here a minute or two before firstreply:maxreach
+     * has populated its max_polygon - without which nobody is eligible at all.
      *
      * @return \Illuminate\Support\Collection<int,object>
      */
@@ -342,7 +358,8 @@ class ScoutService
                    )
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs WHERE fs.msgid = ms.msgid
-                   )
+                   )"
+             . Rollout::sqlFilter('ms.msgid') . "
              ORDER BY ms.arrival ASC
              LIMIT 200",
             [$quiet, $maxAge]

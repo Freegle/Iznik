@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * What Freegle says to someone whose post nobody has answered.
+ * What Freegle says to someone whose posts nobody has answered.
  *
  * 44% of rippled posts get no reply at all, and from the poster's side a post
  * that is quietly working and a post that has failed look exactly the same:
@@ -15,25 +15,42 @@ use Illuminate\Support\Facades\Log;
  * by inventing activity - a fake reply from a fake account would be a lie, and
  * would waste the poster's time on a handover that never comes - so everything
  * here is either true information the poster cannot currently see, or a question
- * whose answer genuinely improves the post's chances.
+ * whose answer genuinely improves their posts' chances.
+ *
+ * **It talks about a member's outstanding posts as a SET, not one at a time.**
+ * That is the whole shape of this, and it follows bulk freegling: a clearance is
+ * one conversation about many items, not one conversation per item. So the unit
+ * here is the member, not the post.
+ *
+ * Per-post messaging was tried and is wrong. Somebody clearing a house has six
+ * posts going; drip-feeding a question about each produces a thread where every
+ * message opens "still nothing on this one" about a different thing, half of them
+ * are about items that have since gone, and the member has to hold the mapping in
+ * their head. Grouped, the same information becomes one message that is actually
+ * useful: "your 6 outstanding posts have been looked at 47 times between them",
+ * and one "could you deliver?" covering all of them.
  *
  * The four things, in the order they become due:
  *
- *  photo    - a post with no picture is much harder to want. Asked early, while
+ *  photo    - posts with no picture are much harder to want. Asked early, while
  *             editing still feels like part of posting.
  *  delivery - the biggest single lever a poster controls. Someone who cannot
- *             collect is not a lost cause if the poster will drop it off.
+ *             collect is not a lost cause if the poster will drop things off.
  *  views    - "people ARE looking" is the reassurance that stops a poster
  *             concluding the site is broken. Only sent once enough people have
  *             looked; "1 person viewed this" is worse than saying nothing.
- *  deadline - what turns "someday" into "this weekend" for everyone who sees it.
+ *  deadline - what turns "someday" into a date for everyone who sees them.
  *             Last, because it only matters once the easy wins have not worked.
  *
- * One prompt per post per run, at most a handful per post ever, and never two to
- * the same member within the configured gap however many posts they have. The
- * failure mode being designed against is well documented elsewhere: a helper bot
- * that cannot be told apart from a real reply, and cannot be turned off, trains
- * people to ignore the notification that matters.
+ * Each message covers only the posts its question actually applies to - photo
+ * covers the ones with no photo, delivery covers the OFFERs - and answering
+ * applies to exactly those. A member gets a given question at most once per
+ * cooldown however many posts they have, so the volume is bounded by the member
+ * rather than by how much they are giving away.
+ *
+ * The failure mode being designed against is well documented elsewhere: a helper
+ * bot that cannot be told apart from a real reply, and cannot be turned off,
+ * trains people to ignore the notification that matters.
  */
 class EngagementService
 {
@@ -61,22 +78,36 @@ class EngagementService
         $maxAge = max(1, (int) ($cfg['max_age_hours'] ?? 72));
         $limit = max(1, (int) ($cfg['batch_limit'] ?? 200));
 
-        foreach ($this->silentPosts($maxAge, $limit) as $post) {
+        // Before saying anything new, stop offering answers to questions that
+        // have stopped applying. A "could you deliver?" sitting there with live
+        // buttons under posts that were all collected yesterday is not merely
+        // clutter - it is wrong, and answering it edits finished posts.
+        $stats['retired'] = $dryRun ? 0 : $this->retireStalePrompts();
+
+        foreach ($this->membersWithSilentPosts($maxAge, $limit) as $userId) {
             $stats['considered']++;
 
             try {
-                $kind = $this->dueKind($post, $cfg);
-                if ($kind === null) {
+                $posts = $this->silentPostsFor($userId, $maxAge);
+                if (empty($posts)) {
                     $stats['skipped']++;
                     continue;
                 }
 
-                if (!$this->userIsAvailable((int) $post->fromuser, $cfg)) {
+                if (!$this->userIsAvailable($userId, $cfg)) {
                     $stats['skipped']++;
                     continue;
                 }
 
-                $prompt = $this->compose($kind, $post);
+                $due = $this->dueKind($userId, $posts, $cfg);
+                if ($due === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
+
+                [$kind, $applicable] = $due;
+
+                $prompt = $this->compose($kind, $applicable);
                 if ($prompt === null) {
                     $stats['skipped']++;
                     continue;
@@ -88,29 +119,27 @@ class EngagementService
                     continue;
                 }
 
-                // Claim the (post, kind) slot BEFORE sending. The unique key is what
-                // makes the whole engine idempotent, and claiming after sending would
-                // leave a window where a second worker sends the same question again.
-                if (!$this->claim((int) $post->msgid, (int) $post->fromuser, $kind)) {
-                    $stats['skipped']++;
-                    continue;
-                }
+                $msgids = array_map(static fn ($p) => (int) $p->msgid, $applicable);
 
                 $sent = $this->prompts->send(
-                    (int) $post->fromuser,
+                    $userId,
                     $kind,
                     $prompt['text'],
                     $prompt['options'],
-                    (int) $post->msgid
+                    $msgids
                 );
 
                 if ($sent === null) {
-                    // Give the slot back so a transient failure is retried rather
-                    // than silently costing the poster the question.
-                    $this->release((int) $post->msgid, $kind);
                     $stats['skipped']++;
                     continue;
                 }
+
+                DB::table('firstreply_prompts_sent')->insert([
+                    'userid' => $userId,
+                    'kind' => $kind,
+                    'postcount' => count($msgids),
+                    'sent_at' => now(),
+                ]);
 
                 $this->metrics->record('prompt_sent');
                 $this->metrics->record('prompt_sent_' . $kind);
@@ -118,8 +147,8 @@ class EngagementService
                 $stats[$kind] = ($stats[$kind] ?? 0) + 1;
             } catch (\Throwable $e) {
                 $stats['skipped']++;
-                Log::warning('firstreply: engagement failed for post', [
-                    'msgid' => $post->msgid ?? null,
+                Log::warning('firstreply: engagement failed for member', [
+                    'userid' => $userId,
                     'error' => $e->getMessage(),
                 ]);
             }
@@ -129,21 +158,14 @@ class EngagementService
     }
 
     /**
-     * Live posts with no reply yet.
+     * Members who have at least one live post with no reply, oldest waiter first.
      *
-     * messages_spatial is already "approved, open, not taken" so it does the
-     * heavy lifting; the anti-join is against any Interested reply from someone
-     * other than the poster. Held replies count as replies on purpose: the poster
-     * has an answer coming, so nudging them about a silent post would be wrong.
-     *
-     * @return \Illuminate\Support\Collection<int,object>
+     * @return int[]
      */
-    private function silentPosts(int $maxAgeHours, int $limit)
+    private function membersWithSilentPosts(int $maxAgeHours, int $limit): array
     {
-        return collect(DB::select(
-            "SELECT ms.msgid AS msgid, ms.arrival AS arrival, ms.msgtype AS msgtype,
-                    m.fromuser AS fromuser, m.subject AS subject,
-                    m.deliverypossible AS deliverypossible, m.deadline AS deadline
+        return array_map('intval', collect(DB::select(
+            "SELECT m.fromuser AS userid, MIN(ms.arrival) AS oldest
              FROM messages_spatial ms
              JOIN messages m ON m.id = ms.msgid
              JOIN users u ON u.id = m.fromuser
@@ -158,100 +180,175 @@ class EngagementService
                    )
                AND NOT EXISTS (
                      SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = ms.msgid
-                   )
-             ORDER BY ms.arrival ASC
-             LIMIT ?",
+                   )"
+             . Rollout::sqlFilter('ms.msgid') . '
+             GROUP BY m.fromuser
+             ORDER BY oldest ASC
+             LIMIT ?',
             [$maxAgeHours, $limit]
-        ));
+        ))->pluck('userid')->all());
     }
 
     /**
-     * Which question, if any, is due for this post. The first one whose hour has
-     * passed, that applies, and that has not been asked wins - so a post that has
-     * been quiet for a day works through them in order rather than getting all
-     * four at once.
+     * One member's silent posts, oldest first, with everything the questions need
+     * to know about them.
      *
-     * @param array<string,mixed> $cfg
+     * @return array<int,object>
      */
-    private function dueKind(object $post, array $cfg): ?string
+    private function silentPostsFor(int $userId, int $maxAgeHours): array
     {
-        $ageHours = $this->ageHours($post);
-        $schedule = (array) ($cfg['schedule'] ?? []);
+        return DB::select(
+            "SELECT ms.msgid AS msgid, ms.arrival AS arrival, ms.msgtype AS msgtype,
+                    m.deliverypossible AS deliverypossible, m.deadline AS deadline,
+                    EXISTS (SELECT 1 FROM messages_attachments a WHERE a.msgid = ms.msgid) AS hasphoto,
+                    (SELECT COUNT(*) FROM messages_likes l
+                      WHERE l.msgid = ms.msgid AND l.type = 'View'
+                        AND l.pageview = 1 AND l.userid <> m.fromuser) AS views
+             FROM messages_spatial ms
+             JOIN messages m ON m.id = ms.msgid
+             WHERE m.fromuser = ?
+               AND ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
+               AND m.deleted IS NULL
+               AND NOT EXISTS (
+                     SELECT 1 FROM chat_messages cm
+                     WHERE cm.refmsgid = ms.msgid
+                       AND cm.type = 'Interested'
+                       AND cm.userid <> m.fromuser
+                   )
+               AND NOT EXISTS (
+                     SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = ms.msgid
+                   )"
+             . Rollout::sqlFilter('ms.msgid') . '
+             ORDER BY ms.arrival ASC',
+            [$userId, $maxAgeHours]
+        );
+    }
 
-        $already = DB::table('firstreply_prompts_sent')
-            ->where('msgid', $post->msgid)
+    /**
+     * Which question is due for this member, and which of their posts it applies
+     * to. Null when none is.
+     *
+     * Due-ness is judged on their OLDEST silent post: that is the one that has
+     * been waiting, and it stops someone who posts something new every hour from
+     * resetting the clock on questions they have already earned.
+     *
+     * @param array<int,object> $posts
+     * @param array<string,mixed> $cfg
+     * @return array{0:string, 1:array<int,object>}|null
+     */
+    private function dueKind(int $userId, array $posts, array $cfg): ?array
+    {
+        $schedule = (array) ($cfg['schedule'] ?? []);
+        $cooldownDays = max(1, (int) ($cfg['kind_cooldown_days'] ?? 14));
+
+        $oldestAge = $this->ageHours($posts[0]);
+
+        $recent = DB::table('firstreply_prompts_sent')
+            ->where('userid', $userId)
+            ->where('sent_at', '>', now()->subDays($cooldownDays))
             ->pluck('kind')
             ->all();
 
-        if (count($already) >= (int) ($cfg['max_per_post'] ?? 4)) {
-            return null;
-        }
-
         // Config order is the priority order.
         foreach ($schedule as $kind => $dueAfter) {
-            if (in_array($kind, $already, true)) {
+            if (in_array($kind, $recent, true)) {
                 continue;
             }
-            if ($ageHours < (float) $dueAfter) {
-                continue;
-            }
-            if (!$this->applies($kind, $post, $cfg)) {
+            if ($oldestAge < (float) $dueAfter) {
                 continue;
             }
 
-            return $kind;
+            $applicable = $this->applicable($kind, $posts, $cfg);
+            if (!empty($applicable)) {
+                return [$kind, $applicable];
+            }
         }
 
         return null;
     }
 
-    /** Is this question worth asking about this particular post? */
-    private function applies(string $kind, object $post, array $cfg): bool
+    /**
+     * The subset of a member's silent posts a given question is actually about.
+     * Asking "could you deliver?" about a WANTED, or "add a photo" about posts
+     * that already have one, is how a helpful message becomes noise.
+     *
+     * @param array<int,object> $posts
+     * @return array<int,object>
+     */
+    private function applicable(string $kind, array $posts, array $cfg): array
     {
         switch ($kind) {
             case PromptService::KIND_PHOTO:
-                return !$this->hasPhoto((int) $post->msgid);
+                return array_values(array_filter($posts, static fn ($p) => !$p->hasphoto));
 
             case PromptService::KIND_DELIVERY:
                 // Only OFFERs: asking someone who WANTS something whether they
                 // could deliver it makes no sense.
-                return $post->msgtype === Message::TYPE_OFFER && !$post->deliverypossible;
+                return array_values(array_filter(
+                    $posts,
+                    static fn ($p) => $p->msgtype === Message::TYPE_OFFER && !$p->deliverypossible
+                ));
 
             case PromptService::KIND_DEADLINE:
-                return $post->deadline === null;
+                return array_values(array_filter($posts, static fn ($p) => $p->deadline === null));
 
             case PromptService::KIND_VIEWS:
-                return $this->viewCount((int) $post->msgid, (int) $post->fromuser) >= (int) ($cfg['views_min'] ?? 5);
+                // Judged on the total across their posts, which is the number the
+                // message actually quotes.
+                $total = array_sum(array_map(static fn ($p) => (int) $p->views, $posts));
+
+                return $total >= (int) ($cfg['views_min'] ?? 5) ? $posts : [];
 
             default:
-                return false;
+                return [];
         }
     }
 
     /**
-     * The question itself.
+     * The question itself, phrased for however many posts it covers.
      *
+     * Deliberately says nothing about WHICH posts by name. An item name reads
+     * fine as "your dining chairs" and terribly as whatever someone actually
+     * typed, and there is no way to tell the two apart. The chat and the
+     * notification email both render the posts themselves, so the question can
+     * just be the question.
+     *
+     * @param array<int,object> $posts
      * @return array{text:string, options:array<int,array<string,string>>}|null
      */
-    private function compose(string $kind, object $post): ?array
+    private function compose(string $kind, array $posts): ?array
     {
-        $item = $this->itemName((string) ($post->subject ?? ''));
+        $n = count($posts);
+        $many = $n > 1;
 
         switch ($kind) {
             case PromptService::KIND_PHOTO:
                 return [
-                    'text' => "Nobody's replied about {$item} yet. Posts with a photo get a lot more interest,"
-                        . " because people can see what they're getting. Could you add one?",
+                    'text' => $many
+                        ? "{$n} of your posts have had no reply and have no photo. Posts with a photo get"
+                            . " a lot more interest, because people can see what they're getting."
+                            . ' Could you add some?'
+                        : "Nobody's replied about this yet, and it has no photo. Posts with a photo get a"
+                            . " lot more interest, because people can see what they're getting."
+                            . ' Could you add one?',
                     'options' => [
-                        ['value' => 'add', 'label' => 'Add a photo', 'variant' => 'primary', 'action' => 'editmessage'],
-                        ['value' => 'none', 'label' => "I haven't got a photo", 'variant' => 'secondary'],
+                        [
+                            'value' => 'add',
+                            'label' => $many ? 'Add photos' : 'Add a photo',
+                            'variant' => 'primary',
+                            'action' => 'editmessage',
+                        ],
+                        ['value' => 'none', 'label' => "I haven't got photos", 'variant' => 'secondary'],
                     ],
                 ];
 
             case PromptService::KIND_DELIVERY:
                 return [
-                    'text' => "Still nothing about {$item}. Some freeglers would love it but have no way to"
-                        . ' collect. Could you drop it off, if it worked for you?',
+                    'text' => $many
+                        ? "Still nothing on {$n} of your offers. Some freeglers would love them but have"
+                            . ' no way to collect. Could you drop things off, if it worked for you?'
+                        : 'Still nothing on this one. Some freeglers would love it but have no way to'
+                            . ' collect. Could you drop it off, if it worked for you?',
                     'options' => [
                         ['value' => 'maybe', 'label' => 'Maybe, if it works for me', 'variant' => 'primary'],
                         ['value' => 'no', 'label' => 'Collection only', 'variant' => 'secondary'],
@@ -260,25 +357,36 @@ class EngagementService
 
             case PromptService::KIND_DEADLINE:
                 return [
-                    'text' => "Still no replies about {$item}. If you need it gone by a certain date, we'll show"
-                        . ' that on your post, which nudges people who were going to think about it.',
+                    'text' => $many
+                        ? "Still no replies on {$n} of your posts. If you need them gone by a certain"
+                            . " date, we'll show that, which nudges people who were going to think about it."
+                        : "Still no replies. If you need this gone by a certain date, we'll show that on"
+                            . ' your post, which nudges people who were going to think about it.',
                     'options' => [
-                        ['value' => 'weekend', 'label' => 'By this weekend', 'variant' => 'primary'],
-                        ['value' => 'week', 'label' => 'Within a week', 'variant' => 'primary'],
-                        ['value' => 'twoweeks', 'label' => 'Within two weeks', 'variant' => 'primary'],
+                        // A date picker rather than fixed choices: "by this weekend"
+                        // is wrong for anyone moving house on the 14th, and the
+                        // poster already knows their own date.
+                        ['value' => 'date', 'label' => 'Pick a date', 'variant' => 'primary', 'input' => 'date'],
                         ['value' => 'norush', 'label' => "There's no rush", 'variant' => 'secondary'],
                     ],
                 ];
 
             case PromptService::KIND_VIEWS:
-                $views = $this->viewCount((int) $post->msgid, (int) $post->fromuser);
-                $text = "Good news: {$views} freeglers have looked at {$item}. Nobody's replied yet,"
-                    . ' but people are definitely looking.';
+                $views = array_sum(array_map(static fn ($p) => (int) $p->views, $posts));
 
-                $stillToCome = $this->stillToCome($post);
+                $text = $many
+                    ? "Good news: your {$n} outstanding posts have been looked at {$views} times between"
+                        . " them. Nobody's replied yet, but people are definitely looking."
+                    : "Good news: {$views} freeglers have looked at this. Nobody's replied yet, but"
+                        . ' people are definitely looking.';
+
+                $stillToCome = $this->stillToCome($posts);
                 if ($stillToCome !== null) {
-                    $text .= " It's also still spreading - it'll be shown to around {$stillToCome} more people"
-                        . ' over the next few days.';
+                    $text .= $many
+                        ? " They're also still spreading - they'll be shown to around {$stillToCome} more"
+                            . ' people over the next few days.'
+                        : " It's also still spreading - it'll be shown to around {$stillToCome} more"
+                            . ' people over the next few days.';
                 }
 
                 return ['text' => $text, 'options' => []];
@@ -289,68 +397,89 @@ class EngagementService
     }
 
     /**
-     * Roughly how many more freeglers the post will be shown to as it keeps
+     * Roughly how many more freeglers these posts will be shown to as they keep
      * rippling out. Null when we cannot say, in which case we say nothing rather
      * than guess - a made-up number here would be exactly the dishonesty this
      * whole feature is meant to avoid.
+     *
+     * @param array<int,object> $posts
      */
-    private function stillToCome(object $post): ?int
+    private function stillToCome(array $posts): ?int
     {
-        $max = $this->maxReach->maxCumulativeUsers((int) $post->msgid);
-        if ($max === null || $max <= 0) {
-            return null;
-        }
+        $remaining = 0;
 
-        try {
-            $notified = (int) DB::table('rippling_reach_notified')->where('msgid', $post->msgid)->count();
-        } catch (\Throwable) {
-            return null;
-        }
+        foreach ($posts as $post) {
+            $max = $this->maxReach->maxCumulativeUsers((int) $post->msgid);
+            if ($max === null || $max <= 0) {
+                continue;
+            }
 
-        $remaining = $max - $notified;
+            try {
+                $notified = (int) DB::table('rippling_reach_notified')
+                    ->where('msgid', $post->msgid)->count();
+            } catch (\Throwable) {
+                return null;
+            }
+
+            $remaining += max(0, $max - $notified);
+        }
 
         // Round to something that reads as an estimate, because it is one.
         return $remaining >= 50 ? (int) (round($remaining / 50) * 50) : null;
     }
 
     /**
-     * Genuine page-opens, not list-scroll impressions, and not the poster
-     * checking their own post - which they will have done, and which would make
-     * "1 freegler has looked at this" mean nobody at all.
+     * Retire unanswered prompts none of whose posts are still silent - they have
+     * replies, outcomes, or have been deleted.
+     *
+     * Expiring rather than deleting: the conversation should still read back in
+     * order, and a question that visibly went unanswered is part of the story. It
+     * just stops offering buttons, which is what stops it editing posts that are
+     * no longer live.
+     *
+     * A prompt covering several posts is retired only when they have ALL stopped
+     * being silent. While any of them is still waiting the question still means
+     * something, and answering it applies to whichever are still live.
+     *
+     * @return int how many were retired
      */
-    private function viewCount(int $msgid, ?int $poster = null): int
+    private function retireStalePrompts(): int
     {
         try {
-            $q = DB::table('messages_likes')
-                ->where('msgid', $msgid)
-                ->where('type', 'View')
-                ->where('pageview', 1);
+            return DB::update(
+                "UPDATE chat_prompts cp
+                 SET cp.expires_at = NOW()
+                 WHERE cp.answered_at IS NULL
+                   AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
+                   AND cp.msgids IS NOT NULL
+                   AND NOT EXISTS (
+                         SELECT 1
+                         FROM JSON_TABLE(cp.msgids, '$[*]' COLUMNS (mid BIGINT PATH '$')) jt
+                         JOIN messages m ON m.id = jt.mid
+                         WHERE m.deleted IS NULL
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = jt.mid
+                               )
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM chat_messages cm
+                                 WHERE cm.refmsgid = jt.mid
+                                   AND cm.type = ?
+                                   AND cm.userid <> m.fromuser
+                               )
+                       )",
+                ['Interested']
+            );
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: could not retire stale prompts', ['error' => $e->getMessage()]);
 
-            if ($poster !== null) {
-                $q->where('userid', '<>', $poster);
-            }
-
-            return (int) $q->count();
-        } catch (\Throwable) {
             return 0;
-        }
-    }
-
-    private function hasPhoto(int $msgid): bool
-    {
-        try {
-            return DB::table('messages_attachments')->where('msgid', $msgid)->exists();
-        } catch (\Throwable) {
-            // Cannot tell - assume there is one, so we never nag someone who has
-            // already done the thing we are about to ask for.
-            return true;
         }
     }
 
     /**
      * Has this member heard from Freegle too recently, or asked not to hear at
-     * all? The gap is per MEMBER, not per post: someone clearing out a house
-     * posts ten things in an evening and must not get ten conversations.
+     * all? The gap is per MEMBER, which is now the natural unit: one message
+     * covers everything they have outstanding.
      */
     private function userIsAvailable(int $userId, array $cfg): bool
     {
@@ -373,36 +502,11 @@ class EngagementService
             ->exists();
     }
 
-    /** Take the (post, kind) slot. False if someone else already has it. */
-    private function claim(int $msgid, int $userId, string $kind): bool
-    {
-        try {
-            return DB::table('firstreply_prompts_sent')->insertOrIgnore([
-                'msgid' => $msgid,
-                'userid' => $userId,
-                'kind' => $kind,
-                'sent_at' => now(),
-            ]) > 0;
-        } catch (\Throwable) {
-            return false;
-        }
-    }
-
-    private function release(int $msgid, string $kind): void
-    {
-        try {
-            DB::table('firstreply_prompts_sent')->where('msgid', $msgid)->where('kind', $kind)->delete();
-        } catch (\Throwable) {
-            // Worst case the question is never asked for this post, which is a
-            // far smaller problem than asking it twice.
-        }
-    }
-
     /**
-     * How long the post has been up, in hours. Computed from timestamps rather
-     * than Carbon's diff helpers, whose absolute-vs-signed default has changed
-     * between major versions - and "how old is this" silently coming back
-     * positive for a future date would fire every prompt at once.
+     * How long a post has been up, in hours. Computed from timestamps rather than
+     * Carbon's diff helpers, whose absolute-vs-signed default has changed between
+     * major versions - and "how old is this" silently coming back positive for a
+     * future date would fire every prompt at once.
      */
     private function ageHours(object $post): float
     {
@@ -413,25 +517,5 @@ class EngagementService
         $seconds = now()->getTimestamp() - \Carbon\Carbon::parse($post->arrival)->getTimestamp();
 
         return max(0.0, $seconds / 3600.0);
-    }
-
-    /**
-     * "OFFER: Dining chairs (Edinburgh EH1)" -> "your dining chairs".
-     *
-     * Falls back to "your post" for anything empty or unusually long, rather than
-     * echoing a wall of text back at the member. Every caller reads as "... about
-     * {$item} ...", so the possessive belongs here.
-     */
-    private function itemName(string $subject): string
-    {
-        $s = preg_replace('/^\s*(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i', '', $subject) ?? $subject;
-        $s = preg_replace('/\s*\([^)]*\)\s*$/', '', $s) ?? $s;
-        $s = trim($s);
-
-        if ($s === '' || mb_strlen($s) > 60) {
-            return 'your post';
-        }
-
-        return 'your ' . mb_strtolower($s);
     }
 }

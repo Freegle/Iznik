@@ -29,6 +29,8 @@ class ScoutServiceTest extends TestCase
 
         config([
             'freegle.firstreply.enabled' => true,
+            // Whole-network arm: the rollout percentage is exercised separately.
+            'freegle.firstreply.rollout_percent' => 100,
             'freegle.firstreply.scouts.enabled' => true,
             'freegle.firstreply.scouts.quiet_minutes' => 0,
             'freegle.firstreply.scouts.max_per_post' => 10,
@@ -63,7 +65,7 @@ class ScoutServiceTest extends TestCase
     }
 
     /** A silent OFFER, rippling, with its eventual reach known. */
-    private function seedSilentOffer(): Message
+    private function seedSilentOffer(bool $populateMaxReach = true): Message
     {
         $poster = $this->createTestUser();
         $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.1]);
@@ -93,7 +95,9 @@ class ScoutServiceTest extends TestCase
             [$message->id, self::TICK1, self::TICK1, $schedule]
         );
 
-        app(MaxReachService::class)->populate();
+        if ($populateMaxReach) {
+            app(MaxReachService::class)->populate();
+        }
 
         return $message;
     }
@@ -514,5 +518,28 @@ class ScoutServiceTest extends TestCase
     private function londonDayStart(): \Carbon\Carbon
     {
         return \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC');
+    }
+
+    public function test_a_brand_new_post_is_scouted_without_waiting_for_the_background_pass(): void
+    {
+        // Scouting fires as soon as a post is seen, so it regularly arrives before
+        // firstreply:maxreach has worked out the eventual reach. Without that
+        // nobody is eligible, so the scout path fills it in itself rather than
+        // making the post wait a minute for a different cron.
+        $message = $this->seedSilentOffer(false);
+
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $message->id)->value('max_cumulative_users'),
+            'precondition: the background pass has not run for this post'
+        );
+
+        $searcher = $this->memberAt(51.9, 0.8);
+        DB::table('users_searches')->insert([
+            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
+        ]);
+
+        $this->service()->run();
+
+        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
     }
 }

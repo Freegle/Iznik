@@ -3,6 +3,7 @@
 namespace App\Console\Commands\FirstReply;
 
 use App\Services\FirstReply\EngagementService;
+use App\Services\FirstReply\Rollout;
 use Illuminate\Console\Command;
 
 /**
@@ -21,6 +22,8 @@ class EngageCommand extends Command
     public function handle(EngagementService $service): int
     {
         $dryRun = (bool) $this->option('dry-run');
+
+        $this->info(Rollout::describe());
         $stats = $service->run($dryRun);
 
         $detail = collect($stats)
