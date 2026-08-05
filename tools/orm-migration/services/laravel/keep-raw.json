@@ -146,6 +146,13 @@
       "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(). The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
       "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
       "category": "Write storing the database clock"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/SELECT\\s+(?:[^;]*?,\\s*(?:COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\([^)]*\\)\\s+AS\\b|(?:COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\([^)]*\\)\\s+AS\\s+\\w+\\s*,)/is",
+      "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+      "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+      "category": "Aggregate alongside columns in one SELECT"
     }
   ]
 }

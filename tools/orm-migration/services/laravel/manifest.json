@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:04:38Z",
+    "generated": "2026-08-05T17:07:36Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 406,
+        "keep-raw": 416,
         "converted": 77,
-        "raw": 248,
+        "raw": 238,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -482,10 +482,10 @@
             "goldenSql": "SELECT userid, MAX(id) AS max, COUNT(*) AS count FROM users_images WHERE userid IS NOT NULL GROUP BY userid HAVING count > 1",
             "presentInCode": true,
             "hasParityTest": true,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "9ec7961822f5": {
@@ -4047,10 +4047,10 @@
             "goldenSql": "SELECT SUM(count) AS count, date FROM stats WHERE date >= ? AND date < ? AND groupid IN ({{expr}}) AND type = ? GROUP BY date ORDER BY date ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "beb1a4b6bafb": {
@@ -4160,10 +4160,10 @@
             "goldenSql": "SELECT {{expr}} AS partialpc, COUNT(*) AS count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = 'Postcode' AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? GROUP BY partialpc ORDER BY locations.name",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "b0eb91a60716": {
@@ -4191,10 +4191,10 @@
             "goldenSql": "SELECT {{expr}} AS partialpc, COUNT(*) AS count FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = 'Postcode' AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) GROUP BY partialpc ORDER BY locations.name",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "74a187d48a1a": {
@@ -4254,10 +4254,10 @@
             "goldenSql": "SELECT {{expr}} AS partialpc, COUNT(*) AS count FROM pc INNER JOIN search_history ON search_history.locationid = pc.locationid INNER JOIN locations ON search_history.locationid = locations.id WHERE locations.type = 'Postcode' AND LOCATE(' ', locations.name) > 0 AND search_history.date BETWEEN ? AND ? GROUP BY partialpc ORDER BY locations.name",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "c3e57ebcb0df": {
@@ -4334,10 +4334,10 @@
             "goldenSql": "SELECT DATE(timestamp) AS date, COUNT(*) AS count FROM shortlink_clicks WHERE shortlinkid = ? GROUP BY date ORDER BY date ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "9e1132f382e3": {
@@ -5530,10 +5530,10 @@
             "goldenSql": "SELECT memberships.groupid, COUNT(DISTINCT chat_messages.id) AS cnt FROM chat_messages INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid INNER JOIN users ON users.id = chat_messages.userid AND users.deleted IS NULL INNER JOIN memberships ON memberships.userid = ( CASE WHEN chat_rooms.user1 = chat_messages.userid THEN chat_rooms.user2 ELSE chat_rooms.user1 END ) LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id WHERE chat_messages.date < ? AND chat_messages.reviewrequired = 1 AND chat_messages.reviewedby IS NULL AND chat_messages.reviewrejected = 0 AND chat_messages_held.id IS NULL GROUP BY memberships.groupid ORDER BY RAND()",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "2540bacf1e59": {
@@ -5562,10 +5562,10 @@
             "goldenSql": "SELECT DISTINCT(memberships.groupid), COUNT(*) AS count FROM chat_messages INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid INNER JOIN users ON users.id = chat_messages.userid AND users.deleted IS NULL INNER JOIN memberships ON memberships.userid = ( CASE WHEN chat_rooms.user1 = chat_messages.userid THEN chat_rooms.user2 ELSE chat_rooms.user1 END ) LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id WHERE chat_messages.date < ? AND reviewrequired = 1 AND reviewedby IS NULL AND reviewrejected = 0 AND chat_messages_held.id IS NULL GROUP BY groupid ORDER BY RAND()",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "28717f6b9519": {
@@ -5649,10 +5649,10 @@
             "goldenSql": "SELECT DISTINCT chat_messages.userid, COUNT(*) AS count FROM chat_messages LEFT JOIN spam_users ON spam_users.userid = chat_messages.userid INNER JOIN users ON users.id = chat_messages.userid WHERE chat_messages.date >= ? AND reviewrejected = 1 AND (spam_users.collection IS NULL OR spam_users.collection != 'Whitelisted') AND users.systemrole = 'User' GROUP BY chat_messages.userid HAVING count > ? ORDER BY count DESC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "72404d41f2b6": {
@@ -13185,10 +13185,10 @@
             "goldenSql": "SELECT ms.msgid AS msgid, ANY_VALUE(ST_Y(ms.point)) AS lat, ANY_VALUE(ST_X(ms.point)) AS lng, MIN(ms.arrival) AS arrival FROM messages_spatial ms LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid WHERE mr.msgid IS NULL{{expr}}{{expr}}{{expr}} GROUP BY ms.msgid LIMIT ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A SELECT whose list mixes plain columns WITH an aliased aggregate - 'SELECT userid, COUNT(*) AS count FROM ...'. This is deliberately NOT the same case as an aggregate-only statement: 'SELECT COUNT(*) AS n FROM t' converts cleanly to ->count(), and several such sites in this migration did. The difference is that ->count()/->sum() return a SCALAR and issue their own statement; the moment a real column has to come back alongside the aggregate, the builder has no form for it and the only route is ->select('userid', DB::raw('COUNT(*) as count')) - where DB::raw is itself a raw site here, so the site changes surface and nothing is converted. These are also the statements most likely to carry a GROUP BY, which is where Layer 1 rendering-equality would stop being sufficient evidence anyway.",
+            "porting": "PostgreSQL: standard SQL and ports unchanged, with the usual GROUP_CONCAT -> string_agg exception. Worth revisiting as a group when the builder question is reopened: if these ever move to the ORM it will be through a repository method returning a typed row, not through the query builder as it stands.",
+            "category": "Aggregate alongside columns in one SELECT",
             "approvedDiff": ""
         },
         "a476e3192c27": {
