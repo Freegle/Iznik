@@ -538,7 +538,7 @@ class EeeClassificationService
     {
         if ($attid <= 0) return;
         try {
-            DB::statement('INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES (?, ?)', [$messageid, $attid]);
+            DB::table('eee_classified_attachments')->insertOrIgnore(['messageid' => $messageid, 'attid' => $attid]);
         } catch (\Throwable $e) {
             // Table may not exist yet on first deploy — log and continue.
             // The classifier's own write to SQLite is what matters; this is

@@ -818,12 +818,16 @@ class PurgeService
         $end = now()->subDays(60)->startOfDay();
 
         if ($dryRun) {
-            $row = DB::selectOne(
-                "SELECT COUNT(*) AS cnt FROM logs LEFT JOIN messages ON messages.id = logs.msgid WHERE logs.msgid IS NOT NULL AND messages.id IS NULL AND logs.timestamp >= ? AND logs.timestamp < ?",
-                [$end, $start]
-            );
-
-            return (int) ($row->cnt ?? 0);
+            // Anti-join: log rows whose message has been deleted. leftJoin +
+            // messages.id IS NULL, not an inner join, which would count the
+            // exact opposite - logs whose message still exists.
+            return DB::table('logs')
+                ->leftJoin('messages', 'messages.id', '=', 'logs.msgid')
+                ->whereNotNull('logs.msgid')
+                ->whereNull('messages.id')
+                ->where('logs.timestamp', '>=', $end)
+                ->where('logs.timestamp', '<', $start)
+                ->count();
         }
 
         $total = 0;
