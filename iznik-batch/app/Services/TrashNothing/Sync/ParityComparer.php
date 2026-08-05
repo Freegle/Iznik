@@ -193,7 +193,7 @@ class ParityComparer
      * builds its post_id-keyed map — only the API path needs this.
      *
      * Groups ingested posts (a messages row must exist — nothing to compare
-     * without one) by (fromuser, subject, rounded lat, rounded lng) and keeps
+     * without one) by (subject, rounded lat, rounded lng) and keeps
      * only the earliest-dated post_id per group as canonical; every other
      * post_id in that group is dropped entirely from apiResults/apiMessages,
      * removing it from every layer, not just Layer 2.
@@ -210,8 +210,14 @@ class ParityComparer
         $earliestDateByKey    = [];
 
         foreach ($apiMessages as $postId => $msg) {
+            // Deliberately excludes fromuser: TN assigns a different numeric
+            // user id per group-affiliation for the same real person (see
+            // GroupPostIngestionService::findRepostCandidate() for the live
+            // case that discovered this), so a cross-group crosspost by the
+            // same poster legitimately shows two different fromuser values.
+            // Keying on it here would silently stop collapsing exactly the
+            // cross-group case this method exists to catch.
             $key = implode('|', [
-                $msg['fromuser'] ?? '',
                 strtolower(trim((string) ($msg['subject'] ?? ''))),
                 is_numeric($msg['lat'] ?? null) ? round((float) $msg['lat'], self::COORDINATE_PRECISION) : ($msg['lat'] ?? ''),
                 is_numeric($msg['lng'] ?? null) ? round((float) $msg['lng'], self::COORDINATE_PRECISION) : ($msg['lng'] ?? ''),
