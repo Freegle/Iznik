@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T16:49:19Z",
+    "generated": "2026-08-05T16:50:34Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 343,
-        "raw": 324,
+        "keep-raw": 399,
         "converted": 64,
+        "raw": 268,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -91,10 +91,10 @@
             "goldenSql": "UPDATE ai_images ai LEFT JOIN tmp_ai_usage_counts t ON t.externaluid = ai.externaluid SET ai.usage_count = COALESCE(t.cnt, 0) WHERE ai.id = ? AND ai.usage_count != COALESCE(t.cnt, 0)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "1e5ce8b18220": {
@@ -1137,10 +1137,10 @@
             "goldenSql": "LOWER(nameshort)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "31ed12e6a468": {
@@ -1607,10 +1607,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS namedisplay",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "3a983af242d5": {
@@ -1691,10 +1691,10 @@
             "goldenSql": "SELECT ms.msgid, m.subject, LEFT(m.textbody, 500) as body FROM messages_spatial ms JOIN messages m ON m.id = ms.msgid LEFT JOIN messages_embeddings me ON me.msgid = ms.msgid WHERE me.msgid IS NULL AND ms.successful = 0 AND ms.promised = 0 ORDER BY ms.arrival DESC LIMIT ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "7b5c3551f762": {
@@ -1720,10 +1720,10 @@
             "goldenSql": "SELECT ms.msgid, m.subject, LEFT(m.textbody, 500) as body FROM messages_spatial ms JOIN messages m ON m.id = ms.msgid WHERE ms.successful = 0 AND ms.promised = 0 AND ms.msgid > ? ORDER BY ms.msgid ASC LIMIT ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "6c4256a96688": {
@@ -1826,10 +1826,10 @@
             "goldenSql": "LOWER(users_emails.email)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a40778d40d4b": {
@@ -1964,10 +1964,10 @@
             "goldenSql": "LOWER(email) = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "4641002d9fce": {
@@ -1990,10 +1990,10 @@
             "goldenSql": "LOWER(email) = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "ec6adbe8b770": {
@@ -2016,10 +2016,10 @@
             "goldenSql": "LOWER(email) != ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "4fc5ec8e010e": {
@@ -3576,10 +3576,10 @@
             "goldenSql": "SELECT p.name AS postcode, a.name AS area FROM locations p LEFT JOIN locations a ON a.id = p.areaid WHERE p.id IN ({{expr}}) AND p.lat IS NOT NULL AND p.lng IS NOT NULL AND ST_Contains( (SELECT polyindex FROM `groups` WHERE id = ? AND polyindex IS NOT NULL), ST_GeomFromText(CONCAT('POINT(', p.lng, ' ', p.lat, ')'), ?) ) ORDER BY FIELD(p.id, {{expr}}) LIMIT 1",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "95ca9a762bec": {
@@ -3897,10 +3897,10 @@
             "goldenSql": "LOWER(namedisplay) ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a429da0c66c9": {
@@ -4019,10 +4019,10 @@
             "goldenSql": "SELECT groups.id AS id, nameshort, namefull, CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN CASE WHEN polyindex = COALESCE(simplified, polygon) THEN 1 ELSE ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon))) / ST_Area(polyindex) END ELSE 0 END AS overlap, CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN CASE WHEN polyindex = COALESCE(simplified, polygon) THEN 1 ELSE ST_Area(polyindex) / ST_Area(ST_Intersection(polyindex, COALESCE(simplified, polygon))) END ELSE 0 END AS overlap2 FROM `groups` INNER JOIN authorities ON ( polyindex = COALESCE(simplified, polygon) OR ST_Intersects(polyindex, COALESCE(simplified, polygon)) ) WHERE type = ? AND publish = 1 AND onmap = 1 AND authorities.id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a896a87be431": {
@@ -4224,10 +4224,10 @@
             "goldenSql": "SELECT {{expr}} AS partialpc, SUM(COALESCE(weight, ?)) AS weight FROM pc INNER JOIN messages ON messages.locationid = pc.locationid INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id INNER JOIN messages_items mi ON messages.id = mi.msgid INNER JOIN items i ON mi.itemid = i.id INNER JOIN locations ON messages.locationid = locations.id WHERE locations.type = 'Postcode' AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) GROUP BY partialpc ORDER BY locations.name",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "53e882499329": {
@@ -4306,10 +4306,10 @@
             "goldenSql": "LOWER(name) ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "51a89053569a": {
@@ -5498,10 +5498,10 @@
             "goldenSql": "UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "3cd33b511f55": {
@@ -6101,10 +6101,10 @@
             "goldenSql": "SELECT COALESCE(SUM(GrossAmount), 0) AS total FROM users_donations WHERE TIMESTAMPDIFF(HOUR, users_donations.timestamp, NOW()) <= 24 AND {{expr}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a6d3c0be64c4": {
@@ -8715,10 +8715,10 @@
             "goldenSql": "UPDATE engage_mails SET rate = COALESCE(100 * action / shown, 0) WHERE id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "dfb572e7b896": {
@@ -9390,10 +9390,10 @@
             "goldenSql": "SELECT ST_Intersection(ST_GeomFromText(polyofficial, ?), COALESCE(simplified, polygon)) FROM `groups` INNER JOIN `authorities` ON type = 'Freegle' AND publish = 1 AND onmap = 1 WHERE authorities.id = 74579 AND groups.id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a6794f950624": {
@@ -9422,10 +9422,10 @@
             "goldenSql": "SELECT ST_Intersection(ST_GeomFromText(poly, ?), COALESCE(simplified, polygon)) FROM `groups` INNER JOIN `authorities` ON type = 'Freegle' AND publish = 1 AND onmap = 1 WHERE authorities.id = 74579 AND groups.id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "92a7a754d157": {
@@ -9533,10 +9533,10 @@
             "goldenSql": "SELECT ST_AsText(polyindex) AS current, ST_AsText(ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), ?)) AS geomtext FROM `groups` WHERE id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "25de6a725cd4": {
@@ -9590,10 +9590,10 @@
             "goldenSql": "LOWER(nameshort) ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "5a16690aecd4": {
@@ -9756,10 +9756,10 @@
             "goldenSql": "LOWER(COALESCE(groups.namefull, groups.nameshort)) ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "fa64408e3c7d": {
@@ -9785,10 +9785,10 @@
             "goldenSql": "SELECT COUNT(DISTINCT TRIM(REGEXP_REPLACE(messages.subject, '\\\\[.*?\\\\](.*)', '$1'))) AS count, CASE WHEN messages.sourceheader LIKE 'TN-%' THEN 1 ELSE 0 END AS tn FROM messages INNER JOIN lovejunk ON lovejunk.msgid = messages.id WHERE lovejunk.timestamp >= ? AND lovejunk.timestamp < ? GROUP BY tn ORDER BY tn ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "0c92b9505326": {
@@ -10106,10 +10106,10 @@
             "goldenSql": "LOWER(name) = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "3171d4a57399": {
@@ -10493,10 +10493,10 @@
             "goldenSql": "INSERT IGNORE INTO words (word, firstthree, soundex) VALUES (?, ?, SUBSTRING(SOUNDEX(?), 1, 10))",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "439642b455af": {
@@ -10830,10 +10830,10 @@
             "goldenSql": "SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN `groups` ON messages_groups.groupid = groups.id LEFT JOIN users_notifications ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY) AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id) AND users_notifications.type = ? WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY) AND messages.deleted IS NULL -- A hold is per-group. Every other predicate here is already -- scoped to this messages_groups row (arrival, and groupid via -- the SELECT above); this one wasn't. messages.heldby is a -- legacy message-wide mirror that nothing writes any more, so -- checking it here let a copy held on this row's group still -- be offered up for \"please review\" - the hold only ever -- belonged to the group it was placed on. AND messages_groups.heldby IS NULL AND users_notifications.id IS NULL AND groups.microvolunteering = 1",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "27496bd44361": {
@@ -11002,10 +11002,10 @@
             "goldenSql": "SELECT COUNT(*) AS count FROM users_notifications un INNER JOIN microactions ma ON ma.userid = un.touser AND ma.actiontype = 'CheckMessage' AND un.url = CONCAT('/microvolunteering/message/', ma.msgid) WHERE un.type = ? AND un.seen = 0 AND un.timestamp >= DATE_SUB(NOW(), INTERVAL {{expr}} DAY)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "23e25cdbbf16": {
@@ -11031,10 +11031,10 @@
             "goldenSql": "UPDATE users_notifications un INNER JOIN microactions ma ON ma.userid = un.touser AND ma.actiontype = 'CheckMessage' AND un.url = CONCAT('/microvolunteering/message/', ma.msgid) SET un.seen = 1 WHERE un.type = ? AND un.seen = 0 AND un.timestamp >= DATE_SUB(NOW(), INTERVAL {{expr}} DAY)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a497ad42bda4": {
@@ -11725,10 +11725,10 @@
             "goldenSql": "name, `type`, ST_AsText(COALESCE(ourgeometry, geometry)) AS wkt",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "173278ee2b31": {
@@ -13535,10 +13535,10 @@
             "goldenSql": "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome FROM messages_groups mg JOIN `groups` g ON g.id = mg.groupid JOIN memberships m ON m.groupid = g.id AND m.userid = ? WHERE mg.msgid = ? AND mg.rippled_in = 1 AND m.rippled = 1 AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> '' ORDER BY mg.arrival ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "cf5d1076e522": {
@@ -13625,10 +13625,10 @@
             "goldenSql": "SELECT ST_Area(ST_Intersection(iso, grp)) / NULLIF(ST_Area(grp), 0) AS frac, ST_AsText(ST_Union(iso, grp)) AS u FROM (SELECT ST_GeomFromText(?, {{expr}}) AS iso, ST_GeomFromText(?, {{expr}}) AS grp) t",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "c3d282d5d0c3": {
@@ -13685,10 +13685,10 @@
             "goldenSql": "SELECT ST_Area(ST_Intersection(iso, grp)) / NULLIF(ST_Area(grp), 0) AS frac, ST_AsText(ST_Union(iso, grp)) AS u FROM (SELECT ST_Buffer(ST_GeomFromText(?, {{expr}}), 0) AS iso, ST_Buffer(ST_GeomFromText(?, {{expr}}), 0) AS grp) t",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "c04b516c2938": {
@@ -14030,10 +14030,10 @@
             "goldenSql": "UPDATE rippling_reach rr SET rr.outer_bound = COALESCE( (SELECT ST_Union(rr.outer_bound, g.polyindex) FROM messages_groups mg JOIN `groups` g ON g.id = mg.groupid WHERE mg.msgid = rr.msgid AND mg.deleted = 0 AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' ORDER BY mg.arrival ASC LIMIT 1), rr.outer_bound), rr.updated_at = rr.updated_at WHERE rr.msgid = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "28a4d2342453": {
@@ -14118,10 +14118,10 @@
             "goldenSql": "SELECT EXISTS( SELECT 1 FROM rippling_reach rr WHERE rr.msgid = ? AND ((ST_GeometryType(rr.outer_bound) <> 'POINT' AND ST_Contains(rr.outer_bound, {{expr}}) AND (COALESCE(ST_Contains(rr.inner_bound, {{expr}}), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, {{expr}})))) OR (ST_GeometryType(rr.outer_bound) = 'POINT' AND EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, {{expr}})))) ) AS within",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "8327f7309158": {
@@ -14179,10 +14179,10 @@
             "goldenSql": "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome FROM memberships m JOIN `groups` g ON g.id = m.groupid WHERE m.userid = ? AND m.rippled = 1 AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> '' ORDER BY m.groupid ASC",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "4d7cd372c42f": {
@@ -14240,10 +14240,10 @@
             "goldenSql": "UPDATE chat_rooms cr JOIN rippling_held_replies rhr ON rhr.id = ? JOIN chat_messages cm ON cm.id = rhr.chatmsgid SET cr.latestmessage = GREATEST(COALESCE(cr.latestmessage, cm.date), cm.date) WHERE cr.id = rhr.chatid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "9e93e1c3f132": {
@@ -15178,10 +15178,10 @@
             "goldenSql": "SELECT sub.groupid AS gid, ROUND(SUM(sub.eff_weight)) AS total_weight FROM ( SELECT DISTINCT mo.msgid, mg.groupid, COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 INNER JOIN messages_items mi ON mi.msgid = mo.msgid LEFT JOIN items i ON i.id = mi.itemid WHERE mo.timestamp >= ? AND mo.timestamp < ? AND mo.outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)) sub GROUP BY sub.groupid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "1d4d54d5acf8": {
@@ -15208,10 +15208,10 @@
             "goldenSql": "SELECT mg.groupid AS gid, ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight FROM messages_bulk_items bi INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci WHERE bi.available = 0 AND bi.updated_at >= ? AND bi.updated_at < ? GROUP BY mg.groupid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "e3329c713a4a": {
@@ -15239,10 +15239,10 @@
             "goldenSql": "SELECT mg.groupid AS gid, ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight FROM messages_bulk_items_interest mbi INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci WHERE mbi.state = ? AND mbi.updated_at >= ? AND mbi.updated_at < ? GROUP BY mg.groupid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "9eaa899291cb": {
@@ -15297,10 +15297,10 @@
             "goldenSql": "SELECT sub.groupid, ROUND(SUM(sub.eff_weight)) AS total_weight FROM ( SELECT DISTINCT mo.msgid, mg.groupid, COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 INNER JOIN messages_items mi ON mi.msgid = mo.msgid LEFT JOIN items i ON i.id = mi.itemid WHERE mo.timestamp >= ? AND mo.timestamp < ? AND mo.outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)) sub GROUP BY sub.groupid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "d342193d603c": {
@@ -15327,10 +15327,10 @@
             "goldenSql": "SELECT mg.groupid, ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight FROM messages_bulk_items bi INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci WHERE bi.available = 0 AND bi.updated_at >= ? AND bi.updated_at < ? GROUP BY mg.groupid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "61d4f1020ee5": {
@@ -15358,10 +15358,10 @@
             "goldenSql": "SELECT mg.groupid, ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight FROM messages_bulk_items_interest mbi INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci WHERE mbi.state = ? AND mbi.updated_at >= ? AND mbi.updated_at < ? GROUP BY mg.groupid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "fe821b8f880a": {
@@ -15552,10 +15552,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS namedisplay",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "e80934cb1ccb": {
@@ -15604,10 +15604,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS namedisplay",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "d29a110462db": {
@@ -15708,10 +15708,10 @@
             "goldenSql": "LOWER(email)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a5dbbe56aa0c": {
@@ -15770,10 +15770,10 @@
             "goldenSql": "SELECT DISTINCT u.id AS id, CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6)) ELSE l.lat END AS resolved_lat, CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6)) ELSE l.lng END AS resolved_lng FROM messages_groups mg JOIN rippling_reach mr ON mr.msgid = mg.msgid JOIN memberships m ON m.groupid = mg.groupid AND m.emailfrequency = ? AND m.collection = 'Approved' JOIN users u ON u.id = m.userid LEFT JOIN locations l ON l.id = u.lastlocation WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0 AND NOT EXISTS ( SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received') ) AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?) AND ST_Contains(mr.polygon, ST_SRID(POINT( CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6)) ELSE l.lng END, CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6)) ELSE l.lat END ), ?)) AND NOT EXISTS ( SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id )",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "1542e5db4e8b": {
@@ -15796,10 +15796,10 @@
             "goldenSql": "LOWER(email)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "bbec78bcccee": {
@@ -16087,10 +16087,10 @@
             "goldenSql": "LOWER(users_emails.email)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "ade600e55b7b": {
@@ -16191,10 +16191,10 @@
             "goldenSql": "LOWER(users_emails.email)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "b190005f29d4": {
@@ -16611,10 +16611,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS groupname",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "10a769475fc7": {
@@ -16637,10 +16637,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS groupname",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "28646adefda3": {
@@ -16663,10 +16663,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS groupname",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "230d1bf3ebe4": {
@@ -16689,10 +16689,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS groupname",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "c7e83cb62c63": {
@@ -16715,10 +16715,10 @@
             "goldenSql": "COALESCE(groups.namefull, groups.nameshort) AS groupname",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "a2a0b695276b": {
@@ -16974,10 +16974,10 @@
             "goldenSql": "SELECT GREATEST( COALESCE((SELECT MAX(date) FROM chat_messages WHERE userid = ?), '1970-01-01'), COALESCE((SELECT MAX(added) FROM memberships WHERE userid = ?), '1970-01-01') ) AS max",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "3e5c9521e84d": {
@@ -17190,10 +17190,10 @@
             "goldenSql": "COALESCE(NULLIF(groups.namefull, ''), groups.nameshort) AS name",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+            "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+            "category": "Scalar SQL function over a column",
             "approvedDiff": ""
         },
         "810db37c95be": {

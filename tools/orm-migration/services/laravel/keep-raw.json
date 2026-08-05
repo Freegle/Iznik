@@ -119,6 +119,12 @@
       "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
       "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
       "category": "SQL assembled at runtime"
+    },
+    {
+      "sqlMatches": "/\\b(LEFT|RIGHT|SUBSTRING|SUBSTR|CONCAT|CONCAT_WS|COALESCE|IFNULL|NULLIF|GREATEST|LEAST|LOWER|UPPER|TRIM|REPLACE|CAST|IF)\\s*\\(/i",
+      "reason": "A scalar SQL function applied to a column - LEFT(textbody, 500), COALESCE(namefull, nameshort), GREATEST(...), CAST(...) and the like. Same position as the aliased-aggregate rule: the builder can select columns, not expressions over them, so the only conversion available is ->select(DB::raw('LEFT(textbody, 500) as body')) and DB::raw is itself a raw site here - the site moves from one surface to another and nothing is converted. Doing the work in PHP instead is not equivalent: LEFT(textbody, 500) truncates in the database so only 500 bytes cross the wire, and the queries using it are batch jobs over large text columns where that is the point. COALESCE and GREATEST additionally participate in WHERE and ORDER BY, where moving them to PHP is not possible at all.",
+      "porting": "PostgreSQL: LEFT/RIGHT/SUBSTRING/CONCAT/COALESCE/GREATEST/LEAST/LOWER/UPPER/TRIM/CAST are standard and port unchanged. IFNULL becomes COALESCE, IF(a,b,c) becomes CASE WHEN a THEN b ELSE c END, and CONCAT_WS exists but treats NULLs differently - those three need rewriting, the rest do not.",
+      "category": "Scalar SQL function over a column"
     }
   ]
 }
