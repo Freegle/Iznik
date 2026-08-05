@@ -154,6 +154,35 @@ Schedule::command('ripple:release-replies')
     ->sendOutputTo(cronLog('ripple:release-replies'))
     ->runInBackground();
 
+// First reply: getting one in quickly, and making the wait bearable when there isn't one.
+// All three are gated by freegle.firstreply.* and are no-ops until those are switched on.
+if (config('freegle.firstreply.enabled')) {
+    // Fill in each rippling post's EVENTUAL reach. Kept out of ripple:expand because that is
+    // the hot single-writer loop and this occasionally has to call the routing server.
+    Schedule::command('firstreply:maxreach')
+        ->everyMinute()
+        ->withoutOverlapping(15)
+        ->sendOutputTo(cronLog('firstreply:maxreach'))
+        ->runInBackground();
+
+    // Tell a handful of likely-interested people about posts nobody has replied to. Every
+    // five minutes rather than every minute: posts have to sit quiet for a while first, so a
+    // per-minute cadence would only add load without making anything arrive sooner.
+    Schedule::command('firstreply:scout')
+        ->everyFiveMinutes()
+        ->withoutOverlapping(15)
+        ->sendOutputTo(cronLog('firstreply:scout'))
+        ->runInBackground();
+
+    // Freegle's own messages to the poster. Nothing here is due sooner than an hour after
+    // posting, so five minutes is as often as it could possibly matter.
+    Schedule::command('firstreply:engage')
+        ->everyFiveMinutes()
+        ->withoutOverlapping(15)
+        ->sendOutputTo(cronLog('firstreply:engage'))
+        ->runInBackground();
+}
+
 // Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot
 // ripple:expand cron so its routing/KNN calls can't slow rippling (freegle.ripple.proximity_notes
 // gates it; withoutOverlapping keeps a slow run from stacking).

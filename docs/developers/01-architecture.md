@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-17
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -61,6 +61,10 @@ and per-group membership and roles are the ones you will meet first.
   the member and moderator behaviour is in
   [../members/rippling-out.md](../members/rippling-out.md) and
   [../moderators/rippling-out.md](../moderators/rippling-out.md).
+- **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
+  that get no reply at all: a passthrough for a silent post's first reply, early notification
+  of members who look likely to want that specific item, and Freegle's own chat messages to
+  the poster. See [./reference/first-reply.md](./reference/first-reply.md).
 - **TrashNothing / LoveJunk** is a partner integration where external users post into
   Freegle communities. See [./reference/trashnothing.md](./reference/trashnothing.md).
 - **Logging and observability** run through Loki, with client-side tracing. See

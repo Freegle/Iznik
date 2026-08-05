@@ -3,6 +3,7 @@
 namespace App\Services\Ripple;
 
 use App\Models\ChatMessage;
+use App\Services\FirstReply\MaxReachService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -28,8 +29,20 @@ use Illuminate\Support\Facades\Log;
  */
 class RippleReplyService
 {
-    public function __construct(private ReachQueryService $reach)
+    private ?MaxReachService $maxReach;
+
+    /**
+     * $maxReach is optional so the many places that construct this by hand (tests
+     * included) keep working; it is resolved from the container when omitted.
+     */
+    public function __construct(private ReachQueryService $reach, ?MaxReachService $maxReach = null)
     {
+        $this->maxReach = $maxReach;
+    }
+
+    private function maxReach(): MaxReachService
+    {
+        return $this->maxReach ??= app(MaxReachService::class);
     }
 
     /**
@@ -59,6 +72,15 @@ class RippleReplyService
      * post is actively rippling (has a reach row) AND the replier is outside the
      * current reach. No reach row → not rippling → deliver normally. Unknown
      * location → cannot test → deliver normally.
+     *
+     * One exception, the first-reply passthrough: a post that has no replies at all
+     * yet does not hold its first one, provided the replier is inside the reach the
+     * post will EVENTUALLY have. Nothing is given away by that - the reply was
+     * always going to be allowed once the ripple got there, so the hold only
+     * changes when the poster hears, not whether. On a post with replies already
+     * that delay is a fair price for local-first ordering; on a post with none it
+     * is charged against the posts that can least afford it, because a poster
+     * cannot tell a delayed first reply from no interest at all.
      */
     public function shouldHold(int $msgid, ?float $lat, ?float $lng): bool
     {
@@ -68,8 +90,59 @@ class RippleReplyService
         if (!$this->hasReach($msgid)) {
             return false;
         }
+        if ($this->reach->isWithinReach($msgid, $lat, $lng)) {
+            return false;
+        }
 
-        return !$this->reach->isWithinReach($msgid, $lat, $lng);
+        return !$this->qualifiesForFirstReplyPassthrough($msgid, $lat, $lng);
+    }
+
+    /**
+     * Is this the reply the passthrough exists for: a post with (almost) no
+     * repliers, and a replier the post's reach will eventually cover?
+     *
+     * Both switches have to be on and the max-reach geometry has to be populated;
+     * any of those missing means the normal hold applies, so this can be deployed
+     * ahead of the backfill without changing behaviour.
+     */
+    public function qualifiesForFirstReplyPassthrough(int $msgid, float $lat, float $lng): bool
+    {
+        if (!config('freegle.firstreply.enabled') || !config('freegle.firstreply.passthrough.enabled')) {
+            return false;
+        }
+
+        $maxRepliers = (int) config('freegle.firstreply.passthrough.max_existing_repliers', 1);
+        if ($this->distinctReplierCount($msgid) >= $maxRepliers) {
+            return false;
+        }
+
+        return $this->maxReach()->isWithinMaxReach($msgid, $lat, $lng);
+    }
+
+    /**
+     * How many distinct people have replied to this post, not counting the poster
+     * talking on their own post. Held replies count: the poster has an answer
+     * coming, so the post is not silent in the sense the passthrough is about.
+     */
+    private function distinctReplierCount(int $msgid): int
+    {
+        try {
+            $row = DB::selectOne(
+                'SELECT COUNT(DISTINCT cm.userid) AS repliers
+                 FROM chat_messages cm
+                 JOIN messages m ON m.id = cm.refmsgid
+                 WHERE cm.refmsgid = ? AND cm.type = ? AND cm.userid <> m.fromuser',
+                [$msgid, ChatMessage::TYPE_INTERESTED]
+            );
+
+            return (int) ($row->repliers ?? 0);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: distinctReplierCount failed for {$msgid}: {$e->getMessage()}");
+
+            // Cannot tell how many replies there are, so do not spend the
+            // passthrough on a post that might already have plenty.
+            return PHP_INT_MAX;
+        }
     }
 
     /**

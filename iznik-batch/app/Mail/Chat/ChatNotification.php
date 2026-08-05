@@ -443,6 +443,14 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 'ampIncluded' => $ampIncluded,
                 'isOwnMessage' => $this->isOwnMessage,
                 'otherUserName' => $otherUserName,
+                // A Freegle prompt asks a question whose answers are buttons, and
+                // buttons cannot live in email: a one-click answer in a mail is
+                // answerable by anyone who ever sees that mail, including a
+                // forwarded copy, and these answers change what the member's post
+                // says. So the mail carries the question and sends them to the
+                // chat to answer it - which the call to action has to be honest
+                // about, rather than saying "Reply to Freegle".
+                'isPrompt' => $this->message->type === ChatMessage::TYPE_PROMPT,
             ], $this->getTrackingData()), 'emails.text.chat.notification');
 
         // Render AMP version if enabled, User2User chat, and recipient's domain supports AMP.

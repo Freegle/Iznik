@@ -572,6 +572,122 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | First Reply
+    |--------------------------------------------------------------------------
+    |
+    | Getting a first reply in quickly, and making the wait bearable when there
+    | isn't one. 44% of rippled posts get no reply at all, and a poster who hears
+    | nothing has no way to tell "nobody wants it" from "it isn't working".
+    |
+    | Four levers, each independently switchable:
+    |   passthrough - never hold a post's FIRST reply if the replier is somewhere
+    |                 the post's reach will eventually get to anyway.
+    |   scouts      - tell a handful of likely-interested people early, instead of
+    |                 waiting for their digest or for the ripple to arrive.
+    |   chat        - Freegle talks to the poster: asks the questions that make a
+    |                 post more likely to succeed, and says what is happening.
+    |
+    | Ships DARK. Every lever is off until switched on, so deploying this changes
+    | nothing.
+    |
+    */
+
+    'firstreply' => [
+        // Master switch. Off means none of the below runs, whatever they say.
+        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+
+        // Let a post's first reply through even when the replier is outside the
+        // reach the post has RIGHT NOW, as long as they are inside the reach it
+        // will eventually have. Holding them buys nothing - they were always
+        // going to be allowed - so the hold only turns a fast reply into a slow
+        // one, on exactly the posts that can least afford it.
+        'passthrough' => [
+            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // How many distinct repliers a post may already have and still get the
+            // passthrough. 1 = only the very first reply. Raise to soften the cliff
+            // for posts where the first replier goes quiet.
+            'max_existing_repliers' => (int) env('FIRSTREPLY_PASSTHROUGH_MAX_REPLIERS', 1),
+        ],
+
+        // Tell a few likely-interested people early about a post nobody has
+        // replied to yet.
+        'scouts' => [
+            'enabled' => filter_var(env('FIRSTREPLY_SCOUTS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // How long a post gets to attract a reply on its own before we help.
+            // Zero would fire on posts that were about to get a reply anyway.
+            'quiet_minutes' => (int) env('FIRSTREPLY_SCOUTS_QUIET_MINUTES', 45),
+            // Give up after this: a day-old silent post is a job for reposting and
+            // better post quality, not for more notifications.
+            'max_age_hours' => (int) env('FIRSTREPLY_SCOUTS_MAX_AGE_HOURS', 24),
+            // Hard cap on how many people we mail per post. Small on purpose: the
+            // whole point is that these are the RIGHT people, and a big number
+            // would just be the digest with extra steps.
+            'max_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_PER_POST', 10),
+            // Nobody should become Freegle's unpaid alerting service. A member is
+            // not scouted again within this many hours...
+            'user_cooldown_hours' => (int) env('FIRSTREPLY_SCOUTS_USER_COOLDOWN_HOURS', 24),
+            // ...nor more than this many times in a rolling week.
+            'user_max_per_week' => (int) env('FIRSTREPLY_SCOUTS_USER_MAX_PER_WEEK', 5),
+            // Minimum score to be worth mailing at all. A post with no good match
+            // should mail nobody rather than pad the list out to max_per_post.
+            'min_score' => (float) env('FIRSTREPLY_SCOUTS_MIN_SCORE', 1.0),
+            // How many distinct Interested replies in the last 90 days make someone
+            // a "frequent replier" worth considering on propensity alone.
+            'frequent_replier_min' => (int) env('FIRSTREPLY_SCOUTS_FREQUENT_MIN', 3),
+            // Candidate pool size before scoring. Bounds the cost of the geo query.
+            'candidate_limit' => (int) env('FIRSTREPLY_SCOUTS_CANDIDATE_LIMIT', 500),
+        ],
+
+        // The Freegle chat: Freegle itself talks to the poster.
+        'chat' => [
+            'enabled' => filter_var(env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // The account the messages come from. Resolved by email, created on
+            // first use if absent, so there is nothing to seed by hand.
+            'system_user_email' => env('FIRSTREPLY_SYSTEM_USER_EMAIL', 'freegle@ilovefreegle.org'),
+            'system_user_name' => env('FIRSTREPLY_SYSTEM_USER_NAME', 'Freegle'),
+
+            // Minimum gap between two Freegle messages to the SAME member, across
+            // all their posts. Without this, someone who posts five things in an
+            // evening gets five conversations started at once.
+            'user_gap_hours' => (int) env('FIRSTREPLY_CHAT_USER_GAP_HOURS', 6),
+            // Most prompts one post will ever generate.
+            'max_per_post' => (int) env('FIRSTREPLY_CHAT_MAX_PER_POST', 4),
+            // Prompts stop being answerable after this - a week-old "could you
+            // deliver?" on a long-gone item should not still have live buttons.
+            'expiry_days' => (int) env('FIRSTREPLY_CHAT_EXPIRY_DAYS', 7),
+
+            // When each prompt becomes due, in hours after the post arrived. The
+            // order here is the order they are considered; the first one that is
+            // due and applicable wins, and only one is sent per run per post.
+            'schedule' => [
+                // Ask early, while editing still feels like part of posting.
+                'photo' => (float) env('FIRSTREPLY_CHAT_PHOTO_HOURS', 1.5),
+                // Offering delivery is the single biggest thing a poster can
+                // change about a silent post, so it comes before anything else
+                // that is merely informative.
+                'delivery' => (float) env('FIRSTREPLY_CHAT_DELIVERY_HOURS', 3),
+                // "People are looking" only reassures once there is something to
+                // report, hence later than the asks.
+                'views' => (float) env('FIRSTREPLY_CHAT_VIEWS_HOURS', 8),
+                // A deadline is what turns "someday" into "this weekend", and it
+                // only makes sense once the easy wins have not worked.
+                'deadline' => (float) env('FIRSTREPLY_CHAT_DEADLINE_HOURS', 24),
+            ],
+
+            // Do not claim people are looking until enough of them have. One
+            // curious visitor is not encouraging, it is depressing.
+            'views_min' => (int) env('FIRSTREPLY_CHAT_VIEWS_MIN', 5),
+
+            // Posts older than this are past the point where a nudge helps.
+            'max_age_hours' => (int) env('FIRSTREPLY_CHAT_MAX_AGE_HOURS', 72),
+
+            // How many posts one run of the cadence engine will consider.
+            'batch_limit' => (int) env('FIRSTREPLY_CHAT_BATCH_LIMIT', 200),
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Loki Logging
     |--------------------------------------------------------------------------
     |

@@ -475,7 +475,7 @@ class DonationThankPrepService
 
         return DB::table('chat_messages')
             ->whereIn('chatid', $rooms)
-            ->whereNotIn('type', ['System', 'Schedule', 'ScheduleUpdated', 'Reminder'])
+            ->whereNotIn('type', ['System', 'Schedule', 'ScheduleUpdated', 'Reminder', 'Prompt'])
             ->whereNotNull('message')
             ->orderByDesc('date')
             ->limit(5)

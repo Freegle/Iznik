@@ -36,6 +36,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
+| Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |

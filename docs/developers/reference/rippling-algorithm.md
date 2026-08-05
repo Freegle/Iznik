@@ -293,6 +293,12 @@ retracted, so re-approval restores the copy without re-rippling.
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
 - **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
+  One exception: a post's FIRST reply is not held when the replier is inside the reach the
+  post will eventually have (`rippling_reach.max_polygon`). They were always going to be
+  allowed to reply once the ripple got there, so holding them delays a poster who currently
+  has nothing without protecting local-first ordering in any lasting way. See
+  [first-reply.md](first-reply.md); gated by `freegle.firstreply.passthrough.enabled`, off by
+  default.
 - **Rippling Explorer (ModTools `/rippling`):** draws the exact polygon and tints groups from
   the per-tick `reachable_group_ids`.
 
