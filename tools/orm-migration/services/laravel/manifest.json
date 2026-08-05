@@ -1,5 +1,5 @@
 {
-    "generated": "2026-08-05T15:04:42Z",
+    "generated": "2026-08-05T15:08:51Z",
     "root": "iznik-batch",
     "counts": {
         "raw": 569,
@@ -480,7 +480,7 @@
             "args": 0,
             "goldenSql": "SELECT userid, MAX(id) AS max, COUNT(*) AS count FROM users_images WHERE userid IS NOT NULL GROUP BY userid HAVING count > 1",
             "presentInCode": true,
-            "hasParityTest": false,
+            "hasParityTest": true,
             "status": "raw",
             "reason": "",
             "porting": "",
@@ -1746,7 +1746,7 @@
             "args": 1,
             "goldenSql": "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
             "presentInCode": true,
-            "hasParityTest": false,
+            "hasParityTest": true,
             "status": "raw",
             "reason": "",
             "porting": "",
@@ -2696,7 +2696,7 @@
             "args": 1,
             "goldenSql": "UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?",
             "presentInCode": true,
-            "hasParityTest": false,
+            "hasParityTest": true,
             "status": "raw",
             "reason": "",
             "porting": "",

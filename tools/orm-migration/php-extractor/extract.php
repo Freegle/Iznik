@@ -291,7 +291,7 @@ function newSite(): array
         'args' => 0,
         'goldenSql' => '',
         'presentInCode' => true,
-        'hasParityTest' => false, // always false in Phase A: no harness exists yet.
+        'hasParityTest' => false, // set from parityTestedIds() after the scan.
         'status' => STATUS_RAW,
         'reason' => '',
         'porting' => '',
@@ -754,6 +754,189 @@ final class SiteCollectorVisitor extends NodeVisitorAbstract
 // ---------------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------------
+/**
+ * Site ids named by a Layer 1/2 parity assertion, i.e. the PHP counterpart of
+ * extract.go's parityTestedIDs.
+ *
+ * Parsed, not grepped, and deliberately so: matching the id anywhere in a file
+ * would let a COMMENT saying "site abc123 is deliberately not converted"
+ * satisfy the very gate that is supposed to assert it WAS converted. Only a
+ * string literal in the first argument position of one of the harness's
+ * assertions counts.
+ *
+ * A site whose raw SQL is gone AND which such a test names is promoted to
+ * converted. One that vanished with no test to vouch for it keeps its old
+ * status, so "it disappeared" is never a route out of the inventory.
+ */
+const PARITY_ASSERTIONS = [
+    'GoldenSql::assert',
+    'GoldenSql::assertUpdate',
+    'GoldenSql::assertDelete',
+    'ResultParity::assertForSite',
+];
+
+/**
+ * The harness classes whose assertions vouch for a site, and where they live.
+ * Used by assertParityAssertionsCurrent() below.
+ */
+const PARITY_HARNESS_FILES = [
+    'GoldenSql'    => 'iznik-batch/tests/Support/OrmHarness/GoldenSql.php',
+    'ResultParity' => 'iznik-batch/tests/Support/OrmHarness/ResultParity.php',
+];
+
+/**
+ * Fail if the harness has grown an assertion that takes a $siteId which
+ * PARITY_ASSERTIONS does not list.
+ *
+ * This is the PHP counterpart of extract.go's gate (m), and it exists because
+ * the failure it prevents is invisible: an unlisted assertion means every site
+ * proved only through it silently reports as unproven, and the natural reading
+ * of that - "the manifest is stale, I should fix up the statuses" - is wrong in
+ * a way that would paper over the real bug. On the Go side that exact thing
+ * happened once and 68 sites with real passing tests reported as unproven.
+ *
+ * Note ResultParity::assert is deliberately NOT listed: its first argument is
+ * $originalSql, not a site id, so treating it as one would record SQL strings
+ * as site ids. Only methods whose first parameter is $siteId qualify.
+ */
+function assertParityAssertionsCurrent(string $repo): void
+{
+    $missing = [];
+    foreach (PARITY_HARNESS_FILES as $class => $rel) {
+        $path = $repo . '/' . $rel;
+        if (!is_file($path)) {
+            continue;
+        }
+        $src = file_get_contents($path);
+        if (!preg_match_all('/public static function ([a-zA-Z]+)\(string \$siteId/', $src, $m)) {
+            continue;
+        }
+        foreach ($m[1] as $method) {
+            $qualified = $class . '::' . $method;
+            if (!in_array($qualified, PARITY_ASSERTIONS, true)) {
+                $missing[] = $qualified;
+            }
+        }
+    }
+    if ($missing !== []) {
+        fwrite(STDERR, "extract: PARITY_ASSERTIONS is out of date - the harness has assertion(s) it does not list:\n");
+        foreach ($missing as $q) {
+            fwrite(STDERR, "  {$q}\n");
+        }
+        fwrite(STDERR, "  Add them to PARITY_ASSERTIONS in extract.php. Until you do, every site\n");
+        fwrite(STDERR, "  proved only through them reports as unproven.\n");
+        exit(1);
+    }
+}
+
+final class ParityTestVisitor extends NodeVisitorAbstract
+{
+    /** @var array<string,true> */
+    public array $ids = [];
+
+    /**
+     * Class constants declared in this file whose value is a literal string,
+     * so `GoldenSql::assert(self::SITE_FOO, ...)` resolves.
+     *
+     * This is NOT general constant resolution. It is the same deliberately
+     * narrow trick extract.go uses for its forwarding helpers, and for the same
+     * reason: an id the test COMPUTES is not the id written at the call site,
+     * and crediting it would vouch for something the test never asserted. Only
+     * a `const NAME = '<literal>';` in the same file counts.
+     *
+     * Without this the detector silently reports zero: the existing
+     * ProvenSitesTest names every site through a self:: constant, so a
+     * literals-only matcher finds nothing and the whole promotion path looks
+     * like it does not work.
+     *
+     * @var array<string,string>
+     */
+    private array $constants = [];
+
+    public function enterNode(Node $node)
+    {
+        if ($node instanceof Node\Stmt\ClassConst) {
+            foreach ($node->consts as $c) {
+                if ($c->value instanceof Node\Scalar\String_) {
+                    $this->constants[$c->name->toString()] = $c->value->value;
+                }
+            }
+            return null;
+        }
+
+        if (!$node instanceof Node\Expr\StaticCall) {
+            return null;
+        }
+        if (!$node->class instanceof Node\Name || !$node->name instanceof Node\Identifier) {
+            return null;
+        }
+        // NameResolver has already expanded the class to its FQN, so compare on
+        // the trailing segment - the harness is always imported by short name.
+        $parts = $node->class->getParts();
+        $short = end($parts) . '::' . $node->name->toString();
+        if (!in_array($short, PARITY_ASSERTIONS, true)) {
+            return null;
+        }
+
+        $first = $node->args[0]->value ?? null;
+        if ($first instanceof Node\Scalar\String_) {
+            $this->ids[$first->value] = true;
+            return null;
+        }
+        if ($first instanceof Node\Expr\ClassConstFetch && $first->name instanceof Node\Identifier) {
+            $name = $first->name->toString();
+            if (isset($this->constants[$name])) {
+                $this->ids[$this->constants[$name]] = true;
+            }
+        }
+        return null;
+    }
+}
+
+/**
+ * @return array<string,true> site ids a parity test names
+ */
+function parityTestedIds(string $root): array
+{
+    $parser = (new ParserFactory())->createForNewestSupportedVersion();
+    $ids = [];
+    foreach (walkPhpFiles($root) as $path) {
+        if (!str_contains($path, '/tests/')) {
+            continue;
+        }
+        $src = file_get_contents($path);
+        // Cheap reject before paying for a parse.
+        $interesting = false;
+        foreach (PARITY_ASSERTIONS as $a) {
+            if (str_contains($src, explode('::', $a)[0] . '::')) {
+                $interesting = true;
+                break;
+            }
+        }
+        if (!$interesting) {
+            continue;
+        }
+        try {
+            $ast = $parser->parse($src);
+        } catch (ParseError $e) {
+            fwrite(STDERR, "extract: parse {$path}: {$e->getMessage()}\n");
+            exit(1);
+        }
+        if ($ast === null) {
+            continue;
+        }
+        $t = new NodeTraverser();
+        $t->addVisitor(new NameResolver());
+        $v = new ParityTestVisitor();
+        $t->addVisitor($v);
+        $t->traverse($ast);
+        foreach ($v->ids as $id => $_) {
+            $ids[$id] = true;
+        }
+    }
+    return $ids;
+}
+
 function scan(string $root, string $repo): array
 {
     $parser = (new ParserFactory())->createForNewestSupportedVersion();
@@ -920,6 +1103,35 @@ function mergeForward(array $sites, ?array $prevManifest): array
     return $sites;
 }
 
+/**
+ * Stamp hasParityTest, and promote a site whose raw SQL is gone AND which a
+ * parity test names to "converted".
+ *
+ * Mirrors extract.go. The promotion is deliberately narrow: absence alone never
+ * promotes, because a deleted call site and a converted one look identical to
+ * an extractor, and "it vanished" must not be a route out of the inventory. A
+ * site that disappears unproven keeps whatever status it had, so it stays
+ * visible as raw and unaccounted for.
+ *
+ * @param array<string,true> $tested
+ */
+function applyParityTests(array &$sites, array $tested): int
+{
+    $promoted = 0;
+    foreach ($sites as &$s) {
+        $s['hasParityTest'] = isset($tested[$s['id']]);
+        if (!$s['hasParityTest'] || $s['presentInCode']) {
+            continue;
+        }
+        if (in_array($s['status'], [STATUS_RAW, STATUS_IN_PROGRESS], true)) {
+            $s['status'] = STATUS_CONVERTED;
+            $promoted++;
+        }
+    }
+    unset($s);
+    return $promoted;
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -931,6 +1143,10 @@ if (file_exists($out)) {
     $prevManifest = json_decode(file_get_contents($out), true, flags: JSON_THROW_ON_ERROR);
 }
 $sites = mergeForward($sites, $prevManifest);
+
+assertParityAssertionsCurrent($repo);
+$tested = parityTestedIds($root);
+$promoted = applyParityTests($sites, $tested);
 
 $applied = applyKeepRaw($sites, $rulesPath);
 
@@ -968,8 +1184,9 @@ file_put_contents(
 );
 
 fwrite(STDERR, sprintf(
-    "%d sites written to %s (%d keep-raw/excluded by rule)\n",
+    "%d sites written to %s (%d keep-raw/excluded by rule, %d promoted to converted by a parity test)\n",
     count($sites),
     $out,
-    $applied
+    $applied,
+    $promoted
 ));
