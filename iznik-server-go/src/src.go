@@ -59,7 +59,6 @@ func recordSource(src string, userID uint64, sessionID string) error {
 	db := database.DBConn
 
 	// Insert into logs_src table
-	// ORM migration site 0e7a8f66e4c4 (wave 2).
 	result := db.WithContext(ctx).Table("logs_src").Create(map[string]interface{}{
 		"src":     src,
 		"userid":  userID,
@@ -73,7 +72,6 @@ func recordSource(src string, userID uint64, sessionID string) error {
 
 	// If user is logged in, update their source field if not already set
 	if userID > 0 {
-		// ORM migration site 352b3c03f2f7 (wave 2).
 		result = db.WithContext(ctx).Table("users").Where("id = ? AND source IS NULL", userID).
 			Update("source", src)
 

@@ -149,7 +149,7 @@ func Bounds(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
 	ownMsgs := []MessageSummary{}
-	// ORM migration site 72fd7dc3ca1e (Tier 1 spatial review, round 2). Bind
+	// Bind
 	// order mirrors clause build order: Select's own two binds (the IN list),
 	// then the bound messages_likes Joins ON clause, then Where.
 	db.Table("messages").

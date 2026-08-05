@@ -236,7 +236,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	key := reachUniverseKey(myid, lat, lng)
 	reachIDs, hit := cachedReachUniverse(key, now)
 	if !hit {
-		// ORM migration site ff00b3ba45a3 (Tier 1 spatial review, round 3).
 		// The extractor now resolves utils.AuthorReachCapWhere to a single
 		// fixed golden with no unresolved gap (the manifest's stale,
 		// presentInCode=false 7ef7f895e8bf is the pre-fix snapshot), so this
@@ -259,7 +258,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 
 	// Own arm: always fresh (cheap indexed query), never cached.
 	var ownIDs []uint64
-	// ORM migration site 17a182469755 (Tier 1 spatial review, round 3).
 	db.Table("messages_spatial ms").
 		Select("ms.msgid").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").
@@ -543,7 +541,7 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult {
 	var results []SearchResult
 
-	// ORM migration site a5e382bd3536 (Tier 3 keep-raw review). len(groupids)>0
+	// len(groupids)>0
 	// is the only toggle - 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_a5e382bd3536
 	// (iznik-server-go/test). Unlike groupFilter (still used unchanged by

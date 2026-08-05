@@ -62,7 +62,6 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 			Systemrole string `json:"systemrole"`
 		}
 
-		// ORM migration site a2a6a74e67d6 (wave 4).
 		db.Table("sessions").
 			Select("users.id, users.systemrole").
 			Joins("INNER JOIN users ON users.id = sessions.userid").
@@ -111,7 +110,6 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 1f790095e709 (wave 1).
 	db.Table("config").Where("`key` = ?", key).Scan(&items)
 
 	if len(items) > 0 {

@@ -41,7 +41,6 @@ func GetABTest(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var variants []ABTestVariant
-	// ORM migration site b8d3220fdb2f (wave 1).
 	db.Table("abtest").Where("uid = ? AND suggest = 1", uid).Order("rate DESC, RAND()").Scan(&variants)
 
 	if len(variants) == 0 {
@@ -90,7 +89,7 @@ func PostABTest(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	if req.Shown != nil && *req.Shown {
-		// ORM migration site 7e75c8eb601d (wave 3). DoUpdates is an explicit
+		// DoUpdates is an explicit
 		// ordered clause.Set, not clause.Assignments(map...): rate's expression
 		// reads shown, which this same statement also assigns, and MySQL
 		// evaluates a SET list left to right - shown must stay first, exactly
@@ -116,7 +115,7 @@ func PostABTest(c *fiber.Ctx) error {
 		if req.Score != nil && *req.Score > 0 {
 			score = *req.Score
 		}
-		// ORM migration site 7e4882220657 (wave 3). Same reasoning as
+		// Same reasoning as
 		// 7e75c8eb601d above: rate reads action, which this statement also
 		// assigns, so action must stay first in an explicit ordered Set.
 		db.Table("abtest").Clauses(clause.OnConflict{

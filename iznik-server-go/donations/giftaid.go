@@ -67,7 +67,6 @@ func GetGiftAid(c *fiber.Ctx) error {
 
 	// Query for user's gift aid record (exclude deleted records)
 	var giftaid GiftAid
-	// ORM migration site 275465713fef (wave 1).
 	result := db.Table("giftaid").
 		Select("id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber").
 		Where("userid = ? AND deleted IS NULL", userID).
@@ -137,7 +136,6 @@ func isGiftAidAdmin(myid uint64) bool {
 	}
 
 	var permissions *string
-	// ORM migration site 753a53ffa510 (wave 1).
 	db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
 
 	if permissions != nil && strings.Contains(strings.ToLower(*permissions), "giftaid") {
@@ -162,7 +160,6 @@ func ListGiftAid(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var giftaids []GiftAidListItem
-	// ORM migration site 380a2b8e3fbc (wave 4).
 	db.Table("giftaid").
 		Select("giftaid.*, SUM(users_donations.GrossAmount) AS donations").
 		Joins("LEFT JOIN users_donations ON users_donations.userid = giftaid.userid").
@@ -178,7 +175,6 @@ func ListGiftAid(c *fiber.Ctx) error {
 	// Fetch emails for each user
 	for i := range giftaids {
 		var email *string
-		// ORM migration site 06f02d4d35de (wave 1).
 		db.Table("users_emails").Select("email").Where("userid = ?", giftaids[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
 		giftaids[i].Email = email
 	}
@@ -207,7 +203,6 @@ func SearchGiftAid(c *fiber.Ctx) error {
 	searchPattern := "%" + search + "%"
 
 	var giftaids []GiftAidListItem
-	// ORM migration site d42b2cee70cd (wave 1).
 	db.Table("giftaid").
 		Where("fullname LIKE ? OR homeaddress LIKE ? OR id LIKE ?", searchPattern, searchPattern, searchPattern).
 		Scan(&giftaids)
@@ -219,7 +214,6 @@ func SearchGiftAid(c *fiber.Ctx) error {
 	// Fetch emails for each user
 	for i := range giftaids {
 		var email *string
-		// ORM migration site ba853e58442d (wave 1).
 		db.Table("users_emails").Select("email").Where("userid = ?", giftaids[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
 		giftaids[i].Email = email
 	}
@@ -276,7 +270,6 @@ func SetGiftAid(c *fiber.Ctx) error {
 	// write returned — never issue a separate SELECT LAST_INSERT_ID() as it's
 	// unsafe under parallel load (GORM's connection pool may assign a
 	// different connection).
-	// ORM migration site 258437a60f5d (tier4).
 	res := gorm.WithResult()
 	tx := db.Table("giftaid").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{
@@ -341,39 +334,30 @@ func EditGiftAid(c *fiber.Ctx) error {
 	// Update each field individually if provided (non-nil pointer means explicitly sent,
 	// even if empty string -- allowing fields to be cleared).
 	if req.Period != nil {
-		// ORM migration site 4f053cd8dd78 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("period", *req.Period)
 	}
 	if req.Fullname != nil {
-		// ORM migration site 645c6f681043 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("fullname", *req.Fullname)
 	}
 	if req.Firstname != nil {
-		// ORM migration site ef4a0c1acdcb (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("firstname", *req.Firstname)
 	}
 	if req.Lastname != nil {
-		// ORM migration site 09c76dc0c164 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("lastname", *req.Lastname)
 	}
 	if req.Homeaddress != nil {
-		// ORM migration site d21ef86c2517 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("homeaddress", *req.Homeaddress)
 	}
 	if req.Postcode != nil {
-		// ORM migration site 6eb0a1069fb6 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("postcode", *req.Postcode)
 	}
 	if req.Housenameornumber != nil {
-		// ORM migration site 246bbfcc9225 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("housenameornumber", *req.Housenameornumber)
 	}
 	if req.Reviewed != nil && *req.Reviewed {
-		// ORM migration site 2ecbd6874f42 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("reviewed", gorm.Expr("NOW()"))
 	}
 	if req.Deleted != nil && *req.Deleted {
-		// ORM migration site 40da338804c9 (wave 2).
 		db.Table("giftaid").Where("id = ?", req.ID).Update("deleted", gorm.Expr("NOW()"))
 	}
 
@@ -398,11 +382,9 @@ func DeleteGiftAid(c *fiber.Ctx) error {
 
 	// Get user's name for the insert if record doesn't exist
 	var fullname string
-	// ORM migration site bb29b5996e58 (wave 1).
 	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", myid).Scan(&fullname)
 
 	// INSERT or update existing record to mark as Declined.
-	// ORM migration site baf0645f5f91 (wave 3).
 	db.Table("giftaid").Clauses(clause.OnConflict{
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"period":  gorm.Expr("'Declined'"),

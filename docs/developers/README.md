@@ -42,7 +42,6 @@ Read these directly; the pages above link into them rather than copy them:
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
-| ORM migration harness (shadow reads, write replay) | [./reference/orm-migration-harness.md](./reference/orm-migration-harness.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

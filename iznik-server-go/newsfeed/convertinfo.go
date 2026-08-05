@@ -46,7 +46,6 @@ func ConvertInfo(c *fiber.Ctx) error {
 	}
 
 	var author uint64
-	// ORM migration site 7684033bc776 (wave 1).
 	database.DBConn.Table("newsfeed").Select("userid").Where("id = ? AND deleted IS NULL", id).Scan(&author)
 
 	if author == 0 {

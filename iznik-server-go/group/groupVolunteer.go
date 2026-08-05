@@ -40,7 +40,6 @@ func GetGroupVolunteers(id uint64) []GroupVolunteer {
 	// Get most recent profile.
 	//
 	// showmod setting defaults true.
-	// ORM migration site ddc552673df8 (wave 5).
 	db.Table("memberships").
 		Select("memberships.userid AS id, ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, "+
 			"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+

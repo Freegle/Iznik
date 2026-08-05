@@ -61,7 +61,7 @@ func Groups(c *fiber.Ctx) error {
 	// The own-messages arm joins messages_groups and can produce one row per group for a cross-posted
 	// message; GROUP BY messages.id + MAX(arrival) collapses those into a single row.
 	//
-	// ORM migration site bc6d923b540d (Tier 3 keep-raw review). gid>0 is the
+	// gid>0 is the
 	// only toggle (it drives spatialGroupFilter and spatialArgs together) - 2
 	// possible rendered forms, both declared in ormharness/shapes.json and
 	// proven by TestTier3Shapes_bc6d923b540d (iznik-server-go/test). Uses the

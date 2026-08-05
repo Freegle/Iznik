@@ -47,7 +47,6 @@ func GetModConfig(c *fiber.Ctx) error {
 	if id > 0 {
 		// Return a single config.
 		var config ModConfig
-		// ORM migration site f719d0218049 (wave 1).
 		db.Table("mod_configs").Where("id = ?", id).Scan(&config)
 		if config.ID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Config not found")
@@ -55,7 +54,6 @@ func GetModConfig(c *fiber.Ctx) error {
 
 		// Fetch standard messages for this config.
 		var stdmsgs []StdMsg
-		// ORM migration site 494b5692c466 (wave 1).
 		db.Table("mod_stdmsgs").Where("configid = ?", id).Order("id").Scan(&stdmsgs)
 
 		return c.JSON(fiber.Map{
@@ -92,7 +90,6 @@ func GetModConfig(c *fiber.Ctx) error {
 	// - default configs
 	// - configs used in their memberships
 	var configs []ModConfig
-	// ORM migration site 67206ab9f1ab (wave 4).
 	db.Table("mod_configs mc").
 		Select("DISTINCT mc.*").
 		Joins("LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ?", myid).

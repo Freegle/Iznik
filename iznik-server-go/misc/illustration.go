@@ -63,7 +63,6 @@ func GetIllustration(c *fiber.Ctx) error {
 	db := database.DBConn
 	var externalUID sql.NullString
 
-	// ORM migration site cb7eb47d0076 (wave 1).
 	err := db.Table("ai_images").Select("externaluid").Where("name = ?", itemName).Scan(&externalUID).Error
 
 	if err != nil || !externalUID.Valid || externalUID.String == "" {

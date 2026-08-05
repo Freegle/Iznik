@@ -59,7 +59,6 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 			}
 
 			var userids []Userid
-			// ORM migration site e57197b50601 (wave 1).
 			db.Table("sessions").Select("userid").Where("id = ? AND token = ?", minPT.ID, minPT.Token).Limit(1).Scan(&userids)
 
 			if len(userids) > 0 {
@@ -137,7 +136,6 @@ func GetJWTFromRequest(c *fiber.Ctx) (uint64, uint64, float64) {
 func IsAdminOrSupport(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	// ORM migration site e449ae451594 (wave 1).
 	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
 		log.Printf("Failed to check admin/support role for user %d: %v", myid, result.Error)
@@ -164,7 +162,6 @@ func IsChitChatMod(myid uint64) bool {
 
 	db := database.DBConn
 	var teamMemberCount int64
-	// ORM migration site 204fbc700672 (wave 4).
 	db.Table("teams_members tm").
 		Joins("INNER JOIN teams t ON tm.teamid = t.id").
 		Where("t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).
@@ -177,7 +174,6 @@ func IsChitChatMod(myid uint64) bool {
 func IsAdmin(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	// ORM migration site 2c0bbedc0eb2 (wave 1).
 	db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	return systemrole == utils.SYSTEMROLE_ADMIN
 }
@@ -198,7 +194,6 @@ const (
 func HasPermission(userid uint64, perm string) bool {
 	db := database.DBConn
 	var permissions *string
-	// ORM migration site 2f4a87c7cb53 (wave 1).
 	db.Table("users").Select("permissions").Where("id = ?", userid).Scan(&permissions)
 	if permissions == nil || *permissions == "" {
 		return false
@@ -215,7 +210,6 @@ func HasPermission(userid uint64, perm string) bool {
 func IsSystemMod(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	// ORM migration site 135b17140f36 (wave 1).
 	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
 		log.Printf("Failed to check system mod role for user %d: %v", myid, result.Error)
@@ -236,7 +230,6 @@ func IsModOfGroup(myid uint64, groupid uint64) bool {
 
 	db := database.DBConn
 	var role string
-	// ORM migration site a8691b8ac0e6 (wave 1).
 	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?", myid, groupid).Scan(&role)
 	if result.Error != nil {
 		log.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
@@ -253,7 +246,6 @@ func IsModOfAnyGroup(myid uint64) bool {
 
 	db := database.DBConn
 	var count int64
-	// ORM migration site 401a7aa34330 (wave 1).
 	db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&count)
 	return count > 0
 }
@@ -283,7 +275,6 @@ func VerifyPassword(userID uint64, password string) bool {
 		Credentials string
 		Salt        string
 	}
-	// ORM migration site 8d14c119b9c8 (wave 1).
 	db.Table("users_logins").Select("credentials, salt").Where("userid = ? AND type = ?", userID, utils.LOGIN_TYPE_NATIVE).Order("lastaccess DESC").Scan(&logins)
 
 	for _, login := range logins {
@@ -319,7 +310,7 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	// cross-node apply window, can return the user's PREVIOUS session - so the
 	// persistent token/JWT would carry the wrong session id (cf. message create,
 	// Discourse 9832). db.DB() returns the source even with dbresolver registered.
-	// ORM migration site 45c97c1f1f58 (insertid-conv). Table()+map Create
+	// Table()+map Create
 	// reads the generated id back from the same sql.Result the INSERT
 	// returned, under the map key "@id" - see test/orm_insertid_test.go.
 	row := map[string]interface{}{

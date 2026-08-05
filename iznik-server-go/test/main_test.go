@@ -181,18 +181,7 @@ func verifyRequiredTables() {
 }
 
 func TestMain(m *testing.M) {
-	// Record what production code actually sends to MySQL while the suite runs.
-	// This is the only check that looks at the real chain rather than a chain
-	// re-written in a test; see orm_executed_sql_test.go for why that matters.
-	if err := captureExecutedSQL(database.DBConn); err != nil {
-		fmt.Printf("WARNING: executed-SQL capture not installed: %v\n", err)
-	}
-
 	code := m.Run()
-
-	if rc := reportExecutedSQLParity(); rc != 0 && code == 0 {
-		code = rc
-	}
 
 	// Clean up test groups after all tests complete (pass or fail).
 	// Test groups accumulate and bloat the groups table, causing SSR payload

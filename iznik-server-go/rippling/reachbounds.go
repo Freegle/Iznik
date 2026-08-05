@@ -71,7 +71,6 @@ var reachBoundsExists bool
 func ReachBoundsReady(db *gorm.DB) bool {
 	reachBoundsOnce.Do(func() {
 		var n int64
-		// ORM migration site 417a0b24d8d6 (wave 1).
 		db.Table("information_schema.COLUMNS").
 			Where("table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'outer_bound'").
 			Count(&n)

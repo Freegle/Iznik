@@ -64,7 +64,6 @@ func PayPalIPN(c *fiber.Ctx) error {
 				if err == nil && pi != nil && pi.Metadata != nil {
 					if uidStr, ok := pi.Metadata["uid"]; ok && uidStr != "" {
 						var uid uint64
-						// ORM migration site b55d22304524 (wave 1).
 						gdb.Table("users").Select("id").Where("id = ?", uidStr).Scan(&uid)
 						if uid > 0 {
 							userID = uid
@@ -109,7 +108,6 @@ func PayPalIPN(c *fiber.Ctx) error {
 		userIDPtr = &userID
 	}
 
-	// ORM migration site 6fdb2c3b96f5 (wave 2).
 	result := gdb.Table("users_donations").Create(map[string]interface{}{
 		"userid":           userIDPtr,
 		"Payer":            payerEmail,

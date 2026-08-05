@@ -52,7 +52,6 @@ var attributionSchemaWide bool
 func AttributionSchemaReady(db *gorm.DB) bool {
 	attributionSchemaOnce.Do(func() {
 		var n int64
-		// ORM migration site 33d8780a286d (wave 1).
 		db.Table("information_schema.COLUMNS").
 			Where("TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'rippling_reply_attribution' AND COLUMN_NAME = 'attribution'").
 			Count(&n)

@@ -115,7 +115,6 @@ func PostMatches(c *fiber.Ctx) error {
 			Lat              float64 `gorm:"column:lat"`
 			Lng              float64 `gorm:"column:lng"`
 		}
-		// ORM migration site 498e74a4e8c5 (Tier 1 spatial review).
 		database.DBConn.Table("messages_embeddings me").
 			Select("me.subject_embedding, m.fromuser, m.type, ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng").
 			Joins("INNER JOIN messages m ON m.id = me.msgid").

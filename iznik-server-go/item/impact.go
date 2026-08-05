@@ -117,7 +117,6 @@ type standardWeight struct {
 // loadStandardWeights fetches every row of the `weights` reference table.
 func loadStandardWeights(db *gorm.DB) []standardWeight {
 	var rows []standardWeight
-	// ORM migration site 6ae9df9b7bcc (wave 1).
 	db.Table("weights").Select("CASE WHEN simplename IS NOT NULL THEN simplename ELSE name END AS name, weight").Scan(&rows)
 	return rows
 }
@@ -167,7 +166,6 @@ type itemsExactMatch struct {
 // it never inserts, unlike ItemService::findOrCreate().
 func findExactItemWeight(db *gorm.DB, name string) (weight float64, matched string, ok bool) {
 	var row itemsExactMatch
-	// ORM migration site e9988d77269d (wave 1).
 	result := db.Table("items").
 		Select("name, weight").
 		Where("name = ? AND weight IS NOT NULL AND weight != 0", name).
@@ -193,7 +191,6 @@ func populationAverageWeight(db *gorm.DB) float64 {
 		Average *float64 `gorm:"column:average"`
 	}
 
-	// ORM migration site d25398c4a0b6 (wave 1).
 	db.Table("items").Select("SUM(popularity*weight)/SUM(popularity) AS average").Where("weight IS NOT NULL AND weight != 0").Scan(&result)
 
 	if result.Average == nil {

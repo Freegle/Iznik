@@ -14,7 +14,7 @@ import (
 // GetProfileRecord uses ORDER BY id DESC LIMIT 1, so the latest INSERT is always shown.
 // Only called when a real (non-silhouette) picture URL is available.
 //
-// ORM migration site 9ccb23bbcdaf (wave 2). Golden column order (userid, url,
+// Golden column order (userid, url,
 // default, contenttype) is not alphabetical, but normaliseColumnOrder sorts
 // both sides' columns together with their values before comparing
 // (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert); the two
@@ -43,7 +43,6 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 
 	// Find existing user by email.
 	if email != "" {
-		// ORM migration site 242735a48039 (wave 4).
 		db.Table("users u").
 			Select("u.id").
 			Joins("JOIN users_emails ue ON ue.userid = u.id").
@@ -53,7 +52,6 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	}
 
 	// Find existing user by social login UID.
-	// ORM migration site 304e1cc5f2e5 (wave 1).
 	db.Table("users_logins").Select("userid").Where("type = ? AND uid = ?", loginType, uid).
 		Limit(1).Scan(&loginUserID)
 
@@ -72,7 +70,6 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	// If we found a user by email but not by social login, check for TN user.
 	if userID > 0 && loginUserID == 0 {
 		var tnUserID *uint64
-		// ORM migration site 64602d672727 (wave 1).
 		db.Table("users").Select("tnuserid").Where("id = ?", userID).Scan(&tnUserID)
 		if tnUserID != nil && *tnUserID > 0 {
 			return 0, fmt.Errorf("user %d is a TN user and cannot use %s login", userID, loginType)
@@ -85,7 +82,7 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		// SELECT LAST_INSERT_ID() as it's unsafe under parallel load (GORM's
 		// connection pool may assign a different connection).
 		//
-		// ORM migration site bbbc465b075c (insertid-conv). Table()+map
+		// Table()+map
 		// Create reads the generated id back from the SAME sql.Result the
 		// INSERT returned (gorm.io/gorm/callbacks/create.go), writing it
 		// into the map under "@id" - no separate connection-scoped query,
@@ -110,7 +107,7 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		userID = uint64(lastID)
 
 		// Add email if provided.
-		// ORM migration site f6bd87f2df8e (wave 2). Golden column order not
+		// Golden column order not
 		// alphabetical, but normaliseColumnOrder handles the map-Create
 		// reorder; see TestNormaliseColumnOrder_Insert.
 		if email != "" {
@@ -126,7 +123,6 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		}
 
 		// Add social login record.
-		// ORM migration site c86a6d9efeb3 (wave 3).
 		db.Table("users_logins").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"userid": userID,
 			"type":   loginType,
@@ -137,7 +133,6 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		if email != "" && emailUserID == 0 {
 			// They logged in via social UID but we don't have this email yet.
 			canon := user.CanonicalizeEmail(email)
-			// ORM migration site 1013ca206ab1 (wave 3).
 			db.Table("users_emails").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 				"userid":    userID,
 				"email":     email,
@@ -150,7 +145,6 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 
 		if loginUserID == 0 {
 			// They were found by email but don't have a social login record yet.
-			// ORM migration site 9cb4eab12012 (wave 3).
 			db.Table("users_logins").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 				"userid": userID,
 				"type":   loginType,
@@ -160,12 +154,11 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	}
 
 	// Update last access on the social login record.
-	// ORM migration site cdcc4a38c65d (wave 2).
 	db.Table("users_logins").Where("userid = ? AND type = ?", userID, loginType).
 		Update("lastaccess", gorm.Expr("NOW()"))
 
 	// Update name if missing.
-	// ORM migration site 994ffacdcb47 (wave 2). None of these three assignments
+	// None of these three assignments
 	// reference another assigned column (all plain binds), so the SET order is
 	// not load-bearing and GORM's alphabetical Updates(map) order is safe; see
 	// check-set-order.sh / setOrderIsLoadBearing.

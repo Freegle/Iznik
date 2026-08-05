@@ -135,7 +135,7 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 	// are already distinct and we just enrich them.
 	distExpr := "ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry))))"
 
-	// ORM migration site bc3af5374c0c (batch C). Only the id-list changes:
+	// Only the id-list changes:
 	// ids is now bound as a native []int64 "IN ?" slice instead of the
 	// hand-built comma-joined placeholders string. categoryClause and
 	// areaClause (the search-box polygon, %f-formatted) are unchanged -
@@ -216,7 +216,6 @@ func GetJob(c *fiber.Ctx) error {
 		if err == nil {
 			db := database.DBConn
 
-			// ORM migration site 6535a765873b (wave 4).
 			db.Table("`jobs`").
 				Select("jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid").
 				Joins("LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title").
@@ -333,7 +332,6 @@ func RecordJobClick(c *fiber.Ctx) error {
 
 	// Use IGNORE to handle clicks for purged jobs gracefully
 	if userID != nil {
-		// ORM migration site 427bf8bd0bc7 (wave 3).
 		db.Table("logs_jobs").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"userid":    *userID,
 			"jobid":     jobID,
@@ -343,7 +341,6 @@ func RecordJobClick(c *fiber.Ctx) error {
 			"page":      pageVal,
 		})
 	} else {
-		// ORM migration site 9d84c4751dd8 (wave 3).
 		db.Table("logs_jobs").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"userid":    gorm.Expr("NULL"),
 			"jobid":     jobID,

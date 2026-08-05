@@ -31,7 +31,6 @@ func GetSpammers(c *fiber.Ctx) error {
 	if partner != "" {
 		db := database.DBConn
 		var partnerID uint64
-		// ORM migration site 4d467f8ef688 (wave 1).
 		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
@@ -71,7 +70,7 @@ func GetSpammers(c *fiber.Ctx) error {
 		Heldat     *string `json:"heldat"`
 	}
 
-	// ORM migration site d64650fb9560 (Tier 3 keep-raw review). Four
+	// Four
 	// independent toggles - collection!="", contextID>0, userid>0, search!="" -
 	// give 2x2x2x2 = 16 possible rendered forms, all declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_d64650fb9560
@@ -184,14 +183,13 @@ func PostSpammer(c *fiber.Ctx) error {
 	// This is the fix for Discourse #9589 (wrong-attribution bug).
 	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
 		var existingCount int64
-		// ORM migration site 3a1a2fda0491 (wave 1).
 		db.Table("spam_users").Where("userid = ?", req.Userid).Count(&existingCount)
 		if existingCount > 0 {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": 0})
 		}
 	}
 
-	// ORM migration site 20dfce4d2228 (Tier 1 batch review). GORM's map-Create
+	// GORM's map-Create
 	// reads the id back from the same sql.Result the INSERT/REPLACE returned
 	// (under the map key "@id"), which is the same write-connection guarantee
 	// the old sqlDB.Exec()+LastInsertId() call had - REPLACE always inserts a
@@ -221,7 +219,6 @@ func PostSpammer(c *fiber.Ctx) error {
 	// V1 parity: reporting a SYSTEMROLE_USER as PendingAdd suppresses their ChitChat/newsfeed
 	// posts by setting users.newsfeedmodstatus = 'Suppressed' while pending review.
 	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
-		// ORM migration site 284c8dddea5c (wave 2).
 		db.Table("users").Where("id = ? AND systemrole = ?", req.Userid, utils.SYSTEMROLE_USER).
 			Update("newsfeedmodstatus", utils.NEWSFEED_MODSTATUS_SUPPRESSED)
 	}
@@ -273,7 +270,6 @@ func PatchSpammer(c *fiber.Ctx) error {
 		Byuserid   *uint64
 		Heldby     *uint64
 	}
-	// ORM migration site b35f73621756 (wave 1).
 	db.Table("spam_users").Select("collection, reason, byuserid, heldby").Where("id = ?", req.ID).Scan(&current)
 
 	if current.Collection == "" {
@@ -290,7 +286,6 @@ func PatchSpammer(c *fiber.Ctx) error {
 		takingHold := req.Heldby != nil
 		if changingCollection || takingHold {
 			var holderName string
-			// ORM migration site 4e48616b5b66 (wave 1).
 			db.Table("users").Select("fullname").Where("id = ?", *current.Heldby).Scan(&holderName)
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"ret":        1,
@@ -339,7 +334,6 @@ func PatchSpammer(c *fiber.Ctx) error {
 			heldby = &myid
 		}
 
-		// ORM migration site 2c2dda80b557 (wave 2).
 		//
 		// The SET order here is not load-bearing, though an earlier version of
 		// check-set-order.sh said it was. The "?" inside the heldat CASE is a
@@ -377,7 +371,6 @@ func ExportSpammers(c *fiber.Ctx) error {
 	if partner != "" {
 		db := database.DBConn
 		var partnerID uint64
-		// ORM migration site 9f33a7d0a5b1 (wave 1).
 		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
@@ -403,7 +396,6 @@ func ExportSpammers(c *fiber.Ctx) error {
 	}
 
 	var rows []ExportRow
-	// ORM migration site b524187a3675 (wave 4).
 	db.Table("spam_users").
 		Select("spam_users.id, spam_users.added, reason, email").
 		Joins("INNER JOIN users_emails ON spam_users.userid = users_emails.userid").
@@ -456,7 +448,6 @@ func DeleteSpammer(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site cd86450dea5a (wave 2).
 	db.Table("spam_users").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

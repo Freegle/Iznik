@@ -67,7 +67,6 @@ func GetUserDump(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cnt int64
-	// ORM migration site 3777f46262ba (wave 1).
 	db.Table("users").Where("id = ?", targetID).Count(&cnt)
 	if cnt == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
@@ -161,7 +160,6 @@ func dumpTimeRange(c *fiber.Ctx) (int64, int64) {
 	return start.UnixNano(), end.UnixNano()
 }
 
-// ORM migration site 823b16eb87c6 (userdump keep-raw review, revisited).
 // Same correction as collect_db.go's existingTables/scanIDs/runDBSpec: this
 // reads users_emails from the Percona cluster via the same *gorm.DB
 // everything else uses, not a separate connection or a SQLite file.

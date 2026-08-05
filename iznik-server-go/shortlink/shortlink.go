@@ -51,7 +51,6 @@ func GetShortlink(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single shortlink with click history.
 		var s Shortlink
-		// ORM migration site 23b1c7ff40ab (wave 1).
 		db.Table("shortlinks").Where("id = ?", id).Scan(&s)
 
 		if s.ID == 0 {
@@ -62,7 +61,6 @@ func GetShortlink(c *fiber.Ctx) error {
 
 		// Get click history.
 		var clicks []ClickHistory
-		// ORM migration site 8ce94884434d (wave 1).
 		db.Table("shortlink_clicks").Select("DATE(timestamp) AS date, COUNT(*) AS count").Where("shortlinkid = ?", id).
 			Group("date").Order("date ASC").Scan(&clicks)
 
@@ -90,10 +88,8 @@ func GetShortlink(c *fiber.Ctx) error {
 	// List all shortlinks.
 	var links []Shortlink
 	if groupid > 0 {
-		// ORM migration site 87c8a0b19cab (wave 1).
 		db.Table("shortlinks").Where("groupid = ?", groupid).Order("LOWER(name) ASC").Scan(&links)
 	} else {
-		// ORM migration site 5604e1f583b4 (wave 1).
 		db.Table("shortlinks").Order("LOWER(name) ASC").Scan(&links)
 	}
 
@@ -158,14 +154,13 @@ func PostShortlink(c *fiber.Ctx) error {
 
 	// Check if name already exists.
 	var existing uint64
-	// ORM migration site d9283245db83 (wave 1).
 	db.Table("shortlinks").Select("id").Where("name LIKE ?", req.Name).Scan(&existing)
 	if existing > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Name already in use"})
 	}
 
 	// Create the shortlink.
-	// ORM migration site 322b611c86cc (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT ('Group' is a fixed literal, not a bind); id read back via GORM's
 	// map-Create "@id" writeback.
 	row := map[string]interface{}{
@@ -194,7 +189,6 @@ func resolveShortlinkURL(s *Shortlink, userSite string) {
 			External  *string
 			Onhere    int
 		}
-		// ORM migration site 4c3e63baca48 (wave 1).
 		database.DBConn.Table("groups").Select("nameshort, external, onhere").Where("id = ?", *s.Groupid).Scan(&g)
 
 		s.Nameshort = g.Nameshort

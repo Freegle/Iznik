@@ -145,7 +145,6 @@ func Post(c *fiber.Ctx) error {
 	if raterecognise != "" && id != "" {
 		idNum, _ := strconv.ParseUint(id, 10, 64)
 		db := database.DBConn
-		// ORM migration site 30517f1cbffd (wave 2).
 		db.Table("messages_attachments_recognise").Where("attid = ?", idNum).Update("rating", raterecognise)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -198,7 +197,7 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	}
 	db := database.DBConn
 	var owner uint64
-	// ORM migration site bc2f944bfbb7 (wave 5 shapes pilot). ownerCol/table
+	// ownerCol/table
 	// come from the switch above, which has exactly 6 reachable cases
 	// (Message, ChatMessage, CommunityEvent, Volunteering, Story, Newsfeed -
 	// "User" and the default branch return before reaching this query), so
@@ -341,7 +340,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	}
 	db := database.DBConn
 	var rotateParentID uint64
-	// ORM migration site 6f9c3996f035 (Tier 3 keep-raw review). cfg.IDColumn/
+	// cfg.IDColumn/
 	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
 	// reachable here - one rendered form per entry, declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_6f9c3996f035
@@ -353,7 +352,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`
 
-	// ORM migration site 2ad46344c8b2 (Tier 3 keep-raw review). Same
+	// Same
 	// typeConfigs-driven table name as 6f9c3996f035 above - 10 possible
 	// rendered forms, declared in ormharness/shapes.json and proven by
 	// TestTier3Shapes_2ad46344c8b2 (iznik-server-go/test).
@@ -479,7 +478,7 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var rows []legacyAttachment
-	// ORM migration site 1be407fe0a15 (wave 5 shapes pilot). cfg.Table comes
+	// cfg.Table comes
 	// from typeConfigs, which has exactly 10 entries, all reachable here (the
 	// default imgType "Message" plus the 9 getFlagTypes flags); cols is
 	// determined by imgType too (only Message adds externalurl), so there is
@@ -529,7 +528,7 @@ func Get(c *fiber.Ctx) error {
 		Data        []byte
 		Contenttype string
 	}
-	// ORM migration site 1606033fd8f7 (wave 5 shapes pilot). Same reasoning as
+	// Same reasoning as
 	// 1be407fe0a15 above: blobCols is determined by cfg.TrustStoredContentType,
 	// which is itself a function of imgType (false only for Message), so this
 	// is again exactly one rendered form per typeConfigs entry - 10 shapes, all

@@ -468,7 +468,7 @@ type BouncesEmailsStats struct {
 }
 
 // getBouncesEmailsStats queries the bounces_emails table for actual bounce counts
-// ORM migration site e1daa6fea45a (Tier 3 keep-raw review). The date-range
+// The date-range
 // clause is only appended when both startDate and endDate are supplied, so
 // this statement has exactly 2 possible rendered forms, both declared in
 // ormharness/shapes.json and proven by TestTier3Shapes_e1daa6fea45a
@@ -556,7 +556,7 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 
 	// Query for AMP emails.
 	//
-	// ORM migration site 52ecf7eb71ac (Tier 3 keep-raw review). The
+	// The
 	// emailType/date-range toggles give 4 possible rendered forms, all
 	// declared in ormharness/shapes.json and proven by
 	// TestTier3Shapes_52ecf7eb71ac (iznik-server-go/test).
@@ -585,7 +585,7 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 
 	// Query for non-AMP emails.
 	//
-	// ORM migration site c8a4c6cbcae8 (Tier 3 keep-raw review). Same toggles
+	// Same toggles
 	// as the AMP query above - 4 possible rendered forms, all declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_c8a4c6cbcae8
 	// (iznik-server-go/test).
@@ -625,7 +625,7 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	// Reply clicks are clicks to message/chat pages where users can reply
 	// Exclude Trash Nothing users via JOIN on users table
 	//
-	// ORM migration site ef321afa5b7a (Tier 3 keep-raw review). Same toggles,
+	// Same toggles,
 	// applied via the e./u. aliases this query uses - 4 possible rendered
 	// forms, all declared in ormharness/shapes.json and proven by
 	// TestTier3Shapes_ef321afa5b7a (iznik-server-go/test).
@@ -641,7 +641,7 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 		Joins("LEFT JOIN users u ON e.userid = u.id").
 		Where(ampClickWhereSQL, ampClickWhereArgs...).Scan(&ampClickBreakdown)
 
-	// ORM migration site b37a229bfb0b (Tier 3 keep-raw review). Non-AMP twin
+	// Non-AMP twin
 	// of ef321afa5b7a above - 4 possible rendered forms, all declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_b37a229bfb0b
 	// (iznik-server-go/test).
@@ -763,14 +763,12 @@ func UserEmails(c *fiber.Ctx) error {
 			UserID uint64 `gorm:"column:userid"`
 		}
 		// First try users_emails table (for users with multiple emails)
-		// ORM migration site 5335567292aa (wave 1).
 		result := db.Table("users_emails").Select("userid").Where("email = ? AND backwards IS NULL", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
 			// Fallback to users table (for new users whose email is only in users.email)
 			var userFallback struct {
 				ID uint64 `gorm:"column:id"`
 			}
-			// ORM migration site 39805074ce3d (wave 1).
 			result = db.Table("users").Select("id").Where("email = ?", email).Limit(1).Scan(&userFallback)
 			if result.Error != nil || userFallback.ID == 0 {
 				// No user found - search by recipient_email in email_tracking table directly
@@ -962,7 +960,7 @@ func TimeSeries(c *fiber.Ctx) error {
 	// Build query for daily stats including AMP breakdown
 	// Exclude Trash Nothing users from stats
 	//
-	// ORM migration site 69f6acdc5a6b (Tier 3 keep-raw review). The email_type
+	// The email_type
 	// filter is only appended when one was supplied, so this statement has
 	// exactly 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_69f6acdc5a6b
@@ -1006,7 +1004,7 @@ func TimeSeries(c *fiber.Ctx) error {
 
 	// Get daily bounce counts from bounces_emails table.
 	//
-	// ORM migration site 9d115fb3ebcd (Tier 3 keep-raw review). This text is
+	// This text is
 	// entirely fixed - the extractor just could not fold the local
 	// `bounceQuery` variable to a static golden. Declared (as a single shape)
 	// in ormharness/shapes.json and proven by TestTier3Shapes_9d115fb3ebcd
@@ -1106,7 +1104,7 @@ func StatsByType(c *fiber.Ctx) error {
 
 	// Build query for stats by type - exclude Trash Nothing users
 	//
-	// ORM migration site ecbedcafc048 (Tier 3 keep-raw review). The date-range
+	// The date-range
 	// clause is only appended when both startDate and endDate are supplied, so
 	// this statement has exactly 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_ecbedcafc048
@@ -1257,7 +1255,7 @@ func TopClickedLinks(c *fiber.Ctx) error {
 
 	// Get all clicked links within the date range.
 	//
-	// ORM migration site f6e4a52a0fb6 (Tier 3 keep-raw review). The date-range
+	// The date-range
 	// clause is only appended when both startDate and endDate are supplied, so
 	// this statement has exactly 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_f6e4a52a0fb6
@@ -1937,7 +1935,6 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// NULL, since no mail was sent) still count towards "sent" - they just
 	// never contribute to opened/clicked.
 	var funnel ReengageFunnel
-	// ORM migration site db84f5bddc5b (wave 4).
 	db.Table("reengage r").
 		Select("COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
 		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
@@ -1946,7 +1943,6 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 
 	// Funnel broken down by stage (day 1-5).
 	byStage := make([]ReengageStageStat, 0)
-	// ORM migration site b8401fd16dd1 (wave 4).
 	db.Table("reengage r").
 		Select("r.stage AS stage, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
 		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
@@ -1959,7 +1955,6 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// (or sent outside of one) have arm = NULL and are excluded here - they
 	// are still reflected in the overall funnel above.
 	byArm := make([]ReengageArmStat, 0)
-	// ORM migration site 37d4ff3aedb7 (wave 4).
 	db.Table("reengage r").
 		Select("r.arm AS arm, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
 		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
@@ -1972,7 +1967,6 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// send time. Segment has no bearing on opens/clicks so it isn't joined
 	// to email_tracking.
 	bySegment := make([]ReengageSegmentStat, 0)
-	// ORM migration site 9db29fd9c43a (wave 1).
 	db.Table("reengage r").
 		Select("r.segment AS segment, COUNT(*) AS sent, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
 		Where("r.sentat BETWEEN ? AND ? AND r.segment IS NOT NULL", startDate, endDateTime).
@@ -1986,7 +1980,6 @@ func ReengageEffectiveness(c *fiber.Ctx) error {
 	// joined so a genuine home-group sign-off can be compared against nearest
 	// or no sign-off.
 	bySource := make([]ReengageSourceStat, 0)
-	// ORM migration site 639cf671aa39 (wave 4).
 	db.Table("reengage r").
 		Select("r.volunteer_source AS source, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
 		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").

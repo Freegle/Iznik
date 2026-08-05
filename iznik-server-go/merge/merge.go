@@ -28,7 +28,6 @@ type loginRow struct {
 
 func fetchLoginsForUser(userID uint64) []loginRow {
 	logins := make([]loginRow, 0)
-	// ORM migration site d42efd0197f3 (wave 1).
 	database.DBConn.Table("users_logins").Select("id, userid, type, CAST(uid AS CHAR) AS uid, added, lastaccess").
 		Where("userid = ?", userID).Order("lastaccess DESC").Scan(&logins)
 	return logins
@@ -92,7 +91,6 @@ func GetMerge(c *fiber.Ctx) error {
 	}
 
 	var m MergeRow
-	// ORM migration site df35e6ee770d (wave 1).
 	db.Table("merges").Select("id, user1, user2, uid, accepted, rejected").Where("id = ? AND uid = ?", id, uid).Scan(&m)
 
 	if m.ID == 0 {
@@ -106,22 +104,18 @@ func GetMerge(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		// ORM migration site 7e64501cc8fd (wave 1).
 		db.Table("users").Select("COALESCE(fullname, 'A freegler')").Where("id = ?", m.User1).Scan(&name1)
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site 4655e85d1bb5 (wave 1).
 		db.Table("users_emails").Select("COALESCE(email, '')").Where("userid = ?", m.User1).Order("preferred DESC").Limit(1).Scan(&email1)
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site 1ba3ae16b6a7 (wave 1).
 		db.Table("users").Select("COALESCE(fullname, 'A freegler')").Where("id = ?", m.User2).Scan(&name2)
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site a3be2bf2b81f (wave 1).
 		db.Table("users_emails").Select("COALESCE(email, '')").Where("userid = ?", m.User2).Order("preferred DESC").Limit(1).Scan(&email2)
 	}()
 	go func() {
@@ -201,7 +195,7 @@ func CreateMerge(c *fiber.Ctx) error {
 	uid := generateUID()
 
 	db := database.DBConn
-	// ORM migration site 4d2e18cf27e3 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
 		"user1":     req.User1,
@@ -233,7 +227,6 @@ func CreateMerge(c *fiber.Ctx) error {
 	}
 
 	// Flag related users as notified.
-	// ORM migration site 6c13f84896c6 (wave 2).
 	db.Table("users_related").
 		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
 		Update("notified", gorm.Expr("1"))
@@ -287,7 +280,6 @@ func PostMerge(c *fiber.Ctx) error {
 	}
 
 	var m MergeRow
-	// ORM migration site 8d9acac47724 (wave 1).
 	db.Table("merges").Select("id, user1, user2, uid").Where("id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
 
 	if m.ID == 0 {
@@ -305,10 +297,8 @@ func PostMerge(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Accept":
-		// ORM migration site 2b580119e4e3 (wave 2).
 		db.Table("merges").Where("id = ?", req.ID).Update("accepted", gorm.Expr("NOW()"))
 	case "Reject":
-		// ORM migration site a4b133b08878 (wave 2).
 		db.Table("merges").Where("id = ?", req.ID).Update("rejected", gorm.Expr("NOW()"))
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid action")
@@ -358,7 +348,6 @@ func DeleteMerge(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site f1b4641550c1 (wave 2).
 	db.Table("users_related").
 		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
 		Update("notified", gorm.Expr("1"))

@@ -43,7 +43,6 @@ func FetchEmailHealth(db *gorm.DB, hour int) (emailin, emailout int64) {
 		defer wg.Done()
 		// Incoming: alert if zero platform=0 chat messages in last 2 hours.
 		var inCount int64
-		// ORM migration site 4889ff2231e7 (wave 1).
 		db.Table("chat_messages").
 			Where("platform = 0 AND date >= DATE_SUB(NOW(), INTERVAL 2 HOUR)").
 			Count(&inCount)
@@ -56,7 +55,6 @@ func FetchEmailHealth(db *gorm.DB, hour int) (emailin, emailout int64) {
 		defer wg.Done()
 		// Outgoing: alert if fewer than 10 emails sent in last hour.
 		var outCount int64
-		// ORM migration site 8dae60aef8bb (wave 1).
 		db.Table("email_tracking").
 			Where("sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)").
 			Count(&outCount)
@@ -379,7 +377,6 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 		ID    uint64 `gorm:"column:id"`
 		Email string `gorm:"column:email"`
 	}
-	// ORM migration site 78b08f1a877d (wave 4).
 	db.Table("users").
 		Select("users.id, users_emails.email").
 		Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
@@ -404,11 +401,9 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 	// Note: users with no login rows at all (email-only, never set a password) are
 	// allowed through — they can use the reset link to set their first password.
 	var nativeCount int64
-	// ORM migration site 0c1bcc6cd9ae (wave 1).
 	db.Table("users_logins").Where("userid = ? AND type = ?", userID, utils.LOGIN_TYPE_NATIVE).Count(&nativeCount)
 	if nativeCount == 0 {
 		var socialCount int64
-		// ORM migration site 59679104df61 (wave 1).
 		db.Table("users_logins").Where("userid = ? AND type IN (?, ?)",
 			userID, utils.LOGIN_TYPE_GOOGLE, utils.LOGIN_TYPE_FACEBOOK).Count(&socialCount)
 		if socialCount > 0 {
@@ -462,7 +457,6 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 
 	// Find user by email. Deleted users can still unsubscribe.
 	var userID uint64
-	// ORM migration site c6167c3afc65 (wave 4).
 	db.Table("users").
 		Select("users.id").
 		Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
@@ -494,7 +488,6 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 
 	// Get user's preferred email.
 	var preferredEmail string
-	// ORM migration site c9d2261c0bbb (wave 1).
 	db.Table("users_emails").Select("email").Where("userid = ?", userID).
 		Order("preferred DESC, id ASC").Limit(1).Scan(&preferredEmail)
 
@@ -526,7 +519,6 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 
 	// Check for existing key.
 	var existingKey string
-	// ORM migration site 86d397f1f396 (wave 1).
 	db.Table("users_logins").Select("credentials").Where("userid = ? AND type = ?", userID, utils.LOGIN_TYPE_LINK).
 		Limit(1).Scan(&existingKey)
 
@@ -538,7 +530,7 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 	newKey := utils.RandomHex(16)
 
 	// Insert the login key. Use uid=userid as a unique identifier.
-	// ORM migration site 812775236c88 (wave 2). Golden column order (userid,
+	// Golden column order (userid,
 	// type, uid, credentials) is not alphabetical, but normaliseColumnOrder
 	// sorts both sides' columns together with their values before comparing
 	// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert), so the
@@ -562,7 +554,6 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 	// Find user by email. Deleted users can still log in so they see the
 	// "restore your account" banner.
 	var userID uint64
-	// ORM migration site d3280ea8d71b (wave 4).
 	db.Table("users u").
 		Select("u.id").
 		Joins("JOIN users_emails ue ON ue.userid = u.id").
@@ -604,7 +595,6 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 	// Verify the user exists. Deleted users can still log in so they see the
 	// "restore your account" banner.
 	var exists uint64
-	// ORM migration site 3ae0e2e69ab8 (wave 1).
 	db.Table("users").Select("id").Where("id = ?", uid).Limit(1).Scan(&exists)
 
 	if exists == 0 {
@@ -616,7 +606,6 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 
 	// Verify the link key.
 	var storedKey string
-	// ORM migration site c82f1f1c2cd7 (wave 1).
 	db.Table("users_logins").Select("credentials").Where("userid = ? AND type = ?", uid, utils.LOGIN_TYPE_LINK).
 		Limit(1).Scan(&storedKey)
 
@@ -648,7 +637,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	if partner != "" {
 		// Partner flow: a partner service can delete users it manages.
 		var partnerID uint64
-		// ORM migration site ea22d033db71 (wave 1).
 		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
@@ -661,7 +649,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 
 		// Only allow for users linked via partner (ljuserid set).
 		var ljuserid *uint64
-		// ORM migration site 9543ef288345 (wave 1).
 		db.Table("users").Select("ljuserid").Where("id = ?", targetID).Scan(&ljuserid)
 
 		if ljuserid == nil || *ljuserid == 0 {
@@ -673,17 +660,17 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// log first (byuser NULL — no acting Freegle user in the partner flow), since
 		// the eager delete leaves nothing for the later cleanup cron to log.
 		user.LogGroupLeftForApprovedMemberships(db, targetID, 0)
-		// ORM migration site aeda8c91f9ff (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in the self-service flow below (54406e904bd5).
 		db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
 
-		// ORM migration site c38c5422a649 (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in the self-service flow below (da41536965a2).
 		db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
 
 		// V1 parity (User::delete with $log=TRUE): audit trail for the deletion.
 		// byuser is NULL because there is no acting Freegle user in the partner flow.
-		// ORM migration site 02506a663a0e (wave 2). Golden column order (timestamp,
+		// Golden column order (timestamp,
 		// type, subtype, user, byuser) is not alphabetical, but normaliseColumnOrder
 		// sorts both sides' columns together with their values before comparing
 		// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert), so the
@@ -699,7 +686,7 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// GDPR erasure: partner-deleted accounts have no recovery affordance (the partner
 		// owns the contract), so unlike the self-service flow we blank message content
 		// immediately rather than deferring to the 14-day grace cleanup.
-		// ORM migration site 735b4f446b8e (wave 2). None of these nine assignments
+		// None of these nine assignments
 		// reference another assigned column (all NULL/NOW() literals), so the SET
 		// order is not load-bearing and GORM's alphabetical Updates(map) order is
 		// safe; see check-set-order.sh / setOrderIsLoadBearing.
@@ -714,7 +701,7 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 			"htmlbody":     gorm.Expr("NULL"),
 			"deleted":      gorm.Expr("NOW()"),
 		})
-		// ORM migration site fc02dfb79aa4 (wave 5). gorm.Expr("1") rather than a
+		// gorm.Expr("1") rather than a
 		// bare 1: the original writes the literal into the statement, and a
 		// plain Go value binds as a placeholder instead, which is a different
 		// statement text even though it sets the same value.
@@ -733,7 +720,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 
 	// Moderators must demote themselves first to avoid accidental deletion.
 	var modRole string
-	// ORM migration site 7db99b93d6cd (wave 1).
 	db.Table("memberships").Select("role").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Limit(1).Scan(&modRole)
 
@@ -746,7 +732,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 
 	// Spammers cannot delete their own accounts (prevents evasion of tracking).
 	var spammerCount int64
-	// ORM migration site f091c05b08dd (wave 1).
 	db.Table("spam_users").Where("userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_SPAMMER, utils.SPAM_COLLECTION_PENDING_ADD).
 		Count(&spammerCount)
 
@@ -765,7 +750,7 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	// audit log first (byuser = the user themselves), since the eager delete leaves
 	// nothing for the later cleanup cron to log.
 	user.LogGroupLeftForApprovedMemberships(db, myid, myid)
-	// ORM migration site 54406e904bd5 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in the partner flow above (aeda8c91f9ff).
 	db.Table("memberships").Where("userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Delete(nil)
 
@@ -775,12 +760,12 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	// UserManagementService::forgetInactiveUsers → User::forget). Doing it here would
 	// destroy data that the user could otherwise restore by signing back in — which is
 	// exactly the recovery affordance the soft-delete is supposed to preserve.
-	// ORM migration site da41536965a2 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in the partner flow above (c38c5422a649).
 	db.Table("users").Where("id = ?", myid).Update("deleted", gorm.Expr("NOW()"))
 
 	// V1 parity (User::delete with $log=TRUE): record the deletion in the audit log.
-	// ORM migration site 9f1d1bde8950 (wave 2). Same reasoning as 02506a663a0e above.
+	// Same reasoning as 02506a663a0e above.
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log2.LOG_TYPE_USER,
@@ -790,7 +775,6 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	})
 
 	// Destroy session so the user is logged out.
-	// ORM migration site 5e425bd87624 (wave 2).
 	db.Table("sessions").Where("userid = ?", myid).Delete(nil)
 
 	return c.JSON(fiber.Map{
@@ -811,7 +795,6 @@ func handleRelated(c *fiber.Ctx, userlist []uint64) error {
 	// Insert related records for each pair.
 	for _, otherID := range userlist {
 		if otherID != myid && otherID > 0 {
-			// ORM migration site 39a4f93e1455 (wave 3).
 			db.Table("users_related").Clauses(clause.Insert{Modifier: "IGNORE"}).
 				Create(map[string]interface{}{"user1": myid, "user2": otherID})
 		}
@@ -880,7 +863,6 @@ func GetSession(c *fiber.Ctx) error {
 	// gate doesn't meaningfully affect the website.
 	modtools := c.Query("modtools") == "true" || c.Query("modtools") == "1"
 	var minWebversion string
-	// ORM migration site 421ba6305db6 (wave 1).
 	database.DBConn.Table("config").Select("value").Where("`key` = ?", minWebversionConfigKey(modtools)).Scan(&minWebversion)
 	if webversionOlderThan(c.Query("webversion"), minWebversion) {
 		return c.JSON(fiber.Map{
@@ -903,7 +885,6 @@ func GetSession(c *fiber.Ctx) error {
 	// Throttled client-side via lastversiontime; we just insert/update.
 	webversion := c.Query("webversion")
 	if webversion != "" || appversion != "" {
-		// ORM migration site b4d495e2284e (wave 3).
 		db.Table("users_builddates").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"timestamp": gorm.Expr("NOW()"), "webversion": webversion, "appversion": appversion,
@@ -1015,19 +996,16 @@ func GetSession(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		// ORM migration site 0773b72a917c (wave 1).
 		db.Table("users").Select("id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed, engagement AS engagementlevel").
 			Where("id = ?", myid).Scan(&userRow)
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site 238e8011f646 (wave 1).
 		db.Table("users_emails").Select("id, email, preferred, validated, bounced").
 			Where("userid = ?", myid).Order("preferred DESC").Scan(&emails)
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site ca92bd0ba27d (wave 4).
 		db.Table("memberships m").
 			Select("m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed").
 			Joins("JOIN `groups` g ON g.id = m.groupid").
@@ -1038,25 +1016,21 @@ func GetSession(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		if currentSessionID > 0 {
-			// ORM migration site 6a4184c2e662 (wave 1).
 			db.Table("sessions").Select("id, series, token").
 				Where("id = ? AND userid = ?", currentSessionID, myid).Scan(&sessionRow)
 		} else {
-			// ORM migration site a5d3eac7f1b6 (wave 1).
 			db.Table("sessions").Select("id, series, token").
 				Where("userid = ?", myid).Limit(1).Scan(&sessionRow)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site 37ba31ef8bb0 (wave 1).
 		db.Table("users_aboutme").Select("text, timestamp").
 			Where("userid = ?", myid).Order("timestamp DESC").Limit(1).Scan(&aboutme)
 	}()
 	go func() {
 		defer wg.Done()
 		start := time.Now().AddDate(0, 0, -utils.SUPPORTER_PERIOD).Format("2006-01-02")
-		// ORM migration site 0a6ca0656195 (wave 5).
 		db.Table("users").
 			Select("(CASE WHEN ((users.systemrole != ? OR EXISTS(SELECT id FROM users_donations WHERE userid = ? AND users_donations.timestamp >= ?) OR EXISTS(SELECT id FROM microactions WHERE userid = ? AND microactions.timestamp >= ?)) AND (CASE WHEN JSON_EXTRACT(users.settings, '$.hidesupporter') IS NULL THEN 0 ELSE JSON_EXTRACT(users.settings, '$.hidesupporter') END) = 0) THEN 1 ELSE 0 END) AS supporter, (SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, (SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype",
 				utils.SYSTEMROLE_USER, myid, start, myid, start, myid, myid).
@@ -1143,7 +1117,6 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				// Unheld pending in active groups → pending (red).
-				// ORM migration site 2045fb2e0152 (wave 4).
 				db.Table("messages_groups mg").
 					Joins("INNER JOIN messages m ON m.id = mg.msgid").
 					Joins("INNER JOIN users u ON u.id = m.fromuser").
@@ -1158,7 +1131,6 @@ func GetSession(c *fiber.Ctx) error {
 				// as "Held by ..." — dropping it left mods with a badge lower than the
 				// number of held posts in front of them (Discourse 9481/635).
 				var heldActive int64
-				// ORM migration site 4b310a4913e0 (wave 4).
 				db.Table("messages_groups mg").
 					Joins("INNER JOIN messages m ON m.id = mg.msgid").
 					Joins("INNER JOIN users u ON u.id = m.fromuser").
@@ -1172,7 +1144,6 @@ func GetSession(c *fiber.Ctx) error {
 				// above: an unchecked post might still auto-approve so it waits for the
 				// content check, but a held one is claimed work and always counts.
 				var inact int64
-				// ORM migration site 0ae47e468828 (wave 4).
 				db.Table("messages_groups mg").
 					Joins("INNER JOIN messages m ON m.id = mg.msgid").
 					Joins("INNER JOIN users u ON u.id = m.fromuser").
@@ -1193,7 +1164,6 @@ func GetSession(c *fiber.Ctx) error {
 				// must not be counted in the badge either — otherwise the badge
 				// shows a total with no visible, clickable home (an inflated
 				// hamburger count and no red left-menu count).
-				// ORM migration site d8fa348393fe (wave 4).
 				db.Table("messages_groups mg").
 					Joins("INNER JOIN messages m ON m.id = mg.msgid").
 					Joins("INNER JOIN users u ON u.id = m.fromuser").
@@ -1207,7 +1177,6 @@ func GetSession(c *fiber.Ctx) error {
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			// ORM migration site d947b0e5819b (wave 1).
 			db.Table("memberships").Where("groupid IN ? AND collection = ?",
 				modGroupIDs, utils.COLLECTION_PENDING).Count(&pendingmembers)
 		}()
@@ -1220,7 +1189,6 @@ func GetSession(c *fiber.Ctx) error {
 				// Unheld spam members in active groups → spammembers (red).
 				// Condition matches getSpamMembers list: flag set and either never reviewed
 				// or re-flagged after the last review action.
-				// ORM migration site 719d174ca4a7 (wave 1).
 				db.Table("memberships").
 					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
 						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
@@ -1228,7 +1196,6 @@ func GetSession(c *fiber.Ctx) error {
 						activeGroupIDs).Count(&spammembers)
 				// Held spam members in active groups → spammembersother (blue).
 				var heldActive int64
-				// ORM migration site ef15aa1e20c6 (wave 1).
 				db.Table("memberships").
 					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
 						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
@@ -1239,7 +1206,6 @@ func GetSession(c *fiber.Ctx) error {
 			if len(inactiveGroupIDs) > 0 {
 				// All spam members in inactive groups → spammembersother (blue).
 				var inact int64
-				// ORM migration site 3a6e42ab9746 (wave 1).
 				db.Table("memberships").
 					Where("groupid IN ? AND reviewrequestedat IS NOT NULL "+
 						"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat)",
@@ -1253,7 +1219,6 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				// ORM migration site 9f50349c1378 (wave 4).
 				db.Table("communityevents ce").
 					Select("COUNT(DISTINCT ce.id)").
 					Joins("INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id").
@@ -1269,7 +1234,6 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				// ORM migration site 1d7035c837c8 (wave 1).
 				db.Table("admins").Where("groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL",
 					activeGroupIDs).Count(&pendingadmins)
 			}
@@ -1284,7 +1248,6 @@ func GetSession(c *fiber.Ctx) error {
 				// without this the Edit badge counts rippled-in copies that the Edit
 				// list (filtered rippled_in=0) never shows — a ghost count (Discourse
 				// 9839). Matches ListMessagesMT and groupWork's per-group Editreview.
-				// ORM migration site 2edb182648ba (wave 4).
 				db.Table("messages_edits me").
 					Select("COUNT(DISTINCT me.msgid)").
 					Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
@@ -1299,7 +1262,6 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				// ORM migration site 076c5c70eb8e (wave 4).
 				db.Table("volunteering v").
 					Select("COUNT(DISTINCT v.id)").
 					Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
@@ -1316,7 +1278,6 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
-				// ORM migration site 93161dacd118 (wave 4).
 				db.Table("users_stories us").
 					Select("COUNT(DISTINCT us.id)").
 					Joins("INNER JOIN memberships m ON m.userid = us.userid").
@@ -1337,9 +1298,7 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if auth.HasPermission(myid, auth.PERM_SPAM_ADMIN) {
-				// ORM migration site ef5ca788cc9e (wave 1).
 				db.Table("spam_users").Where("collection = ?", utils.SPAM_COLLECTION_PENDING_ADD).Count(&spammerpendingadd)
-				// ORM migration site e1b746a11157 (wave 1).
 				db.Table("spam_users").Where("collection = ?", utils.SPAM_COLLECTION_PENDING_REMOVE).Count(&spammerpendingremove)
 			}
 		}()
@@ -1363,7 +1322,6 @@ func GetSession(c *fiber.Ctx) error {
 			// chatmessage_review.go getReviewQueue() so the sidebar count
 			// equals the number of displayed messages.
 			//
-			// ORM migration site f43d5f680ef9 (Tier 3 keep-raw review).
 			// heldFilter is the only toggle - 2 possible rendered forms, both
 			// declared in ormharness/shapes.json and proven by
 			// TestTier3Shapes_f43d5f680ef9 (iznik-server-go/test).
@@ -1443,7 +1401,6 @@ func GetSession(c *fiber.Ctx) error {
 					// NOT IN only filters the mod-group JOIN row while still
 					// counting the wider-group JOIN row, causing double-counting.
 					//
-					// ORM migration site 3f3696f3bba4 (Tier 3 keep-raw review).
 					// This branch (allModGroupIDs>0) has exactly one rendered
 					// form, declared in ormharness/shapes.json and proven by
 					// TestTier3Shapes_3f3696f3bba4 (iznik-server-go/test).
@@ -1476,7 +1433,6 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if auth.HasPermission(myid, auth.PERM_NEWSLETTER) {
-				// ORM migration site 6b1f5e2ded05 (wave 4).
 				db.Table("users_stories").
 					Joins("INNER JOIN users ON users.id = users_stories.userid AND users.deleted IS NULL").
 					Where("reviewed = 1 AND public = 1 AND newsletterreviewed = 0").
@@ -1489,7 +1445,6 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if auth.HasPermission(myid, auth.PERM_CLEARANCE) {
-				// ORM migration site 504611abf531 (wave 1).
 				db.Table("helper_repliers").Where("state = 'ESCALATED'").Count(&helperEscalated)
 			}
 		}()
@@ -1498,7 +1453,6 @@ func GetSession(c *fiber.Ctx) error {
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			// ORM migration site cae162df80a1 (wave 1).
 			db.Table("giftaid").Where("reviewed IS NULL AND deleted IS NULL AND period != 'Declined'").Count(&giftaid)
 		}()
 
@@ -1508,7 +1462,6 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-				// ORM migration site 31e0b23915a9 (wave 4).
 				// rippled_in = 0: the aggregate Feedback work count must match
 				// the per-group badge (groupWork.go) and the list — only posts
 				// that originated on the group, not rippled-in copies. 9808/633.
@@ -1539,7 +1492,7 @@ func GetSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
-				// ORM migration site 09515916c939 (wave 5). Derived-table trick: GORM's
+				// Derived-table trick: GORM's
 				// Table() passes its name argument through verbatim (no quoting) once it
 				// contains a space, so a parenthesized UNION subquery can be given as the
 				// "table name" with its own bind args in Table()'s variadic args.
@@ -1572,7 +1525,6 @@ func GetSession(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				// ORM migration site fbf8a34131ef (wave 1).
 				db.Table("housekeeper_tasks").
 					Where("enabled = 1 AND placeholder = 0 AND ( last_status = 'failure' OR last_run_at IS NULL OR last_run_at < DATE_SUB(NOW(), INTERVAL interval_hours HOUR) )").
 					Count(&housekeeping)
@@ -1583,11 +1535,9 @@ func GetSession(c *fiber.Ctx) error {
 			go func() {
 				defer wg2.Done()
 				var failures int64
-				// ORM migration site 58f7851e95e9 (wave 1).
 				db.Table("cron_job_status").Where("last_exit_code IS NOT NULL AND last_exit_code != 0").Count(&failures)
 
 				var runCount int64
-				// ORM migration site 6f6fca850fd6 (wave 1).
 				db.Table("cron_job_status").Count(&runCount)
 
 				activeCount := int64(housekeeper.ActiveCronJobCount())
@@ -1674,7 +1624,6 @@ func GetSession(c *fiber.Ctx) error {
 	}
 	if loc == nil && userRow.Lastlocation != nil && *userRow.Lastlocation > 0 {
 		var locRow LocationRow
-		// ORM migration site 501faa48bf9b (wave 1).
 		db.Table("locations").Select("name, lat, lng").Where("id = ?", *userRow.Lastlocation).Scan(&locRow)
 		if locRow.Name != "" {
 			loc = &locRow
@@ -1858,7 +1807,7 @@ func GetSession(c *fiber.Ctx) error {
 // left-to-right assignment order MySQL evaluates a SET list in is exactly
 // the order fields are appended below - unchanged from the string version.
 //
-// ORM migration site 64dbb28e0d7b / f85b0b8ed693. Previously kept raw with
+// Previously kept raw with
 // the reasoning that a dynamic SET list built by string concatenation has
 // 2^n possible shapes and so cannot be a fixed GORM chain - true for a FIXED
 // chain, but irrelevant here: the chain itself is fixed
@@ -1979,7 +1928,6 @@ func PatchSession(c *fiber.Ctx) error {
 		// SECURITY: reject keys older than 7 days so a validatekey is not an indefinitely-valid
 		// bearer credential (it can trigger an account merge below). NULL validatetime (legacy rows
 		// predating this) stays accepted for compatibility; new keys always set it.
-		// ORM migration site cec96ac6422d (wave 1).
 		db.Table("users_emails").Select("id, userid, email").
 			Where("validatekey = ? AND (validatetime IS NULL OR validatetime > NOW() - INTERVAL 7 DAY)", *req.Key).
 			Scan(&emails)
@@ -2011,9 +1959,8 @@ func PatchSession(c *fiber.Ctx) error {
 			}
 
 			// Clear all preferred flags for this user, then set the confirmed email as preferred.
-			// ORM migration site fc7cf4ff8b35 (wave 2).
 			db.Table("users_emails").Where("userid = ?", myid).Update("preferred", gorm.Expr("0"))
-			// ORM migration site db15655f044f (wave 2). None of these four
+			// None of these four
 			// assignments reference another assigned column, so the SET order
 			// is not load-bearing and GORM's alphabetical Updates(map) order is
 			// safe; see check-set-order.sh / setOrderIsLoadBearing.
@@ -2036,9 +1983,7 @@ func PatchSession(c *fiber.Ctx) error {
 			// unbounce: the per-address timestamp (gates welcome mail via
 			// whereNull('bounced')) and the per-user suspension flag.
 			// Safe if the address later fails again: BounceService re-suspends.
-			// ORM migration site 54fd76b4cc2c (wave 2).
 			db.Table("users_emails").Where("id = ?", mail.ID).Update("bounced", gorm.Expr("NULL"))
-			// ORM migration site 3fc481b1a1a6 (wave 2).
 			db.Table("users").Where("id = ?", myid).Update("bouncing", gorm.Expr("0"))
 		}
 
@@ -2087,7 +2032,6 @@ func PatchSession(c *fiber.Ctx) error {
 		// fires if the account is actually flagged deleted right now (the UPDATE
 		// clearing the flag runs after this), so a routine settings save that
 		// happens to include deleted:null doesn't spam the log.
-		// ORM migration site 56c15677ea5b (tier4).
 		database.InsertSelect(db, "logs",
 			"(timestamp, type, subtype, user, byuser) "+
 				"SELECT NOW(), ?, ?, id, id FROM users WHERE id = ? AND deleted IS NOT NULL",
@@ -2114,7 +2058,6 @@ func PatchSession(c *fiber.Ctx) error {
 	}
 
 	// Execute single users table UPDATE if there are any changes.
-	// ORM migration site 64dbb28e0d7b (see buildPatchSessionUpdateSet above).
 	if set := buildPatchSessionUpdateSet(req.Displayname, req.Firstname, req.Lastname, settingsJSONStr,
 		lastlocationID, req.Onholidaytill, relevantallowedInt, newslettersallowedInt, req.Source, deletedNull,
 		marketingconsentInt); len(set) > 0 {
@@ -2133,7 +2076,6 @@ func PatchSession(c *fiber.Ctx) error {
 			salt := auth.GetPasswordSalt()
 			hashed := auth.HashPassword(*req.Password, salt)
 			uid := strconv.FormatUint(myid, 10)
-			// ORM migration site 69fb1ebb3a73 (wave 3).
 			db.Table("users_logins").Clauses(clause.OnConflict{
 				DoUpdates: clause.Assignments(map[string]interface{}{"credentials": hashed, "salt": salt}),
 			}).Create(map[string]interface{}{
@@ -2146,7 +2088,7 @@ func PatchSession(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// ORM migration site 3e8f726f0ef8 (wave 2). Golden column order not
+			// Golden column order not
 			// alphabetical, but normaliseColumnOrder handles the map-Create
 			// reorder; see TestNormaliseColumnOrder_Insert.
 			db.Table("users_aboutme").Create(map[string]interface{}{
@@ -2178,7 +2120,6 @@ func PatchSession(c *fiber.Ctx) error {
 				// first and the current user gets no push (and pushes for the old
 				// user are delivered to this device). Reassign userid/type/apptype
 				// to the currently-logged-in user.
-				// ORM migration site 5fb6e8fa85fd (wave 3).
 				db.Table("users_push_notifications").Clauses(clause.OnConflict{
 					DoUpdates: clause.Assignments(map[string]interface{}{
 						"userid": myid, "type": pushSub.Type, "apptype": apptype,
@@ -2265,17 +2206,14 @@ func DeleteSession(c *fiber.Ctx) error {
 
 		var series uint64
 		if sessionId > 0 {
-			// ORM migration site 21b921f5f200 (wave 1).
 			db.Table("sessions").Select("series").Where("id = ? AND userid = ?", sessionId, myid).Scan(&series)
 		}
 
 		if series > 0 {
 			// Close the whole current login series (all its tabs/token rotations).
-			// ORM migration site c49c4a6dd162 (wave 2).
 			db.Table("sessions").Where("userid = ? AND series = ?", myid, series).Delete(nil)
 		} else if sessionId > 0 {
 			// Series unavailable but the row is known — delete just that row.
-			// ORM migration site 5f7862e7e461 (wave 2).
 			db.Table("sessions").Where("id = ? AND userid = ?", sessionId, myid).Delete(nil)
 		}
 		// If the current session cannot be identified at all, do NOT delete every

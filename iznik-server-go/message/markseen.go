@@ -102,7 +102,7 @@ func MarkSeen(c *fiber.Ctx) error {
 		// so different users never conflict; only concurrent same-user mark-seens can.
 		if err := insertViewBatch(db, chunk, myid, source); err != nil && database.IsDeadlockOrLockTimeout(err) {
 			for _, msgID := range chunk {
-				// ORM migration site 61e26594c74d (insertid-conv). No id is
+				// No id is
 				// read back here, so this is a plain ODKU upsert - no
 				// LAST_INSERT_ID/WithResult needed. Uses database.RetryGorm
 				// rather than a bare GORM chain so this per-row degrade-

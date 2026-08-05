@@ -85,7 +85,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 		Settings *string `json:"settings"`
 	}
 	var memberships []membershipRow
-	// ORM migration site dfcf063d9320 (wave 1).
 	db.Table("memberships").Select("groupid, settings").
 		Where("userid = ? AND role IN (?, ?) AND collection = ?",
 			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
@@ -145,7 +144,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 		// the ModTools badge - without it the two disagreed about the same queue.
 		// A HELD post is exempt: a moderator has claimed it, so it will never
 		// auto-approve and is already in their list (Discourse 9481/635).
-		// ORM migration site 31e336f98156 (wave 4).
 		db.Table("messages_groups mg").
 			Select("mg.groupid, COUNT(*) as count, (mg.heldby IS NOT NULL) as held").
 			Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -181,7 +179,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		// ORM migration site f749b5bc26ed (wave 4).
 		db.Table("messages_groups mg").
 			Select("mg.groupid, COUNT(*) as count").
 			Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -204,7 +201,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []countRow
-		// ORM migration site 1de7b48d433b (wave 1).
 		db.Table("memberships").Select("groupid, COUNT(*) as count").
 			Where("groupid IN ? AND collection = ?", allGroupIDs, utils.COLLECTION_PENDING).
 			Group("groupid").Scan(&rows)
@@ -222,7 +218,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 		var rows []heldCountRow
-		// ORM migration site 45bb8a4c8133 (wave 4).
 		db.Table("memberships m").
 			Select("m.groupid, COUNT(*) as count, (m.heldby IS NOT NULL) as held").
 			Joins("INNER JOIN users u ON u.id = m.userid").
@@ -256,7 +251,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		// ORM migration site 083af5c9e0a1 (wave 4).
 		db.Table("communityevents ce").
 			Select("ceg.groupid, COUNT(DISTINCT ce.id) as count").
 			Joins("INNER JOIN communityevents_groups ceg ON ceg.eventid = ce.id").
@@ -281,7 +275,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		// ORM migration site 1f888c4d9a0a (wave 4).
 		db.Table("volunteering v").
 			Select("vg.groupid, COUNT(DISTINCT v.id) as count").
 			Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
@@ -312,7 +305,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 		// group's Edit badge while the Edit list (which filters rippled_in=0) shows
 		// nothing — a "ghost" count (Discourse 9839). Matches the ListMessagesMT
 		// Edit query and the session editreview count.
-		// ORM migration site 7233641f67ad (wave 4).
 		db.Table("messages_edits me").
 			Select("mg.groupid, COUNT(DISTINCT me.msgid) as count").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid").
@@ -337,7 +329,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		// ORM migration site de52b33ad2c2 (wave 1).
 		db.Table("admins").Select("groupid, COUNT(DISTINCT id) as count").
 			Where("groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL", activeGroupIDs).
 			Group("groupid").Scan(&rows)
@@ -359,7 +350,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 		}
 		hapCutoff := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 		var rows []countRow
-		// ORM migration site 1f1e8962edcb (wave 4).
 		// rippled_in = 0: count Feedback only for posts that originated on the
 		// group, not rippled-in copies, so the badge matches the Feedback list
 		// (getHappinessMembers) and the Edit badge above. Discourse 9808/633.
@@ -399,7 +389,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 			return
 		}
 		var rows []countRow
-		// ORM migration site 2fb19be4ef0b (wave 5). Derived-table trick: GORM's
+		// Derived-table trick: GORM's
 		// Table() passes its name argument through verbatim (no quoting) once it
 		// contains a space, so a parenthesized UNION subquery can be given as the
 		// "table name" with its own bind args in Table()'s variadic args.
@@ -450,7 +440,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 				return nil
 			}
 			var rows []chatCountRow
-			// ORM migration site e9cc5186c0a5 (wave 5). Same derived-table trick as
+			// Same derived-table trick as
 			// above: the correlated "sub" subquery is passed as Table()'s verbatim
 			// name (it contains a space, so GORM does not quote it), with its own
 			// bind args in Table()'s variadic args.
@@ -514,7 +504,6 @@ func GetGroupWork(c *fiber.Ctx) error {
 				Count   int64
 			}
 			var widerRows []widerCountRow
-			// ORM migration site a9a8c24df5e0 (wave 4).
 			db.Table("chat_messages cm").
 				Select("m1.groupid, COUNT(DISTINCT cm.id) as count").
 				Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").

@@ -39,7 +39,6 @@ func RedirectShortlink(c *fiber.Ctx) error {
 
 	// Look up the shortlink by name.
 	var s Shortlink
-	// ORM migration site ae66a83e23cf (wave 1).
 	db.Table("shortlinks").Where("name LIKE ?", name).Scan(&s)
 
 	if s.ID == 0 {
@@ -58,9 +57,7 @@ func RedirectShortlink(c *fiber.Ctx) error {
 	}
 
 	// Record the click.
-	// ORM migration site a2ca92d61766 (wave 2).
 	db.Table("shortlinks").Where("id = ?", s.ID).Update("clicks", gorm.Expr("clicks + 1"))
-	// ORM migration site 507986a628ba (wave 2).
 	db.Table("shortlink_clicks").Create(map[string]interface{}{"shortlinkid": s.ID})
 
 	log.Printf("[Shortlink] Redirecting '%s' (id=%d) to %s", name, s.ID, redirectURL)

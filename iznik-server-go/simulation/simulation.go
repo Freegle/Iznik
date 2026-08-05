@@ -61,7 +61,6 @@ func listRuns(c *fiber.Ctx) error {
 	}
 
 	var runs []RunRow
-	// ORM migration site 76e0992276ef (wave 1).
 	db.Table("simulation_message_isochrones_runs").
 		Select("id, name, description, created, completed, parameters, filters, message_count, metrics, status").
 		Where("status = 'completed'").Order("created DESC").Limit(100).Scan(&runs)
@@ -135,7 +134,6 @@ func getRun(c *fiber.Ctx) error {
 	}
 
 	var r RunRow
-	// ORM migration site 13c70937febc (wave 1).
 	db.Table("simulation_message_isochrones_runs").
 		Select("id, name, description, created, completed, parameters, filters, message_count, metrics, status").
 		Where("id = ?", runID).Scan(&r)
@@ -193,7 +191,6 @@ func getMessage(c *fiber.Ctx) error {
 
 	// Get total messages in the run.
 	var total int64
-	// ORM migration site 38f8814d52b3 (wave 1).
 	db.Table("simulation_message_isochrones_messages").Where("runid = ?", runID).Count(&total)
 
 	// Get the message at this sequence.
@@ -209,7 +206,6 @@ func getMessage(c *fiber.Ctx) error {
 	}
 
 	var msg MessageRow
-	// ORM migration site 9f95a2d88fb9 (wave 1).
 	db.Table("simulation_message_isochrones_messages").
 		Select("id, runid, sequence, msgid, subject, lat, lng, groupid").
 		Where("runid = ? AND sequence = ?", runID, index).Scan(&msg)
@@ -230,7 +226,6 @@ func getMessage(c *fiber.Ctx) error {
 	}
 
 	var expansions []ExpansionRow
-	// ORM migration site af92875f9273 (wave 1).
 	db.Table("simulation_message_isochrones_expansions").
 		Select("id, sim_msgid, sequence, minutes, users, lat, lng").
 		Where("sim_msgid = ?", msg.ID).Order("sequence ASC").Scan(&expansions)
@@ -249,7 +244,6 @@ func getMessage(c *fiber.Ctx) error {
 	}
 
 	var users []UserRow
-	// ORM migration site ed5e8175ef79 (wave 1).
 	db.Table("simulation_message_isochrones_users").
 		Select("id, sim_msgid, userid, lat, lng").
 		Where("sim_msgid = ?", msg.ID).Scan(&users)

@@ -40,16 +40,16 @@ package test
 // directly and does not care about RowsAffected at all, so it gets the right
 // answer every time, including on the id-only duplicate hit. A converted
 // Table()+map Create call using the "@id" convention established in
-// test/orm_insertid_test.go loses that: on the duplicate branch it silently
+// test/insertid_gorm_writeback_test.go loses that: on the duplicate branch it silently
 // leaves "@id" unset.
 //
 // This is a real DB test, not dry-run SQL rendering, because the bug lives in
-// runtime RowsAffected, which RenderDryRunSQL cannot see - the existing
-// ormharness/upsert_test.go suite for this idiom only checks the rendered SQL
-// text and would pass unchanged whether or not this bug exists.
+// runtime RowsAffected. The golden-SQL parity harness that used to cover this
+// idiom only compared rendered statement text, so it passed whether or not the
+// bug was present - which is exactly why this test outlived it.
 //
-// The safe alternative, also demonstrated below, is the OTHER pattern already
-// proven in orm_insertid_test.go: gorm.WithResult(). Statement.Result.Result
+// The safe alternative, also demonstrated below, is the OTHER pattern proven in
+// insertid_gorm_writeback_test.go: gorm.WithResult(). Statement.Result.Result
 // is populated before the RowsAffected==0 check, so
 // res.Result.LastInsertId() gives the right answer on both branches - insert
 // and no-op duplicate alike - exactly matching what the raw sqlDB.Exec code
@@ -75,7 +75,7 @@ import (
 // idOnlyUpsert reproduces the shape of ensureBatchRow / helperUpsertReplier /
 // helperSetItemState: INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
 // with no other assignment. domain is unique in this table (see
-// orm_insertid_test.go), so a second call with the same domain always takes
+// insertid_gorm_writeback_test.go), so a second call with the same domain always takes
 // the UPDATE branch and always changes nothing.
 func idOnlyUpsert(row map[string]interface{}) error {
 	db := database.DBConn
