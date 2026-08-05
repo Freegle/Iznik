@@ -21,6 +21,12 @@ class Wave2MiscTest extends TestCase
     // SELECT DISTINCT jobs.title FROM logs_jobs INNER JOIN jobs ...
     private const SITE_CLICKED_TITLES = '808ef0c86a20';
 
+    // SELECT jobs.id AS jobid, logs_jobs.id AS lid ... INNER JOIN jobs ON jobs.url = logs_jobs.link
+    private const SITE_JOBID_BACKFILL = 'b3ba7ebf8c17';
+
+    // The visualise source sweep: DISTINCT over three joined tables.
+    private const SITE_VISUALISE_SOURCE = '9866d94c54a3';
+
     /**
      * The third anti-join in this service alone: logs whose USER has been
      * deleted, as distinct from the sibling count for logs whose MESSAGE has.
@@ -71,5 +77,40 @@ class Wave2MiscTest extends TestCase
             ->distinct()
             ->select('jobs.title')
             ->join('jobs', 'logs_jobs.jobid', '=', 'jobs.id'));
+    }
+
+    /**
+     * Joined on URL, not on id - which is the whole purpose: these are log rows
+     * whose jobid was never resolved, matched back to their job by link so the
+     * caller can fill it in. Joining on an id here would find nothing, since
+     * the id is precisely what is missing.
+     */
+    public function test_jobid_backfill_candidates(): void
+    {
+        GoldenSql::assert(self::SITE_JOBID_BACKFILL, fn () => DB::table('logs_jobs')
+            ->select('jobs.id as jobid', 'logs_jobs.id as lid')
+            ->join('jobs', 'jobs.url', '=', 'logs_jobs.link')
+            ->whereNull('logs_jobs.jobid')
+            ->whereNotNull('logs_jobs.link')
+            ->orderByDesc('logs_jobs.id'));
+    }
+
+    public function test_visualise_source_rows(): void
+    {
+        GoldenSql::assert(self::SITE_VISUALISE_SOURCE, fn () => DB::table('messages')
+            ->distinct()
+            ->select(
+                'messages.id',
+                'a.id as attid',
+                'messages.fromuser',
+                'messages_by.userid as touser',
+                'messages_by.timestamp'
+            )
+            ->join('messages_by', 'messages.id', '=', 'messages_by.msgid')
+            ->join('messages_attachments as a', 'messages.id', '=', 'a.msgid')
+            ->where('messages_by.timestamp', '>', '2026-01-01 00:00:00')
+            ->where('messages.type', 'Offer')
+            ->whereNotNull('messages_by.userid')
+            ->orderByDesc('messages_by.timestamp'));
     }
 }

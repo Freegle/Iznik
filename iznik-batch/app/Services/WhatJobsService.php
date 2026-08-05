@@ -1620,13 +1620,16 @@ class WhatJobsService
         DB::table('logs_jobs')->where('timestamp', '<', $cutoff)->delete();
 
         // Back-fill missing jobid from URL
-        $logs = DB::select(
-            'SELECT jobs.id AS jobid, logs_jobs.id AS lid
-             FROM logs_jobs
-             INNER JOIN jobs ON jobs.url = logs_jobs.link
-             WHERE logs_jobs.jobid IS NULL AND logs_jobs.link IS NOT NULL
-             ORDER BY logs_jobs.id DESC'
-        );
+        $logs = DB::table('logs_jobs')
+            ->select('jobs.id as jobid', 'logs_jobs.id as lid')
+            // Joined on URL, not id - that is the point: these are log rows
+            // whose jobid was never resolved, matched back to the job by link.
+            ->join('jobs', 'jobs.url', '=', 'logs_jobs.link')
+            ->whereNull('logs_jobs.jobid')
+            ->whereNotNull('logs_jobs.link')
+            ->orderByDesc('logs_jobs.id')
+            ->get()
+            ->all();
         foreach ($logs as $log) {
             DB::table('logs_jobs')->where('id', $log->lid)->update(['jobid' => $log->jobid]);
         }
