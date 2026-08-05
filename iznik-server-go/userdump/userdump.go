@@ -177,19 +177,53 @@ func gatherEmails(gdb *gorm.DB, userID int64) []string {
 	return emails
 }
 
-// buildPlan assembles the ordered list of collection sections for this dump.
-func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string]bool, startNs, endNs int64) []section {
+// maxChatAnchors bounds how many chat rooms we pull message bodies for, even
+// after the time window has been applied. The window alone takes the worst real
+// case from 18,664 rooms to 332, but a busy moderator in a big enough community
+// could still push past what one query should carry - and a dump that silently
+// runs for minutes is worse than one that says what it left out. When this
+// bites, buildPlan returns a warning that lands in the dump's _sections table,
+// so whoever reads the snapshot can see the messages are not complete.
+const maxChatAnchors = 2000
+
+// buildPlan assembles the ordered list of collection sections for this dump,
+// plus any warnings raised while working out what to collect.
+func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string]bool, startNs, endNs int64) ([]section, []string) {
 	tables := existingTables(gdb)
 	var plan []section
+	var warnings []string
 
 	if include["db"] {
+		since := time.Unix(0, startNs)
+
 		chatIDs := scanIDs(gdb,
 			"SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ? UNION SELECT chatid FROM chat_roster WHERE userid = ?",
 			targetID, targetID, targetID)
+
+		// Rooms with activity inside the window, newest first, so that if the
+		// cap bites we keep the most recent conversations rather than an
+		// arbitrary slice. See the comment on the chat specs in collect_db.go
+		// for why message bodies have to be anchored on this smaller set.
+		recentChatIDs := scanIDs(gdb,
+			"SELECT id FROM ("+
+				"SELECT c.id AS id, c.latestmessage AS lm FROM chat_rooms c "+
+				"WHERE (c.user1 = ? OR c.user2 = ?) AND c.latestmessage >= ? "+
+				"UNION "+
+				"SELECT c.id AS id, c.latestmessage AS lm FROM chat_rooms c "+
+				"INNER JOIN chat_roster r ON r.chatid = c.id "+
+				"WHERE r.userid = ? AND c.latestmessage >= ?"+
+				") x ORDER BY x.lm DESC LIMIT ?",
+			targetID, targetID, since, targetID, since, maxChatAnchors+1)
+		if len(recentChatIDs) > maxChatAnchors {
+			recentChatIDs = recentChatIDs[:maxChatAnchors]
+			warnings = append(warnings, fmt.Sprintf(
+				"chat_messages: only the %d most recently active chats in this window were included", maxChatAnchors))
+		}
+
 		msgIDs := scanIDs(gdb, "SELECT id FROM messages WHERE fromuser = ?", targetID)
 		trackIDs := scanIDs(gdb, "SELECT id FROM email_tracking WHERE userid = ?", targetID)
 
-		for _, spec := range buildDBSpecs(targetID, chatIDs, msgIDs, trackIDs) {
+		for _, spec := range buildDBSpecs(targetID, chatIDs, recentChatIDs, msgIDs, trackIDs, since) {
 			if !tables[strings.ToLower(spec.table)] {
 				continue
 			}
@@ -224,7 +258,7 @@ func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string
 		})
 	}
 
-	return plan
+	return plan, warnings
 }
 
 // onSection is called after each section completes, for progress reporting.
@@ -235,14 +269,20 @@ type onSection func(done, total, totalWeight, doneWeight int, sec section, rows 
 func buildDump(b *Builder, targetID int64, include map[string]bool, startNs, endNs int64, cb onSection) []string {
 	gdb := database.DBConn
 	emails := gatherEmails(gdb, targetID)
-	plan := buildPlan(gdb, targetID, emails, include, startNs, endNs)
+	plan, warnings := buildPlan(gdb, targetID, emails, include, startNs, endNs)
 
 	totalWeight := 0
 	for _, s := range plan {
 		totalWeight += s.weight
 	}
 
-	var warnings []string
+	// Anything the plan itself had to bound is recorded as a section too, so a
+	// reader of the raw SQLite (which only gets a warning COUNT in meta) can see
+	// what was left out rather than assuming the snapshot is complete.
+	for _, w := range warnings {
+		b.AddSection("plan", "warning", 0, w, 0)
+	}
+
 	doneWeight := 0
 	for i, sec := range plan {
 		t0 := time.Now()

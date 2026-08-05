@@ -3,6 +3,7 @@ package userdump
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -114,7 +115,7 @@ func runDBSpec(b *Builder, gdb *gorm.DB, spec dbSpec) (int, error) {
 // buildDBSpecs returns the full set of user-linked extractions — a superset of
 // the V1 GDPR export. chatIDs/msgIDs/trackIDs are anchor id sets gathered up
 // front so child tables can be pulled by IN clause (and both sides of chats).
-func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpec {
+func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []interface{}, since time.Time) []dbSpec {
 	u := []interface{}{userID}
 	uu := []interface{}{userID, userID}
 	var specs []dbSpec
@@ -173,13 +174,28 @@ func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpe
 	}
 
 	// Chats — both sides of every room the user is in.
+	//
+	// Room membership is NOT windowed: which conversations someone is in is
+	// cheap to collect and support needs the whole picture. The message BODIES
+	// are, because they are not cheap. A moderator sits in the roster of every
+	// Mod2Mod and User2Mod chat on their groups - one real admin is in 18,664
+	// rooms - and "chat_messages WHERE chatid IN (18,664 ids)" with no date
+	// bound cannot finish: a bare COUNT of it against production ran for over
+	// two minutes, so the dump always blew the caller's timeout and that member
+	// could never be investigated at all. Only 332 of those rooms had any
+	// activity in the default 90-day window, so anchoring the messages on the
+	// rooms active within the window - the window the dump already documents
+	// via ?since= - collapses the query while losing nothing anyone asked for.
+	// The (chatid, date) index serves exactly this shape.
 	if in, args := inClause(chatIDs); in != "" {
 		add("chat_rooms", "id IN "+in, args, 0)
 		add("chat_roster", "chatid IN "+in, args, 0)
-		add("chat_messages", "chatid IN "+in, args, 0)
 		add("chat_messages_held", "chatid IN "+in+" OR userid = ?", append(append([]interface{}{}, args...), userID), 0)
 	} else {
 		add("chat_messages_held", "userid = ?", u, 0)
+	}
+	if in, args := inClause(recentChatIDs); in != "" {
+		add("chat_messages", "chatid IN "+in+" AND date >= ?", append(append([]interface{}{}, args...), since), 0)
 	}
 	add("users_chatlists", "userid = ?", u, 0)
 	add("users_expected", "expecter = ? OR expectee = ?", uu, 0)
