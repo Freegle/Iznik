@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T16:45:52Z",
+    "generated": "2026-08-05T16:47:30Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 343,
-        "raw": 327,
-        "converted": 61,
+        "raw": 326,
+        "converted": 62,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -1189,13 +1189,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_NAME = 'groups' AND TABLE_NAME != 'groups' AND TABLE_SCHEMA = ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select `TABLE_NAME`, `COLUMN_NAME` from `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` where `REFERENCED_TABLE_NAME` = ? and `TABLE_NAME` != ? and `TABLE_SCHEMA` = ?"
         },
         "9c686efa7811": {
             "id": "9c686efa7811",

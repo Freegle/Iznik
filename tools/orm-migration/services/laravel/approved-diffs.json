@@ -142,6 +142,11 @@
       "id": "3dc022a277c1",
       "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ? and date(`timestamp`) >= ?",
       "reason": "The >= variant of a61080618cba - same reasoning."
+    },
+    {
+      "id": "4d2a758e2882",
+      "sql": "select `TABLE_NAME`, `COLUMN_NAME` from `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` where `REFERENCED_TABLE_NAME` = ? and `TABLE_NAME` != ? and `TABLE_SCHEMA` = ?",
+      "reason": "Inlined constants now bound ('groups' twice), plus the qualified table name gaining backticks around each part. Quoting a catalog view as `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` is valid MySQL and resolves to the same view; the TABLE_SCHEMA bind that was already there is unchanged."
     }
   ]
 }

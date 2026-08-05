@@ -34,11 +34,13 @@ class DeleteGroupCommand extends Command
         $gid = $group->id;
         $dbName = DB::getDatabaseName();
 
-        $refs = DB::select(
-            "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-             WHERE REFERENCED_TABLE_NAME = 'groups' AND TABLE_NAME != 'groups' AND TABLE_SCHEMA = ?",
-            [$dbName]
-        );
+        $refs = DB::table('INFORMATION_SCHEMA.KEY_COLUMN_USAGE')
+            ->select('TABLE_NAME', 'COLUMN_NAME')
+            ->where('REFERENCED_TABLE_NAME', 'groups')
+            ->where('TABLE_NAME', '!=', 'groups')
+            ->where('TABLE_SCHEMA', $dbName)
+            ->get()
+            ->all();
 
         $this->line("Group: {$groupName} (#{$gid})");
         $hasData = false;
