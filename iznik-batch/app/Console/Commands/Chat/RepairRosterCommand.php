@@ -63,10 +63,17 @@ class RepairRosterCommand extends Command
             // For older chats, mark all messages as already emailed so the
             // notification system doesn't send stale emails.
             if (! $isRecent && $row->max_msg_id) {
-                DB::statement(
-                    'UPDATE chat_roster SET lastmsgemailed = ? WHERE chatid = ? AND userid = ? AND (lastmsgemailed IS NULL OR lastmsgemailed < ?)',
-                    [$row->max_msg_id, $row->chatid, $row->user1, $row->max_msg_id]
-                );
+                DB::table('chat_roster')
+                    ->where('chatid', $row->chatid)
+                    ->where('userid', $row->user1)
+                    // The OR must stay grouped: a flat orWhere() would bind to
+                    // the whole WHERE and update every roster row whose
+                    // lastmsgemailed is behind, across all chats.
+                    ->where(function ($q) use ($row) {
+                        $q->whereNull('lastmsgemailed')
+                          ->orWhere('lastmsgemailed', '<', $row->max_msg_id);
+                    })
+                    ->update(['lastmsgemailed' => $row->max_msg_id]);
             }
 
             // Ensure group mods are in the roster.
