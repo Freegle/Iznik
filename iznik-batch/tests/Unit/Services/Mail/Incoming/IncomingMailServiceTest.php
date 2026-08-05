@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
+use App\Services\Mail\Incoming\ParsedEmail;
 use App\Services\Mail\Incoming\RoutingResult;
 use Illuminate\Support\Facades\DB;
 use App\Mail\Fbl\FblNotification;
@@ -1460,9 +1461,10 @@ class IncomingMailServiceTest extends TestCase
         ]);
 
         // Add worry word to database
-        DB::table('worrywords')->insert([
+        DB::table('concern_keywords')->insert([
             'keyword' => 'kitten',
-            'type' => 'Review',
+            'category' => 'review',
+            'action' => 'flag',
         ]);
 
         $userEmail = $user->emails->first()->email;
@@ -1484,6 +1486,110 @@ class IncomingMailServiceTest extends TestCase
 
         // Worry words cause posts to be held for review
         $this->assertEquals(RoutingResult::PENDING, $result);
+    }
+
+    /**
+     * Build a ParsedEmail with the given subject/body via the real mail parser,
+     * for exercising the private containsWorryWords() directly. Group/user/
+     * membership are irrelevant to that method, so they're omitted here.
+     */
+    private function parseEmailWithBody(string $subject, string $body): ParsedEmail
+    {
+        $email = $this->createMinimalEmail([
+            'From' => 'sender@example.com',
+            'To' => 'testgroup@groups.ilovefreegle.org',
+            'Subject' => $subject,
+        ], $body);
+
+        return $this->parser->parse($email, 'sender@example.com', 'testgroup@groups.ilovefreegle.org');
+    }
+
+    public function test_contains_worry_words_ignores_stale_legacy_worrywords_table(): void
+    {
+        // Regression guard (Discourse #9944/7): containsWorryWords() used to read the
+        // legacy 'worrywords' table, which is a one-time migration snapshot that is
+        // never written to again (see MigrateConcernKeywordsCommand). A row inserted
+        // only there (never migrated into concern_keywords) must NOT be able to flag
+        // a post - if it does, this method is checking the wrong table again.
+        DB::table('worrywords')->insert([
+            'keyword' => 'puppy',
+            'type' => 'Review',
+        ]);
+
+        $parsed = $this->parseEmailWithBody(
+            'OFFER: Free puppy (London)',
+            'Adorable puppy needs a good home.'
+        );
+
+        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
+        $method->setAccessible(true);
+
+        $this->assertFalse($method->invoke($this->service, $parsed));
+    }
+
+    public function test_contains_worry_words_flags_concern_keyword(): void
+    {
+        // Sanity check: a genuine (non-whitelisted) concern keyword still flags,
+        // bounding the fix below so whitelisting can't blanket-suppress everything.
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'cash',
+            'category' => 'review',
+            'action' => 'flag',
+        ]);
+
+        $parsed = $this->parseEmailWithBody(
+            'OFFER: Sofa, cash on collection',
+            'Collection only, please bring a van.'
+        );
+
+        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
+        $method->setAccessible(true);
+
+        $this->assertTrue($method->invoke($this->service, $parsed));
+    }
+
+    public function test_contains_worry_words_respects_whitelisted_phrase_despite_contained_keyword(): void
+    {
+        // Discourse #9944/7: 'Cashes Green' was whitelisted via the concern_keywords
+        // 'allowed' category (the current admin UI), but posts arriving BY EMAIL kept
+        // getting held because containsWorryWords() read the legacy 'worrywords' table,
+        // which never received the new whitelist row.
+        //
+        // containsWorryWords()'s single-word check is EXACT match only (levenshtein
+        // distance < 1, unlike ContentCheckService's fuzzy/inflection matching), so
+        // this reproduces the bug with a keyword that is a whole word contained in the
+        // whitelisted phrase ('green' inside 'Cashes Green') rather than an inflection.
+        //
+        // Also seed the legacy table with the same 'green' keyword (but NOT the
+        // whitelist row, which only ever existed in concern_keywords) so this test
+        // actually fails against the pre-fix code - otherwise the legacy table has no
+        // matching keyword at all and containsWorryWords() would return false for the
+        // wrong reason (nothing to match on, not a working whitelist).
+        DB::table('worrywords')->insert([
+            'keyword' => 'green',
+            'type' => 'Review',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'green',
+            'category' => 'review',
+            'action' => 'flag',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Cashes Green',
+            'category' => 'allowed',
+            'action' => 'flag',
+        ]);
+
+        $parsed = $this->parseEmailWithBody(
+            'OFFER: Sofa near Cashes Green (Stroud)',
+            'Collection only, please bring a van.'
+        );
+
+        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
+        $method->setAccessible(true);
+
+        // Whitelisted phrase must suppress the contained 'green' match.
+        $this->assertFalse($method->invoke($this->service, $parsed));
     }
 
     // ========================================

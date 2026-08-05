@@ -151,6 +151,12 @@ return [
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
     ],
 
+    'mod_welfare' => [
+        // Paused 2026-08-03: mentors asked us to stop the weekly "X does not
+        // have an active owner" alerts for now. Set to true to resume.
+        'notify_no_owner' => env('FREEGLE_MOD_WELFARE_NOTIFY_NO_OWNER', false),
+    ],
+
     'trashnothing' => [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
@@ -591,6 +597,14 @@ return [
     // APIV2_DEPRECATED_URL for its network (batch-prod isn't in this compose
     // network); if the fetch fails the command warns and exits non-zero.
     'apiv2_deprecated_url' => env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/apiv2/deprecated'),
+
+    // The routing-backed town/near endpoint browse:backfill-max-distance uses to
+    // recompute the mile radius a travel-time budget reaches - the same source the
+    // frontend slider uses, so the derived cap matches what a member re-dragging
+    // the slider would get. Same reachability note as apiv2_deprecated_url: inside
+    // this compose network the batch container reaches apiv2 on port 8192, and
+    // batch-prod must set BROWSE_TOWN_NEAR_URL for its own network.
+    'town_near_url' => env('BROWSE_TOWN_NEAR_URL', 'http://apiv2:8192/api/town/near'),
 
     // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
     // max_query_length (~30d) — a longer since-sunset range 400s; this many days of

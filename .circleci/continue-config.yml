@@ -23,19 +23,19 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  # 1.1.366 adds the ORM migration inventory ratchet (Gate 1) to build-and-test,
-  # with the Go toolchain it needs (the CI host has none - Go suites all run
-  # inside containers).
+  # 1.1.370 = master's 1.1.369 plus the ORM migration inventory ratchet (Gate 1)
+  # in build-and-test, with the Go toolchain it needs (the CI host has none - Go
+  # suites all run inside containers).
   # Publishing the orb is what makes a step take effect - CircleCI resolves
   # freegle/tests from the registry, not from the copy in this repo - but the
-  # PIN here is what decides which published version runs, and it was still on
-  # 1.1.364. So the ratchet existed, was published, and did not run: the whole
-  # gate was decorative on this PR until this bump.
+  # PIN here is what decides which published version runs. 1.1.369 was published
+  # from master, which does not carry the ratchet, so merging master in without
+  # this bump would have made the whole gate decorative again on this PR.
   #
   # Safe to raise on master ahead of the migration merging: the step exits 0
   # when tools/orm-migration/ci-ratchet.sh is absent, so a branch without the
   # migration is unaffected.
-  freegle: freegle/tests@1.1.368
+  freegle: freegle/tests@1.1.370
 
 jobs:
   mark-ci-passed:
@@ -234,11 +234,16 @@ workflows:
               only:
                 - production
 
-  # Manually-triggered ModTools production build and Play Store / TestFlight upload.
-  # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
-  # Does not run automatically — ModTools updates are infrequent and manually controlled.
-  # After building, attempts to submit immediately. If Apple hasn't finished processing the
-  # build yet, the submit step exits gracefully — re-trigger via manual-promote-submit later.
+  # ModTools production build and Play Store / TestFlight upload. Unlike FD, ModTools has
+  # NO per-push beta builds - this workflow is the only thing that builds it, and the
+  # Android side uploads straight to the Play production track.
+  # Runs weekly via the CircleCI scheduled pipeline "weekly-modtools-release-schedule"
+  # (Wednesday 20:00 UTC, parameters build_modtools_production: true, branch production),
+  # deliberately TWO HOURS BEFORE the FD "weekly-promote-schedule" (22:00): the inline
+  # submit below usually fires before Apple has processed the fresh build and exits
+  # gracefully, and it is the promote workflow's auto-submit-ios-modtools that then
+  # submits it the same night once processed. Can also be triggered manually by setting
+  # build_modtools_production: true in the pipeline parameters UI.
   modtools-production:
     when: << pipeline.parameters.build_modtools_production >>
     jobs:

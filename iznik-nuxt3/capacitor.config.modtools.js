@@ -28,6 +28,7 @@ const config = {
       '@capawesome/capacitor-badge',
       '@capgo/capacitor-social-login',
       '@capacitor/app',
+      '@capacitor/text-zoom', // C7 - apply system accessibility text size to the WebView
       '@capacitor/status-bar',
       '@capacitor/network',
       '@capacitor/device',
@@ -49,6 +50,7 @@ const config = {
       '@capgo/capacitor-social-login',
       '@capacitor-community/apple-sign-in',
       '@capacitor/app',
+      '@capacitor/text-zoom', // C7 - apply system accessibility text size to the WebView
       '@capacitor/status-bar',
       '@capacitor/network',
       '@capacitor/device',

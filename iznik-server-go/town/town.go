@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -44,21 +43,15 @@ const reachRadiusFloorMiles = 1.0
 
 // reachRadiusMiles converts the towns reachable within the chosen travel time into a crow-flies mile
 // radius to store as settings.browseMaxDistance (the value the feed's fast Haversine distance filter
-// reads). It uses the FURTHEST reachable town's straight-line distance - a real, location-aware reach
-// extent with NO hardcoded miles<->minutes mapping - and falls back to the isochrone's road frontier
-// when nothing named is reachable. Floored so it never collapses to ~0. The nearby feed already gates
-// every post through the real drive-time isochrone (ST_Contains on the reach polygon), so this cap
-// only needs to be a rough, generous tightening; an approximate crow-flies circle is fine.
-func reachRadiusMiles(crowMilesReachable []float64, fallbackMiles float64) float64 {
-	radius := 0.0
-	for _, d := range crowMilesReachable {
-		if d > radius {
-			radius = d
-		}
-	}
-	if radius <= 0 {
-		radius = fallbackMiles
-	}
+// reads). PURE travel time: the radius is the isochrone's road frontier, floored so a degenerate
+// isochrone can never collapse the browse cap to ~0. Named towns deliberately play NO part - they
+// exist for the NearbyTowns display and community news, and deriving the radius from them collapsed
+// a 25-minute reach to 1 mile for a member whose only nearby named town was her own (ChitChat
+// 616307). Road distance never understates crow distance, and the nearby feed already gates every
+// post through the real drive-time isochrone (ST_Contains on the reach polygon), so this cap only
+// needs to be a rough, generous tightening; the frontier is the right travel-time-only source.
+func reachRadiusMiles(frontierMedianMiles float64) float64 {
+	radius := frontierMedianMiles
 	if radius < reachRadiusFloorMiles {
 		radius = reachRadiusFloorMiles
 	}
@@ -190,13 +183,8 @@ func Near(c *fiber.Ctx) error {
 		return c.JSON(empty)
 	}
 	cands := make([]TownCand, len(rows))
-	var crowReachable []float64 // straight-line miles to each town reachable within the time budget
 	for i, rw := range rows {
-		dm := r.Results[i].DriveMin
-		cands[i] = TownCand{ID: rw.ID, Name: rw.Name, DriveMin: dm}
-		if dm != nil && *dm <= maxMin {
-			crowReachable = append(crowReachable, utils.Haversine(lat, lng, rw.Lat, rw.Lng))
-		}
+		cands[i] = TownCand{ID: rw.ID, Name: rw.Name, DriveMin: r.Results[i].DriveMin}
 	}
 
 	// The road-distance reach range ("reaches median..max miles by road"), shown alongside the town
@@ -204,14 +192,15 @@ func Near(c *fiber.Ctx) error {
 	// reach.
 	out := fiber.Map{"frontier_median_miles": r.FrontierMedianMiles, "frontier_max_miles": r.FrontierMaxMiles}
 
-	// reach_radius_miles: the crow-flies radius the chosen travel time reaches, for the client to
-	// store as settings.browseMaxDistance. Falls back to the isochrone's road frontier when no named
-	// town is reachable (rural short trips).
-	fallback := 0.0
+	// reach_radius_miles: the mile radius the chosen travel time reaches, for the client to store as
+	// settings.browseMaxDistance. This is a PURE travel-time value from the isochrone frontier -
+	// named towns play no part (they are display material for NearbyTowns / community news). Deriving
+	// it from reachable towns collapsed the radius to ~1 mile for a member whose only nearby named
+	// town was her own (ChitChat 616307). Omitted when the isochrone has no frontier, so the client
+	// treats the derivation as failed rather than storing a made-up cap.
 	if r.FrontierMedianMiles != nil {
-		fallback = *r.FrontierMedianMiles
+		out["reach_radius_miles"] = reachRadiusMiles(*r.FrontierMedianMiles)
 	}
-	out["reach_radius_miles"] = reachRadiusMiles(crowReachable, fallback)
 
 	towns := SelectNear(cands, maxMin, 5)
 	if len(towns) > 0 {

@@ -453,6 +453,40 @@ describe('chat store', () => {
 
       await expect(store.approveChat(42)).rejects.toThrow('Server error')
     })
+
+    // Discourse #9879/1: holdChat used to only send the API action, leaving the
+    // caller (ModChatReview.vue) to emit('reload') and have the parent clear +
+    // refetch the whole review queue just to pick up the new held state — which
+    // reset scroll to the top. holdChat now patches the held message in the store
+    // directly, matching messageStore.hold()'s in-place update for pending posts.
+    it('holdChat sends Hold action and patches the message in place with held info', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatMessageId[42] = { id: 42, message: 'hi', held: null }
+
+      await store.holdChat(42)
+
+      expect(mockSendMT).toHaveBeenCalledWith({ id: 42, action: 'Hold' })
+      const updated = store.listByChatMessageId[42]
+      expect(updated.held).toBeTruthy()
+      expect(updated.held.id).toBe(999) // mocked authStore.user.id
+      expect(updated.held.timestamp).toBeTruthy()
+      // Other fields on the message are preserved, not wiped by a refetch.
+      expect(updated.message).toBe('hi')
+    })
+
+    it('holdChat does not clear or refetch the review list', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatMessageId[42] = { id: 42, held: null }
+      store.messages.null = [{ id: 42 }, { id: 43 }]
+
+      await store.holdChat(42)
+
+      expect(mockFetchReviewChatsMT).not.toHaveBeenCalled()
+      // The rest of the list is untouched — no reload, no reordering.
+      expect(store.messages.null).toEqual([{ id: 42 }, { id: 43 }])
+    })
   })
 
   describe('openChat', () => {

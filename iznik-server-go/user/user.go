@@ -423,6 +423,26 @@ func GetMemberships(id uint64) []Membership {
 // GetActiveModGroupIDs returns group IDs where the user is an active moderator/owner.
 // A moderator is "active" unless their membership settings JSON has active=0.
 // A moderator is "active" unless their membership settings JSON has active=0.
+// inventNameAttempts bounds the retries when the generated name is one we
+// cannot keep. Each attempt is independent, so a handful is plenty.
+const inventNameAttempts = 10
+
+// usableInventedName reports whether a candidate is one we can store as a
+// user's fullname.
+//
+// The isSuspiciousName check is the important one, and it is not paranoia:
+// SanitizeDisplayName rewrites a suspicious name back to "A freegler" on
+// every read, but InventName is only reached when the stored fullname *is*
+// "A freegler". So storing a suspicious name is a one-way trap — the user
+// displays as "A freegler" forever and we never invent again.
+//
+// Both sources can produce one. Role addresses (info@, support@, admin@) are
+// common, and a trigram-generated word lands on an authority word like "team"
+// or "update" often enough to have failed CI.
+func usableInventedName(name string) bool {
+	return name != "" && name != "A freegler" && !isSuspiciousName(name)
+}
+
 // InventName derives a display name from the user's email address and stores it
 // as the user's fullname. Returns the invented name, or "A freegler"
 // if no usable email is found.
@@ -437,12 +457,19 @@ func InventName(db *gorm.DB, id uint64) string {
 		name = utils.TidyName(email[:at])
 	}
 
-	// Fall back to trigram-generated name when email local part is unusable.
-	if name == "" || name == "A freegler" {
-		name = utils.GenerateName()
+	// Fall back to a trigram-generated name when the email local part is
+	// unusable, retrying until we get one we can actually keep.
+	if !usableInventedName(name) {
+		name = ""
+		for i := 0; i < inventNameAttempts; i++ {
+			if candidate := utils.GenerateName(); usableInventedName(candidate) {
+				name = candidate
+				break
+			}
+		}
 	}
 
-	if name == "" || name == "A freegler" {
+	if name == "" {
 		return "A freegler"
 	}
 

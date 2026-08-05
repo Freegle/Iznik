@@ -277,6 +277,23 @@ describe('ModChatReview', () => {
         .find((b) => b.text().includes('Release'))
       expect(releaseButton).toBeUndefined()
     })
+
+    // Discourse #9879/1: unlike pending-post review (ModMessageButtons.vue
+    // v-if="!heldByOnThisGroup" / v-else Release), the chat-review Hold button used
+    // v-if="!message.held || me.id === message.held.id" — which stays true once you
+    // hold it yourself, so the Hold button never disappeared like it does for posts.
+    it('hides the Hold button once held by me, same as pending-post review', () => {
+      const wrapper = mountComponent({ held: heldByMe })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeUndefined()
+      // Release takes its place, exactly as for pending posts.
+      const releaseButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Release'))
+      expect(releaseButton).toBeDefined()
+    })
   })
 
   describe('spammer display', () => {
@@ -472,7 +489,6 @@ describe('ModChatReview', () => {
 
     it.each([
       ['release', mockReleaseChat],
-      ['hold', mockHoldChat],
       ['approve', mockApproveChat],
       ['reject', mockRejectChat],
       ['whitelist', mockApproveAllFutureChat],
@@ -490,6 +506,20 @@ describe('ModChatReview', () => {
         }
       }
     )
+
+    // Discourse #9879/1: hold() used to emit('reload'), which made the parent
+    // (chats/review.vue) clear and refetch the ENTIRE review queue — resetting
+    // scroll to the top and losing the moderator's place after every hold. The
+    // store now updates the held message in place (see stores/chat.js holdChat),
+    // so hold() must NOT trigger that full-list reload.
+    it('hold calls store method with message id, does NOT emit reload, calls callback', async () => {
+      const wrapper = mountComponent()
+      const callback = vi.fn()
+      await wrapper.vm.hold(callback)
+      expect(mockHoldChat).toHaveBeenCalledWith(123)
+      expect(wrapper.emitted('reload')).toBeFalsy()
+      expect(callback).toHaveBeenCalled()
+    })
 
     it('showModnote sets showModChatNoteModal to true and calls callback', () => {
       const wrapper = mountComponent()
@@ -608,7 +638,9 @@ describe('ModChatReview', () => {
         touserid: 200,
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       // First = From:, gets sender's group (groupidfrom)
       expect(reviewUsers[0].props('groupid')).toBe(555)
       // Second = To:, gets recipient's group (groupid)
@@ -624,7 +656,9 @@ describe('ModChatReview', () => {
         touserid: 200,
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       reviewUsers.forEach((u) => {
         expect(u.props('groupid')).toBe(555)
       })
@@ -650,7 +684,9 @@ describe('ModChatReview', () => {
         touser: null,
       })
       // No ModChatReviewUser for To: (userid=0 is not a real user)
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       expect(reviewUsers.length).toBe(1) // only From:
       // But the chatroom name should appear as the To: label
       expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(true)
@@ -671,7 +707,9 @@ describe('ModChatReview', () => {
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
       expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(false)
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       expect(reviewUsers.length).toBe(2) // From: and To:
     })
 
@@ -702,17 +740,17 @@ describe('ModChatReview', () => {
 
     it('does not show the rippling held notice when heldbyrippling is false', () => {
       const wrapper = mountComponent({ heldbyrippling: false })
-      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
-        false
-      )
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
     })
 
     it('does not show the rippling held notice when heldbyrippling is absent', () => {
       const wrapper = mountComponent({})
       // defaultMessage has no heldbyrippling key → should not render the notice
-      expect(wrapper.find('[data-testid="rippling-held-notice"]').exists()).toBe(
-        false
-      )
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
     })
 
     it('can show both manual hold notice and rippling held notice together', () => {

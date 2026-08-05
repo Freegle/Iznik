@@ -13,6 +13,9 @@ const mockView = vi.fn()
 const mockMarkSeen = vi.fn()
 const mockCount = vi.fn()
 const mockNearbyMarkSeen = vi.fn()
+const mockHold = vi.fn()
+const mockRelease = vi.fn()
+const mockFetchMT = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -25,6 +28,9 @@ vi.mock('~/api', () => ({
       view: mockView,
       markSeen: mockMarkSeen,
       count: mockCount,
+      hold: mockHold,
+      release: mockRelease,
+      fetchMT: mockFetchMT,
     },
   }),
 }))
@@ -481,7 +487,10 @@ describe('message store - markSeen()', () => {
 
   it('refreshes the count for the member browse view and distance, not the default', async () => {
     useAuthStore.mockReturnValue({
-      user: { id: 1, settings: { browseView: 'mygroups', browseMaxDistance: 10 } },
+      user: {
+        id: 1,
+        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+      },
     })
     const store = useMessageStore()
     store.init({})
@@ -549,6 +558,64 @@ describe('message store - markSeenSiblings()', () => {
   })
 })
 
+// hold()/release() re-fetch the whole message after the API call and replace
+// this.list[id] with the fresh copy - which naturally carries the correct,
+// per-group messages_groups.heldby row. Since every component reads the
+// message via the reactive byId getter, this refetch is what keeps the
+// Hold/Release toggle and the held-by banner in sync with the server
+// (Discourse 9904/9481/642) - no separate optimistic patch of groups[] is
+// needed or attempted, and the store never adds a message-level heldby of
+// its own.
+describe('message store - hold()/release() update the matching per-group row', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('replaces the message with a refetch whose groups[] row reflects the new hold', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetchMT.mockResolvedValue({
+      id: 42,
+      groups: [
+        { groupid: 10, collection: 'Pending', heldby: 999 },
+        { groupid: 20, collection: 'Approved', heldby: null },
+      ],
+    })
+
+    await store.hold({ id: 42, groupid: 10 })
+
+    expect(mockHold).toHaveBeenCalledWith(42, 10)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
+    const row = store.byId(42).groups.find((g) => g.groupid === 10)
+    expect(row.heldby).toBe(999)
+    // The other group's row is unaffected - it was never held.
+    expect(
+      store.byId(42).groups.find((g) => g.groupid === 20).heldby
+    ).toBeNull()
+    // The store replaces list[id] wholesale with the server's payload; it
+    // never invents a message-level heldby of its own.
+    expect(store.byId(42).heldby).toBeUndefined()
+  })
+
+  it('replaces the message with a refetch whose groups[] row reflects the release', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetchMT.mockResolvedValue({
+      id: 42,
+      groups: [{ groupid: 10, collection: 'Pending', heldby: null }],
+    })
+
+    await store.release({ id: 42, groupid: 10 })
+
+    expect(mockRelease).toHaveBeenCalledWith(42, 10)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
+    const row = store.byId(42).groups.find((g) => g.groupid === 10)
+    expect(row.heldby).toBeNull()
+    expect(store.byId(42).heldby).toBeUndefined()
+  })
+})
+
 // After a per-group approve/reject, a reported post that's pending on several of a mod's groups
 // must stay in the pending list so the next group's copy can be actioned without reloading
 // (Discourse 9862). refreshOrRemoveFromMTList re-fetches and keeps-or-drops it accordingly.
@@ -595,9 +662,10 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
   it('treats Spam and PendingOther as still in the review queue', async () => {
     const store = useMessageStore()
     store.list[500] = { id: 500 }
-    store.fetchMT = vi
-      .fn()
-      .mockResolvedValue({ id: 500, groups: [{ groupid: 1, collection: 'Spam' }] })
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [{ groupid: 1, collection: 'Spam' }],
+    })
 
     await store.refreshOrRemoveFromMTList(500)
 

@@ -34,8 +34,13 @@ const CONVERSION_PENDING_KEY = 'compose-experiment-variant'
 // the config store) and the synchronous assign()/experimentActive() read the
 // cached value. Falls back to DEFAULT_ROLLOUT_PCT when the key isn't set or the
 // fetch fails. Per-visit override: ?voice=1 forces voice, ?voice=0 forces control.
+//
+// Experiment ENDED 2026-08-04: post-reset data showed ~5% uptake (19/350 chose
+// voice) and worse completion in the voice arm (62.9% vs 76.1% control, n=474).
+// Server config and this default are both 0 so a config-fetch failure can't
+// re-enrol anyone; ?voice=1 remains for demos.
 const ROLLOUT_CONFIG_KEY = 'voicepost_rollout_pct'
-const DEFAULT_ROLLOUT_PCT = 10
+const DEFAULT_ROLLOUT_PCT = 0
 let rolloutPct = DEFAULT_ROLLOUT_PCT
 
 export function useComposeChoice() {

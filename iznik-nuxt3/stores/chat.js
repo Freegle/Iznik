@@ -490,6 +490,25 @@ export const useChatStore = defineStore({
     },
     async holdChat(id) {
       await this._sendChatMT({ id, action: 'Hold' })
+
+      // Patch the held message in place instead of making the caller reload the
+      // whole review queue (Discourse #9879/1) - a full reload cleared/refetched
+      // every message, resetting scroll to the top just to pick up one held
+      // flag. Mirrors messageStore.hold()'s in-place update for pending posts.
+      const authStore = useAuthStore()
+      const me = authStore.user
+      const existing = this.listByChatMessageId[id]
+      if (existing && me) {
+        this.listByChatMessageId[id] = {
+          ...existing,
+          held: {
+            id: me.id,
+            name: me.displayname,
+            email: me.email,
+            timestamp: new Date().toISOString(),
+          },
+        }
+      }
     },
     async releaseChat(id) {
       await this._sendChatMT({ id, action: 'Release' })

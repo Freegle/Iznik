@@ -120,6 +120,8 @@ class ModActiveWelfareCommandTest extends TestCase
 
     public function test_notifies_mentors_when_group_has_no_active_owner(): void
     {
+        config(['freegle.mod_welfare.notify_no_owner' => true]);
+
         $group = $this->createTestGroup();
 
         // Group has recent approval activity (by a user with no ownership membership)
@@ -131,6 +133,20 @@ class ModActiveWelfareCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertSentCount(1);
+    }
+
+    public function test_no_owner_mentors_mail_paused_by_default(): void
+    {
+        // freegle.mod_welfare.notify_no_owner defaults to false (paused 2026-08-03)
+        $group = $this->createTestGroup();
+
+        $anyUser = $this->createTestUser();
+        $this->recordApproval($anyUser->id, $group->id);
+
+        $this->artisan('groups:check-mod-welfare')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
     }
 
     // ── Modbot skip ───────────────────────────────────────────────────────────

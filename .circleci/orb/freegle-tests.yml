@@ -3103,6 +3103,34 @@ jobs:
             echo "export COVERALLS_PARALLEL=true" >> $BASH_ENV
             echo "export COV_UPLOADS=0" >> $BASH_ENV
 
+            # Retry helper for every Coveralls upload below.
+            #
+            # coveralls.io returns 503 "This website is under heavy load (queue
+            # full)" when busy. The uploads used to be a single attempt, and on
+            # failure printed a warning and let the step SUCCEED - so the build
+            # went green with a whole flag missing from the Coveralls build.
+            # Losing the go flag (the highest-covered component) dropped the
+            # aggregate by ~2.5%, and GitHub then reported "coverage decreased"
+            # on a PR that had changed no instrumented code at all. The
+            # misleading symptom was two steps from the cause, so retry the
+            # upload rather than leaving that to be rediscovered.
+            #
+            # Still fails loudly if every attempt fails: this makes the upload
+            # reliable, it does not make coverage optional.
+            printf '%s\n' \
+              'cov_upload() {' \
+              '  _covfile="$1"' \
+              '  for _covtry in 1 2 3 4 5; do' \
+              '    if cat "$_covfile" | coveralls; then return 0; fi' \
+              '    if [ "$_covtry" -lt 5 ]; then' \
+              '      echo "Coveralls upload attempt $_covtry failed; retrying in $((_covtry * 15))s"' \
+              '      sleep $((_covtry * 15))' \
+              '    fi' \
+              '  done' \
+              '  echo "Coveralls upload failed after 5 attempts"' \
+              '  return 1' \
+              '}' >> $BASH_ENV
+
       - run:
           name: Upload Go coverage
           when: always
@@ -3116,7 +3144,7 @@ jobs:
             docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv2:/app/coverage.lcov "$GO_DIR/coverage.lcov" 2>/dev/null
             sed -i 's|^SF:/app/|SF:iznik-server-go/|' "$GO_DIR/coverage.lcov"
             cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go"
-            cat "$GO_DIR/coverage.lcov" | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cov_upload "$GO_DIR/coverage.lcov" && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
             cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
 
@@ -3140,7 +3168,7 @@ jobs:
             [ -s /tmp/lc.lcov ] || { echo "⚠️ Conversion failed"; exit 0; }
             echo "✅ Converted ($(wc -l < /tmp/lc.lcov) lines)"
             cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel"
-            cat /tmp/lc.lcov | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cov_upload /tmp/lc.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
           name: Upload Vitest coverage
@@ -3156,7 +3184,7 @@ jobs:
             echo "✅ Found at $VL"
             sed 's|^SF:|SF:iznik-nuxt3/|' "$VL" > /tmp/vl.lcov
             cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest"
-            cat /tmp/vl.lcov | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cov_upload /tmp/vl.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
           name: Upload Playwright coverage
@@ -3170,7 +3198,7 @@ jobs:
             [ -z "$PL" ] && echo "⚠️ Not found" && exit 0
             sed 's|^SF:|SF:iznik-nuxt3/|' "$PL" > /tmp/pl-fixed.lcov
             cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright"
-            cat /tmp/pl-fixed.lcov | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cov_upload /tmp/pl-fixed.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
           name: Coveralls webhook

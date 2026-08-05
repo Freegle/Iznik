@@ -2,6 +2,7 @@ package image
 
 import (
 	"encoding/json"
+	stdlog "log"
 	"os"
 	"strconv"
 	"strings"
@@ -18,17 +19,13 @@ import (
 type imageTypeConfig struct {
 	Table    string
 	IDColumn string
-	// TrustStoredContentType governs Get()'s legacy blob-read fallback only -
-	// it does NOT control whether doCreate writes contenttype. Every one of
-	// the 10 image tables, messages_attachments included, has a NOT NULL
-	// contenttype column with no default (confirmed via SHOW CREATE TABLE on
-	// all 10), so doCreate always writes one regardless of this field. It is
-	// false for Message because rows created before this field existed - when
-	// doCreate wrongly omitted contenttype for Message on the false belief
-	// that column was nullable there - may have an empty string stored: under
-	// a lenient sql_mode MySQL silently substituted '' for the missing value,
-	// while under strict mode (what Playwright's CI target runs) the INSERT
-	// failed outright. Get() must not trust an empty legacy value.
+	// TrustStoredContentType says whether a row's stored contenttype can be
+	// believed when serving a legacy `data` blob. It is NOT "does this table
+	// have the column" - all ten do, NOT NULL with no default - and it does NOT
+	// control whether doCreate writes contenttype, which it always does. Message
+	// is false because historic messages_attachments rows were written without it
+	// (see below), so their stored value is blank and must not be served as a
+	// Content-Type.
 	TrustStoredContentType bool
 }
 
@@ -264,16 +261,30 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 
 	db := database.DBConn
 
+	// Always write contenttype. Every one of the ten tables declares it NOT NULL
+	// with no default, so omitting it is only survivable when the server is not
+	// in strict mode: MySQL then substitutes '' and the row is written with a
+	// meaningless content type. Under STRICT_TRANS_TABLES the same INSERT fails
+	// outright with Error 1364 and the caller sees a 500.
+	//
+	// Both happen in practice. Production's sql_mode has no STRICT_TRANS_TABLES,
+	// which is why this never surfaced as an outage - but of the most recent
+	// 200,000 messages_attachments rows, 54,057 carry contenttype='' against
+	// 3,544 with 'image/jpeg'. In CI the mode is not even constant within a run:
+	// scripts/setup-test-database.sh issues SET GLOBAL sql_mode partway through,
+	// and a connection opened before that still sees strict, so the same upload
+	// could 500 early in a run and succeed later (Playwright's HEIC mobile give
+	// flow, intermittently).
+	//
+	// A single unconditional write removes the dependency on server mode
+	// entirely, which is the only version that is correct in both. Every
+	// uploaded image is normalised to JPEG before it reaches here.
 	row := map[string]interface{}{
 		cfg.IDColumn:   parentIDParam,
 		"externaluid":  req.ExternalUID,
 		"externalmods": modsStr,
 		"hash":         utils.NilIfEmpty(req.Hash),
-		// Every one of the 10 typeConfigs tables has a NOT NULL, no-default
-		// contenttype column - messages_attachments included, despite what
-		// this used to assume (see imageTypeConfig.TrustStoredContentType).
-		// Every uploaded image is normalised to JPEG before it reaches here.
-		"contenttype": gorm.Expr("'image/jpeg'"),
+		"contenttype":  gorm.Expr("'image/jpeg'"),
 	}
 
 	// ORM migration site 1571f00a4ce8, now covering all 10 typeConfigs
@@ -288,6 +299,15 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	// This is a plain INSERT (no ON DUPLICATE KEY UPDATE), so RowsAffected
 	// is always 1 and GORM never skips the id writeback.
 	if err := db.Table("`" + cfg.Table + "`").Create(row).Error; err != nil {
+		// Log the real cause. Returning only the generic message made a genuine
+		// server-side fault indistinguishable from any other, and cost real
+		// diagnosis time: a NOT NULL violation on this INSERT surfaced in CI as a
+		// bare 500 with nothing in any log naming the column, so the failure had
+		// to be reproduced by hand against the schema to find out what it was.
+		// The client still gets the generic message - the detail goes to the log,
+		// not the response.
+		stdlog.Printf("image doCreate: INSERT into %s failed for imgtype %s (parent %v, uid %s): %v",
+			cfg.Table, imgType, parentIDParam, req.ExternalUID, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create image attachment")
 	}
 
@@ -340,6 +360,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	result := db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Update("externalmods", modsJSON)
 
 	if result.Error != nil {
+		stdlog.Printf("image doRotate: UPDATE %s id %d failed: %v", cfg.Table, req.ID, result.Error)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to rotate image")
 	}
 

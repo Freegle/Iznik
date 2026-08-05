@@ -40,8 +40,14 @@ DISMISSIVE_PATTERNS=(
   'unrelated.*(fail|test|error)'
   '(fail|test|error).*unrelated'
   'known (issue|failure|flak)'
-  'skip.*(fail|test)'
-  'ignore.*(fail|test)'
+  # The verb must directly govern the noun - "skip the failing test", "ignore
+  # these errors". The previous form was `skip.*(fail|test)`, which fired on any
+  # sentence containing both words however far apart, so it hit ordinary
+  # technical prose: quoting a tool that prints "skipping", or describing a
+  # coverage-ignore directive ("ignores v8 comments ... rather than hiding code
+  # from tests"). Neither dismisses anything, and a guard that cries wolf on
+  # normal writing gets read as noise.
+  '(skip|ignor)[a-z]* +(the |this |that |these |those |it |them |such )*(fail|test|error|red|break)'
   'not our (fault|problem|issue)'
   'nothing to do with'
   'beyond the scope'
@@ -90,16 +96,45 @@ PIVOT_PATTERNS=(
   "(fail|error|broken).{0,20}(in|from|of) [A-Z].{0,100}(let me now|now (let me|I.ll|kick off|start|run|move))"
 )
 
+# ── Scannable text: one sentence per line, negated sentences removed ────
+#
+# Two corrections to how the patterns above are applied, both needed to stop
+# this hook firing on messages that are REPORTING SUCCESS.
+#
+# 1. SENTENCE SCOPING. The patterns use windows of up to 120 characters, and
+#    grep is line-based, so on a paragraph they happily match a trigger word in
+#    one sentence against a failure word in the next — two unrelated statements
+#    read as one dismissal. Splitting sentences onto their own lines confines
+#    every match to a single statement. A genuine dismissal is a single
+#    sentence ("those failures are pre-existing"), so nothing real is lost, and
+#    a dismissal split across two sentences still trips on the sentence that
+#    carries the excuse.
+#
+# 2. NEGATION EXCLUSION. Line 86 already documents this as required — "exclude
+#    negated contexts (no failures, 0 failed, all passed)" — but it was never
+#    implemented, so "zero failures" and "nothing broken" read exactly like a
+#    dismissal. A sentence that states, with evidence, that nothing failed is
+#    the opposite of dismissing a failure.
+#
+# Deliberately narrow: the exclusion is per-sentence, not per-message, so a
+# message that reports some passes AND waves away a real failure still gets
+# caught on the sentence doing the waving.
+NEGATION='no (failure|failing|error|red|break)|zero (failure|error)|0 (failed|failures|error|✗)|nothing (broke|broken|failing|failed)|all (of them |[0-9]+ )?(test|check|gate|suite)?s? ?(pass|passed|green)|fail=0|failed: ?0|, 0 failed|0 fail|none (failed|failing|broken)|no test failures|(rather than|instead of|not) (fail|failing|failed|broken|red)|(pending|queued|running|skipped) rather than'
+
+SCANNABLE=$(printf '%s' "$LAST_MESSAGE" \
+  | sed -E 's/([.!?])[[:space:]]+/\1\n/g' \
+  | grep -viE "$NEGATION")
+
 check_patterns() {
   local label="$1"
   shift
   local patterns=("$@")
   for pattern in "${patterns[@]}"; do
-    if echo "$LAST_MESSAGE" | grep -iqP "$pattern" 2>/dev/null || echo "$LAST_MESSAGE" | grep -iqE "$pattern" 2>/dev/null; then
+    if echo "$SCANNABLE" | grep -iqP "$pattern" 2>/dev/null || echo "$SCANNABLE" | grep -iqE "$pattern" 2>/dev/null; then
       local matched
-      matched=$(echo "$LAST_MESSAGE" | grep -ioP "$pattern" 2>/dev/null | head -1)
+      matched=$(echo "$SCANNABLE" | grep -ioP "$pattern" 2>/dev/null | head -1)
       if [ -z "$matched" ]; then
-        matched=$(echo "$LAST_MESSAGE" | grep -ioE "$pattern" 2>/dev/null | head -1)
+        matched=$(echo "$SCANNABLE" | grep -ioE "$pattern" 2>/dev/null | head -1)
       fi
       echo "$label: $matched"
       return 0

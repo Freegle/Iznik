@@ -603,37 +603,50 @@ class ContentCheckServiceTest extends TestCase
     // isGroupModerated — needs DB
     // =========================================================================
 
-    public function test_is_group_moderated_no_rules_returns_false(): void
+    public function test_is_group_moderated_no_settings_returns_false(): void
     {
         $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update(['rules' => null]);
+        DB::table('groups')->where('id', $group->id)->update(['settings' => null]);
 
         $this->assertFalse($this->service->isGroupModerated($group->id));
     }
 
-    public function test_is_group_moderated_empty_rules_returns_false(): void
+    public function test_is_group_moderated_empty_settings_returns_false(): void
     {
         $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update(['rules' => json_encode([])]);
+        DB::table('groups')->where('id', $group->id)->update(['settings' => json_encode([])]);
 
         $this->assertFalse($this->service->isGroupModerated($group->id));
     }
 
-    public function test_is_group_moderated_fully_moderated_true(): void
+    public function test_is_group_moderated_setting_on(): void
     {
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([
-            'rules' => json_encode(['fullymoderated' => true]),
+            'settings' => json_encode(['moderated' => 1]),
         ]);
 
         $this->assertTrue($this->service->isGroupModerated($group->id));
     }
 
-    public function test_is_group_moderated_fully_moderated_false(): void
+    public function test_is_group_moderated_setting_off(): void
     {
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([
-            'rules' => json_encode(['fullymoderated' => false]),
+            'settings' => json_encode(['moderated' => false]),
+        ]);
+
+        $this->assertFalse($this->service->isGroupModerated($group->id));
+    }
+
+    public function test_is_group_moderated_ignores_rules_questionnaire(): void
+    {
+        // rules.fullymoderated is the member-facing questionnaire answer, not
+        // the enforcement setting - it must not hold posts (Discourse #9987).
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'rules'    => json_encode(['fullymoderated' => true]),
+            'settings' => json_encode(['moderated' => 0]),
         ]);
 
         $this->assertFalse($this->service->isGroupModerated($group->id));

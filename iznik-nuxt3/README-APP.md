@@ -172,20 +172,31 @@ Mobile-specific Stripe implementation:
 4. **Pinch Zoom**
    - Enabled for Android
    - Native zoom gestures
+   - Transient magnifier: scales the whole WebView viewport (navbars included)
+     while zoomed; distinct from the permanent text-size preference below
 
-5. **Device Information**
+5. **System Text Size (accessibility)**
+   - `@capacitor/text-zoom`: on startup (and again on resume) the app reads
+     the OS-preferred text zoom - iOS Dynamic Type / Android font scale - and
+     applies it to the WebView (`stores/mobile.js` `initTextZoom()`)
+   - Without this, WKWebView ignores iOS Dynamic Type entirely, so the app
+     rendered at a fixed text size whatever the member set in Settings →
+     Accessibility
+   - Text grows with reflow, and the navbars are unaffected
+
+6. **Device Information**
    - Collect device details for debugging
    - Persistent device ID
    - OS version tracking
    - Send to Sentry for error context
 
-6. **App Updates**
+7. **App Updates**
    - Check for required updates
    - Check for available updates
    - Version comparison logic
    - Update prompts
 
-7. **Rate App**
+8. **Rate App**
    - Native rating prompts
    - Timing logic to avoid annoying users
    - Platform-specific app store links
@@ -944,6 +955,30 @@ Both iOS and Android are built and deployed in parallel with shared version numb
    - **Android**: Auto-promotes Beta → Production (if not already promoted)
    - **iOS**: Auto-submits latest TestFlight build to App Store review (if not already submitted)
    - Only the LATEST build from last 24 hours is submitted/promoted
+
+### ModTools Release Cadence
+
+ModTools releases differ from FD deliberately:
+
+- **No per-push builds and no Play beta track** — nothing builds ModTools when
+  `production` moves. The only builders are the weekly schedule and a manual
+  trigger.
+- **Weekly schedule**: CircleCI scheduled pipeline
+  `weekly-modtools-release-schedule`, Wednesday 20:00 UTC, runs the
+  `modtools-production` workflow (parameter `build_modtools_production: true`
+  on `production`): version increment → Android straight to the Play
+  **production** track + iOS to TestFlight → App Store submit attempt.
+- **Why 20:00**: two hours before the FD `weekly-promote-schedule` (22:00).
+  The inline iOS submit usually runs before Apple has processed the fresh
+  build and exits gracefully; the promote workflow's
+  `auto-submit-ios-modtools` then submits it the same night once processed.
+- **Manual release**: set `build_modtools_production: true` in the CircleCI
+  pipeline parameters UI (or API) on `production`.
+- **Version bookkeeping**: the Android job writes the released version back to
+  the `CURRENT_MODTOOLS_VERSION` project env var via `CIRCLECI_API_TOKEN`. If
+  that write fails, fix the token and set the variable by hand before the next
+  release — a stale value makes the next release rebuild the SAME version,
+  which Apple rejects (the train closes once a version is approved).
 
 ### Android-Specific
 

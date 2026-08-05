@@ -54,11 +54,12 @@ class ModWelfareService
             }
 
             // Check if group has an active owner — if not, notify mentors
+            // (pausable via freegle.mod_welfare.notify_no_owner).
             $notifyAddrs = $this->getModsToNotify($group->id, false);
             if ($notifyAddrs === $mentorsAddr) {
                 $subject = $groupName . ' does not have an active owner';
                 $body = "We don't think there is an active mod with owner status on this group. Can you check it?";
-                if (!$dryRun) {
+                if (!$dryRun && config('freegle.mod_welfare.notify_no_owner')) {
                     app(\App\Services\EmailSpoolerService::class)->spool(new ModWelfareAlertMail(
                         recipientEmail: $mentorsAddr,
                         fromEmail: $supportAddr,
