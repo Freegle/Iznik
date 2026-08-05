@@ -159,4 +159,34 @@ describe('ChatMessageText', () => {
     const wrapperWithHighlight = createWrapper({ highlightEmails: true })
     expect(wrapperWithHighlight.find('.highlighter').exists()).toBe(true)
   })
+
+  // Links stay plain text in member-to-member chat, where a link could be a
+  // scam. A User2Mod chat is the conversation with your own community's
+  // volunteers, and their standard messages routinely point you at a link
+  // (e.g. where to edit your post) - which on the app was dead text.
+  describe('clickable links', () => {
+    // The linkified branch renders through v-html; the plain branch renders
+    // through the Highlighter component, so the stub tells them apart.
+    const linkified = (wrapper) => !wrapper.find('.highlighter').exists()
+
+    it('leaves links plain in member-to-member chat', async () => {
+      const { useChatMessageBase } = await import('~/composables/useChat')
+      useChatMessageBase.mockReturnValueOnce({
+        ...mockComposableReturn,
+        chat: { value: { ...mockChat, chattype: 'User2User' } },
+      })
+
+      expect(linkified(createWrapper({ highlightEmails: true }))).toBe(false)
+    })
+
+    it('makes links clickable in a chat with the volunteers', async () => {
+      const { useChatMessageBase } = await import('~/composables/useChat')
+      useChatMessageBase.mockReturnValueOnce({
+        ...mockComposableReturn,
+        chat: { value: { ...mockChat, chattype: 'User2Mod' } },
+      })
+
+      expect(linkified(createWrapper({ highlightEmails: true }))).toBe(true)
+    })
+  })
 })

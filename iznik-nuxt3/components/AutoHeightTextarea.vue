@@ -17,7 +17,7 @@
 //
 // We don't shrink.  If you're reading this, why not code it?
 import { storeToRefs } from 'pinia'
-import { ref, watch, onBeforeUnmount } from '#imports'
+import { ref, watch, onMounted, onBeforeUnmount, nextTick } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 
 const props = defineProps({
@@ -86,6 +86,36 @@ const checkRows = () => {
 
   timer.value = setTimeout(checkRows, 100)
 }
+
+// Grow to fit whatever is already in the box. The polling above only starts from
+// the currentValue watcher, which never fires for the value we were mounted with
+// - so a box arriving pre-filled (a standard message template, an edit form) sat
+// at its minimum rows with a scrollbar and the text apparently missing.
+// One bounded pass rather than a permanent timer: pre-filled boxes are common and
+// their content doesn't change until someone types, which starts the timer anyway.
+const growToFit = async () => {
+  const maxRows = Number(props.maxRows)
+
+  while (Number(currentRows.value) < maxRows) {
+    await nextTick()
+
+    if (!ta.value?.$el) {
+      return
+    }
+
+    if (ta.value.$el.scrollHeight <= ta.value.$el.clientHeight) {
+      return
+    }
+
+    currentRows.value = Number(currentRows.value) + 1
+  }
+}
+
+onMounted(() => {
+  if (currentValue.value) {
+    growToFit()
+  }
+})
 
 watch(
   () => props.modelValue,
