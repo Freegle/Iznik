@@ -212,13 +212,18 @@ class ChatRoom extends Model implements Auditable
     {
         $room = DB::transaction(function () use ($userId, $groupId) {
             // Lock any existing row to close the timing window.
-            $chat = DB::selectOne(
-                'SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = ? FOR UPDATE',
-                [$userId, $groupId, self::TYPE_USER2MOD]
-            );
+            $chat = DB::table('chat_rooms')
+                ->select('id')
+                ->where('user1', $userId)
+                ->where('groupid', $groupId)
+                ->where('chattype', self::TYPE_USER2MOD)
+                ->lockForUpdate()
+                ->first();
 
             if ($chat) {
-                DB::update('UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?', [$chat->id]);
+                DB::table('chat_rooms')
+                    ->where('id', $chat->id)
+                    ->update(['latestmessage' => DB::raw('NOW()')]);
                 return self::find($chat->id);
             }
 

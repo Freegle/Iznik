@@ -1622,11 +1622,13 @@ class ExpandService
                     // memberships_history with rippled=1: abuse detection still runs (processingrequired=1),
                     // but MembershipsProcessingService reads rippled to SUPPRESS the per-group welcome -
                     // a single bundled intro email (RippleIntroMail) is sent below instead.
-                    DB::statement(
-                        "INSERT INTO memberships_history (userid, groupid, collection, processingrequired, rippled)
-                         VALUES (?, ?, 'Approved', 1, 1)",
-                        [$posterId, $t->groupid]
-                    );
+                    DB::table('memberships_history')->insert([
+                        'userid' => $posterId,
+                        'groupid' => $t->groupid,
+                        'collection' => 'Approved',
+                        'processingrequired' => 1,
+                        'rippled' => 1,
+                    ]);
                     // Log the join with a rippling-specific reason. V1 addMembership logs a
                     // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use
                     // 'Rippled' so the modlog - and MembershipsProcessingService, which reads
@@ -2340,10 +2342,11 @@ class ExpandService
      */
     private function distinctReplierCount(int $msgid): int
     {
-        return (int) (DB::selectOne(
-            "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
-            [$msgid]
-        )->n ?? 0);
+        return (int) DB::table('chat_messages')
+            ->where('refmsgid', $msgid)
+            ->where('type', 'Interested')
+            ->distinct()
+            ->count('userid');
     }
 
     /**

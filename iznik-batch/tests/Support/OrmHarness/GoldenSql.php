@@ -141,6 +141,41 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for an INSERT-shaped site. $build returns [query, values]: the
+     * query builder carrying the table (built but never executed - do not call
+     * ->insert() on it), and the row ->insert() would have been given.
+     *
+     *   GoldenSql::assertInsert($siteId, fn () => [
+     *       DB::table('memberships_history'),
+     *       ['userid' => 1, 'groupid' => 2, 'collection' => 'Approved'],
+     *   ]);
+     *
+     * Column ORDER matters and is not normalised away: compileInsert emits the
+     * columns in the order the array gives them, and an INSERT whose columns
+     * and values disagree writes the wrong data while still being valid SQL.
+     * That is precisely the kind of mistake a golden comparison should catch,
+     * so the array must be written in the raw statement's column order.
+     *
+     * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
+     */
+    public static function assertInsert(string $siteId, callable $build): void
+    {
+        [$built, $values] = $build();
+        $query = self::normaliseBuiltQuery($siteId, $built);
+        $grammar = $query->getGrammar();
+
+        $sql = $grammar->compileInsert($query, [$values]);
+        // compileInsert takes a LIST of rows; a single row is wrapped above so
+        // the emitted statement has one VALUES tuple, matching the raw form.
+        // cleanBindings() for the same reason assertUpdate needs it: a DB::raw
+        // value is inlined into the SQL by parameter(), so it is not a bind and
+        // counting it would trip the placeholder guard on a correct statement.
+        $bindings = $query->cleanBindings(array_values($values));
+
+        self::compareAndAssert($siteId, $sql, $bindings);
+    }
+
+    /**
      * Layer 1 for a DELETE-shaped site. $build returns the query builder
      * carrying the table and WHERE, un-executed (do not call ->delete() on
      * it - same reasoning as assertUpdate()).

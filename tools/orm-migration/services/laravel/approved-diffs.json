@@ -82,6 +82,16 @@
       "id": "72404d41f2b6",
       "sql": "update `chat_messages` set `reviewrequired` = ?, `processingrequired` = ?, `processingsuccessful` = ?, `reviewrejected` = ?, `reviewedby` = ? where `userid` = ? and `reviewrequired` = ? and `reviewedby` is null",
       "reason": "The same inlined-constant case at scale: five assigned constants and one WHERE constant all become binds, so one placeholder becomes seven. Column order, values and the IS NULL predicate are unchanged, so the rows matched and the values written are identical."
+    },
+    {
+      "id": "273df11c1838",
+      "sql": "insert into `memberships_history` (`userid`, `groupid`, `collection`, `processingrequired`, `rippled`) values (?, ?, ?, ?, ?)",
+      "reason": "Inlined constants now bound, on an INSERT: the raw VALUES tuple wrote 'Approved', 1, 1 literally and the builder binds all five columns. The column list and its ORDER are unchanged, which is the part that matters on an insert - columns and values disagreeing would write the wrong data while still being valid SQL."
+    },
+    {
+      "id": "d73229723d30",
+      "sql": "select count(distinct `userid`) as aggregate from `chat_messages` where `refmsgid` = ? and `type` = ?",
+      "reason": "Two changes, both already documented classes. The inlined type = 'Interested' is now bound; and ->count('userid') emits its result as `aggregate` where the raw statement said `AS n` - an alias that never leaves the statement, since ->count() reads the value off it and returns an int. COUNT(DISTINCT userid) itself is preserved exactly by ->distinct()->count('userid')."
     }
   ]
 }
