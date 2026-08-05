@@ -122,6 +122,14 @@ class DeadlineReached extends MjmlMailable
     }
 
     /**
+     * Transactional - about the member's own post - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * Get the recipient's user ID for common header tracking.
      */
     protected function getRecipientUserId(): ?int

@@ -107,6 +107,12 @@ class ReengageService
             ->where('bouncing', 0)
             // Honour the marketing opt-out, exactly as the sibling flows do.
             ->where('relevantallowed', 1)
+            // ...and the "Encouragement emails" setting, which is what the `engagement`
+            // unsubscribe category turns off. Absent means on.
+            ->where(function ($q) {
+                $q->whereRaw("JSON_EXTRACT(users.settings, '$.engagement') IS NULL")
+                    ->orWhereRaw("JSON_EXTRACT(users.settings, '$.engagement') != CAST('false' AS JSON)");
+            })
             // New members only: keyed off account creation date.
             ->whereBetween('added', [$oldest, $newest])
             // TrashNothing / LoveJunk proxy accounts onboard through their own

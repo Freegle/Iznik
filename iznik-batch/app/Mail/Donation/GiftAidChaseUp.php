@@ -6,6 +6,7 @@ use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\User;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -39,6 +40,11 @@ class GiftAidChaseUp extends MjmlMailable
             $this->getSubject(),
             ['donation_date' => $donationDate]
         );
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
     }
 
     protected function getRecipientUserId(): ?int

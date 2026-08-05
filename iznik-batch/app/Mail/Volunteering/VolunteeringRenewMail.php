@@ -3,6 +3,7 @@
 namespace App\Mail\Volunteering;
 
 use App\Mail\MjmlMailable;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -58,6 +59,11 @@ class VolunteeringRenewMail extends MjmlMailable
             'email'          => $this->recipientEmail,
             'unsubscribeUrl' => config('freegle.sites.user') . '/unsubscribe',
         ]);
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_VOLUNTEERING;
     }
 
     protected function getRecipientUserId(): ?int

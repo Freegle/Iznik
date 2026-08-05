@@ -150,6 +150,12 @@ class DonationService
                     continue;
                 }
 
+                // Honour the "Encouragement emails" setting, which is also what the
+                // `engagement` unsubscribe category turns off.
+                if (!$user->wantsEngagementMail()) {
+                    continue;
+                }
+
                 // Check if we asked recently.
                 $lastAsk = $this->getLastAskDate($recipient->userid);
 

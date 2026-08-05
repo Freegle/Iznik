@@ -61,6 +61,14 @@ class ChaseAdminMail extends MjmlMailable
         );
     }
 
+    /**
+     * Transactional - a chase-up to volunteers about an admin they asked for - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;

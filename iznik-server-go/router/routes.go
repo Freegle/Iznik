@@ -1087,6 +1087,12 @@ func SetupRoutes(app *fiber.App) {
 		// @Router /user/relevantoff [get]
 		rg.Get("/user/relevantoff", user.RelevantOff)
 		rg.Post("/user/relevantoff", user.RelevantOff)
+		// Category opt-out, the HTTPS arm of the List-Unsubscribe header on bulk mail.
+		// Key-authenticated like relevantoff, and registered before /user/:id? for the
+		// same reason: so "unsubscribe" is not treated as a user id.
+		// @Router /user/unsubscribe [post]
+		rg.Get("/user/unsubscribe", user.Unsubscribe)
+		rg.Post("/user/unsubscribe", user.Unsubscribe)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)

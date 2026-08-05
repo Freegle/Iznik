@@ -6,6 +6,7 @@ use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\User;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -50,6 +51,11 @@ class AskForDonation extends MjmlMailable
                 'item_subject' => $this->itemSubject,
             ]
         );
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
     }
 
     /**
