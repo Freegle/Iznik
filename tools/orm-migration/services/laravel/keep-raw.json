@@ -188,6 +188,20 @@
       "reason": "A statement whose PREDICATE does date arithmetic in SQL - 'cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)'. The builder has no form for it: ->where('latestmessage', '>=', now()->subDays($d)) computes the cutoff in PHP and binds it, which moves the clock from the database to the application. That is not cosmetic on a batch job - the process may start hours before the statement runs, and on a long queue drain the two answers differ. DATEDIFF is worse still, since it counts CALENDAR DAY boundaries rather than 24-hour spans, so no binding of a computed datetime reproduces it. Deliberately scoped to date ARITHMETIC, not to any mention of NOW(): a statement that merely writes NOW() is covered by its own rule, and one that compares against a plain bound datetime converts fine.",
       "porting": "PostgreSQL: DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'), TIMESTAMPDIFF becomes an age()/extract() pair, and DATEDIFF becomes a date subtraction returning an integer - which preserves the calendar-day semantics. Mechanical per statement, but each needs reading rather than substituting.",
       "category": "Date arithmetic in a predicate"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/ST_Contains|ST_GeomFromText|ST_Intersects|ST_Within|ST_Distance|haversine\\(|JSON_TABLE/i",
+      "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+      "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+      "category": "Spatial or JSON_TABLE statement"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bSET\\b[^;]*?=\\s*\\(\\s*SELECT\\b/i",
+      "reason": "An UPDATE whose SET value is a correlated subquery - 'SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?)'. Laravel's ->update() takes values, not queries: a subquery can only get in there via DB::raw, itself a raw site. Splitting it into a read then a write is not equivalent either - it opens a window in which the subquery's answer can change, on a statement whose whole job is to recompute a denormalised column from the rows it summarises.",
+      "porting": "PostgreSQL: a scalar subquery in SET is standard and ports unchanged. Postgres additionally offers UPDATE ... FROM, which is often clearer for this shape - worth considering at port time, but it is a rewrite rather than a translation.",
+      "category": "Correlated subquery as an UPDATE value"
     }
   ]
 }

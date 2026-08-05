@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-05T17:29:43Z",
+    "generated": "2026-08-05T17:30:59Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 437,
+        "keep-raw": 454,
         "converted": 95,
-        "raw": 199,
         "excluded": 70,
+        "raw": 182,
         "retired": 1,
         "test-fixture": 352
     },
@@ -308,10 +308,10 @@
             "goldenSql": "UPDATE chat_rooms SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?) WHERE id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "An UPDATE whose SET value is a correlated subquery - 'SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?)'. Laravel's ->update() takes values, not queries: a subquery can only get in there via DB::raw, itself a raw site. Splitting it into a read then a write is not equivalent either - it opens a window in which the subquery's answer can change, on a statement whose whole job is to recompute a denormalised column from the rows it summarises.",
+            "porting": "PostgreSQL: a scalar subquery in SET is standard and ports unchanged. Postgres additionally offers UPDATE ... FROM, which is often clearer for this shape - worth considering at port time, but it is a rewrite rather than a translation.",
+            "category": "Correlated subquery as an UPDATE value",
             "approvedDiff": ""
         },
         "193232bb689f": {
@@ -2430,10 +2430,10 @@
             "goldenSql": "SELECT COUNT(*) AS n FROM ( SELECT msgid FROM rippling_reach WHERE ST_GeometryType(outer_bound) <> 'POINT' AND NOT ST_Contains(outer_bound, polygon) LIMIT 100 ) x",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "faf6aadc5ed8": {
@@ -3607,10 +3607,10 @@
             "goldenSql": "SELECT id FROM `groups` WHERE publish = 1 AND listable = 1 AND ST_Contains(polyindex, ST_GeomFromText(?, ?)) ORDER BY haversine(lat, lng, ?, ?) ASC LIMIT ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "9199066317bb": {
@@ -3637,10 +3637,10 @@
             "goldenSql": "SELECT id FROM `groups` WHERE publish = 1 AND listable = 1 AND haversine(lat, lng, ?, ?) < ? ORDER BY haversine(lat, lng, ?, ?) ASC LIMIT ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "d6eb4908fbb1": {
@@ -4452,10 +4452,10 @@
             "goldenSql": "SELECT jt.userid AS userid FROM JSON_TABLE(?, '$[*]' COLUMNS ( userid BIGINT PATH '$.userid', lat DOUBLE PATH '$.lat', lng DOUBLE PATH '$.lng' )) jt INNER JOIN authorities a ON a.id = ? WHERE ST_Contains(a.polygon, ST_SRID(POINT(jt.lng, jt.lat), ?))",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "a30e89fc4716": {
@@ -6453,10 +6453,10 @@
             "goldenSql": "INSERT INTO locations (osm_id, name, type, geometry, canon, osm_place, maxdimension) VALUES (NULL, ?, ?, ST_GeomFromText(?, ?), ?, 0, GetMaxDimension(ST_GeomFromText(?, ?)))",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "369f25886e79": {
@@ -6483,10 +6483,10 @@
             "goldenSql": "INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ?))",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "87f49c07a5d6": {
@@ -6599,10 +6599,10 @@
             "goldenSql": "UPDATE locations SET lat = ?, lng = ?, type = ?, geometry = ST_GeomFromText(?, ?), ourgeometry = NULL WHERE id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "5dd6958cdcd8": {
@@ -6830,10 +6830,10 @@
             "goldenSql": "UPDATE locations_spatial SET geometry = ST_GeomFromText(?, ?) WHERE locationid = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "f7b89bf93345": {
@@ -9564,10 +9564,10 @@
             "goldenSql": "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "c869b78321c6": {
@@ -10661,10 +10661,10 @@
             "goldenSql": "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('{{expr}}', {{expr}}), ?, ?, ?) ON DUPLICATE KEY UPDATE point = ST_GeomFromText('{{expr}}', {{expr}}), groupid = ?, msgtype = ?, arrival = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "aa6a1e37681d": {
@@ -10719,10 +10719,10 @@
             "goldenSql": "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('{{expr}}', {{expr}}), ?, ?, ?) ON DUPLICATE KEY UPDATE point = ST_GeomFromText('{{expr}}', {{expr}}), groupid = ?, msgtype = ?, arrival = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "3c71897a5b41": {
@@ -13062,10 +13062,10 @@
             "goldenSql": "SELECT COUNT(*) AS c FROM `groups` g WHERE g.publish = 1 AND g.type = 'Freegle' AND g.onhere = 1 AND g.nameshort NOT LIKE '%playground%' AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(g.polyindex, ST_GeomFromText(?, {{expr}}))",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "8142690bb6c2": {
@@ -13383,10 +13383,10 @@
             "goldenSql": "SELECT g.id FROM `groups` g WHERE g.publish = 1 AND g.type = 'Freegle' AND g.onhere = 1 AND g.nameshort NOT LIKE '%playground%' AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(g.polyindex, ST_GeomFromText(?, {{expr}})){{expr}} AND NOT EXISTS ( SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id ) AND NOT EXISTS ( -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log -- for this group is a ripple-join (text='Rippled') AND they then LEFT it - -- i.e. the membership they last opted out of was a rippled one. Most recent -- join wins: the NOT EXISTS lj2 makes lj the latest Joined, so a later -- manual/ordinary join (then leave) means they treated it as a normal group -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow -- that ripple-join. Sites B/C apply the identical rule. SELECT 1 FROM logs lj WHERE lj.user = ? AND lj.groupid = g.id AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled' AND NOT EXISTS ( SELECT 1 FROM logs lj2 WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid AND lj2.type = 'Group' AND lj2.subtype = 'Joined' AND lj2.id > lj.id ) AND EXISTS ( SELECT 1 FROM logs ll WHERE ll.user = lj.user AND ll.groupid = lj.groupid AND ll.type = 'Group' AND ll.subtype = 'Left' AND ll.id > lj.id ) ) AND NOT EXISTS ( -- A ban is an explicit mod ejection: it withdraws the poster's live posts -- and (modern ban) deletes their membership while recording a users_banned -- row. Never ripple a poster's post into a group they are banned from - that -- would silently re-insert the post (and, via addPosterMembershipToRippledGroups, -- re-join the banned poster). Cover both representations: the users_banned -- table (authoritative, no expiry) and a legacy collection='Banned' membership. SELECT 1 FROM users_banned ub WHERE ub.userid = ? AND ub.groupid = g.id ) AND NOT EXISTS ( SELECT 1 FROM memberships mb WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned' )",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "a7a6385a9528": {
@@ -13823,10 +13823,10 @@
             "goldenSql": "UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? SET mr.polygon = ST_Difference(mr.polygon, g.polyindex){{expr}} WHERE mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(mr.polygon, g.polyindex) AND NOT ST_Within(mr.polygon, g.polyindex)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "d73229723d30": {
@@ -13997,10 +13997,10 @@
             "goldenSql": "SELECT ST_Contains(outer_bound, polygon) AS o, (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i FROM rippling_reach WHERE msgid = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "f3dfec3a78a2": {
@@ -14148,10 +14148,10 @@
             "goldenSql": "SELECT EXISTS( SELECT 1 FROM rippling_reach WHERE msgid = ? AND ST_Contains(polygon, ST_SRID(POINT(?, ?), {{expr}})) = 1 ) AS within",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL constructs the builder has no vocabulary for at all: the spatial family (ST_Contains, ST_GeomFromText and the project's own haversine() SQL function) and JSON_TABLE, which shreds a JSON document into rows so it can be joined. Same position as the fragment-surface rule of the same name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. These are also among the most index-sensitive statements in the codebase - Location's group lookups drive every 'groups near me' query - so rewriting their shape casually risks a table scan on locations even where an equivalent could be found.",
+            "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS lng/lat) and will silently transpose coordinates if unhandled. haversine() is project-defined with no counterpart - port it as ST_DWithin on geography, which is correct AND index-assisted rather than translating the arithmetic. JSON_TABLE has no direct equivalent; jsonb_to_recordset or jsonb_array_elements is the usual replacement and needs the column list restating.",
+            "category": "Spatial or JSON_TABLE statement",
             "approvedDiff": ""
         },
         "fe857741d72e": {
