@@ -52,6 +52,21 @@
       "id": "2b0a0c6d24d3",
       "sql": "select max(`date`) as aggregate from `chat_messages` where `chatid` = ? and `id` < ? and `userid` = ?",
       "reason": "NOT the inlined-constant case - an alias difference. ->max('date') is a first-class aggregate and emits its result as `aggregate`, where the raw statement said `AS max`. The alias never leaves the statement: ->max() reads the value off it and returns a scalar, and the caller was rewritten from $lastOther[0]->max to that scalar. Matching the golden byte-for-byte would need ->selectRaw('MAX(date) AS max'), which is itself a raw site here and would convert nothing."
+    },
+    {
+      "id": "7afcdec295c4",
+      "sql": "select `name` from `locations` where `type` = ? and `name` = ? limit 1",
+      "reason": "Inlined constant now bound: type = 'Postcode' renders as type = ? with 'Postcode' as the first bind."
+    },
+    {
+      "id": "2f142c0c73a9",
+      "sql": "select `name` from `locations` where `type` = ? and `name` LIKE ? order by `name` asc limit 1",
+      "reason": "Two differences, both cosmetic. The inlined type = 'Postcode' is now bound, as above; and orderBy() writes the direction explicitly, so ORDER BY name becomes order by `name` asc. ASC is the SQL default, so the ordering is identical - MySQL parses the two the same way."
+    },
+    {
+      "id": "6b8dcb20450d",
+      "sql": "update `giftaid` set `reviewed` = ? where `userid` = ?",
+      "reason": "Inlined constant now bound, the NULL case of it: SET reviewed = NULL renders as set reviewed = ? with null bound. MySQL assigns SQL NULL either way."
     }
   ]
 }

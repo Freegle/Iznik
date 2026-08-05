@@ -33,9 +33,12 @@ class GiftAidClaimService
     {
         $found = 0;
 
-        $records = DB::select(
-            'SELECT id, userid, homeaddress FROM giftaid WHERE postcode IS NULL AND deleted IS NULL'
-        );
+        $records = DB::table('giftaid')
+            ->select('id', 'userid', 'homeaddress')
+            ->whereNull('postcode')
+            ->whereNull('deleted')
+            ->get()
+            ->all();
 
         foreach ($records as $record) {
             $candidate = $this->findPostcodeFromSavedAddresses($record->userid, $record->homeaddress)
@@ -51,7 +54,7 @@ class GiftAidClaimService
             }
 
             if (!$dryRun) {
-                DB::update('UPDATE giftaid SET postcode = ? WHERE id = ?', [$canonical, $record->id]);
+                DB::table('giftaid')->where('id', $record->id)->update(['postcode' => $canonical]);
             }
             $found++;
         }
@@ -68,18 +71,25 @@ class GiftAidClaimService
     {
         $normalised = strtoupper(preg_replace('/\s+/', ' ', trim($candidate)));
 
-        $exact = DB::select(
-            "SELECT name FROM locations WHERE type = 'Postcode' AND name = ? LIMIT 1",
-            [$normalised]
-        );
+        $exact = DB::table('locations')
+            ->select('name')
+            ->where('type', 'Postcode')
+            ->where('name', $normalised)
+            ->limit(1)
+            ->get()
+            ->all();
         if (!empty($exact)) {
             return $exact[0]->name;
         }
 
-        $prefix = DB::select(
-            "SELECT name FROM locations WHERE type = 'Postcode' AND name LIKE ? ORDER BY name LIMIT 1",
-            [$normalised.'%']
-        );
+        $prefix = DB::table('locations')
+            ->select('name')
+            ->where('type', 'Postcode')
+            ->where('name', 'LIKE', $normalised.'%')
+            ->orderBy('name')
+            ->limit(1)
+            ->get()
+            ->all();
         if (!empty($prefix)) {
             return $prefix[0]->name;
         }
@@ -120,18 +130,20 @@ class GiftAidClaimService
     {
         $found = 0;
 
-        $records = DB::select(
-            'SELECT id, homeaddress FROM giftaid WHERE housenameornumber IS NULL AND deleted IS NULL'
-        );
+        $records = DB::table('giftaid')
+            ->select('id', 'homeaddress')
+            ->whereNull('housenameornumber')
+            ->whereNull('deleted')
+            ->get()
+            ->all();
 
         foreach ($records as $record) {
             if (preg_match('/^([\d\/\-]+[a-z]{0,1})[\w\s]/im', $record->homeaddress, $matches)) {
                 $number = trim($matches[0]);
                 if (!$dryRun) {
-                    DB::update(
-                        'UPDATE giftaid SET housenameornumber = ? WHERE id = ?',
-                        [$number, $record->id]
-                    );
+                    DB::table('giftaid')
+                        ->where('id', $record->id)
+                        ->update(['housenameornumber' => $number]);
                 }
                 $found++;
             }
@@ -159,10 +171,9 @@ class GiftAidClaimService
         );
 
         foreach ($missing as $m) {
-            DB::update(
-                'UPDATE users_donations SET userid = ? WHERE id = ?',
-                [$m->emailid, $m->donationid]
-            );
+            DB::table('users_donations')
+                ->where('id', $m->donationid)
+                ->update(['userid' => $m->emailid]);
         }
 
         return count($missing);
@@ -177,7 +188,7 @@ class GiftAidClaimService
     {
         $found = 0;
 
-        $giftaids = DB::select('SELECT * FROM giftaid WHERE reviewed IS NOT NULL');
+        $giftaids = DB::table('giftaid')->whereNotNull('reviewed')->get()->all();
 
         foreach ($giftaids as $giftaid) {
             // Dry-run uses an equivalent COUNT() pre-image so the report is meaningful.
@@ -332,7 +343,9 @@ class GiftAidClaimService
                 ]);
 
                 if (!$dryRun) {
-                    DB::update('UPDATE giftaid SET reviewed = NULL WHERE userid = ?', [$donation->userid]);
+                    DB::table('giftaid')
+                        ->where('userid', $donation->userid)
+                        ->update(['reviewed' => null]);
                 }
 
                 $invalid++;
@@ -376,10 +389,9 @@ class GiftAidClaimService
             }
 
             if (!$dryRun) {
-                DB::update(
-                    'UPDATE users_donations SET giftaidclaimed = NOW() WHERE id = ?',
-                    [$donation->id]
-                );
+                DB::table('users_donations')
+                    ->where('id', $donation->id)
+                    ->update(['giftaidclaimed' => DB::raw('NOW()')]);
             }
         }
 

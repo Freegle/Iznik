@@ -37,6 +37,12 @@
       "reason": "Renumbered, not converted and not deleted. This id named MicrovolunteeringNotifyService::notifyForMessages' \"please review this post\" SELECT. The merge that brought PR #1257 and PR #1230 together added an `AND messages_groups.heldby IS NULL` predicate to it - the per-group hold fix - which changed the recorded SQL text and therefore the id hash, so the same call site now appears as 4f242de92f6d and this id has no code behind it. Left as raw-and-absent it inflates the raw count by one against a statement that does not exist, and it was that phantom which the ceiling was raised to 570 to accommodate. The work it represented is not discharged: 4f242de92f6d carries it forward, still raw and still counted.",
       "porting": "None of its own - see site 4f242de92f6d, which now names this statement and carries its porting note.",
       "category": "Master merge: renumbered by a predicate change"
+    },
+    {
+      "id": "8a4e5c1a5e2d",
+      "reason": "DB::raw('NOW()') as the assigned value in GiftAidClaimService's \"mark this donation claimed\" UPDATE. The statement around it IS converted (site 029b3600e99d) - this is only the value expression, and it has to stay raw because NOW() must be evaluated by MySQL. The non-raw alternative, ->update(['giftaidclaimed' => now()]), binds a timestamp taken from the PHP process instead, which moves the clock from the database to the application on a claimed-at field that HMRC submissions are built from. That is a real behaviour change bought for a cosmetic win in this inventory, so it is declined.",
+      "porting": "PostgreSQL: NOW() exists and behaves the same (transaction-start timestamp); no change needed. If the exact instant matters rather than the statement's transaction, clock_timestamp() is the closer equivalent - worth a look at porting time, not before.",
+      "category": "Value expression the database must evaluate"
     }
   ]
 }
