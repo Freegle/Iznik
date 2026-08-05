@@ -347,22 +347,15 @@ class ChatExpectedService
         $maxDelay = 30 * 24 * 3600;
 
         foreach ($userIds as $userId) {
-            $msgs = DB::select(
-                "SELECT cm.id, cm.chatid, cm.date, cr.user1, cr.user2
-                 FROM chat_messages cm
-                 INNER JOIN chat_rooms cr ON cr.id = cm.chatid
-                 WHERE cm.userid = ?
-                   AND cm.date > ?
-                   AND cr.chattype = ?
-                   AND cm.type IN (?, ?)",
-                [
-                    $userId,
-                    $since,
-                    ChatRoom::TYPE_USER2USER,
-                    ChatMessage::TYPE_INTERESTED,
-                    ChatMessage::TYPE_DEFAULT,
-                ]
-            );
+            $msgs = DB::table('chat_messages as cm')
+                ->select('cm.id', 'cm.chatid', 'cm.date', 'cr.user1', 'cr.user2')
+                ->join('chat_rooms as cr', 'cr.id', '=', 'cm.chatid')
+                ->where('cm.userid', $userId)
+                ->where('cm.date', '>', $since)
+                ->where('cr.chattype', ChatRoom::TYPE_USER2USER)
+                ->whereIn('cm.type', [ChatMessage::TYPE_INTERESTED, ChatMessage::TYPE_DEFAULT])
+                ->get()
+                ->all();
 
             $delays = [];
 

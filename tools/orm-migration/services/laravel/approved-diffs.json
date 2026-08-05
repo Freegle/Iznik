@@ -147,6 +147,11 @@
       "id": "4d2a758e2882",
       "sql": "select `TABLE_NAME`, `COLUMN_NAME` from `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` where `REFERENCED_TABLE_NAME` = ? and `TABLE_NAME` != ? and `TABLE_SCHEMA` = ?",
       "reason": "Inlined constants now bound ('groups' twice), plus the qualified table name gaining backticks around each part. Quoting a catalog view as `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` is valid MySQL and resolves to the same view; the TABLE_SCHEMA bind that was already there is unchanged."
+    },
+    {
+      "id": "1a2fdf6e9cab",
+      "sql": "select `cm`.`id`, `cm`.`userid`, `cm`.`chatid`, `cm`.`date`, `cr`.`user1`, `cr`.`user2` from `chat_messages` as `cm` inner join `chat_rooms` as `cr` on `cr`.`id` = `cm`.`chatid` where `cm`.`date` >= ? and `cm`.`replyexpected` = ? and `cm`.`replyreceived` = ? and `cr`.`chattype` = ?",
+      "reason": "Inlined constants now bound: replyexpected = 1 and replyreceived = 0. What is deliberately NOT different is everything that decides which rows come back on a join - the INNER JOIN type, the ON clause, the column list and the remaining predicates all render identically, which is why Layer 1 is still adequate evidence for a plain join with no grouping."
     }
   ]
 }
