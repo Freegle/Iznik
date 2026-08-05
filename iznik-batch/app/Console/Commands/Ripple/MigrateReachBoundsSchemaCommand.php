@@ -55,7 +55,7 @@ class MigrateReachBoundsSchemaCommand extends Command
             return Command::SUCCESS;
         }
 
-        $total = (int) DB::selectOne('SELECT COUNT(*) AS n FROM rippling_reach')->n;
+        $total = (int) DB::table('rippling_reach')->count();
         if (!$this->option('execute')) {
             $chunks = (int) ceil($total / $chunk);
             $this->info("DRY RUN: would shadow-copy {$total} rows in ~{$chunks} chunks of {$chunk} "
@@ -88,9 +88,10 @@ class MigrateReachBoundsSchemaCommand extends Command
         // 2) Chunked, resumable, msgid-ordered copy with per-row bounds derivation.
         $copied = 0;
         while (true) {
-            $cursor = (int) DB::selectOne(
-                'SELECT COALESCE(MAX(msgid), 0) AS m FROM rippling_reach_shadow', [], false
-            )->m;
+            // COALESCE(MAX(msgid), 0) becomes ->max() plus a PHP ?? 0: ->max()
+            // returns null on an empty table, which is the only case COALESCE was
+            // guarding. Keeping COALESCE would need DB::raw, itself a raw site.
+            $cursor = (int) (DB::table('rippling_reach_shadow')->max('msgid') ?? 0);
             $done = $this->copyChunk($cursor, $chunk);
             if ($done === 0) {
                 break;
@@ -170,7 +171,7 @@ class MigrateReachBoundsSchemaCommand extends Command
     /** Re-copy one row (delta pass), replacing any stale shadow copy. */
     private function replaceRow(int $msgid): void
     {
-        DB::delete('DELETE FROM rippling_reach_shadow WHERE msgid = ?', [$msgid]);
+        DB::table('rippling_reach_shadow')->where('msgid', $msgid)->delete();
         // The source row may have been deleted since the delta SELECT — then this
         // inserts nothing, which is exactly right.
         $this->insertRows('rr.msgid = ' . $msgid, true);

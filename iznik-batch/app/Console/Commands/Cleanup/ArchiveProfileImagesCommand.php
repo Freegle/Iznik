@@ -42,10 +42,10 @@ class ArchiveProfileImagesCommand extends Command
             if ($dryRun) {
                 $duplicatesDeleted += $dup->count - 1;
             } else {
-                $affected = DB::delete(
-                    'DELETE FROM users_images WHERE userid = ? AND id < ?',
-                    [$dup->userid, $dup->max]
-                );
+                $affected = DB::table('users_images')
+                    ->where('userid', $dup->userid)
+                    ->where('id', '<', $dup->max)
+                    ->delete();
                 $duplicatesDeleted += $affected;
             }
         }

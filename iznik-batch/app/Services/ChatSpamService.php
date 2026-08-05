@@ -86,7 +86,7 @@ class ChatSpamService
                     $mail = new SpamWarningMail($innocent, $spammerName, $subject, $replyTo, $replyName);
                     app(\App\Services\EmailSpoolerService::class)->spool($mail, $innocent->email_preferred);
 
-                    DB::update('UPDATE chat_rooms SET flaggedspam = 1 WHERE id = ?', [$room->id]);
+                    DB::table('chat_rooms')->where('id', $room->id)->update(['flaggedspam' => 1]);
 
                     Log::info('Chat spam warning sent', [
                         'chat_id'    => $room->id,
@@ -172,13 +172,17 @@ class ChatSpamService
             }
 
             if (!$dryRun) {
-                DB::update(
-                    "UPDATE chat_messages
-                     SET reviewrequired = 0, processingrequired = 0, processingsuccessful = 0,
-                         reviewrejected = 1, reviewedby = NULL
-                     WHERE userid = ? AND reviewrequired = 1 AND reviewedby IS NULL",
-                    [$user->userid]
-                );
+                DB::table('chat_messages')
+                    ->where('userid', $user->userid)
+                    ->where('reviewrequired', 1)
+                    ->whereNull('reviewedby')
+                    ->update([
+                        'reviewrequired' => 0,
+                        'processingrequired' => 0,
+                        'processingsuccessful' => 0,
+                        'reviewrejected' => 1,
+                        'reviewedby' => null,
+                    ]);
 
                 Log::info('Auto-marked chat messages as spam', [
                     'userid'  => $user->userid,

@@ -67,6 +67,21 @@
       "id": "6b8dcb20450d",
       "sql": "update `giftaid` set `reviewed` = ? where `userid` = ?",
       "reason": "Inlined constant now bound, the NULL case of it: SET reviewed = NULL renders as set reviewed = ? with null bound. MySQL assigns SQL NULL either way."
+    },
+    {
+      "id": "83aec2aa9cd7",
+      "sql": "select max(`msgid`) as aggregate from `rippling_reach_shadow`",
+      "reason": "The COALESCE moves from SQL to PHP, and the alias changes with it. COALESCE(MAX(msgid), 0) guards exactly one case - an empty table, where MAX returns NULL - and ->max('msgid') returns null there, so the caller's `?? 0` covers the same case and hands back the same int. The alias difference (`aggregate` vs `m`) never leaves the statement: ->max() reads the value off it and returns a scalar. Keeping COALESCE in SQL would need DB::raw, itself a raw site here, so it would convert nothing."
+    },
+    {
+      "id": "167eea65c5ac",
+      "sql": "update `chat_rooms` set `flaggedspam` = ? where `id` = ?",
+      "reason": "Inlined constant now bound: SET flaggedspam = 1 renders as set flaggedspam = ? with 1 bound."
+    },
+    {
+      "id": "72404d41f2b6",
+      "sql": "update `chat_messages` set `reviewrequired` = ?, `processingrequired` = ?, `processingsuccessful` = ?, `reviewrejected` = ?, `reviewedby` = ? where `userid` = ? and `reviewrequired` = ? and `reviewedby` is null",
+      "reason": "The same inlined-constant case at scale: five assigned constants and one WHERE constant all become binds, so one placeholder becomes seven. Column order, values and the IS NULL predicate are unchanged, so the rows matched and the values written are identical."
     }
   ]
 }
