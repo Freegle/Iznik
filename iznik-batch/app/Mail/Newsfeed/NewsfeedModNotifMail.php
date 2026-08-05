@@ -8,6 +8,14 @@ use Illuminate\Mail\Mailables\Envelope;
 
 class NewsfeedModNotifMail extends MjmlMailable
 {
+    /**
+     * Transactional - a moderator notification - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly array $posts,

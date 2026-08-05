@@ -3,11 +3,17 @@
 namespace App\Mail\Stories;
 
 use App\Mail\MjmlMailable;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
 class AskMail extends MjmlMailable
 {
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
+    }
+
     public function __construct(
         public readonly string $recipientName,
         public readonly string $recipientEmail,

@@ -11,6 +11,7 @@ covers:
   - scripts/check-unsubscribe-categories.mjs
   - iznik-nuxt3/server/middleware/oneClickUnsubscribe.js
   - iznik-nuxt3/tests/unit/server/oneClickUnsubscribe.spec.js
+  - iznik-batch/tests/Unit/Mail/UnsubscribeCategoryCoverageTest.php
 ---
 
 # Unsubscribing from email
@@ -78,6 +79,31 @@ one group would leave the same email arriving from the others.
 reads is worse than none, because the member is told it worked. `settings.engagement` was
 in exactly that state before this was built: the "Encouragement emails" toggle in Settings
 wrote it and nothing read it.
+
+### Adding a new mailable
+
+`unsubscribeType()` has a default, so a mailable that says nothing still behaves safely — it
+carries a working `List-Unsubscribe` that turns everything off. But safe is not right: a new
+bulk mail would take away more than the member asked for, and a new transactional mail would
+carry an unsubscribe link it should not have. Neither shows up as a failure anywhere, which
+is how `EventsDigestMail` and `VolunteeringDigestMail` sat uncategorised for as long as they
+did.
+
+So `UnsubscribeCategoryCoverageTest` pins the full list of `MjmlMailable` subclasses and
+their categories. **Add a mailable and it fails until you categorise it**, naming the class
+and what to do:
+
+```
+New mailable(s) with no unsubscribe category:
+  App\Mail\Tmp\ForgottenMail
+
+Decide which UnsubscribeService::TYPE_* they belong to - or null if they are
+transactional and should carry no List-Unsubscribe - declare it with
+unsubscribeType(), and add them to self::EXPECTED.
+```
+
+It also fails if a declared category stops matching the pinned one, or if a listed mailable
+is deleted — so the answer always lands in the diff where a reviewer sees it.
 
 ## The two implementations
 

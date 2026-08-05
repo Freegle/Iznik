@@ -16,6 +16,14 @@ class ChitchatReportMail extends MjmlMailable
 {
     use LoggableEmail;
 
+    /**
+     * Transactional - a moderator report notice - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public string $reporterName,
         public int $reporterId,
