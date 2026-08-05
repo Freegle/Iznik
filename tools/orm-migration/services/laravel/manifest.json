@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:18:38Z",
+    "generated": "2026-08-05T17:20:28Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 88,
-        "raw": 227,
+        "converted": 90,
+        "raw": 225,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -14345,9 +14345,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT memberships.userid, memberships.groupid FROM memberships INNER JOIN spam_users ON memberships.userid = spam_users.userid WHERE spam_users.collection = ? AND memberships.role = ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -14376,13 +14376,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT DISTINCT messages.id, messages_groups.groupid FROM messages INNER JOIN spam_users ON messages.fromuser = spam_users.userid AND spam_users.collection = ? INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN users ON messages.fromuser = users.id AND users.systemrole = 'User' WHERE messages.deleted IS NULL",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select distinct `messages`.`id`, `messages_groups`.`groupid` from `messages` inner join `spam_users` on `messages`.`fromuser` = `spam_users`.`userid` and `spam_users`.`collection` = ? inner join `messages_groups` on `messages`.`id` = `messages_groups`.`msgid` inner join `users` on `messages`.`fromuser` = `users`.`id` and `users`.`systemrole` = ? where `messages`.`deleted` is null"
         },
         "0089fe542c58": {
             "id": "0089fe542c58",
@@ -14415,7 +14415,7 @@
         "0dff831da965": {
             "id": "0dff831da965",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 206,
+            "line": 213,
             "class": "SpamCleanupService",
             "function": "deleteSpamNewsfeedItems",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -14444,7 +14444,7 @@
         "a1058358a274": {
             "id": "a1058358a274",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 225,
+            "line": 232,
             "class": "SpamCleanupService",
             "function": "deleteSpamNotifications",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -14473,7 +14473,7 @@
         "82d31a13ca56": {
             "id": "82d31a13ca56",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 244,
+            "line": 251,
             "class": "SpamCleanupService",
             "function": "deleteSpamExpectedRecords",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -14502,7 +14502,7 @@
         "d8432452343e": {
             "id": "d8432452343e",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 264,
+            "line": 271,
             "class": "SpamCleanupService",
             "function": "deleteSpamSessions",
             "receiver": "Illuminate\\Support\\Facades\\DB",

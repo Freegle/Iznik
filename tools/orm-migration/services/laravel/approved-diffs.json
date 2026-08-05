@@ -192,6 +192,11 @@
       "id": "ed6f86e4e59c",
       "sql": "select distinct `mg`.`msgid`, `m`.`subject`, `mg`.`arrival` from `messages_groups` as `mg` inner join `messages` as `m` on `m`.`id` = `mg`.`msgid` inner join `messages_spatial` as `ms` on `ms`.`msgid` = `mg`.`msgid` left join `messages_attachments` as `ma` on `ma`.`msgid` = `m`.`id` left join `messages_ai_declined` as `maid` on `maid`.`msgid` = `m`.`id` where `mg`.`arrival` >= ? and `mg`.`collection` in (?, ?) and `ma`.`id` is null and `maid`.`msgid` is null and `m`.`subject` is not null and `m`.`subject` != ? order by `mg`.`arrival` asc, `mg`.`msgid` asc limit 100",
       "reason": "Inlined constants now bound (the IN list and the != '' guard), the LIMIT inlined by the grammar with the test's representative value, and explicit asc on both ORDER BY terms. Unchanged, and all load-bearing: DISTINCT, the two INNER joins, and both ANTI-joins - leftJoin paired with IS NULL on messages_attachments and messages_ai_declined. An inner join in either position would return exactly the messages this is meant to skip, and since this feeds an AI image generator that would mean paying to illustrate messages that already have pictures."
+    },
+    {
+      "id": "f464bbe429f8",
+      "sql": "select distinct `messages`.`id`, `messages_groups`.`groupid` from `messages` inner join `spam_users` on `messages`.`fromuser` = `spam_users`.`userid` and `spam_users`.`collection` = ? inner join `messages_groups` on `messages`.`id` = `messages_groups`.`msgid` inner join `users` on `messages`.`fromuser` = `users`.`id` and `users`.`systemrole` = ? where `messages`.`deleted` is null",
+      "reason": "One inlined constant now bound: users.systemrole = 'User' becomes a bind. Everything that decides which rows are DELETED is unchanged - DISTINCT, all three inner joins, and both extra predicates still in their ON clauses. The systemrole one is a guard rather than a filter: it is what stops this deleting posts by moderators or support staff who happen to be flagged as spammers, so it is the single most important thing in this statement to render identically."
     }
   ]
 }

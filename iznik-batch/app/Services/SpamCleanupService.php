@@ -55,14 +55,13 @@ class SpamCleanupService
      */
     public function removeSpamMemberships(bool $dryRun = false): int
     {
-        $spammers = DB::select(
-            "SELECT memberships.userid, memberships.groupid
-             FROM memberships
-             INNER JOIN spam_users ON memberships.userid = spam_users.userid
-             WHERE spam_users.collection = ?
-               AND memberships.role = ?",
-            [self::SPAMMER_COLLECTION, self::MEMBER_ROLE]
-        );
+        $spammers = DB::table('memberships')
+            ->select('memberships.userid', 'memberships.groupid')
+            ->join('spam_users', 'memberships.userid', '=', 'spam_users.userid')
+            ->where('spam_users.collection', self::SPAMMER_COLLECTION)
+            ->where('memberships.role', self::MEMBER_ROLE)
+            ->get()
+            ->all();
 
         if ($dryRun) {
             return count($spammers);
@@ -104,17 +103,25 @@ class SpamCleanupService
      */
     public function deleteSpamMessages(bool $dryRun = false): int
     {
-        $msgs = DB::select(
-            "SELECT DISTINCT messages.id, messages_groups.groupid
-             FROM messages
-             INNER JOIN spam_users ON messages.fromuser = spam_users.userid
-               AND spam_users.collection = ?
-             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
-             INNER JOIN users ON messages.fromuser = users.id
-               AND users.systemrole = 'User'
-             WHERE messages.deleted IS NULL",
-            [self::SPAMMER_COLLECTION]
-        );
+        $msgs = DB::table('messages')
+            ->distinct()
+            ->select('messages.id', 'messages_groups.groupid')
+            // Both extra predicates stay in their ON clauses, where the raw
+            // statement put them, rather than migrating to the WHERE.
+            ->join('spam_users', function ($j) {
+                $j->on('messages.fromuser', '=', 'spam_users.userid')
+                  ->where('spam_users.collection', self::SPAMMER_COLLECTION);
+            })
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            // users.systemrole = 'User' is a GUARD: it keeps this from deleting
+            // posts by moderators or support staff who happen to be flagged.
+            ->join('users', function ($j) {
+                $j->on('messages.fromuser', '=', 'users.id')
+                  ->where('users.systemrole', 'User');
+            })
+            ->whereNull('messages.deleted')
+            ->get()
+            ->all();
 
         if ($dryRun) {
             return count($msgs);
