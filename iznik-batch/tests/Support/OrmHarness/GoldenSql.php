@@ -155,6 +155,20 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for a site converted to ->exists(). $build returns the query
+     * carrying table and WHERE, un-executed.
+     *
+     * @param  callable(): QueryBuilder|EloquentBuilder  $build
+     */
+    public static function assertExists(string $siteId, callable $build): void
+    {
+        $query = self::normaliseBuiltQuery($siteId, $build());
+        $sql = $query->getGrammar()->compileExists($query);
+
+        self::compareAndAssert($siteId, $sql, $query->getBindings());
+    }
+
+    /**
      * Layer 1 for an UPDATE-shaped site. $build returns [query, values]:
      * the query builder carrying the table and WHERE (built but, same
      * discipline as assert(), never executed - do not call ->update() on

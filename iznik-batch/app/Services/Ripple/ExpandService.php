@@ -2369,15 +2369,18 @@ class ExpandService
      */
     private function hasTerminalOutcome(int $msgid): bool
     {
-        return DB::selectOne(
-            'SELECT 1 AS x FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?, ?) LIMIT 1',
-            [
-                $msgid,
+        // ->exists() rather than selecting a literal and testing for null:
+        // the raw form's "SELECT 1 ... LIMIT 1" is the hand-rolled version of
+        // exactly this question, and a literal in a select list can only be
+        // expressed through DB::raw, which is a raw site itself.
+        return DB::table('messages_outcomes')
+            ->where('msgid', $msgid)
+            ->whereIn('outcome', [
                 \App\Models\MessageOutcome::OUTCOME_TAKEN,
                 \App\Models\MessageOutcome::OUTCOME_RECEIVED,
                 \App\Models\MessageOutcome::OUTCOME_WITHDRAWN,
-            ]
-        ) !== null;
+            ])
+            ->exists();
     }
 
     private function logEvent(int|string $msgid, string $kind, int $tick, array $entry): void

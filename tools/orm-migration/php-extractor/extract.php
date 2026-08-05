@@ -773,6 +773,7 @@ const PARITY_ASSERTIONS = [
     'GoldenSql::assertInsert',
     'GoldenSql::assertInsertOrIgnore',
     'GoldenSql::assertUpsert',
+    'GoldenSql::assertExists',
     'GoldenSql::assertUpdate',
     'GoldenSql::assertDelete',
     'ResultParity::assertForSite',
