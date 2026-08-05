@@ -43,6 +43,7 @@ import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
 import RecommendationsAPI from './RecommendationsAPI.js'
 import RipplingAPI from './RipplingAPI.js'
+import FirstReplyAPI from '@/api/FirstReplyAPI'
 import TownAPI from './TownAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
@@ -95,6 +96,7 @@ export default (config) => {
     notification: new NotificationAPI(options),
     recommendations: new RecommendationsAPI(options),
     rippling: new RipplingAPI(options),
+    firstreply: new FirstReplyAPI(options),
     town: new TownAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),

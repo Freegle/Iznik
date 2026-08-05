@@ -153,6 +153,42 @@ class ScoutService
         return $stats;
     }
 
+    /**
+     * Stamp firstreply_scouts.replied_at for scouts who have since replied to the
+     * post we told them about.
+     *
+     * This is the only thing that answers "does scouting work?", and it has to be
+     * a sweep rather than a hook on the reply path: the reply arrives through
+     * several doors (web, app, email, TrashNothing) and none of them knows or
+     * should know that the replier was scouted.
+     *
+     * Attribution is deliberately weak - they replied after we mailed them, which
+     * is correlation, not proof. That is why the score is read alongside the
+     * unscouted reply rate rather than on its own.
+     *
+     * @return int how many were newly attributed
+     */
+    public function attributeReplies(int $lookbackDays = 7): int
+    {
+        try {
+            return DB::update(
+                "UPDATE firstreply_scouts fs
+                 JOIN chat_messages cm ON cm.refmsgid = fs.msgid
+                      AND cm.userid = fs.userid
+                      AND cm.type = ?
+                      AND cm.date >= fs.sent_at
+                 SET fs.replied_at = cm.date
+                 WHERE fs.replied_at IS NULL
+                   AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? DAY)",
+                ['Interested', max(1, $lookbackDays)]
+            );
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: scout attribution failed', ['error' => $e->getMessage()]);
+
+            return 0;
+        }
+    }
+
     /** Pick and mail this post's scouts. Returns how many were mailed. */
     public function scoutPost(object $post, array $cfg, bool $dryRun = false): int
     {
@@ -210,11 +246,13 @@ class ScoutService
             return 0;
         }
 
-        $sent = $this->digest->mailPostToUsers($msgid, $claimed);
+        $mailed = $this->digest->mailPostToUsers($msgid, $claimed);
 
         // Anyone we actually mailed must not be mailed again by the reach mailer
         // when the ripple eventually reaches them - that is the same post twice.
-        foreach ($claimed as $userId) {
+        // Keyed on who was really mailed, not who was claimed: a member whose
+        // spool failed has had nothing, and must stay eligible for the reach mail.
+        foreach ($mailed as $userId) {
             DB::table('rippling_reach_notified')->insertOrIgnore([
                 'msgid' => $msgid,
                 'userid' => $userId,
@@ -222,7 +260,52 @@ class ScoutService
             ]);
         }
 
-        return $sent;
+        // For a weak-signal scout the mail WAS their daily digest, moved earlier,
+        // so today's digest must not also go: record it as sent. Strong-signal
+        // scouts are excluded - that mail is an extra, justified by their own
+        // request, and taking their digest away as well would be a straight loss.
+        $broughtForward = array_values(array_filter(
+            $mailed,
+            static fn ($userId) => ($chosen[$userId]['reason'] ?? null) === 'frequent'
+        ));
+        $this->markDigestBroughtForward($broughtForward);
+
+        return count($mailed);
+    }
+
+    /**
+     * Record that these members have had their daily digest, because the scout
+     * mail they just received is it.
+     *
+     * Stamps lastsent only, never the lastmsgid cursor. The cursor is what
+     * decides which posts tomorrow's digest covers, and they have not actually
+     * seen today's roll-up - so tomorrow's must still start from where it would
+     * have. (The scouted post itself is not double-counted: the daily digest
+     * excludes posts that have a rippling_reach row, which every scouted post
+     * does.)
+     *
+     * @param int[] $userIds
+     */
+    private function markDigestBroughtForward(array $userIds): void
+    {
+        if (empty($userIds) || !Schema::hasTable('users_digests')) {
+            return;
+        }
+
+        foreach ($userIds as $userId) {
+            try {
+                DB::table('users_digests')->updateOrInsert(
+                    ['userid' => $userId, 'mode' => 'daily'],
+                    ['lastsent' => now()]
+                );
+            } catch (\Throwable $e) {
+                // Worst case the member also gets today's digest, which is the
+                // behaviour before this existed. Not worth failing the send for.
+                Log::warning('firstreply: could not mark digest brought forward', [
+                    'userid' => $userId, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**

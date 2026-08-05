@@ -6,6 +6,7 @@ covers:
   - iznik-server-go/firstreply/**
   - iznik-server-go/chat/chatprompt.go
   - iznik-nuxt3/components/ChatMessagePrompt.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminFirstReply.vue
 ---
 
 # Getting a First Reply In - Technical Reference
@@ -117,9 +118,17 @@ A candidate dropped by either gate does not leave a hole: filtering happens **be
 top-N cap, so the next-best candidate takes the slot and the post still gets its full
 complement.
 
-One residual overlap on the `frequent` path is deliberately left. A post arriving before the
-daily digest cron has run can scout somebody whose digest then also goes out later the same
-morning. Closing it would mean suppressing their digest, trading a whole day's posts for one.
+**A `frequent` scout's digest is then recorded as sent**, so today's does not also go out -
+the mail genuinely replaces it rather than arriving alongside it. Only `lastsent` is stamped,
+never the `lastmsgid` cursor: the member has not actually seen today's roll-up, so tomorrow's
+must still start from where it would have. (The scouted post is not then duplicated in it,
+because the daily digest excludes posts that have a `rippling_reach` row, which every scouted
+post does.) Match-driven scouts are excluded from this - their mail was an extra they asked
+for, and taking the digest away as well would be a straight loss.
+
+The stamp is keyed on who was **actually mailed**, not who was picked, so a member whose spool
+failed keeps both their digest and their eligibility for the reach mail. That is why
+`mailPostToUsers` returns the ids it sent to rather than a count.
 
 ### The mail is the ordinary digest mail
 
@@ -210,7 +219,7 @@ them in a quiet channel would mean nobody ever answers them.
 |---|---|
 | `rippling_reach.max_polygon` | the reach the post ends up with. NULL = not computed yet, and every reader falls back to current-reach behaviour |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
-| `firstreply_scouts` | who was scouted about what, and why. Doubles as the fatigue ledger |
+| `firstreply_scouts` | who was scouted about what, why, and whether they then replied (`replied_at`). Doubles as the fatigue ledger |
 | `firstreply_prompts_sent` | which prompts a post has had. The `(msgid, kind)` unique key is what makes the cadence engine idempotent |
 | `firstreply_event_metrics` | daily counters, same shape as `rippling_event_metrics` |
 
@@ -222,7 +231,7 @@ All three are registered in `iznik-batch/routes/console.php` inside
 | Command | Cadence | What |
 |---|---|---|
 | `firstreply:maxreach` | every minute | fills in `max_polygon`. Kept out of `ripple:expand`, which is the hot single-writer loop |
-| `firstreply:scout` | every 5 min | picks and mails scouts |
+| `firstreply:scout` | every 5 min | attributes replies to earlier scouts, then picks and mails new ones |
 | `firstreply:engage` | every 5 min | sends the next due prompt |
 
 Each takes `--dry-run`.
@@ -236,3 +245,22 @@ in-app reply path is enforced there.
 
 Sensible order: turn on `FIRSTREPLY_ENABLED` alone first so `firstreply:maxreach` can drain,
 then the passthrough (which needs `max_polygon` to do anything), then scouts, then chat.
+
+## Measuring it
+
+**ModTools → SysAdmin → First reply** (`/sysadmin?tab=firstreply`), served by
+`GET /api/firstreply/metrics` (Support/Admin only, `iznik-server-go/firstreply/metrics.go`).
+
+Each lever is shown against something, because a counter on its own says a number went up
+without saying whether it was worth having:
+
+| Lever | Read it as |
+|---|---|
+| Passthrough | first replies let through, against how long a hold actually lasts when one happens. The second number is the wait the first one avoided |
+| Scouting | reply rate and rehome rate **per signal**, so `wanted` / `search` / `frequent` can be compared directly. A signal that does not convert should be switched off rather than left spending mail |
+| Freegle chat | answer rate per question, and how often the answer actually changed the post. "Collection only" and "no rush" are real answers that leave the post as it was, so they are counted separately from ones that did something |
+
+Scout replies are attributed by a sweep in `firstreply:scout` rather than a hook on the reply
+path, because replies arrive through four doors (web, app, email, TrashNothing) and none of
+them knows or should know the replier was scouted. It is correlation, not proof - they replied
+after we mailed them - which is why the rate is read next to the rehome rate rather than alone.

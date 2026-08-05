@@ -4,6 +4,7 @@ namespace App\Services\Ripple;
 
 use App\Models\ChatMessage;
 use App\Services\FirstReply\MaxReachService;
+use App\Services\FirstReply\Metrics;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -116,7 +117,16 @@ class RippleReplyService
             return false;
         }
 
-        return $this->maxReach()->isWithinMaxReach($msgid, $lat, $lng);
+        if (!$this->maxReach()->isWithinMaxReach($msgid, $lat, $lng)) {
+            return false;
+        }
+
+        // Counted separately from the web path (which records passthrough_web in
+        // the Go API), because the two doors have different volumes and a change
+        // in one should not be read as a change in the other.
+        app(Metrics::class)->record('passthrough_email');
+
+        return true;
     }
 
     /**

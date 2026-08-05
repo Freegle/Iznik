@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FirstReply\ScoutService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 class ScoutServiceTest extends TestCase
@@ -19,6 +20,10 @@ class ScoutServiceTest extends TestCase
     {
         parent::setUp();
         MaxReachService::forgetAvailability();
+        // The scout mail really goes through the digest spool now, because the
+        // ledger and the digest-brought-forward stamp are both keyed on who was
+        // ACTUALLY mailed rather than who was picked.
+        Mail::fake();
         DB::statement('DELETE FROM firstreply_scouts');
         DB::statement('DELETE FROM rippling_reach');
 
@@ -418,5 +423,96 @@ class ScoutServiceTest extends TestCase
         $this->assertArrayNotHasKey($alreadyMailed->id, $scouts);
         $this->assertArrayHasKey($available->id, $scouts);
         $this->assertCount(1, $scouts);
+    }
+
+    public function test_a_frequent_scout_has_their_digest_recorded_as_brought_forward(): void
+    {
+        // The mail they just got IS their digest, moved earlier, so today's must
+        // not also go out.
+        $message = $this->seedSilentOffer();
+        $replier = $this->frequentReplierOn((int) $message->id, 51.5, -0.1);
+
+        $this->service()->run();
+
+        $lastsent = DB::table('users_digests')
+            ->where('userid', $replier->id)->where('mode', 'daily')->value('lastsent');
+
+        $this->assertNotNull($lastsent, 'the digest should now be recorded as sent');
+        $this->assertTrue(
+            \Carbon\Carbon::parse($lastsent)->greaterThanOrEqualTo($this->londonDayStart()),
+            'and recorded as sent TODAY, so today\'s digest cron skips them'
+        );
+    }
+
+    public function test_a_match_scout_keeps_their_digest(): void
+    {
+        // Their mail was an extra, justified by their own saved search. Taking
+        // the digest away as well would be a straight loss to them.
+        $message = $this->seedSilentOffer();
+        $searcher = $this->memberAt(51.9, 0.8);
+        DB::table('users_searches')->insert([
+            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
+        ]);
+
+        $this->service()->run();
+
+        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertNull(
+            DB::table('users_digests')
+                ->where('userid', $searcher->id)->where('mode', 'daily')->value('lastsent'),
+            'a match-driven scout mail must not consume their digest'
+        );
+    }
+
+    public function test_a_scouted_reply_is_attributed_so_the_signal_can_be_judged(): void
+    {
+        // Without this there is no way to tell whether scouting does anything.
+        $message = $this->seedSilentOffer();
+        $searcher = $this->memberAt(51.9, 0.8);
+        DB::table('users_searches')->insert([
+            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
+        ]);
+
+        $this->service()->run();
+        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+
+        // They reply to the post we told them about.
+        $poster = \App\Models\User::find($message->fromuser);
+        $room = $this->createTestChatRoom($searcher, $poster);
+        $this->createTestChatMessage($room, $searcher, [
+            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $message->id,
+        ]);
+
+        $this->assertSame(1, $this->service()->attributeReplies());
+        $this->assertNotNull(
+            DB::table('firstreply_scouts')
+                ->where('msgid', $message->id)->where('userid', $searcher->id)->value('replied_at')
+        );
+    }
+
+    public function test_attribution_ignores_a_reply_to_a_different_post(): void
+    {
+        $message = $this->seedSilentOffer();
+        $searcher = $this->memberAt(51.9, 0.8);
+        DB::table('users_searches')->insert([
+            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
+        ]);
+        $this->service()->run();
+
+        $poster = $this->createTestUser();
+        $elsewhere = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($searcher, $poster);
+        $this->createTestChatMessage($room, $searcher, [
+            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $elsewhere->id,
+        ]);
+
+        $this->assertSame(0, $this->service()->attributeReplies());
+    }
+
+    private function londonDayStart(): \Carbon\Carbon
+    {
+        return \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC');
     }
 }

@@ -22,14 +22,21 @@ class ScoutCommand extends Command
     public function handle(ScoutService $service): int
     {
         $dryRun = (bool) $this->option('dry-run');
+
+        // Attribute first, so a scout mailed on the previous run is credited
+        // before this run reports. Cheap, and the only thing that says whether
+        // any of this works.
+        $attributed = $dryRun ? 0 : $service->attributeReplies();
+
         $stats = $service->run($dryRun);
 
         $this->info(sprintf(
-            '%sscouts: considered %d posts, scouted %d, mailed %d',
+            '%sscouts: considered %d posts, scouted %d, mailed %d, newly replied %d',
             $dryRun ? '[DRY RUN] ' : '',
             $stats['considered'],
             $stats['posts_scouted'],
-            $stats['mailed']
+            $stats['mailed'],
+            $attributed
         ));
 
         return Command::SUCCESS;

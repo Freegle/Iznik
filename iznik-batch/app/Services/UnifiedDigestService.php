@@ -707,7 +707,7 @@ class UnifiedDigestService
                 }
             }
 
-            return $this->spoolPostToRecipients($msg, $recipientIds, $recipientLatLng, $dryRun);
+            return count($this->spoolPostToRecipients($msg, $recipientIds, $recipientLatLng, $dryRun));
         } catch (\Throwable $e) {
             Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
             return 0;
@@ -729,18 +729,24 @@ class UnifiedDigestService
      * deliberately: recipients get the format they already recognise, not a new
      * kind of mail from Freegle.
      *
+     * Returns the ids actually mailed rather than a count. The caller has to know
+     * WHO received it, because for some of them this mail stands in for their
+     * daily digest and that has to be recorded against those members and no
+     * others - including not against anyone whose spool failed.
+     *
      * @param int[] $userIds
+     * @return int[]
      */
-    public function mailPostToUsers(int $msgid, array $userIds, bool $dryRun = false): int
+    public function mailPostToUsers(int $msgid, array $userIds, bool $dryRun = false): array
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE) || empty($userIds)) {
-            return 0;
+            return [];
         }
 
         try {
             $msg = Message::with($this->digestPostEagerLoads())->find($msgid);
             if ($msg === null) {
-                return 0;
+                return [];
             }
 
             $allowlist = $this->getImmediateAllowlist();
@@ -751,7 +757,7 @@ class UnifiedDigestService
                     ->whereIn(DB::raw('LOWER(email)'), $lower)
                     ->pluck('userid')->unique()->map(fn ($v) => (int) $v)->all();
                 if (empty($userIds)) {
-                    return 0;
+                    return [];
                 }
             }
 
@@ -779,7 +785,7 @@ class UnifiedDigestService
             return $this->spoolPostToRecipients($msg, $userIds, $latLng, $dryRun, writeReachLedger: false);
         } catch (\Throwable $e) {
             Log::warning('firstreply: mailPostToUsers failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
-            return 0;
+            return [];
         }
     }
 
@@ -791,8 +797,13 @@ class UnifiedDigestService
      * bouncing/absent preferred address, the browseMaxDistance slider, and the
      * poster's own exemption from their own post.
      *
+     * Returns the ids actually spooled to, so a caller can act on exactly who was
+     * mailed. Both public entry points count them; only first-reply scouting
+     * needs the ids themselves.
+     *
      * @param int[] $recipientIds
      * @param array<int,array{0:float,1:float}|null> $recipientLatLng
+     * @return int[]
      */
     private function spoolPostToRecipients(
         Message $msg,
@@ -800,7 +811,7 @@ class UnifiedDigestService
         array $recipientLatLng,
         bool $dryRun,
         bool $writeReachLedger = true
-    ): int {
+    ): array {
         $msgid = (int) $msg->id;
 
         $postedToGroups = DB::table('messages_groups')->where('msgid', $msgid)
@@ -809,7 +820,7 @@ class UnifiedDigestService
         $sponsorsCache = !empty($postedToGroups) ? $this->getSponsorsForGroup((int) $postedToGroups[0]) : null;
 
         $users = User::whereIn('id', $recipientIds)->with(['emails', 'memberships'])->get();
-        $sent = 0;
+        $mailed = [];
         foreach ($users as $user) {
             if (!$user->email_preferred) {
                 continue;
@@ -835,7 +846,7 @@ class UnifiedDigestService
                 continue;
             }
             if ($dryRun) {
-                $sent++;
+                $mailed[] = (int) $user->id;
                 continue;
             }
             $deduped = collect([['message' => $msg, 'postedToGroups' => $postedToGroups]]);
@@ -852,7 +863,7 @@ class UnifiedDigestService
                         'notified_at' => now(),
                     ]);
                 }
-                $sent++;
+                $mailed[] = (int) $user->id;
             } catch (\Throwable $e) {
                 Log::warning('ripple: failed to spool reach immediate mail', [
                     'msgid' => $msgid, 'user_id' => $user->id, 'error' => $e->getMessage(),
@@ -861,15 +872,16 @@ class UnifiedDigestService
         }
 
         // #0 / §15 instrumentation: count immediate mails sent on expansion.
-        if ($sent > 0 && !$dryRun) {
+        if (!empty($mailed) && !$dryRun) {
+            $count = count($mailed);
             DB::statement(
                 'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
                 . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                ['immediate_mailed', $sent, $sent]
+                ['immediate_mailed', $count, $count]
             );
         }
 
-        return $sent;
+        return $mailed;
     }
 
     protected function getGroupMessagesSinceCursor(int $groupid, ?string $cursorMsgdate, int $cursorMsgid): Collection
