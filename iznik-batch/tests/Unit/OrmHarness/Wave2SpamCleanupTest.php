@@ -21,6 +21,12 @@ class Wave2SpamCleanupTest extends TestCase
     // SELECT DISTINCT messages.id, messages_groups.groupid FROM messages INNER JOIN ... x3
     private const SITE_SPAM_MESSAGES = 'f464bbe429f8';
 
+    // DELETE FROM <t> WHERE <col> IN (SELECT userid FROM spam_users WHERE collection = ?)
+    private const SITE_DEL_NEWSFEED = '0dff831da965';
+    private const SITE_DEL_NOTIFICATIONS = 'a1058358a274';
+    private const SITE_DEL_EXPECTED = '82d31a13ca56';
+    private const SITE_DEL_SESSIONS = 'd8432452343e';
+
     public function test_spam_memberships(): void
     {
         GoldenSql::assert(self::SITE_SPAM_MEMBERSHIPS, fn () => DB::table('memberships')
@@ -52,5 +58,34 @@ class Wave2SpamCleanupTest extends TestCase
                   ->where('users.systemrole', 'User');
             })
             ->whereNull('messages.deleted'));
+    }
+
+    /**
+     * Four deletes sharing one shape. whereIn with a CLOSURE renders the same
+     * correlated IN (SELECT ...) the raw statements had; fetching the spammer
+     * ids first and passing an array would be a different statement and a race,
+     * since the spam list can change between the two queries.
+     */
+    public function test_spam_cascade_deletes(): void
+    {
+        $sub = fn ($q) => $q->from('spam_users')
+            ->select('userid')
+            ->where('collection', self::SPAMMER_COLLECTION);
+
+        GoldenSql::assertDelete(self::SITE_DEL_NEWSFEED, fn () => DB::table('newsfeed')
+            ->whereIn('userid', $sub));
+
+        GoldenSql::assertDelete(self::SITE_DEL_NOTIFICATIONS, fn () => DB::table('users_notifications')
+            ->whereIn('fromuser', $sub));
+
+        GoldenSql::assertDelete(self::SITE_DEL_EXPECTED, fn () => DB::table('users_expected')
+            ->whereIn('expecter', $sub));
+
+        // The sessions one carries an extra IS NOT NULL. Redundant against the
+        // IN, but the raw statement had it, so it is preserved rather than
+        // tidied away.
+        GoldenSql::assertDelete(self::SITE_DEL_SESSIONS, fn () => DB::table('sessions')
+            ->whereIn('userid', $sub)
+            ->whereNotNull('userid'));
     }
 }
