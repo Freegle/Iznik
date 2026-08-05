@@ -57,6 +57,13 @@ class ParityComparer
             || (bool) preg_match('/TN-SYNC-TRACE \[WRITE\] table=/', $text);
     }
 
+    // Routing outcomes meaning a messages row was actually created (i.e. the
+    // post landed on FD, awaiting or past moderation) — as opposed to
+    // dropped/skipped/duplicate, where nothing was ingested. Used to turn
+    // Layer 2's raw "extra post_ids" into a genuine "how many more posts are
+    // we actually getting" figure.
+    private const INGESTED_RESULTS = ['approved', 'pending'];
+
     /**
      * Parses both trace-line sets and buckets post_ids into the four layers.
      *
@@ -64,6 +71,8 @@ class ParityComparer
      * @param  string[]  $apiLines
      * @return array{
      *     emailPostIdCount: int, apiCoveredCount: int,
+     *     emailIngestedCount: int, apiIngestedCount: int,
+     *     layer2ExtraIngested: string[],
      *     layer1Missing: string[], layer1Details: array<string, string>,
      *     layer2Extra: string[],
      *     overlapCount: int, layer3Mismatches: string[], layer4Divergences: string[],
@@ -104,6 +113,16 @@ class ParityComparer
         // Layer 2: extra posts (informational).
         $layer2Extra = array_values(array_diff($apiResultPostIds, $emailPostIds));
 
+        // How many more posts are actually landing on FD via the API path vs
+        // the email path — restricted to results that created a messages row
+        // (approved/pending), not raw post_id counts, so a pile of dropped/
+        // duplicate/skipped extras doesn't inflate the "we're getting more"
+        // figure.
+        $layer2ExtraIngested = array_values(array_filter(
+            $layer2Extra,
+            fn (string $postId) => in_array($apiResults[$postId] ?? '', self::INGESTED_RESULTS, true),
+        ));
+
         // Layers 3 & 4: overlap, split by whether both sides created a
         // messages row on the same group.
         $overlap            = array_values(array_intersect($emailPostIds, $apiResultPostIds));
@@ -122,15 +141,21 @@ class ParityComparer
             );
         }
 
+        $emailIngestedCount = count(array_filter($emailResults, static fn (string $r) => in_array($r, self::INGESTED_RESULTS, true)));
+        $apiIngestedCount   = count(array_filter($apiResults, static fn (string $r) => in_array($r, self::INGESTED_RESULTS, true)));
+
         return [
-            'emailPostIdCount'   => count($emailPostIds),
-            'apiCoveredCount'    => count($apiResultPostIds),
-            'layer1Missing'      => $layer1Missing,
-            'layer1Details'      => $layer1Details,
-            'layer2Extra'        => $layer2Extra,
-            'overlapCount'       => count($overlap),
-            'layer3Mismatches'   => $layer3Mismatches,
-            'layer4Divergences'  => $layer4Divergences,
+            'emailPostIdCount'    => count($emailPostIds),
+            'apiCoveredCount'     => count($apiResultPostIds),
+            'emailIngestedCount'  => $emailIngestedCount,
+            'apiIngestedCount'    => $apiIngestedCount,
+            'layer2ExtraIngested' => $layer2ExtraIngested,
+            'layer1Missing'       => $layer1Missing,
+            'layer1Details'       => $layer1Details,
+            'layer2Extra'         => $layer2Extra,
+            'overlapCount'        => count($overlap),
+            'layer3Mismatches'    => $layer3Mismatches,
+            'layer4Divergences'   => $layer4Divergences,
         ];
     }
 

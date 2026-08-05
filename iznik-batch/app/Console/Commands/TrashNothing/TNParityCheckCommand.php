@@ -216,6 +216,7 @@ class TNParityCheckCommand extends Command
         if (isset($layers['layer1Deleted']) || isset($layers['layer1BumpedOutOfWindow']) || isset($layers['layer1ResolvedOutcome'])) {
             $this->line('Layer 1 (filtered out):    deleted=' . count($layers['layer1Deleted'] ?? []) . ' bumped_out_of_window=' . count($layers['layer1BumpedOutOfWindow'] ?? []) . ' resolved_outcome=' . count($layers['layer1ResolvedOutcome'] ?? []));
         }
+        $this->line($this->formatIngestionGainLine($layers));
         $this->line('');
 
         $layer1MissingLines = array_map(
@@ -232,6 +233,30 @@ class TNParityCheckCommand extends Command
         $this->printSection('Layer 2 (informational) — posts the API path covered that the email path never saw:', $layer2ExtraLines);
         $this->printSection('Layer 3 FAILURES — same group on both paths, but content/outcome differs:', $layers['layer3Mismatches'], isFailure: true);
         $this->printSection('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:', $layers['layer4Divergences']);
+    }
+
+    /**
+     * "How many more posts are we actually getting via the API vs the old
+     * email path" — restricted to posts that actually created a messages row
+     * (approved/pending) on each side, not raw post_id counts, so dropped/
+     * duplicate/skipped extras don't inflate the figure. Percentage is
+     * relative to the email path's own ingested count (the old baseline).
+     */
+    private function formatIngestionGainLine(array $layers): string
+    {
+        $emailIngested = $layers['emailIngestedCount'] ?? 0;
+        $apiIngested   = $layers['apiIngestedCount'] ?? 0;
+        $extraIngested = count($layers['layer2ExtraIngested'] ?? []);
+
+        if ($emailIngested > 0) {
+            $pct = sprintf('%.1f%%', ($extraIngested / $emailIngested) * 100);
+        } elseif ($extraIngested > 0) {
+            $pct = 'n/a (email baseline is 0)';
+        } else {
+            $pct = '0%';
+        }
+
+        return "New posts via API only:    {$extraIngested} (email ingested={$emailIngested}, api ingested={$apiIngested}, +{$pct} vs email-only baseline)";
     }
 
     /**
