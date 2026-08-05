@@ -160,4 +160,59 @@ class JsonPredicateParityTest extends TestCase
             $this->ids(fn ($q) => $q->where('settings->closed', true))
         );
     }
+
+    /**
+     * Membership::scopeActiveModerators nests the same predicates two levels
+     * deep, mixing AND and OR. Boolean-arm and key-absence conversions have to
+     * survive that nesting without the grouping shifting - a flattened OR here
+     * would silently widen "active moderator" to include backup mods.
+     */
+    public function test_active_moderators_scope_conversion_selects_the_same_rows(): void
+    {
+        DB::statement('DROP TEMPORARY TABLE IF EXISTS membership_parity_fixture');
+        DB::statement('CREATE TEMPORARY TABLE membership_parity_fixture (id INT PRIMARY KEY, settings JSON NULL)');
+
+        $fixture = [
+            1 => null,
+            2 => '{}',
+            3 => '{"active":true}',
+            4 => '{"active":1}',
+            5 => '{"active":false}',
+            6 => '{"active":null}',
+            7 => '{"showmessages":true}',
+            8 => '{"showmessages":1}',
+            9 => '{"showmessages":false}',
+            10 => '{"showmessages":null}',
+            11 => '{"active":false,"showmessages":true}',
+            12 => '{"active":"1"}',
+            13 => '{"active":false,"showmessages":false}',
+        ];
+        foreach ($fixture as $id => $settings) {
+            DB::table('membership_parity_fixture')->insert(['id' => $id, 'settings' => $settings]);
+        }
+
+        $ids = fn (callable $build) => DB::table('membership_parity_fixture')
+            ->where($build)->useWritePdo()->orderBy('id')->pluck('id')->map(fn ($i) => (int) $i)->all();
+
+        $raw = fn ($q) => $q->whereNull('settings')
+            ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = true")
+            ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = 1")
+            ->orWhere(fn ($q2) => $q2->whereRaw("JSON_EXTRACT(settings, '$.active') IS NULL")
+                ->where(fn ($q3) => $q3->whereRaw("JSON_EXTRACT(settings, '$.showmessages') IS NULL")
+                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = true")
+                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = 1")));
+
+        $converted = fn ($q) => $q->whereNull('settings')
+            ->orWhere('settings->active', true)
+            ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = 1")
+            ->orWhere(fn ($q2) => $q2->whereJsonDoesntContainKey('settings->active')
+                ->where(fn ($q3) => $q3->whereJsonDoesntContainKey('settings->showmessages')
+                    ->orWhere('settings->showmessages', true)
+                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = 1")));
+
+        $this->assertSame([1, 2, 3, 4, 7, 8], $ids($raw), 'fixture no longer exercises the edge cases');
+        $this->assertSame($ids($raw), $ids($converted));
+
+        DB::statement('DROP TEMPORARY TABLE IF EXISTS membership_parity_fixture');
+    }
 }

@@ -230,14 +230,21 @@ class Membership extends Model implements Auditable
     {
         return $query->whereIn('role', [self::ROLE_MODERATOR, self::ROLE_OWNER])
             ->where(function ($q) {
+                // The IS NULL arms are key-ABSENCE tests, which is exactly what
+                // whereJsonDoesntContainKey expresses; whereNull() would be wrong
+                // here because Laravel renders it as a compound that also matches a
+                // stored JSON null. The boolean arms convert exactly - Laravel emits
+                // json_extract(...) = true unwrapped. Only the = 1 arms keep raw SQL:
+                // Laravel wraps a numeric comparison in json_unquote, and that also
+                // matches the string "1". See JsonPredicateParityTest.
                 $q->whereNull('settings')
-                    ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = true")
+                    ->orWhere('settings->active', true)
                     ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = 1")
                     ->orWhere(function ($q2) {
-                        $q2->whereRaw("JSON_EXTRACT(settings, '$.active') IS NULL")
+                        $q2->whereJsonDoesntContainKey('settings->active')
                             ->where(function ($q3) {
-                                $q3->whereRaw("JSON_EXTRACT(settings, '$.showmessages') IS NULL")
-                                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = true")
+                                $q3->whereJsonDoesntContainKey('settings->showmessages')
+                                    ->orWhere('settings->showmessages', true)
                                     ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = 1");
                             });
                     });

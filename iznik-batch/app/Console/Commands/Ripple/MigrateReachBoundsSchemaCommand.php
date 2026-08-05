@@ -91,7 +91,7 @@ class MigrateReachBoundsSchemaCommand extends Command
             // COALESCE(MAX(msgid), 0) becomes ->max() plus a PHP ?? 0: ->max()
             // returns null on an empty table, which is the only case COALESCE was
             // guarding. Keeping COALESCE would need DB::raw, itself a raw site.
-            $cursor = (int) (DB::table('rippling_reach_shadow')->max('msgid') ?? 0);
+            $cursor = (int) (DB::table('rippling_reach_shadow')->useWritePdo()->max('msgid') ?? 0);
             $done = $this->copyChunk($cursor, $chunk);
             if ($done === 0) {
                 break;
@@ -116,6 +116,7 @@ class MigrateReachBoundsSchemaCommand extends Command
                     // leftJoin, not join: the whole point is finding rows with
                     // NO shadow row, which an inner join would exclude.
                     ->leftJoin('rippling_reach_shadow as s', 's.msgid', '=', 'rr.msgid')
+                    ->useWritePdo()
                     ->where(function ($q) use ($copyStart) {
                         $q->whereNull('s.msgid')
                           ->orWhere('rr.updated_at', '>=', $copyStart);
@@ -139,8 +140,8 @@ class MigrateReachBoundsSchemaCommand extends Command
         $this->info('Swapped. Old table kept as rippling_reach_old — DROP it manually once satisfied.');
 
         // 5) Verify: counts + a sample sandwich check.
-        $oldN = (int) DB::table('rippling_reach_old')->count();
-        $newN = (int) DB::table('rippling_reach')->count();
+        $oldN = (int) DB::table('rippling_reach_old')->useWritePdo()->count();
+        $newN = (int) DB::table('rippling_reach')->useWritePdo()->count();
         $badSample = (int) DB::selectOne(
             'SELECT COUNT(*) AS n FROM (
                 SELECT msgid FROM rippling_reach
