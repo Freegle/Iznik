@@ -48,6 +48,13 @@ func ensureFirstReplyTables(t *testing.T) {
 	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_polygon GEOMETRY NULL SRID 3857")
 	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_cumulative_users INT UNSIGNED NULL")
 
+	// Likewise chat_prompts.msgids. The CREATE TABLE above only fires when the
+	// table is absent, and the migration that creates it is guarded the same way -
+	// so a database that was migrated BEFORE msgids existed keeps a chat_prompts
+	// with no msgids column, and every prompt test fails on the insert. CI is
+	// unaffected (it migrates fresh); long-lived dev databases are not.
+	db.Exec("ALTER TABLE chat_prompts ADD COLUMN msgids JSON NULL")
+
 	// The 'Prompt' enum value likewise.
 	var colType string
 	db.Raw("SELECT column_type FROM information_schema.columns WHERE table_schema = DATABASE() " +
