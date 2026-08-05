@@ -164,31 +164,67 @@ Mobile-specific Stripe implementation:
    - Share posts using native share sheet
    - Platform-specific share UI
 
-3. **Calendar Integration**
+3. **Share Into the App (photo → give flow)**
+   - Android: `ACTION_SEND`/`ACTION_SEND_MULTIPLE` handled by `MainActivity`,
+     which copies images to cache and exposes them via the
+     `window.FreegleShare` bridge; iOS mirrors this with a
+     `freegleshare://` deep link
+   - `stores/mobile.js` consumes pending shares as soon as the App plugin
+     import resolves (early in `initApp()`), and routes to
+     `/give/mobile/photos`
+   - The photos page attaches each shared image through the same
+     `PhotoUploader.processPhoto()` path as manual picks; Next is disabled
+     while any attachment is still uploading
+   - The photo-quality image loaders are bounded (8s timeout) so a
+     `capacitor://` file URL that never fires load/error cannot hang the
+     upload
+
+4. **Calendar Integration**
    - Add events to native calendar
    - Permission handling (iOS requires multiple permission types)
    - Uses Cordova Calendar plugin
 
-4. **Pinch Zoom**
+5. **Pinch Zoom**
    - Enabled for Android
    - Native zoom gestures
+   - Transient magnifier: scales the whole WebView viewport (navbars included)
+     while zoomed; distinct from the permanent text-size preference below
 
-5. **Device Information**
+5. **System Text Size (accessibility)**
+   - `@capacitor/text-zoom`: on startup (and again on resume) the app reads
+     the OS-preferred text zoom - iOS Dynamic Type / Android font scale - and
+     applies it to the WebView (`stores/mobile.js` `initTextZoom()`)
+   - Without this, WKWebView ignores iOS Dynamic Type entirely, so the app
+     rendered at a fixed text size whatever the member set in Settings →
+     Accessibility
+   - Text grows with reflow, and the navbars are unaffected
+
+6. **Device Information**
    - Collect device details for debugging
    - Persistent device ID
    - OS version tracking
    - Send to Sentry for error context
 
-6. **App Updates**
+7. **App Updates**
    - Check for required updates
    - Check for available updates
    - Version comparison logic
    - Update prompts
 
-7. **Rate App**
+8. **Rate App**
    - Native rating prompts
    - Timing logic to avoid annoying users
    - Platform-specific app store links
+
+8. **Hardware Back Button (Android)**
+   - `initBackButton()` in `stores/mobile.js` listens for Capacitor's
+     `backButton` event (fired for both the back button and the back
+     gesture)
+   - Navigates back through webview history while there is any, then
+     backgrounds the app with `App.minimizeApp()` at the root — the
+     standard Android behaviour
+   - Without this listener Capacitor swallows back presses once history
+     is empty and the app cannot be exited
 
 </details>
 
@@ -223,6 +259,7 @@ A dedicated Pinia store handles all mobile-specific state and functionality:
 - `initPushNotifications()`: Configure push notification system
 - `checkForAppUpdate()`: Check for app updates
 - `initWakeUpActions()`: Handle app resume/wake events
+- `initBackButton()`: Android back button/gesture — history back, minimize at root
 
 </details>
 
@@ -254,6 +291,11 @@ Several components have mobile-specific behavior:
 5. **Chat Components**
    - Optimized for mobile screens
    - Native sharing integration
+   - The chat box and ChitChat comment box use
+     `autocapitalize="sentences"` except on iOS (app and Safari), where
+     auto-capitalise engages the virtual Shift key so Return arrives as
+     shift+enter and breaks send-on-enter (`composables/useIsIOS.js`;
+     angular/angular#32963 — iOS keyboard design, not a fixed bug)
 
 ### Ads & Analytics
 
@@ -944,6 +986,30 @@ Both iOS and Android are built and deployed in parallel with shared version numb
    - **Android**: Auto-promotes Beta → Production (if not already promoted)
    - **iOS**: Auto-submits latest TestFlight build to App Store review (if not already submitted)
    - Only the LATEST build from last 24 hours is submitted/promoted
+
+### ModTools Release Cadence
+
+ModTools releases differ from FD deliberately:
+
+- **No per-push builds and no Play beta track** — nothing builds ModTools when
+  `production` moves. The only builders are the weekly schedule and a manual
+  trigger.
+- **Weekly schedule**: CircleCI scheduled pipeline
+  `weekly-modtools-release-schedule`, Wednesday 20:00 UTC, runs the
+  `modtools-production` workflow (parameter `build_modtools_production: true`
+  on `production`): version increment → Android straight to the Play
+  **production** track + iOS to TestFlight → App Store submit attempt.
+- **Why 20:00**: two hours before the FD `weekly-promote-schedule` (22:00).
+  The inline iOS submit usually runs before Apple has processed the fresh
+  build and exits gracefully; the promote workflow's
+  `auto-submit-ios-modtools` then submits it the same night once processed.
+- **Manual release**: set `build_modtools_production: true` in the CircleCI
+  pipeline parameters UI (or API) on `production`.
+- **Version bookkeeping**: the Android job writes the released version back to
+  the `CURRENT_MODTOOLS_VERSION` project env var via `CIRCLECI_API_TOKEN`. If
+  that write fails, fix the token and set the variable by hand before the next
+  release — a stale value makes the next release rebuild the SAME version,
+  which Apple rejects (the train closes once a version is approved).
 
 ### Android-Specific
 

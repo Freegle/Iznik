@@ -22,6 +22,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	geo "github.com/kellydunn/golang-geo"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	xurls "mvdan.cc/xurls/v2"
 )
 
@@ -221,18 +222,18 @@ func RecentNonAlertNewsfeedIDs(ids []int64, excludeUserid uint64) map[int64]stru
 		return allowed
 	}
 
-	// ids come from the spatial server (not user input) — safe to inline.
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = strconv.FormatInt(id, 10)
-	}
 	since := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
 
+	// ORM migration site d80ab5badcb6 (Tier 3 keep-raw review). ids was a
+	// hand-built comma-joined literal-int list; GORM's native "IN (?)"
+	// slice-bind is the direct replacement, giving exactly one rendered
+	// form, declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_d80ab5badcb6 (iznik-server-go/test).
 	var found []int64
-	database.DBConn.Raw(fmt.Sprintf(
-		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ? AND userid != ?",
-		strings.Join(idStrs, ","),
-	), utils.NEWSFEED_TYPE_ALERT, since, excludeUserid).Scan(&found)
+	database.DBConn.Table("newsfeed").
+		Select("id").
+		Where("id IN (?) AND type != ? AND `timestamp` >= ? AND userid != ?", ids, utils.NEWSFEED_TYPE_ALERT, since, excludeUserid).
+		Scan(&found)
 
 	for _, id := range found {
 		allowed[id] = struct{}{}
@@ -768,14 +769,17 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 	go func() {
 		defer wg.Done()
 
-		db.Raw("SELECT newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, "+
-			"(CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, "+
-			"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+
-			"CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod "+
-			"FROM newsfeed "+
-			"LEFT JOIN users ON users.id = newsfeed.userid "+
-			"LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id WHERE newsfeed.id = ?;",
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, id).Scan(&newsfeed)
+		// ORM migration site 6cdce430c158 (wave 4).
+		db.Table("newsfeed").
+			Select("newsfeed.*, newsfeed_images.archived AS imagearchived, newsfeed_images.externaluid AS imageuid, newsfeed_images.externalmods AS imagemods, "+
+				"(CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, "+
+				"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+
+				"CASE WHEN systemrole IN (?, ?, ?) THEN CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END ELSE 0 END AS showmod",
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
+			Joins("LEFT JOIN users ON users.id = newsfeed.userid").
+			Joins("LEFT JOIN newsfeed_images ON newsfeed.imageid = newsfeed_images.id").
+			Where("newsfeed.id = ?", id).
+			Scan(&newsfeed)
 
 		if newsfeed.Imageid > 0 {
 			if newsfeed.Imageuid != "" {
@@ -806,7 +810,8 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 		// can't look the message up itself: it's usually still pending, which
 		// only mods and the author can fetch.
 		if newsfeed.Type == "ConvertedToPost" && newsfeed.Msgid > 0 {
-			db.Raw("SELECT type FROM messages WHERE id = ?", newsfeed.Msgid).Scan(&newsfeed.Msgtype)
+			// ORM migration site a01ad5c474b4 (wave 1).
+			db.Table("messages").Select("type").Where("id = ?", newsfeed.Msgid).Scan(&newsfeed.Msgtype)
 		}
 
 		var wg2 sync.WaitGroup
@@ -849,7 +854,8 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 		defer wg.Done()
 
 		// Get count of loves.
-		db.Raw("SELECT COUNT(*) FROM newsfeed_likes WHERE newsfeedid = ?", id).Row().Scan(&loves)
+		// ORM migration site fa1ef7660b85 (wave 1).
+		db.Table("newsfeed_likes").Where("newsfeedid = ?", id).Count(&loves)
 	}()
 
 	wg.Add(1)
@@ -857,7 +863,10 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 		defer wg.Done()
 
 		// Get any loves by us
-		db.Raw("SELECT COUNT(*) FROM newsfeed_likes WHERE newsfeedid = ? AND userid = ?", id, myid).Row().Scan(&loved)
+		// ORM migration site 93a1565d8106 (wave 1). loved is bool, not int64, so
+		// this keeps Row().Scan (database/sql converts a numeric COUNT(*) to bool
+		// via a nonzero check) rather than GORM's Count, which requires *int64.
+		db.Table("newsfeed_likes").Select("COUNT(*)").Where("newsfeedid = ? AND userid = ?", id, myid).Row().Scan(&loved)
 	}()
 
 	if lovelist {
@@ -865,7 +874,8 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT * FROM newsfeed_likes WHERE newsfeedid = ?", id).Scan(&loverlist)
+			// ORM migration site 2900c82bc4b2 (wave 1).
+			db.Table("newsfeed_likes").Where("newsfeedid = ?", id).Scan(&loverlist)
 		}()
 	}
 
@@ -887,7 +897,13 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 
 		// Use area name for privacy instead of postcode. Look up from user's location.
 		var areaname string
-		db.Raw("SELECT COALESCE(l2.name, '') FROM users LEFT JOIN locations l1 ON users.lastlocation = l1.id LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE users.id = ?", newsfeed.Userid).Scan(&areaname)
+		// ORM migration site 68ee4370bd9a (wave 4).
+		db.Table("users").
+			Select("COALESCE(l2.name, '')").
+			Joins("LEFT JOIN locations l1 ON users.lastlocation = l1.id").
+			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+			Where("users.id = ?", newsfeed.Userid).
+			Scan(&areaname)
 		if areaname != "" {
 			newsfeed.Location = areaname
 		} else if len(newsfeed.Location) > 2 {
@@ -917,7 +933,8 @@ func fetchReplies(id uint64, myid uint64, threadhead uint64, amAMod bool) []News
 	var replyids []ReplyId
 	var mu sync.Mutex
 
-	db.Raw("SELECT id FROM newsfeed WHERE replyto = ? AND deleted IS NULL ORDER BY timestamp ASC", id).Scan(&replyids)
+	// ORM migration site 496dfed25e99 (wave 1).
+	db.Table("newsfeed").Select("id").Where("replyto = ? AND deleted IS NULL", id).Order("timestamp ASC").Scan(&replyids)
 
 	var wg sync.WaitGroup
 
@@ -1021,7 +1038,8 @@ func Count(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT newsfeedid FROM newsfeed_users WHERE userid = ?", myid).Row().Scan(&seen)
+		// ORM migration site 4b16cf99872b (wave 1).
+		db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Row().Scan(&seen)
 	}()
 
 	wg.Wait()
@@ -1058,7 +1076,8 @@ func canModifyPost(myid uint64, nfID uint64) bool {
 	db := database.DBConn
 
 	var ownerID uint64
-	db.Raw("SELECT userid FROM newsfeed WHERE id = ?", nfID).Scan(&ownerID)
+	// ORM migration site 7cf110b6d96b (wave 1).
+	db.Table("newsfeed").Select("userid").Where("id = ?", nfID).Scan(&ownerID)
 
 	if ownerID == myid {
 		return true
@@ -1069,7 +1088,8 @@ func canModifyPost(myid uint64, nfID uint64) bool {
 	}
 
 	var modCount int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&modCount)
+	// ORM migration site 9136a0c1eb27 (wave 1).
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Count(&modCount)
 
 	return modCount > 0
 }
@@ -1099,7 +1119,9 @@ func Post(c *fiber.Ctx) error {
 	switch req.Action {
 	case "Love":
 		if req.ID > 0 {
-			db.Exec("INSERT IGNORE INTO newsfeed_likes (newsfeedid, userid) VALUES (?, ?)", req.ID, myid)
+			// ORM migration site 520be22ce5db (wave 3).
+			db.Table("newsfeed_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{"newsfeedid": req.ID, "userid": myid})
 
 			// Send notification to the post/comment author.
 			type PostOwner struct {
@@ -1107,46 +1129,76 @@ func Post(c *fiber.Ctx) error {
 				Replyto *uint64 `json:"replyto"`
 			}
 			var owner PostOwner
-			db.Raw("SELECT userid, replyto FROM newsfeed WHERE id = ?", req.ID).Scan(&owner)
+			// ORM migration site 1da76e2ebae6 (wave 1).
+			db.Table("newsfeed").Select("userid, replyto").Where("id = ?", req.ID).Scan(&owner)
 			if owner.Userid > 0 && owner.Userid != myid {
 				notifType := "LovedPost"
 				if owner.Replyto != nil && *owner.Replyto > 0 {
 					notifType = "LovedComment"
 				}
-				db.Exec("INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, ?, ?)",
-					myid, owner.Userid, notifType, req.ID)
+				// ORM migration site 72c7371e4220 (wave 2).
+				db.Table("users_notifications").Create(map[string]interface{}{
+					"fromuser":   myid,
+					"touser":     owner.Userid,
+					"type":       notifType,
+					"newsfeedid": req.ID,
+				})
 			}
 		}
 	case "Unlove":
 		if req.ID > 0 {
-			db.Exec("DELETE FROM newsfeed_likes WHERE newsfeedid = ? AND userid = ?", req.ID, myid)
+			// ORM migration site 20d3333b6657 (wave 2).
+			db.Table("newsfeed_likes").Where("newsfeedid = ? AND userid = ?", req.ID, myid).Delete(nil)
 		}
 	case "Seen":
 		if req.ID > 0 {
 			// Only update if no existing record or the new ID is higher than the current one.
 			// Otherwise we'd mark an earlier item as seen, causing duplicate digest emails.
 			var currentSeenID uint64
-			db.Raw("SELECT newsfeedid FROM newsfeed_users WHERE userid = ?", myid).Scan(&currentSeenID)
+			// ORM migration site f6196dd0e38d (wave 1).
+			db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Scan(&currentSeenID)
 
 			if currentSeenID == 0 || req.ID > currentSeenID {
-				db.Exec("REPLACE INTO newsfeed_users (userid, newsfeedid) VALUES (?, ?)", myid, req.ID)
+				// ORM migration site 09730933af57 (tier4).
+				db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
+					Create(map[string]interface{}{"userid": myid, "newsfeedid": req.ID})
 			}
-			db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ? AND newsfeedid = ?", myid, req.ID)
+			// ORM migration site 8a70c0aa1832 (wave 2).
+			db.Table("users_notifications").Where("touser = ? AND newsfeedid = ?", myid, req.ID).
+				Update("seen", gorm.Expr("1"))
 		}
 	case "Follow":
 		if req.ID > 0 {
-			db.Exec("DELETE FROM newsfeed_unfollow WHERE userid = ? AND newsfeedid = ?", myid, req.ID)
+			// ORM migration site 75b3dfc075ca (wave 2).
+			db.Table("newsfeed_unfollow").Where("userid = ? AND newsfeedid = ?", myid, req.ID).Delete(nil)
 		}
 	case "Unfollow":
 		if req.ID > 0 {
-			db.Exec("REPLACE INTO newsfeed_unfollow (userid, newsfeedid) VALUES (?, ?)", myid, req.ID)
-			db.Exec("DELETE FROM users_notifications WHERE touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.ID, req.ID)
+			// ORM migration site 1ff179ae0e2c (tier4).
+			db.Table("newsfeed_unfollow").Clauses(clause.Insert{Modifier: "REPLACE"}).
+				Create(map[string]interface{}{"userid": myid, "newsfeedid": req.ID})
+			// ORM migration site 3c4828e01db8 (wave 5).
+			db.Table("users_notifications").
+				Where("touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.ID, req.ID).
+				Delete(nil)
 		}
 	case "Report":
 		if req.ID > 0 {
-			db.Exec("UPDATE newsfeed SET reviewrequired = 1 WHERE id = ?", req.ID)
-			db.Exec("INSERT INTO newsfeed_reports (userid, newsfeedid, reason) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE reason = ?",
-				myid, req.ID, req.Reason, req.Reason)
+			// ORM migration site 8d982395eb1f (wave 2).
+			db.Table("newsfeed").Where("id = ?", req.ID).Update("reviewrequired", gorm.Expr("1"))
+			// ORM migration site 958d1d242008 (wave 3), through the portable
+			// upsert wrapper. The conflict target is the composite
+			// (userid, newsfeedid) unique key: PostgreSQL requires it to be
+			// named explicitly, and naming it here keeps the one call site
+			// correct on both engines.
+			db.Table("newsfeed_reports").Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "userid"}, {Name: "newsfeedid"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{"reason": req.Reason}),
+			}).Create(map[string]interface{}{
+				"userid":     myid,
+				"newsfeedid": req.ID,
+				"reason":     req.Reason,
+			})
 
 			// Queue email to ChitChat support.
 			type ReporterInfo struct {
@@ -1154,7 +1206,14 @@ func Post(c *fiber.Ctx) error {
 				Email    string
 			}
 			var reporter ReporterInfo
-			db.Raw("SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ue.preferred DESC, ue.id ASC LIMIT 1", myid).Scan(&reporter)
+			// ORM migration site 28acafc7c5a8 (wave 4).
+			db.Table("users u").
+				Select("u.fullname, ue.email").
+				Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+				Where("u.id = ?", myid).
+				Order("ue.preferred DESC, ue.id ASC").
+				Limit(1).
+				Scan(&reporter)
 
 			if err := queue.QueueTask(queue.TaskEmailChitchatReport, map[string]interface{}{
 				"user_id":     myid,
@@ -1168,15 +1227,33 @@ func Post(c *fiber.Ctx) error {
 		}
 	case "Hide":
 		if req.ID > 0 && canHidePost(myid) {
-			db.Exec("UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?", myid, req.ID)
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry hidden')", log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_HIDDEN, myid)
+			// ORM migration site 67632eee8567 (wave 2).
+			db.Table("newsfeed").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"hidden": gorm.Expr("NOW()"), "hiddenby": myid})
+			// ORM migration site 47dfb0a3eebe (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log.LOG_TYPE_CHITCHAT,
+				"subtype":   log.LOG_SUBTYPE_HIDDEN,
+				"byuser":    myid,
+				"text":      gorm.Expr("'Newsfeed entry hidden'"),
+			})
 		} else if req.ID > 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
 	case "Unhide":
 		if req.ID > 0 && canHidePost(myid) {
-			db.Exec("UPDATE newsfeed SET hidden = NULL, hiddenby = NULL WHERE id = ?", req.ID)
-			db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry unhidden')", log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_UNHIDDEN, myid)
+			// ORM migration site a32e0ffcd9e2 (wave 2).
+			db.Table("newsfeed").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"hidden": gorm.Expr("NULL"), "hiddenby": gorm.Expr("NULL")})
+			// ORM migration site e96850e959f9 (wave 2).
+			db.Table("logs").Create(map[string]interface{}{
+				"timestamp": gorm.Expr("NOW()"),
+				"type":      log.LOG_TYPE_CHITCHAT,
+				"subtype":   log.LOG_SUBTYPE_UNHIDDEN,
+				"byuser":    myid,
+				"text":      gorm.Expr("'Newsfeed entry unhidden'"),
+			})
 		} else if req.ID > 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 		}
@@ -1200,21 +1277,32 @@ func Post(c *fiber.Ctx) error {
 		// OFFER/WANTED - a photo is often the most useful part. Modern images
 		// live in the external store (externaluid); rows without one are
 		// legacy blobs which a fresh ChitChat post can't have.
-		db.Exec("INSERT INTO messages_attachments (msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
-			"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
-			"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+
-			"WHERE n.id = ? AND ni.externaluid IS NOT NULL "+
-			"AND NOT EXISTS (SELECT 1 FROM messages_attachments ma WHERE ma.msgid = ?)",
+		// ORM migration site 08d12a748d01 (tier4). database.InsertSelect keeps
+		// this a single atomic statement - splitting it into a read then a
+		// write would open a race between the existence check and the copy.
+		database.InsertSelect(db, "messages_attachments",
+			"(msgid, contenttype, archived, hash, externaluid, externalmods, identification, `primary`) "+
+				"SELECT ?, ni.contenttype, ni.archived, ni.hash, ni.externaluid, ni.externalmods, ni.identification, 1 "+
+				"FROM newsfeed n INNER JOIN newsfeed_images ni ON ni.id = n.imageid "+
+				"WHERE n.id = ? AND ni.externaluid IS NOT NULL "+
+				"AND NOT EXISTS (SELECT 1 FROM messages_attachments ma WHERE ma.msgid = ?)",
 			req.Msgid, req.ID, req.Msgid)
 
 		// The real post now exists, so the ChitChat copy is redundant: hide it
 		// exactly as the Hide action does, so it stops collecting replies. The
 		// member still sees their own hidden post, with the notice on it.
-		db.Exec("UPDATE newsfeed SET hidden = NOW(), hiddenby = ? WHERE id = ?", myid, req.ID)
+		// ORM migration site 3efb8e22cd38 (wave 2).
+		db.Table("newsfeed").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"hidden": gorm.Expr("NOW()"), "hiddenby": myid})
 
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, ?)",
-			log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_CREATED, myid,
-			fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid))
+		// ORM migration site d58a719af7e5 (wave 2).
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log.LOG_TYPE_CHITCHAT,
+			"subtype":   log.LOG_SUBTYPE_CREATED,
+			"byuser":    myid,
+			"text":      fmt.Sprintf("ChitChat post %d posted as message %d for the member", req.ID, req.Msgid),
+		})
 	case "ReferToWanted":
 		if req.ID > 0 {
 			createRefer(db, myid, req.ID, "ReferToWanted", 0)
@@ -1235,10 +1323,19 @@ func Post(c *fiber.Ctx) error {
 		// Mod-only: attach a newsfeed item to a different thread
 		if req.ID > 0 && req.Replyto > 0 {
 			var modCount int64
-			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&modCount)
+			// ORM migration site 5fc8acdf88b8 (wave 1).
+			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Count(&modCount)
 			if modCount > 0 {
-				db.Exec("UPDATE newsfeed SET replyto = ? WHERE id = ?", req.Replyto, req.ID)
-				db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, text) VALUES (NOW(), ?, ?, ?, 'Newsfeed entry attached to thread')", log.LOG_TYPE_CHITCHAT, log.LOG_SUBTYPE_ATTACHED_TO_THREAD, myid)
+				// ORM migration site 359a8dec20e2 (wave 2).
+				db.Table("newsfeed").Where("id = ?", req.ID).Update("replyto", req.Replyto)
+				// ORM migration site 750cbc27385c (wave 2).
+				db.Table("logs").Create(map[string]interface{}{
+					"timestamp": gorm.Expr("NOW()"),
+					"type":      log.LOG_TYPE_CHITCHAT,
+					"subtype":   log.LOG_SUBTYPE_ATTACHED_TO_THREAD,
+					"byuser":    myid,
+					"text":      gorm.Expr("'Newsfeed entry attached to thread'"),
+				})
 			} else {
 				return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 			}
@@ -1247,7 +1344,8 @@ func Post(c *fiber.Ctx) error {
 		if req.ID > 0 {
 			// Mod-only action
 			var modCount int64
-			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+			// ORM migration site 6b08e5e232dc (wave 1).
+			db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 			if modCount == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 			}
@@ -1257,19 +1355,31 @@ func Post(c *fiber.Ctx) error {
 				Userid  uint64
 				Message string
 			}
-			db.Raw("SELECT userid, message FROM newsfeed WHERE id = ?", req.ID).Scan(&nf)
+			// ORM migration site 0baa90745699 (wave 1).
+			db.Table("newsfeed").Select("userid, message").Where("id = ?", req.ID).Scan(&nf)
 
 			if nf.Userid == 0 {
 				return fiber.NewError(fiber.StatusNotFound, "Newsfeed entry not found")
 			}
 
-			// Create a story from this newsfeed entry. Read the new id from the write result,
-			// not a read-split-routable SELECT (9832 class).
-			storyID, err := database.ExecInsertGetID(db,
-				"INSERT INTO users_stories (userid, headline, story, date, fromnewsfeed) VALUES (?, '', ?, NOW(), 1)", nf.Userid, nf.Message)
-			if err != nil {
+			// Create a story from this newsfeed entry. Table()+map Create reads
+			// the new id back from the same sql.Result the INSERT returned,
+			// under the map key "@id" - see test/orm_insertid_test.go. Still
+			// the write connection, so still immune to the read/write split's
+			// Discourse-9832-class staleness.
+			// ORM migration site 64439d15a9ad (insertid-conv).
+			row := map[string]interface{}{
+				"userid":       nf.Userid,
+				"headline":     gorm.Expr("''"),
+				"story":        nf.Message,
+				"date":         gorm.Expr("NOW()"),
+				"fromnewsfeed": gorm.Expr("1"),
+			}
+			if err := db.Table("users_stories").Create(row).Error; err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create story")
 			}
+			storyIDInt, _ := row["@id"].(int64)
+			storyID := uint64(storyIDInt)
 
 			return c.JSON(fiber.Map{"id": storyID})
 		}
@@ -1290,7 +1400,8 @@ func Post(c *fiber.Ctx) error {
 func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 	// Check if user is a spammer
 	var spammerCount int64
-	db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER).Scan(&spammerCount)
+	// ORM migration site 0a09af7a9caf (wave 1).
+	db.Table("spam_users").Where("userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER).Count(&spammerCount)
 	if spammerCount > 0 {
 		// Silently succeed - don't reveal spammer status.
 		return c.JSON(fiber.Map{"id": 0})
@@ -1298,7 +1409,8 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 
 	// Check suppression status
 	var newsfeedmodstatus string
-	db.Raw("SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?", myid).Scan(&newsfeedmodstatus)
+	// ORM migration site 4a4ca7275daa (wave 1).
+	db.Table("users").Select("COALESCE(newsfeedmodstatus, '')").Where("id = ?", myid).Scan(&newsfeedmodstatus)
 	hidden := newsfeedmodstatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED
 
 	// Get user's lat/lng for geographic positioning
@@ -1319,7 +1431,8 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		Message string  `json:"message"`
 	}
 	var last LastPost
-	db.Raw("SELECT id, replyto, type, message FROM newsfeed WHERE userid = ? ORDER BY id DESC LIMIT 1", myid).Scan(&last)
+	// ORM migration site aa81c1da64cb (wave 1).
+	db.Table("newsfeed").Select("id, replyto, type, message").Where("userid = ?", myid).Order("id DESC").Limit(1).Scan(&last)
 
 	var lastReplyto uint64
 	if last.Replyto != nil {
@@ -1332,10 +1445,13 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 
 	// Get user's display location - use area name (e.g. "Kirkcaldy") for privacy instead of postcode.
 	var location *string
-	db.Raw("SELECT l2.name FROM users LEFT JOIN locations l1 ON users.lastlocation = l1.id LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE users.id = ?", myid).Scan(&location)
-
-	// Build position point
-	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", lng, lat, utils.SRID)
+	// ORM migration site 9f3a14137203 (wave 4).
+	db.Table("users").
+		Select("l2.name").
+		Joins("LEFT JOIN locations l1 ON users.lastlocation = l1.id").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("users.id = ?", myid).
+		Scan(&location)
 
 	// Insert the newsfeed entry
 	hiddenSQL := "NULL"
@@ -1352,26 +1468,28 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		replyto = req.Replyto
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site f961504c334d (tier6). Same zero-precision-change
+	// conversion as createRefer (10bcbd6a6404) above: the WKT text is built
+	// exactly as before via fmt.Sprintf("POINT(%f %f)", ...), then bound as a
+	// genuine ST_GeomFromText argument rather than spliced into the SQL text.
+	// hiddenSQL is a fixed two-way literal ("NULL" or "NOW()"), never a bound
+	// value, so gorm.Expr(hiddenSQL) with no args is exact.
+	row := map[string]interface{}{
+		"type":     gorm.Expr("'Message'"),
+		"userid":   myid,
+		"imageid":  imageid,
+		"replyto":  replyto,
+		"message":  req.Message,
+		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
+		"hidden":   gorm.Expr(hiddenSQL),
+		"location": location,
 	}
-	sqlResult, err := sqlDB.Exec(
-		fmt.Sprintf("INSERT INTO newsfeed (type, userid, imageid, replyto, message, position, hidden, location) VALUES ('Message', ?, ?, ?, ?, %s, %s, ?)", pos, hiddenSQL),
-		myid, imageid, replyto, req.Message, location)
-
-	if err != nil {
+	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create newsfeed post")
 	}
 
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	// If this is a reply and not hidden, bump the thread
 	if id > 0 && req.Replyto > 0 && !hidden {
@@ -1379,8 +1497,10 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		notifyThreadContributors(db, myid, id, req.Replyto)
 
 		// Mark own notifications for this thread as seen
-		db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))",
-			myid, req.Replyto, req.Replyto)
+		// ORM migration site aa142f16e0e0 (wave 5).
+		db.Table("users_notifications").
+			Where("touser = ? AND (newsfeedid = ? OR newsfeedid IN (SELECT id FROM newsfeed WHERE replyto = ?))", myid, req.Replyto, req.Replyto).
+			Update("seen", gorm.Expr("1"))
 	}
 
 	return c.JSON(fiber.Map{"id": id})
@@ -1390,9 +1510,11 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 func bumpThread(db *gorm.DB, replyto uint64) {
 	bump := replyto
 	for bump > 0 {
-		db.Exec("UPDATE newsfeed SET timestamp = NOW() WHERE id = ?", bump)
+		// ORM migration site bd0d10b12d60 (wave 2).
+		db.Table("newsfeed").Where("id = ?", bump).Update("timestamp", gorm.Expr("NOW()"))
 		var parent *uint64
-		db.Raw("SELECT replyto FROM newsfeed WHERE id = ?", bump).Scan(&parent)
+		// ORM migration site 084c277ca6e1 (wave 1).
+		db.Table("newsfeed").Select("replyto").Where("id = ?", bump).Scan(&parent)
 		if parent != nil && *parent > 0 {
 			bump = *parent
 		} else {
@@ -1428,7 +1550,8 @@ func notifyThreadContributors(db *gorm.DB, posterUserid uint64, newPostID uint64
 			processed[pid] = true
 
 			var posts []PostInfo
-			db.Raw("SELECT id, userid, timestamp FROM newsfeed WHERE replyto = ? OR id = ?", pid, pid).Scan(&posts)
+			// ORM migration site 23edb49d13f9 (wave 1).
+			db.Table("newsfeed").Select("id, userid, timestamp").Where("replyto = ? OR id = ?", pid, pid).Scan(&posts)
 
 			for _, p := range posts {
 				if p.Timestamp.After(recent) && p.Userid != posterUserid {
@@ -1458,8 +1581,13 @@ func notifyThreadContributors(db *gorm.DB, posterUserid uint64, newPostID uint64
 	// Notify contributors — point to the new post (the reply) so the notification
 	// shows its message rather than the original thread-head's message.
 	for uid := range contributed {
-		db.Exec("INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, 'CommentOnYourPost', ?)",
-			posterUserid, uid, newPostID)
+		// ORM migration site 3c78baa8b628 (wave 2).
+		db.Table("users_notifications").Create(map[string]interface{}{
+			"fromuser":   posterUserid,
+			"touser":     uid,
+			"type":       gorm.Expr("'CommentOnYourPost'"),
+			"newsfeedid": newPostID,
+		})
 	}
 }
 
@@ -1472,34 +1600,40 @@ func createRefer(db *gorm.DB, myid uint64, nfID uint64, referType string, msgid 
 	lat := float64(latlng.Lat)
 	lng := float64(latlng.Lng)
 
-	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", lng, lat, utils.SRID)
-
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
+	// ORM migration site 10bcbd6a6404 (tier6). The WKT text is built exactly as
+	// before (fmt.Sprintf("POINT(%f %f)", ...), unchanged) - only WHERE it goes
+	// changes: it is now a genuine bind argument to ST_GeomFromText via
+	// gorm.Expr, not spliced into the SQL text. This is a zero-precision-change
+	// conversion, deliberately: the review flagged a "%f-truncation vs full
+	// float64 precision" decision to make here, and binding the already-
+	// formatted WKT string sidesteps it entirely rather than answering it.
+	row := map[string]interface{}{
+		"type":     referType,
+		"userid":   myid,
+		"replyto":  nfID,
+		"msgid":    gorm.Expr("NULLIF(?, 0)", msgid),
+		"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
+	}
+	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		return
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO newsfeed (type, userid, replyto, msgid, position) VALUES (?, ?, ?, NULLIF(?, 0), %s)", pos),
-		referType, myid, nfID, msgid)
-	if err != nil {
-		return
-	}
 
-	var newID uint64
-	lastIDInt, err := sqlResult.LastInsertId()
-	if err == nil && lastIDInt > 0 {
-		newID = uint64(lastIDInt)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	// Notify the original poster
 	if newID > 0 {
 		var originalUserid uint64
-		db.Raw("SELECT userid FROM newsfeed WHERE id = ?", nfID).Scan(&originalUserid)
+		// ORM migration site b8962955bf49 (wave 1).
+		db.Table("newsfeed").Select("userid").Where("id = ?", nfID).Scan(&originalUserid)
 		if originalUserid > 0 && originalUserid != myid {
-			db.Exec("INSERT INTO users_notifications (fromuser, touser, type, newsfeedid) VALUES (?, ?, 'CommentOnYourPost', ?)",
-				myid, originalUserid, nfID)
+			// ORM migration site c56bbfcef4f1 (wave 2).
+			db.Table("users_notifications").Create(map[string]interface{}{
+				"fromuser":   myid,
+				"touser":     originalUserid,
+				"type":       gorm.Expr("'CommentOnYourPost'"),
+				"newsfeedid": nfID,
+			})
 		}
 	}
 }
@@ -1526,7 +1660,8 @@ func Edit(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var ownerID uint64
-	db.Raw("SELECT userid FROM newsfeed WHERE id = ?", req.ID).Scan(&ownerID)
+	// ORM migration site 06b4f286eaca (wave 1).
+	db.Table("newsfeed").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 	if ownerID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Newsfeed post not found")
 	}
@@ -1535,7 +1670,8 @@ func Edit(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to edit this post")
 	}
 
-	db.Exec("UPDATE newsfeed SET message = ? WHERE id = ?", req.Message, req.ID)
+	// ORM migration site c6ae40a34425 (wave 2).
+	db.Table("newsfeed").Where("id = ?", req.ID).Update("message", req.Message)
 
 	return c.JSON(fiber.Map{"success": true})
 }
@@ -1553,7 +1689,8 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var ownerID uint64
-	db.Raw("SELECT userid FROM newsfeed WHERE id = ?", id).Scan(&ownerID)
+	// ORM migration site fb21f433b4d6 (wave 1).
+	db.Table("newsfeed").Select("userid").Where("id = ?", id).Scan(&ownerID)
 	if ownerID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Newsfeed post not found")
 	}
@@ -1563,8 +1700,11 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete
-	db.Exec("UPDATE newsfeed SET deleted = NOW(), deletedby = ? WHERE id = ?", myid, id)
-	db.Exec("DELETE FROM users_notifications WHERE newsfeedid = ?", id)
+	// ORM migration site b9777a2b2dc3 (wave 2).
+	db.Table("newsfeed").Where("id = ?", id).
+		Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "deletedby": myid})
+	// ORM migration site c1dcf61cde69 (wave 2).
+	db.Table("users_notifications").Where("newsfeedid = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
 }

@@ -63,6 +63,17 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/check-raw-sql-commit.sh",
+            "if": "Bash(git commit*)",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Skill",
         "hooks": [
           {
@@ -93,6 +104,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/check-push-pr-stale.sh",
+            "timeout": 20
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {
@@ -104,6 +125,15 @@
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/check-replication-excuse.sh",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/check-pr-text.sh"
           }
         ]
       }

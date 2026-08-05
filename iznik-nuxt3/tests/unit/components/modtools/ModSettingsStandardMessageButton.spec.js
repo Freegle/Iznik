@@ -92,8 +92,14 @@ describe('ModSettingsStandardMessageButton - useStdMsgs composable', () => {
       expect(variant({ action: 'Edit' })).toBe('primary')
     })
 
-    it('returns warning for Hold Message action', () => {
-      expect(variant({ action: 'Hold Message' })).toBe('warning')
+    // Hold used to be amber like the rejects, so in an alphabetically sorted
+    // set of buttons it ran into that block and got picked by mistake. Holding
+    // a post keeps it, so it belongs with the greens; the pause icon still
+    // tells it apart from a plain leave.
+    it('returns primary for Hold Message action, not the amber of the rejects', () => {
+      expect(variant({ action: 'Hold Message' })).toBe('primary')
+      expect(variant({ action: 'Reject' })).toBe('warning')
+      expect(icon({ action: 'Hold Message' })).toBe('pause')
     })
 
     it('returns white as default for unknown action', () => {

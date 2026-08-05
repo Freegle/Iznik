@@ -12,20 +12,21 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // NoticeboardItem is a flat V2 response. Client fetches user details separately via /user/:id.
 type NoticeboardItem struct {
-	ID            uint64     `json:"id"`
-	Name          *string    `json:"name"`
-	Lat           float64    `json:"lat"`
-	Lng           float64    `json:"lng"`
-	Added         *time.Time `json:"added"`
-	Addedby       *uint64    `json:"addedby"`
-	Description   *string    `json:"description"`
-	Active        bool       `json:"active"`
-	Lastcheckedat *time.Time `json:"lastcheckedat"`
-	Photo         *PhotoInfo `json:"photo,omitempty"`
+	ID            uint64      `json:"id"`
+	Name          *string     `json:"name"`
+	Lat           float64     `json:"lat"`
+	Lng           float64     `json:"lng"`
+	Added         *time.Time  `json:"added"`
+	Addedby       *uint64     `json:"addedby"`
+	Description   *string     `json:"description"`
+	Active        bool        `json:"active"`
+	Lastcheckedat *time.Time  `json:"lastcheckedat"`
+	Photo         *PhotoInfo  `json:"photo,omitempty"`
 	Checks        []CheckItem `json:"checks"`
 }
 
@@ -81,17 +82,20 @@ func getSingle(c *fiber.Ctx, idStr string) error {
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, name, lat, lng, added, addedby, description, active, lastcheckedat FROM noticeboards WHERE id = ?", id).Scan(&nb)
+		// ORM migration site 92d2a939593e (wave 1).
+		db.Table("noticeboards").Select("id, name, lat, lng, added, addedby, description, active, lastcheckedat").Where("id = ?", id).Scan(&nb)
 	}()
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, userid, askedat, checkedat, inactive, refreshed, declined, comments FROM noticeboards_checks WHERE noticeboardid = ? ORDER BY id DESC", id).Scan(&checks)
+		// ORM migration site 3bcf101e10b0 (wave 1).
+		db.Table("noticeboards_checks").Select("id, userid, askedat, checkedat, inactive, refreshed, declined, comments").Where("noticeboardid = ?", id).Order("id DESC").Scan(&checks)
 	}()
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id FROM noticeboards_images WHERE noticeboardid = ? LIMIT 1", id).Scan(&photoID)
+		// ORM migration site 49eee194e249 (wave 1).
+		db.Table("noticeboards_images").Select("id").Where("noticeboardid = ?", id).Limit(1).Scan(&photoID)
 	}()
 
 	wg.Wait()
@@ -128,12 +132,15 @@ func getList(c *fiber.Ctx) error {
 	var noticeboards []NoticeboardListItem
 
 	if authorityID > 0 {
-		db.Raw("SELECT noticeboards.id, noticeboards.name, noticeboards.lat, noticeboards.lng FROM noticeboards "+
-			"INNER JOIN authorities ON authorities.id = ? "+
-			"WHERE authorities.name IS NOT NULL AND active = 1 AND ST_CONTAINS(authorities.polygon, ST_SRID(POINT(noticeboards.lng, noticeboards.lat), ?))",
-			authorityID, utils.SRID).Scan(&noticeboards)
+		// ORM migration site e9346f66bbf4 (Tier 1 spatial review).
+		db.Table("noticeboards").
+			Select("noticeboards.id, noticeboards.name, noticeboards.lat, noticeboards.lng").
+			Joins("INNER JOIN authorities ON authorities.id = ?", authorityID).
+			Where("authorities.name IS NOT NULL AND active = 1 AND ST_CONTAINS(authorities.polygon, ST_SRID(POINT(noticeboards.lng, noticeboards.lat), ?))", utils.SRID).
+			Scan(&noticeboards)
 	} else {
-		db.Raw("SELECT id, name, lat, lng FROM noticeboards WHERE name IS NOT NULL AND active = 1").Scan(&noticeboards)
+		// ORM migration site b62e9af236c5 (wave 1).
+		db.Table("noticeboards").Select("id, name, lat, lng").Where("name IS NOT NULL AND active = 1").Scan(&noticeboards)
 	}
 
 	if noticeboards == nil {
@@ -189,19 +196,50 @@ func PostNoticeboard(c *fiber.Ctx) error {
 
 		switch req.Action {
 		case "Refreshed":
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, refreshed, inactive) VALUES (?, ?, NOW(), 1, 0)", req.ID, myid)
-			db.Exec("UPDATE noticeboards SET lastcheckedat = NOW(), active = 1 WHERE id = ?", req.ID)
+			// ORM migration site b22dc6f55660 (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"refreshed":     gorm.Expr("1"),
+				"inactive":      gorm.Expr("0"),
+			})
+			// ORM migration site 4e32d794943f (wave 2).
+			db.Table("noticeboards").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"lastcheckedat": gorm.Expr("NOW()"), "active": gorm.Expr("1")})
 		case "Declined":
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, declined, inactive) VALUES (?, ?, NOW(), 1, 0)", req.ID, myid)
+			// ORM migration site 8e072007de59 (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"declined":      gorm.Expr("1"),
+				"inactive":      gorm.Expr("0"),
+			})
 		case "Inactive":
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, inactive) VALUES (?, ?, NOW(), 1)", req.ID, myid)
-			db.Exec("UPDATE noticeboards SET lastcheckedat = NOW(), active = 0 WHERE id = ?", req.ID)
+			// ORM migration site 29fd88a76f02 (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"inactive":      gorm.Expr("1"),
+			})
+			// ORM migration site 90267e07036b (wave 2).
+			db.Table("noticeboards").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"lastcheckedat": gorm.Expr("NOW()"), "active": gorm.Expr("0")})
 		case "Comments":
 			comments := ""
 			if req.Comments != nil {
 				comments = *req.Comments
 			}
-			db.Exec("INSERT INTO noticeboards_checks (noticeboardid, userid, checkedat, comments, inactive) VALUES (?, ?, NOW(), ?, 0)", req.ID, myid, comments)
+			// ORM migration site fc070851caba (wave 2).
+			db.Table("noticeboards_checks").Create(map[string]interface{}{
+				"noticeboardid": req.ID,
+				"userid":        myid,
+				"checkedat":     gorm.Expr("NOW()"),
+				"comments":      comments,
+				"inactive":      gorm.Expr("0"),
+			})
 		default:
 			return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 		}
@@ -229,36 +267,34 @@ func PostNoticeboard(c *fiber.Ctx) error {
 		description = *req.Description
 	}
 
-	srid := utils.SRID
-	pointSQL := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", *req.Lng, *req.Lat, srid)
-
 	// Use NULL for addedby when user is not logged in (myid=0) to satisfy FK constraint.
 	var addedby interface{}
 	if myid > 0 {
 		addedby = myid
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 42bb2fc5fe91 (tier6). Same zero-precision-change
+	// conversion as newsfeed.go's createRefer/createPost and newsfeed/create.go
+	// (10bcbd6a6404, f961504c334d, 90b0f0bb3029): the WKT text is built exactly
+	// as before via fmt.Sprintf("POINT(%f %f)", ...), then bound as a genuine
+	// ST_GeomFromText argument rather than spliced into the SQL text.
+	row := map[string]interface{}{
+		"name":          name,
+		"lat":           *req.Lat,
+		"lng":           *req.Lng,
+		"position":      gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", *req.Lng, *req.Lat), utils.SRID),
+		"added":         gorm.Expr("NOW()"),
+		"addedby":       addedby,
+		"description":   description,
+		"active":        active,
+		"lastcheckedat": gorm.Expr("NOW()"),
 	}
-	sqlResult, err := sqlDB.Exec(
-		"INSERT INTO noticeboards (`name`, `lat`, `lng`, `position`, `added`, `addedby`, `description`, `active`, `lastcheckedat`) "+
-			"VALUES (?, ?, ?, "+pointSQL+", NOW(), ?, ?, ?, NOW())",
-		name, *req.Lat, *req.Lng, addedby, description, active)
-
-	if err != nil {
+	if err := db.Table("noticeboards").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
 
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": id})
 }
@@ -284,7 +320,8 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 	var currentName string
 	var addedby uint64
 	var count int64
-	db.Raw("SELECT COUNT(*), COALESCE(name, ''), COALESCE(addedby, 0) FROM noticeboards WHERE id = ?", req.ID).Row().Scan(&count, &currentName, &addedby)
+	// ORM migration site 17992b4893d5 (wave 1).
+	db.Table("noticeboards").Select("COUNT(*), COALESCE(name, ''), COALESCE(addedby, 0)").Where("id = ?", req.ID).Row().Scan(&count, &currentName, &addedby)
 	if count == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
 	}
@@ -296,27 +333,34 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Name != nil {
-		db.Exec("UPDATE noticeboards SET name = ? WHERE id = ?", *req.Name, req.ID)
+		// ORM migration site 231d70e1fa28 (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("name", *req.Name)
 	}
 	if req.Lat != nil {
-		db.Exec("UPDATE noticeboards SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+		// ORM migration site 96d656eb95cb (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("lat", *req.Lat)
 	}
 	if req.Lng != nil {
-		db.Exec("UPDATE noticeboards SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+		// ORM migration site 86722b0b3cff (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("lng", *req.Lng)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE noticeboards SET description = ? WHERE id = ?", *req.Description, req.ID)
+		// ORM migration site 0c12eb5cf095 (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Active != nil {
-		db.Exec("UPDATE noticeboards SET active = ? WHERE id = ?", *req.Active, req.ID)
+		// ORM migration site b4e8507b4bf0 (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("active", *req.Active)
 	}
 	if req.Lastcheckedat != nil {
-		db.Exec("UPDATE noticeboards SET lastcheckedat = ? WHERE id = ?", *req.Lastcheckedat, req.ID)
+		// ORM migration site 86acdf5e502f (wave 2).
+		db.Table("noticeboards").Where("id = ?", req.ID).Update("lastcheckedat", *req.Lastcheckedat)
 	}
 
 	// Link photo if provided
 	if req.Photoid != nil {
-		db.Exec("UPDATE noticeboards_images SET noticeboardid = ? WHERE id = ?", req.ID, *req.Photoid)
+		// ORM migration site 42bec0874800 (wave 2).
+		db.Table("noticeboards_images").Where("id = ?", *req.Photoid).Update("noticeboardid", req.ID)
 	}
 
 	// Create newsfeed entry on first name assignment (when name was empty and is now being set)
@@ -330,14 +374,24 @@ func PatchNoticeboard(c *fiber.Ctx) error {
 			// Get the noticeboard data for the newsfeed entry
 			var addedby uint64
 			var lat, lng float64
-			db.Raw("SELECT COALESCE(addedby, 0), COALESCE(lat, 0), COALESCE(lng, 0) FROM noticeboards WHERE id = ?", req.ID).Row().Scan(&addedby, &lat, &lng)
+			// ORM migration site 2719baff5f09 (wave 1).
+			db.Table("noticeboards").Select("COALESCE(addedby, 0), COALESCE(lat, 0), COALESCE(lng, 0)").Where("id = ?", req.ID).Row().Scan(&addedby, &lat, &lng)
 
 			if addedby > 0 {
 				// Create newsfeed entry with type 'Noticeboard'.
-				db.Exec(
-					fmt.Sprintf("INSERT INTO newsfeed (type, userid, message, added, position) VALUES ('Noticeboard', ?, ?, NOW(), ST_GeomFromText('POINT(%f %f)', %d))",
-						lng, lat, utils.SRID),
-					addedby, fmt.Sprintf(`{"id":%d,"name":"%s"}`, req.ID, *req.Name))
+				// ORM migration site c4e30fd6a513 (tier6). Same
+				// zero-precision-change conversion as PostNoticeboard
+				// (42bb2fc5fe91) above: the WKT text is built exactly as
+				// before via fmt.Sprintf("POINT(%f %f)", ...), then bound as a
+				// genuine ST_GeomFromText argument rather than spliced into
+				// the SQL text.
+				db.Table("newsfeed").Create(map[string]interface{}{
+					"type":     gorm.Expr("'Noticeboard'"),
+					"userid":   addedby,
+					"message":  fmt.Sprintf(`{"id":%d,"name":"%s"}`, req.ID, *req.Name),
+					"added":    gorm.Expr("NOW()"),
+					"position": gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", lng, lat), utils.SRID),
+				})
 			}
 		}
 	}
@@ -382,13 +436,15 @@ func DeleteNoticeboard(c *fiber.Ctx) error {
 
 	// Check noticeboard exists
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM noticeboards WHERE id = ?", id).Scan(&count)
+	// ORM migration site 6f1e9fffdf7e (wave 1).
+	db.Table("noticeboards").Where("id = ?", id).Count(&count)
 	if count == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Noticeboard not found")
 	}
 
 	// Delete the noticeboard
-	result := db.Exec("DELETE FROM noticeboards WHERE id = ?", id)
+	// ORM migration site 1689d28e9c22 (wave 2).
+	result := db.Table("noticeboards").Where("id = ?", id).Delete(nil)
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete noticeboard")
 	}

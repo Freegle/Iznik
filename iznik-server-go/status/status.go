@@ -145,7 +145,8 @@ func GetVersion(c *fiber.Ctx) error {
 	laravelCommit := "unknown"
 	if database.DBConn != nil {
 		var value string
-		database.DBConn.Raw("SELECT value FROM config WHERE `key` = 'deploy.laravel_commit'").Scan(&value)
+		// ORM migration site a631a85cab7d (wave 1).
+		database.DBConn.Table("config").Select("value").Where("`key` = 'deploy.laravel_commit'").Scan(&value)
 		if value != "" {
 			laravelCommit = value
 		}

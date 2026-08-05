@@ -24,12 +24,16 @@ func GetGroupMessages(c *fiber.Ctx) error {
 	// freegled) but not withdrawn messages.  We also add in our own posts that are still pending, so a member
 	// can't tell their post is awaiting moderation - but NOT our own rejected posts: a rejected post has been
 	// removed and must not leak back into the poster's browse feed.
-	db.Raw("SELECT messages_groups.msgid FROM messages_groups "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid "+
-		"INNER JOIN messages ON messages.id = messages_groups.msgid "+
-		"INNER JOIN users ON users.id = messages.fromuser "+
-		"WHERE groupid = ? AND messages_groups.arrival >= ? AND (collection = ? OR (messages.fromuser = ? AND collection != ?)) AND messages_groups.deleted = 0 AND users.deleted IS NULL AND (messages_outcomes.id IS NULL OR messages_outcomes.outcome IN (?, ?)) "+
-		"ORDER BY messages_groups.arrival DESC", id, then.Format(time.RFC3339), utils.COLLECTION_APPROVED, myid, utils.COLLECTION_REJECTED, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).Pluck("msgid", &ret)
+	// ORM migration site 860c3fb17af3 (wave 4).
+	db.Table("messages_groups").
+		Select("messages_groups.msgid").
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid").
+		Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
+		Joins("INNER JOIN users ON users.id = messages.fromuser").
+		Where("groupid = ? AND messages_groups.arrival >= ? AND (collection = ? OR (messages.fromuser = ? AND collection != ?)) AND messages_groups.deleted = 0 AND users.deleted IS NULL AND (messages_outcomes.id IS NULL OR messages_outcomes.outcome IN (?, ?))",
+			id, then.Format(time.RFC3339), utils.COLLECTION_APPROVED, myid, utils.COLLECTION_REJECTED, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
+		Order("messages_groups.arrival DESC").
+		Pluck("msgid", &ret)
 
 	if ret == nil {
 		ret = make([]uint64, 0)
@@ -70,17 +74,17 @@ func GetGroupMessageSummaries(c *fiber.Ctx) error {
 	now := time.Now()
 	then := now.AddDate(0, 0, -31)
 
-	db.Raw("SELECT messages.id, messages.subject, messages_groups.arrival FROM messages_groups "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid "+
-		"INNER JOIN messages ON messages.id = messages_groups.msgid "+
-		"INNER JOIN users ON users.id = messages.fromuser "+
-		"WHERE groupid = ? AND messages_groups.arrival >= ? AND collection = ? AND messages_groups.deleted = 0 "+
-		"AND users.deleted IS NULL AND messages.deleted IS NULL AND messages_outcomes.id IS NULL "+
-		"AND messages.type IN (?, ?) "+
-		"ORDER BY messages_groups.arrival DESC LIMIT ?",
-		id, then.Format(time.RFC3339), utils.COLLECTION_APPROVED,
-		utils.OFFER, utils.WANTED, groupMessageSummaryLimit,
-	).Scan(&ret)
+	// ORM migration site e5a3017e0a69 (wave 4).
+	db.Table("messages_groups").
+		Select("messages.id, messages.subject, messages_groups.arrival").
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid").
+		Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
+		Joins("INNER JOIN users ON users.id = messages.fromuser").
+		Where("groupid = ? AND messages_groups.arrival >= ? AND collection = ? AND messages_groups.deleted = 0 AND users.deleted IS NULL AND messages.deleted IS NULL AND messages_outcomes.id IS NULL AND messages.type IN (?, ?)",
+			id, then.Format(time.RFC3339), utils.COLLECTION_APPROVED, utils.OFFER, utils.WANTED).
+		Order("messages_groups.arrival DESC").
+		Limit(groupMessageSummaryLimit).
+		Scan(&ret)
 
 	if ret == nil {
 		ret = make([]GroupMessageSummary, 0)

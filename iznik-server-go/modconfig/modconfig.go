@@ -1,7 +1,6 @@
 package modconfig
 
 import (
-	"fmt"
 	stdlog "log"
 	"strconv"
 	"strings"
@@ -9,9 +8,10 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type ModConfig struct {
@@ -93,11 +93,13 @@ func canSee(myid uint64, cfg *ModConfig) bool {
 	}
 	// Used by mods on groups they moderate.
 	var count int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM memberships m1 "+
-		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-		"WHERE m1.userid = ? AND m1.role IN (?, ?) "+
-		"AND m2.configid = ? AND m2.role IN (?, ?)",
-		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	// ORM migration site 37e5bdcc1ee6 (wave 4).
+	database.DBConn.Table("memberships m1").
+		Select("COUNT(*)").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?)",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&count)
 	return count > 0
 }
 
@@ -134,7 +136,8 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", id).Scan(&cfg)
+	// ORM migration site c1e1f7ddeb2d (wave 1).
+	db.Table("mod_configs").Select(configColumns).Where("id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
 		// V1 parity: return 200 with ret:2. The frontend treats
 		// non-200 as a fatal "Settings inaccessible" error (9518.180).
@@ -148,7 +151,8 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	// Get standard messages.
 	var stdmsgs []StdMsg
-	db.Raw("SELECT "+stdMsgColumns+" FROM mod_stdmsgs WHERE configid = ?", id).Scan(&stdmsgs)
+	// ORM migration site 2e87012dbaed (wave 1).
+	db.Table("mod_stdmsgs").Select(stdMsgColumns).Where("configid = ?", id).Scan(&stdmsgs)
 	if stdmsgs == nil {
 		stdmsgs = []StdMsg{}
 	}
@@ -169,13 +173,14 @@ func GetModConfig(c *fiber.Ctx) error {
 			Groupid uint64
 		}
 		var shared SharedInfo
-		db.Raw("SELECT m2.userid, m2.groupid "+
-			"FROM memberships m1 "+
-			"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-			"WHERE m1.userid = ? AND m1.role IN (?, ?) "+
-			"AND m2.configid = ? AND m2.role IN (?, ?) "+
-			"AND m2.userid != ? "+
-			"LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid).Scan(&shared)
+		// ORM migration site 4f2e91887c4f (wave 4).
+		db.Table("memberships m1").
+			Select("m2.userid, m2.groupid").
+			Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+			Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.configid = ? AND m2.role IN (?, ?) AND m2.userid != ?",
+				myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid).
+			Limit(1).
+			Scan(&shared)
 
 		if shared.Userid > 0 {
 			cansee = "Shared"
@@ -186,10 +191,12 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	// Compute "using" - user IDs of moderators currently using this config.
 	var usingUserIDs []uint64
-	db.Raw("SELECT DISTINCT m.userid "+
-		"FROM memberships m "+
-		"WHERE m.configid = ? AND m.role IN (?, ?) "+
-		"LIMIT 10", cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Pluck("userid", &usingUserIDs)
+	// ORM migration site 683a3a4c4854 (wave 1).
+	db.Table("memberships m").
+		Distinct("m.userid").
+		Where("m.configid = ? AND m.role IN (?, ?)", cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Limit(10).
+		Pluck("userid", &usingUserIDs)
 
 	if usingUserIDs == nil {
 		usingUserIDs = []uint64{}
@@ -255,7 +262,8 @@ func listModConfigs(c *fiber.Ctx) error {
 		// Admin/support can see all configs.  Non-admin users silently
 		// fall through to the per-moderator query below.
 		if auth.IsAdminOrSupport(myid) {
-			db.Raw("SELECT " + configColumns + " FROM mod_configs ORDER BY name").Scan(&configs)
+			// ORM migration site 2d4f322cfd3f (wave 1).
+			db.Table("mod_configs").Select(configColumns).Order("name").Scan(&configs)
 		}
 	}
 
@@ -267,19 +275,29 @@ func listModConfigs(c *fiber.Ctx) error {
 		//
 		// Use UNION to avoid the expensive double LEFT JOIN on memberships
 		// which caused full table scans on the 4.7M row memberships table.
-		db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE createdby = ? "+
-			"UNION "+
-			"SELECT "+configColumns+" FROM mod_configs WHERE `default` = 1 "+
-			"UNION "+
-			"SELECT "+configColumns+" FROM mod_configs WHERE id IN ("+
-			"SELECT m1.configid FROM memberships m1 "+
-			"WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) "+
-			"AND m1.groupid IN ("+
-			"SELECT m2.groupid FROM memberships m2 "+
-			"WHERE m2.userid = ? AND m2.role IN (?, ?)"+
-			")"+
-			") "+
-			"ORDER BY name", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&configs)
+		// ORM migration site e9ea468dab80 (Tier 2 keep-raw review). Top-level
+		// UNION with a trailing ORDER BY that applies to the whole union, not
+		// any one arm - BuildClauses={"SELECT"} means GORM renders only the
+		// SELECT clause, so ORDER BY has to be literal text inside the same
+		// fragment rather than a separate .Order() call (that clause would
+		// never be walked). Same mechanism as changes.go's GetChanges above.
+		tx := db.Table("mod_configs").Select(
+			configColumns+" FROM mod_configs WHERE createdby = ? "+
+				"UNION "+
+				"SELECT "+configColumns+" FROM mod_configs WHERE `default` = 1 "+
+				"UNION "+
+				"SELECT "+configColumns+" FROM mod_configs WHERE id IN ("+
+				"SELECT m1.configid FROM memberships m1 "+
+				"WHERE m1.configid IS NOT NULL AND m1.role IN (?, ?) "+
+				"AND m1.groupid IN ("+
+				"SELECT m2.groupid FROM memberships m2 "+
+				"WHERE m2.userid = ? AND m2.role IN (?, ?)"+
+				")"+
+				") "+
+				"ORDER BY name",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		tx.Scan(&configs)
 	}
 
 	if configs == nil {
@@ -331,7 +349,8 @@ func PostModConfig(c *fiber.Ctx) error {
 	if req.ID > 0 {
 		// Verify the user can see the source config before copying.
 		var srcCfg ModConfig
-		db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", req.ID).Scan(&srcCfg)
+		// ORM migration site 87d36c5d843f (wave 1).
+		db.Table("mod_configs").Select(configColumns).Where("id = ?", req.ID).Scan(&srcCfg)
 		if srcCfg.ID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Source config not found")
 		}
@@ -339,75 +358,101 @@ func PostModConfig(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorised to copy this config")
 		}
 
-		// Copy from existing config.
-		// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-		// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-		// parallel load (GORM's connection pool may assign a different connection).
-		sqlDB, err := db.DB()
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
-			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
-			"fromname, subjreg, messageorder) "+
-			"SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
-			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
-			"fromname, subjreg, messageorder "+
-			"FROM mod_configs WHERE id = ?", req.Name, req.ID)
-		if err != nil {
-			stdlog.Printf("Failed to copy mod config %d: %v", req.ID, err)
+		// Copy from existing config. database.InsertSelect keeps the copy a single
+		// atomic INSERT ... SELECT (see database/clausebuilders.go); Clauses(res)
+		// reads the generated id back from the same sql.Result the write returned,
+		// never a separate SELECT LAST_INSERT_ID() - unsafe under parallel load,
+		// since GORM's connection pool could assign that SELECT a different
+		// connection.
+		// ORM migration site 6b9a23982cc9 (tier4).
+		res := gorm.WithResult()
+		tx := database.InsertSelect(db.Clauses(res), "mod_configs",
+			"(name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+				"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
+				"fromname, subjreg, messageorder) "+
+				"SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+				"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
+				"fromname, subjreg, messageorder "+
+				"FROM mod_configs WHERE id = ?", req.Name, req.ID)
+		if tx.Error != nil {
+			stdlog.Printf("Failed to copy mod config %d: %v", req.ID, tx.Error)
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to copy config")
 		}
 
 		var newID uint64
-		lastID, err := sqlResult.LastInsertId()
-		if err == nil && lastID > 0 {
-			newID = uint64(lastID)
+		if res.Result != nil {
+			if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+				newID = uint64(lastID)
+			}
 		}
 		if newID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
 		}
-		db.Exec("UPDATE mod_configs SET createdby = ? WHERE id = ?", myid, newID)
+		// ORM migration site 207260729430 (wave 2).
+		db.Table("mod_configs").Where("id = ?", newID).Update("createdby", myid)
 
 		// Copy stdmsgs.
 		var srcMsgs []StdMsg
-		db.Raw("SELECT "+stdMsgColumns+" FROM mod_stdmsgs WHERE configid = ?", req.ID).Scan(&srcMsgs)
+		// ORM migration site a74b7b022b84 (wave 1).
+		db.Table("mod_stdmsgs").Select(stdMsgColumns).Where("configid = ?", req.ID).Scan(&srcMsgs)
 		for _, m := range srcMsgs {
-			db.Exec("INSERT INTO mod_stdmsgs (configid, title, action, subjpref, subjsuff, body, "+
-				"rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert`) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-				newID, m.Title, m.Action, m.Subjpref, m.Subjsuff, m.Body,
-				m.Rarelyused, m.Autosend, m.Newmodstatus, m.Newdelstatus, m.Edittext, m.Insert)
+			// ORM migration site ef309513694a (wave 2).
+			db.Table("mod_stdmsgs").Create(map[string]interface{}{
+				"configid":     newID,
+				"title":        m.Title,
+				"action":       m.Action,
+				"subjpref":     m.Subjpref,
+				"subjsuff":     m.Subjsuff,
+				"body":         m.Body,
+				"rarelyused":   m.Rarelyused,
+				"autosend":     m.Autosend,
+				"newmodstatus": m.Newmodstatus,
+				"newdelstatus": m.Newdelstatus,
+				"edittext":     m.Edittext,
+				"insert":       m.Insert,
+			})
 		}
 
-		// Copy bulkops.
-		db.Exec("INSERT INTO mod_bulkops (title, configid, `set`, criterion, runevery, action, bouncingfor) "+
-			"SELECT title, ?, `set`, criterion, runevery, action, bouncingfor "+
-			"FROM mod_bulkops WHERE configid = ?", newID, req.ID)
+		// Copy bulkops. ORM migration site e137c396bd13 (tier4).
+		database.InsertSelect(db, "mod_bulkops",
+			"(title, configid, `set`, criterion, runevery, action, bouncingfor) "+
+				"SELECT title, ?, `set`, criterion, runevery, action, bouncingfor "+
+				"FROM mod_bulkops WHERE configid = ?", newID, req.ID)
 
 		// Log the creation.
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_CREATED, myid, newID)
+		// ORM migration site e07a25573e68 (wave 2).
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log.LOG_TYPE_CONFIG,
+			"subtype":   log.LOG_SUBTYPE_CREATED,
+			"byuser":    myid,
+			"configid":  newID,
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 	}
 
-	// Simple create.
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Simple create. Table()+map Create reads the generated id back from the
+	// same sql.Result the INSERT returned, under the map key "@id" - see
+	// test/orm_insertid_test.go.
+	// ORM migration site 181d8342ea4a (insertid-conv).
+	row := map[string]interface{}{
+		"name":           req.Name,
+		"createdby":      myid,
+		"ccrejectaddr":   gorm.Expr("''"),
+		"ccfollowupaddr": gorm.Expr("''"),
+		"ccrejmembaddr":  gorm.Expr("''"),
+		"ccfollmembaddr": gorm.Expr("''"),
+		"network":        gorm.Expr("''"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')", req.Name, myid)
-	if err != nil {
+	if err := db.Table("mod_configs").Create(row).Error; err != nil {
 		stdlog.Printf("Failed to create mod config: %v", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
+	lastID, _ := row["@id"].(int64)
+	if lastID > 0 {
 		newID = uint64(lastID)
 	}
 	if newID == 0 {
@@ -415,7 +460,14 @@ func PostModConfig(c *fiber.Ctx) error {
 	}
 
 	// Log the creation.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_CREATED, myid, newID)
+	// ORM migration site b4d152ba261c (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CONFIG,
+		"subtype":   log.LOG_SUBTYPE_CREATED,
+		"byuser":    myid,
+		"configid":  newID,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
@@ -471,7 +523,8 @@ func PatchModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", req.ID).Scan(&cfg)
+	// ORM migration site 4bbe84a257f3 (wave 1).
+	db.Table("mod_configs").Select(configColumns).Where("id = ?", req.ID).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
 	}
@@ -480,93 +533,93 @@ func PatchModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Don't have rights to modify config")
 	}
 
-	// Build a single UPDATE with all changed fields.
-	setClauses := []string{}
-	args := []interface{}{}
+	// ORM migration site a7b00c5503b7 (fieldwise coverage, not exhaustive
+	// shapes). 17 independently-optional fields, each contributing its own
+	// fixed "col = ?" fragment(s) with no fragment's value referencing
+	// another assigned column - verified via
+	// ormharness.AssertGoldenFieldwise's precondition check, which reuses
+	// setOrderIsLoadBearing (the same rule check-set-order.sh enforces
+	// elsewhere) and refuses the site outright if that ever stops being
+	// true. That independence is what makes n+2 cases (each field alone,
+	// empty, all together) a real proof rather than exhaustive 2^17 shape
+	// coverage, which AssertGoldenShapes could never practically declare.
+	// See test/orm_fieldwise_modconfig_test.go and ormharness/fieldwise.json
+	// - and Protected below, which is the one field that contributes two
+	// fragments (protected, createdby) rather than one; fieldwise coverage
+	// only requires that ITS OWN two fragments don't reference any OTHER
+	// field's column, which they don't.
+	updates := map[string]interface{}{}
 
 	if req.Name != nil {
-		setClauses = append(setClauses, "name = ?")
-		args = append(args, *req.Name)
+		updates["name"] = *req.Name
 	}
 	if req.Fromname != nil {
-		setClauses = append(setClauses, "fromname = ?")
-		args = append(args, *req.Fromname)
+		updates["fromname"] = *req.Fromname
 	}
 	if req.Ccrejectto != nil {
-		setClauses = append(setClauses, "ccrejectto = ?")
-		args = append(args, *req.Ccrejectto)
+		updates["ccrejectto"] = *req.Ccrejectto
 	}
 	if req.Ccrejectaddr != nil {
-		setClauses = append(setClauses, "ccrejectaddr = ?")
-		args = append(args, *req.Ccrejectaddr)
+		updates["ccrejectaddr"] = *req.Ccrejectaddr
 	}
 	if req.Ccfollowupto != nil {
-		setClauses = append(setClauses, "ccfollowupto = ?")
-		args = append(args, *req.Ccfollowupto)
+		updates["ccfollowupto"] = *req.Ccfollowupto
 	}
 	if req.Ccfollowupaddr != nil {
-		setClauses = append(setClauses, "ccfollowupaddr = ?")
-		args = append(args, *req.Ccfollowupaddr)
+		updates["ccfollowupaddr"] = *req.Ccfollowupaddr
 	}
 	if req.Ccrejmembto != nil {
-		setClauses = append(setClauses, "ccrejmembto = ?")
-		args = append(args, *req.Ccrejmembto)
+		updates["ccrejmembto"] = *req.Ccrejmembto
 	}
 	if req.Ccrejmembaddr != nil {
-		setClauses = append(setClauses, "ccrejmembaddr = ?")
-		args = append(args, *req.Ccrejmembaddr)
+		updates["ccrejmembaddr"] = *req.Ccrejmembaddr
 	}
 	if req.Ccfollmembto != nil {
-		setClauses = append(setClauses, "ccfollmembto = ?")
-		args = append(args, *req.Ccfollmembto)
+		updates["ccfollmembto"] = *req.Ccfollmembto
 	}
 	if req.Ccfollmembaddr != nil {
-		setClauses = append(setClauses, "ccfollmembaddr = ?")
-		args = append(args, *req.Ccfollmembaddr)
+		updates["ccfollmembaddr"] = *req.Ccfollmembaddr
 	}
 	if req.Protected != nil {
-		setClauses = append(setClauses, "protected = ?")
-		args = append(args, *req.Protected)
+		updates["protected"] = *req.Protected
 		// When setting protected, also set createdby to the caller.
-		setClauses = append(setClauses, "createdby = ?")
-		args = append(args, myid)
+		updates["createdby"] = myid
 	}
 	if req.Messageorder != nil {
-		setClauses = append(setClauses, "messageorder = ?")
-		args = append(args, *req.Messageorder)
+		updates["messageorder"] = *req.Messageorder
 	}
 	if req.Network != nil {
-		setClauses = append(setClauses, "network = ?")
-		args = append(args, *req.Network)
+		updates["network"] = *req.Network
 	}
 	if req.Coloursubj != nil {
-		setClauses = append(setClauses, "coloursubj = ?")
-		args = append(args, *req.Coloursubj)
+		updates["coloursubj"] = *req.Coloursubj
 	}
 	if req.Subjreg != nil {
-		setClauses = append(setClauses, "subjreg = ?")
-		args = append(args, *req.Subjreg)
+		updates["subjreg"] = *req.Subjreg
 	}
 	if req.Subjlen != nil {
-		setClauses = append(setClauses, "subjlen = ?")
-		args = append(args, *req.Subjlen)
+		updates["subjlen"] = *req.Subjlen
 	}
 	if req.Chatread != nil {
-		setClauses = append(setClauses, "chatread = ?")
-		args = append(args, *req.Chatread)
+		updates["chatread"] = *req.Chatread
 	}
 
-	if len(setClauses) > 0 {
-		args = append(args, req.ID)
-		query := fmt.Sprintf("UPDATE mod_configs SET %s WHERE id = ?", strings.Join(setClauses, ", "))
-		if result := db.Exec(query, args...); result.Error != nil {
+	if len(updates) > 0 {
+		if result := db.Table("mod_configs").Where("id = ?", req.ID).Updates(updates); result.Error != nil {
 			stdlog.Printf("Failed to update mod config %d: %v", req.ID, result.Error)
 			return fiber.NewError(fiber.StatusInternalServerError, "Update failed")
 		}
 	}
 
 	// Log the edit.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_EDIT, myid, req.ID)
+	// ORM migration site d42d9aa90149 (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CONFIG,
+		"subtype":   log.LOG_SUBTYPE_EDIT,
+		"byuser":    myid,
+		"configid":  req.ID,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -592,7 +645,8 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", id).Scan(&cfg)
+	// ORM migration site 9fc1bbefed72 (wave 1).
+	db.Table("mod_configs").Select(configColumns).Where("id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
 	}
@@ -603,15 +657,24 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	// Check if still in use.
 	var inUse int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&inUse)
+	// ORM migration site 8a1e00c30243 (wave 1).
+	db.Table("memberships").Where("configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&inUse)
 	if inUse > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 5, "status": "Config still in use"})
 	}
 
-	db.Exec("DELETE FROM mod_configs WHERE id = ?", id)
+	// ORM migration site 954d3085c050 (wave 2).
+	db.Table("mod_configs").Where("id = ?", id).Delete(nil)
 
 	// Log the deletion.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_DELETED, myid, id)
+	// ORM migration site e31c7ddcc714 (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CONFIG,
+		"subtype":   log.LOG_SUBTYPE_DELETED,
+		"byuser":    myid,
+		"configid":  id,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

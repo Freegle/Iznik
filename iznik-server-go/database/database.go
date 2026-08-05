@@ -55,6 +55,16 @@ func InitDatabase() {
 		Logger: newLogger,
 	})
 
+	// REPLACE INTO and INSERT ... SELECT conversions (database.InsertSelect,
+	// clause.Insert{Modifier: "REPLACE"}) both need a ClauseBuilders override
+	// registered on the connection they run against - see clausebuilders.go.
+	// Config (and so ClauseBuilders) is shared by reference with every
+	// Session()/dbresolver replica this DB ever produces, so registering it
+	// once here, before either is set up below, is sufficient.
+	if err == nil {
+		RegisterCustomClauseBuilders(DBConn)
+	}
+
 	// This rocketlaunchr/mysql-go package allows genuine cancellation of the MySQL query, which doesn't happen in
 	// the standard library. See https://medium.com/@rocketlaunchr.cloud/canceling-mysql-in-go-827ed8f83b30.
 	//

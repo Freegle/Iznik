@@ -63,6 +63,7 @@ const config: CapacitorConfig = {
       "@capacitor/camera", // C7 OK
       "@capacitor/share",
       "@capacitor/app",
+      "@capacitor/text-zoom", // C7 - apply system accessibility text size to the WebView
       "@capacitor/screen-orientation",
     ],
     buildOptions: { // new creds which are not used. unsigned version needs signed with FREEGLE_KEYSTORE and FREEGLE_KEYSTORE_PASSWORD
@@ -93,6 +94,7 @@ const config: CapacitorConfig = {
       "@capacitor/camera",
       "@capacitor/share",
       "@capacitor/app",
+      "@capacitor/text-zoom", // C7 - apply system accessibility text size to the WebView
       "@capacitor/screen-orientation",
     ]
   },

@@ -597,6 +597,41 @@ describe('compose store', () => {
     })
   })
 
+  describe('submit', () => {
+    it('sends the deadline as a plain date, not an ISO datetime', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockMessagePut.mockResolvedValue({ id: 77 })
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+
+      store.setEmail('test@a.com')
+      store.setPostcode({
+        id: 5,
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 10, nameshort: 'Westminster', namedisplay: 'Westminster' },
+        ],
+      })
+      const id = store.add()
+      store.setType({ id, type: 'Offer' })
+      store.setItem({ id, item: 'Table' })
+      store.setDeadline(id, '2026-09-03')
+
+      await store.submit({ type: 'Offer' })
+
+      // messages.deadline is a DATE column: under strict sql_mode MySQL
+      // rejects an ISO datetime ("2026-09-03T00:00:00.000Z") outright, and
+      // the give-flow deadline was silently lost (Discourse #9481).
+      expect(mockJoinAndPost).toHaveBeenCalledWith(
+        77,
+        'test@a.com',
+        expect.objectContaining({ deadline: '2026-09-03' })
+      )
+      logSpy.mockRestore()
+    })
+  })
+
   describe('backToDraft', () => {
     it('calls RejectToDraft and increments progress', async () => {
       const store = useComposeStore()

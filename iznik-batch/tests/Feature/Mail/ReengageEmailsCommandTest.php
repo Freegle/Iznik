@@ -6,6 +6,7 @@ use App\Models\Group;
 use App\Models\Membership;
 use App\Services\EmailSpoolerService;
 use App\Services\ReengageService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\IsolatedSpoolDirectory;
@@ -275,6 +276,44 @@ class ReengageEmailsCommandTest extends TestCase
 
         $this->assertSame(1, $result['sent']);
         $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 2]);
+    }
+
+    public function test_advances_next_day_even_when_under_24h_elapsed(): void
+    {
+        // Regression for the alternate-day lock-up seen live 2026-08: the cron
+        // fires at a fixed clock time, so a member sent late in yesterday's run
+        // was checked ~23h59m later and an elapsed-24h guard skipped them - every
+        // other day, for everyone mid-sequence. Yesterday is yesterday: a tip
+        // sent on the previous CALENDAR day must advance today, even if fewer
+        // than 24 hours have elapsed.
+        $this->travelTo(Carbon::parse('2026-08-04 15:30:04'));
+        $user = $this->createNewMember(3);
+        $this->enable('*');
+        $this->insertTip($user->id, 1, '2026-08-03 15:30:50'); // 23h59m ago, yesterday
+
+        $result = (new ReengageService())->processReengageEmails(false);
+
+        $this->assertSame(1, $result['sent']);
+        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 2]);
+    }
+
+    public function test_member_who_slipped_days_still_finishes_the_sequence(): void
+    {
+        // Regression: the candidate window used to assume the ideal daily
+        // cadence, so a member who slipped to alternate days (see previous test)
+        // aged out of the query after tip 3 and tips 4-5 were never sent to
+        // ANYONE on live. The window now carries slack for slipped days.
+        $user = $this->createNewMember(8);
+        $this->enable('*');
+        config(['freegle.reengage.max_start_days' => 2]); // prod value
+        $this->insertTip($user->id, 1, now()->subDays(6));
+        $this->insertTip($user->id, 2, now()->subDays(4));
+        $this->insertTip($user->id, 3, now()->subDays(2));
+
+        $result = (new ReengageService())->processReengageEmails(false);
+
+        $this->assertSame(1, $result['sent']);
+        $this->assertDatabaseHas('reengage', ['userid' => $user->id, 'stage' => 4]);
     }
 
     public function test_records_each_tip_at_most_once_per_member(): void

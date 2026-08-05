@@ -35,6 +35,53 @@ func TestCreateTryst(t *testing.T) {
 	assert.Greater(t, result["id"].(float64), float64(0))
 }
 
+// TestCreateTrystDuplicateReturnsExistingID pins the fix for a live defect:
+// CreateTryst used to run its ON DUPLICATE KEY UPDATE with no
+// "id = LAST_INSERT_ID(id)" forcing, so re-arranging the SAME tryst (the
+// unique key is (arrangedfor, user1, user2)) made MySQL's LAST_INSERT_ID()
+// report 0, and this endpoint handed that straight back to the caller as
+// {"id": 0}. Confirmed against the real test DB (both the raw SQL and the
+// converted GORM chain) before this test was added: the unfixed ODKU clause
+// returns id 0 on the second call, the fixed one returns the original id
+// both times. This test proves the same thing through the actual HTTP
+// handler, which is what a caller sees.
+func TestCreateTrystDuplicateReturnsExistingID(t *testing.T) {
+	prefix := uniquePrefix("TrystDup")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	_, token := CreateTestSession(t, user1ID)
+
+	// CreateTryst requires a chat room between the users.
+	CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+
+	body := fmt.Sprintf(`{"user1":%d,"user2":%d,"arrangedfor":"2038-01-19T03:14:06+00:00"}`, user1ID, user2ID)
+
+	req1 := httptest.NewRequest("PUT", fmt.Sprintf("/api/tryst?jwt=%s", token), strings.NewReader(body))
+	req1.Header.Set("Content-Type", "application/json")
+	resp1, _ := getApp().Test(req1)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var result1 map[string]interface{}
+	json2.Unmarshal(rsp(resp1), &result1)
+	assert.Equal(t, float64(0), result1["ret"])
+	id1 := result1["id"].(float64)
+	assert.Greater(t, id1, float64(0), "first create must return a real id")
+
+	// Same (arrangedfor, user1, user2) triple again - hits the unique key,
+	// so this goes through the ON DUPLICATE KEY UPDATE path.
+	req2 := httptest.NewRequest("PUT", fmt.Sprintf("/api/tryst?jwt=%s", token), strings.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, _ := getApp().Test(req2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &result2)
+	assert.Equal(t, float64(0), result2["ret"])
+	id2 := result2["id"].(float64)
+	assert.Greater(t, id2, float64(0), "duplicate create must not return id 0 - this is the bug being fixed")
+	assert.Equal(t, id1, id2, "duplicate create must return the SAME id as the original row")
+}
+
 func TestGetTrystList(t *testing.T) {
 	prefix := uniquePrefix("TrystList")
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")

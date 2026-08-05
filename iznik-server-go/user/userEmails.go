@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type UserEmail struct {
@@ -25,7 +26,9 @@ func getEmails(id uint64) []UserEmail {
 
 	var emails []UserEmail
 
-	db.Raw("SELECT id, added, bounced, preferred, email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, email ASC;", id).Scan(&emails)
+	// ORM migration site f3bad72ed518 (wave 1).
+	db.Table("users_emails").Select("id, added, bounced, preferred, email").
+		Where("userid = ?", id).Order("preferred DESC, email ASC").Scan(&emails)
 
 	for ix, e := range emails {
 		emails[ix].Ourdomain = utils.OurDomain(e.Email)
@@ -44,8 +47,9 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 	// Look for an existing internal email that encodes this specific user ID
 	// (format: {local}-{id}@users.ilovefreegle.org).
 	var email string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND email LIKE ? ORDER BY preferred DESC LIMIT 1",
-		id, fmt.Sprintf("%%-%d@%s", id, domain)).Scan(&email)
+	// ORM migration site b4656108f05f (wave 1).
+	db.Table("users_emails").Select("email").Where("userid = ? AND email LIKE ?",
+		id, fmt.Sprintf("%%-%d@%s", id, domain)).Order("preferred DESC").Limit(1).Scan(&email)
 
 	// Validate the returned email actually ends with -{id}@domain (not a merged user's ID).
 	suffix := fmt.Sprintf("-%d@%s", id, domain)
@@ -55,7 +59,8 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 
 	// None found with the correct ID — generate and persist one.
 	var displayname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", id).Scan(&displayname)
+	// ORM migration site 3698e5590b2a (wave 1).
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", id).Scan(&displayname)
 
 	local := SanitiseEmailLocal(displayname)
 	if local == "" {
@@ -63,7 +68,14 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 	}
 	email = fmt.Sprintf("%s-%d@%s", local, id, domain)
 
-	db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, added, validatetime) VALUES (?, ?, 0, NOW(), NOW())", id, email)
+	// ORM migration site ba1bd193532a (wave 3).
+	db.Table("users_emails").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"userid":       id,
+		"email":        email,
+		"preferred":    gorm.Expr("0"),
+		"added":        gorm.Expr("NOW()"),
+		"validatetime": gorm.Expr("NOW()"),
+	})
 
 	return email
 }

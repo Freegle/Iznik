@@ -97,12 +97,14 @@ type CaptureSummary struct {
 // ReplySourceRow is the daily split of Interested replies by attribution channel (the graded
 // ladder captured at reply time in rippling_reply_attribution - see rippling/attribution.go):
 // home (established origin-group member), ripple_notified (we mailed them the post via the
-// ripple), ripple_group (saw it in their own group because it rippled in), ripple_reach
-// (Browse exposure that existed only because the reach extended to them), organic_local
-// (non-member who'd have seen it in Browse anyway), unknown (search / deep link / no location).
-// Rows the backfill hasn't derived yet fold into home/unknown off the legacy was_home_member
-// bit. Ripple/RipplePct is the headline: channels that are DEFINITELY rippling - unlike the
-// old replies-minus-home number, unknown is not credited to rippling.
+// ripple), ripple_group (saw it in their own group because it rippled in), ripple_join (in the
+// origin group only because an earlier ripple auto-joined them there), ripple_reach (Browse
+// exposure that existed only because the reach extended to them), organic_local (non-member
+// who'd have seen it in Browse anyway), unknown (search / deep link / no location).
+// Rows the backfill hasn't derived yet are bucketed live off the legacy was_home_member bit,
+// qualified by the surviving membership's provenance. Ripple/RipplePct is the headline: channels
+// that are DEFINITELY rippling - unlike the old replies-minus-home number, unknown is not
+// credited to rippling.
 type ReplySourceRow struct {
 	Day     string `json:"day"     gorm:"column:day"`
 	Replies int    `json:"replies" gorm:"column:replies"`
@@ -110,11 +112,12 @@ type ReplySourceRow struct {
 
 	RippleNotified int `json:"ripple_notified" gorm:"column:ripple_notified"`
 	RippleGroup    int `json:"ripple_group"    gorm:"column:ripple_group"`
+	RippleJoin     int `json:"ripple_join"     gorm:"column:ripple_join"`
 	RippleReach    int `json:"ripple_reach"    gorm:"column:ripple_reach"`
 	OrganicLocal   int `json:"organic_local"   gorm:"column:organic_local"`
 	Unknown        int `json:"unknown"         gorm:"column:unknown"`
 
-	Ripple    int     `json:"ripple"`     // computed in Go (notified + group + reach)
+	Ripple    int     `json:"ripple"`     // computed in Go (notified + group + join + reach)
 	RipplePct float64 `json:"ripple_pct"` // computed in Go
 }
 
@@ -143,15 +146,57 @@ type GroupOption struct {
 //     migration landing and the backfill running would read as a misleading zero-ripple
 //     chart (every attribution NULL folding to home/unknown).
 //   - legacy (graded columns not yet migrated): derive the durable channels live from the
-//     notified ledger and rippled-group memberships. Correct for home/notified/group; the
-//     location channels (ripple_reach/organic_local) are not derivable retrospectively
-//     (locations drift, polygons grow) so they read 0 and those replies sit in unknown.
+//     notified ledger, rippled-group memberships and origin-membership provenance. Correct for
+//     home/notified/group/join; the location channels (ripple_reach/organic_local) are not
+//     derivable retrospectively (locations drift, polygons grow) so they read 0 and those
+//     replies sit in unknown.
 //
 // srcGroup is the optional origin-group scoping JOIN (aliases rra); it takes one bind arg
 // before the two replied_at window args.
 func ReplySourceSplitSQL(wide bool, srcGroup string) string {
+	return `
+		SELECT day,
+		       COUNT(*) AS replies,
+		       SUM(bucket = 'home') AS home,
+		       SUM(bucket = 'ripple_notified') AS ripple_notified,
+		       SUM(bucket = 'ripple_group') AS ripple_group,
+		       SUM(bucket = 'ripple_join') AS ripple_join,
+		       SUM(bucket = 'ripple_reach') AS ripple_reach,
+		       SUM(bucket = 'organic_local') AS organic_local,
+		       SUM(bucket = 'unknown') AS unknown
+		FROM ` + ReplySourceInnerFrom(wide, srcGroup) + `
+		GROUP BY day
+		ORDER BY day DESC`
+}
+
+// ReplySourceInnerFrom builds the day+bucket derived-table subquery shared by
+// ReplySourceSplitSQL's raw-SQL form (legacy/unmigrated-DB callers) and the
+// GORM chain at Metrics' reply_source_split section (ORM migration site
+// 568a5645fba7): the attribution-channel CASE expression lives in exactly
+// this one place either way, so pulling the outer aggregation out into a
+// real .Table()/.Select()/.Group()/.Order() chain does not duplicate it -
+// see ormharness/bareexists_test.go's distinction between a legitimate
+// .Table() subquery (this) and relocating a whole statement into .Select()
+// (not this). Master's ripple_join derivation lives here for the same reason.
+func ReplySourceInnerFrom(wide bool, srcGroup string) string {
+	// "The only origin-group membership backing this row is one rippling created" - the frozen
+	// was_home_member bit on a legacy row cannot tell home from ripple_join, because the capture
+	// that wrote it did not look at membership provenance. Re-derived here from the surviving
+	// memberships: a ripple-created one present AND no ordinary one. When BOTH are absent (the
+	// member has left since) this is false and the frozen bit's answer of home stands - decay
+	// must not silently demote a genuine home reply.
+	rippleJoinOnly := `(EXISTS(SELECT 1 FROM messages_groups mgj
+	                   INNER JOIN memberships memj ON memj.groupid = mgj.groupid
+	                     AND memj.userid = rra.userid AND memj.collection = 'Approved'
+	                     AND memj.added < mgj.arrival AND memj.rippled = 1
+	                   WHERE mgj.msgid = rra.msgid AND mgj.rippled_in = 0 AND mgj.deleted = 0)
+	              AND NOT EXISTS(SELECT 1 FROM messages_groups mgo
+	                   INNER JOIN memberships memo ON memo.groupid = mgo.groupid
+	                     AND memo.userid = rra.userid AND memo.collection = 'Approved'
+	                     AND memo.added < mgo.arrival AND memo.rippled = 0
+	                   WHERE mgo.msgid = rra.msgid AND mgo.rippled_in = 0 AND mgo.deleted = 0))`
 	derive := `CASE
-	       WHEN rra.was_home_member = 1 THEN 'home'
+	       WHEN rra.was_home_member = 1 AND NOT ` + rippleJoinOnly + ` THEN 'home'
 	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
 	                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
 	                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
@@ -161,29 +206,19 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 	                     AND mem.added < mgr.arrival
 	                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1
 	                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'
+	       WHEN ` + rippleJoinOnly + ` THEN 'ripple_join'
 	       ELSE 'unknown'
 	       END`
 	bucket := derive
 	if wide {
 		bucket = "COALESCE(rra.attribution, " + derive + ")"
 	}
-	return `
-		SELECT day,
-		       COUNT(*) AS replies,
-		       SUM(bucket = 'home') AS home,
-		       SUM(bucket = 'ripple_notified') AS ripple_notified,
-		       SUM(bucket = 'ripple_group') AS ripple_group,
-		       SUM(bucket = 'ripple_reach') AS ripple_reach,
-		       SUM(bucket = 'organic_local') AS organic_local,
-		       SUM(bucket = 'unknown') AS unknown
-		FROM (
+	return `(
 		    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,
 		           ` + bucket + ` AS bucket
 		    FROM rippling_reply_attribution rra` + srcGroup + `
 		    WHERE rra.replied_at >= ? AND rra.replied_at < ?
-		) b
-		GROUP BY day
-		ORDER BY day DESC`
+		) b`
 }
 
 // captureFromCached holds the live-capture boundary once we have found it. Guarded by
@@ -212,10 +247,11 @@ func attributionCaptureFrom(db *gorm.DB) (string, error) {
 	}
 
 	var day string
-	err := db.Raw("SELECT COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '') " +
-		"FROM rippling_reply_attribution " +
-		"WHERE in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL " +
-		"OR client_source IS NOT NULL").Scan(&day).Error
+	// ORM migration site 8240fc74654f (wave 5).
+	err := db.Table("rippling_reply_attribution").
+		Select("COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '')").
+		Where("in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL OR client_source IS NOT NULL").
+		Scan(&day).Error
 	if err != nil {
 		return "", err
 	}
@@ -362,57 +398,77 @@ func Metrics(c *fiber.Ctx) error {
 
 	// §15 raw event counters.
 	section("totals", func() error {
-		return db.Raw("SELECT '' AS day, event, COALESCE(SUM(count), 0) AS count " +
-			"FROM rippling_event_metrics GROUP BY event ORDER BY event").Scan(&totals).Error
+		// ORM migration site 7b13019b71cf (wave 1).
+		return db.Table("rippling_event_metrics").
+			Select("'' AS day, event, COALESCE(SUM(count), 0) AS count").
+			Group("event").
+			Order("event").
+			Scan(&totals).Error
 	})
 
 	section("recent", func() error {
-		return db.Raw("SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count " +
-			"FROM rippling_event_metrics WHERE day >= CURDATE() - INTERVAL 30 DAY " +
-			"ORDER BY day DESC, event").Scan(&recent).Error
+		// ORM migration site bd7c7b0064fb (wave 5).
+		return db.Table("rippling_event_metrics").
+			Select("DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count").
+			Where("day >= CURDATE() - INTERVAL 30 DAY").
+			Order("day DESC, event").
+			Scan(&recent).Error
 	})
 
 	// §16 tuner hotspots – defensive; empty until PR G ships the table.
 	section("hotspots", func() error {
-		return db.Raw("SELECT DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, area_type, area_id, " +
-			"COALESCE(area_name, '') AS area_name, metric, value, baseline, deviation, direction, severity " +
-			"FROM rippling_hotspots WHERE detected_at >= NOW() - INTERVAL 30 DAY " +
-			"ORDER BY (severity = 'alert') DESC, ABS(deviation) DESC LIMIT 100").Scan(&hotspots).Error
+		// ORM migration site 8aaa3043bf0c (wave 5).
+		return db.Table("rippling_hotspots").
+			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, area_type, area_id, COALESCE(area_name, '') AS area_name, metric, value, baseline, deviation, direction, severity").
+			Where("detected_at >= NOW() - INTERVAL 30 DAY").
+			Order("(severity = 'alert') DESC, ABS(deviation) DESC").
+			Limit(100).
+			Scan(&hotspots).Error
 	})
 
 	section("proposed_params", func() error {
-		return db.Raw("SELECT ons_category, max_minutes, COALESCE(rationale, '') AS rationale, " +
-			"DATE_FORMAT(proposed_at, '%Y-%m-%d %H:%i') AS proposed_at " +
-			"FROM rippling_params WHERE status = 'proposed' ORDER BY ons_category").Scan(&proposed).Error
+		// ORM migration site d0a9e5f17cff (wave 5).
+		return db.Table("rippling_params").
+			Select("ons_category, max_minutes, COALESCE(rationale, '') AS rationale, DATE_FORMAT(proposed_at, '%Y-%m-%d %H:%i') AS proposed_at").
+			Where("status = 'proposed'").
+			Order("ons_category").
+			Scan(&proposed).Error
 	})
 
 	// §16.1 / §16.2 volume + reach: overall live-metrics from weekly batch rollup.
 	// Returns the two most recent weekly periods' overall rows so the dashboard can show a
 	// trend. Defensive: returns empty if rippling_live_metrics doesn't exist yet.
 	section("live_metrics", func() error {
-		return db.Raw("SELECT DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size " +
-			"FROM rippling_live_metrics " +
-			"WHERE stratum_type = 'overall' AND period_type = 'weekly' " +
-			"AND period_start >= CURDATE() - INTERVAL 14 DAY " +
-			"ORDER BY period_start DESC, metric").Scan(&liveMetrics).Error
+		// ORM migration site 72175873186c (wave 5).
+		return db.Table("rippling_live_metrics").
+			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size").
+			Where("stratum_type = 'overall' AND period_type = 'weekly' AND period_start >= CURDATE() - INTERVAL 14 DAY").
+			Order("period_start DESC, metric").
+			Scan(&liveMetrics).Error
 	})
 
 	// §15 / §16.5 held-reply friction summary.
 	// Live aggregate of rippling_held_replies by status, with median hold duration for
 	// released rows. Defensive: returns empty if rippling_held_replies doesn't exist yet.
 	section("held_reply_summary", func() error {
-		return db.Raw("SELECT status, COUNT(*) AS count, " +
-			"COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours " +
-			"FROM rippling_held_replies " +
-			"GROUP BY status ORDER BY status").Scan(&heldReplySummary).Error
+		// ORM migration site 7059261a513c (wave 5).
+		return db.Table("rippling_held_replies").
+			Select("status, COUNT(*) AS count, COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours").
+			Group("status").
+			Order("status").
+			Scan(&heldReplySummary).Error
 	})
 
 	// Held replies broken down by origin channel (email / tn / web). Defensive: the `source`
 	// column is added by migration 2026_07_08_000001 — before it runs the query errors and the
 	// slice stays empty (the panel just omits the breakdown), which is fine.
 	section("held_reply_by_source", func() error {
-		return db.Raw("SELECT source, status, COUNT(*) AS count " +
-			"FROM rippling_held_replies GROUP BY source, status ORDER BY source, status").Scan(&heldBySource).Error
+		// ORM migration site 7a72ebd3ef4b (wave 1).
+		return db.Table("rippling_held_replies").
+			Select("source, status, COUNT(*) AS count").
+			Group("source, status").
+			Order("source, status").
+			Scan(&heldBySource).Error
 	})
 
 	// §16.4 timing / capture: latest offline-simulator week.
@@ -420,44 +476,70 @@ func Metrics(c *fiber.Ctx) error {
 	// ripple_algorithm_metrics by migration 2026_06_18_000002). Returns zero struct if the
 	// table is empty or doesn't exist yet.
 	section("capture_summary", func() error {
-		return db.Raw("SELECT DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, " +
-			"pairs_total, pairs_in_time, pairs_late, " +
-			"COALESCE(reply_p50_hours, 0) AS reply_p50_hours, " +
-			"COALESCE(reply_p75_hours, 0) AS reply_p75_hours " +
-			"FROM rippling_algorithm_metrics " +
-			"WHERE `group` = 'all' " +
-			"ORDER BY week_start DESC LIMIT 1").Scan(&capture).Error
+		// ORM migration site 939fde07a522 (wave 5).
+		return db.Table("rippling_algorithm_metrics").
+			Select("DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, pairs_total, pairs_in_time, pairs_late, COALESCE(reply_p50_hours, 0) AS reply_p50_hours, COALESCE(reply_p75_hours, 0) AS reply_p75_hours").
+			Where("`group` = 'all'").
+			Order("week_start DESC").
+			Limit(1).
+			Scan(&capture).Error
 	})
 
 	// (1) Reply attribution channels, per day, from rippling_reply_attribution (captured at
 	//     reply time - the only sound attribution, since replying joins the member to the group).
 	//     Two variants sharing one output shape:
 	//     - wide: read the attribution channel the Go reply handler derived at capture time.
-	//       Rows the backfill hasn't visited (attribution NULL) fold into home/unknown off the
-	//       legacy was_home_member bit.
+	//       Rows the backfill hasn't visited (attribution NULL) are bucketed live off the legacy
+	//       was_home_member bit, qualified by the surviving membership's provenance so a
+	//       ripple-created auto-join reads as ripple_join rather than home.
 	//     - legacy (graded columns not yet migrated, e.g. production before the deploy): derive
 	//       the durable channels live from the notified ledger and rippled-group memberships.
 	//       Correct for notified/group/home; the location channels (ripple_reach/organic_local)
 	//       are not derivable retrospectively (locations drift, polygons grow) so they read 0
 	//       and those replies sit in unknown - attribution_channels_available tells the
 	//       dashboard to say so.
+	// ORM migration site 568a5645fba7 (research review). The attribution-
+	// channel CASE expression is built once, in ReplySourceInnerFrom, and
+	// shared by ReplySourceSplitSQL's raw-SQL form (rippling/metrics_test.go
+	// exercises that function directly) and this GORM chain - so converting
+	// the call site does not duplicate the tested logic, only moves the
+	// OUTER aggregation (which has no logic of its own beyond fixed column
+	// names) into real Select/Group/Order clauses. .Table() holds only the
+	// derived-table subquery, a documented legitimate use of Table() for a
+	// FROM-clause subquery - not the whole statement relocated into
+	// .Select() (see ormharness/bareexists_test.go).
 	section("reply_source_split", func() error {
-		return db.Raw(ReplySourceSplitSQL(attributionWide, srcGroup), gargs()...).Scan(&replySources).Error
+		return db.Table(ReplySourceInnerFrom(attributionWide, srcGroup), gargs()...).
+			Select("day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_join') AS ripple_join, SUM(bucket = 'ripple_reach') AS ripple_reach, SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown").
+			Group("day").
+			Order("day DESC").
+			Scan(&replySources).Error
 	})
 
 	// (1b) Client-reported reply surfaces over the same window (wide schema only - the column
 	//      arrives with the graded-attribution migration). Advisory cross-check of (1).
+	//
+	// ORM migration site 10ee37c98574 (Tier 3 keep-raw review). srcGroup is
+	// the only toggle reachable here (this section only runs when
+	// attributionWide is true) - 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_10ee37c98574
+	// (iznik-server-go/test).
 	section("client_source_summary", func() error {
 		if !attributionWide {
 			return nil
 		}
-		return db.Raw(`
-			SELECT COALESCE(rra.client_source, '(not reported)') AS source,
-			       COUNT(*) AS count
-			FROM rippling_reply_attribution rra`+srcGroup+`
-			WHERE rra.replied_at >= ? AND rra.replied_at < ?
-			GROUP BY source
-			ORDER BY count DESC`, gargs()...).Scan(&clientSources).Error
+		// srcGroup's own "mg.groupid = ?" placeholder (present only when
+		// gid>0) binds to the Table() expression it lives in, not to the
+		// WHERE clause below - unlike gargs()'s flat ordering for db.Raw,
+		// each GORM clause fragment binds only its own args.
+		var tableArgs []interface{}
+		if gid > 0 {
+			tableArgs = []interface{}{gid}
+		}
+		return db.Table("rippling_reply_attribution rra"+srcGroup, tableArgs...).
+			Select("COALESCE(rra.client_source, '(not reported)') AS source, COUNT(*) AS count").
+			Where("rra.replied_at >= ? AND rra.replied_at < ?", start, end).
+			Group("source").Order("count DESC").Scan(&clientSources).Error
 	})
 
 	// (1c) When did LIVE capture start? See attributionCaptureFrom - answered from cache after
@@ -477,12 +559,14 @@ func Metrics(c *fiber.Ctx) error {
 	// so groups that did not ripple in the window have nothing to filter to. Defensive: empty
 	// while rippling is dark.
 	section("groups", func() error {
-		return db.Raw("SELECT DISTINCT g.id AS id, g.nameshort AS name "+
-			"FROM rippling_reach rr "+
-			"JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0 "+
-			"JOIN `groups` g ON g.id = mg.groupid "+
-			"WHERE rr.created_at >= ? AND rr.created_at < ? "+
-			"ORDER BY g.nameshort", start, end).Scan(&groupOpts).Error
+		// ORM migration site a046c8fa9413 (wave 4).
+		return db.Table("rippling_reach rr").
+			Select("DISTINCT g.id AS id, g.nameshort AS name").
+			Joins("JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0").
+			Joins("JOIN `groups` g ON g.id = mg.groupid").
+			Where("rr.created_at >= ? AND rr.created_at < ?", start, end).
+			Order("g.nameshort").
+			Scan(&groupOpts).Error
 	})
 
 	wg.Wait()
@@ -493,7 +577,8 @@ func Metrics(c *fiber.Ctx) error {
 	// channels that are DEFINITELY rippling - unknown is not credited (the old replies-minus-home
 	// number silently attributed every un-evidenced reply to rippling).
 	for i := range replySources {
-		replySources[i].Ripple = replySources[i].RippleNotified + replySources[i].RippleGroup + replySources[i].RippleReach
+		replySources[i].Ripple = replySources[i].RippleNotified + replySources[i].RippleGroup +
+			replySources[i].RippleJoin + replySources[i].RippleReach
 		if replySources[i].Replies > 0 {
 			replySources[i].RipplePct = float64(replySources[i].Ripple) / float64(replySources[i].Replies) * 100
 		}

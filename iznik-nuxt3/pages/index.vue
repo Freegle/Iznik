@@ -226,7 +226,10 @@ function goHome() {
 
     if (route.path !== nextroute) {
       nextTick(() => {
-        router.push(nextroute)
+        // Replace, don't push: leaving / in the history means the back
+        // button returns to a page that immediately redirects forward again,
+        // so the app's history never empties and back can't exit the app.
+        router.replace(nextroute)
       })
     }
   } catch (e) {

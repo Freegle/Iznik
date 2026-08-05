@@ -216,6 +216,16 @@ do_sync() {
             fi
             echo "[$timestamp] $service: $filename"
 
+            # docker cp fails outright when the target's parent directory does
+            # not exist in the container, so the first file of any NEW package
+            # never lands and every later edit to it fails the same way. The
+            # symptom is a build error naming a package that plainly exists on
+            # the host, which is thoroughly confusing to debug.
+            local target_dir="${target_path%/*}"
+            if [[ -n "$target_dir" && "$target_dir" != "$target_path" ]]; then
+                docker exec "$container" mkdir -p "$target_dir" >/dev/null 2>&1 || true
+            fi
+
             local cp_error
             if cp_error=$(docker cp "$file_path" "$container:$target_path" 2>&1); then
                 echo "  ✓ Synced to $container"

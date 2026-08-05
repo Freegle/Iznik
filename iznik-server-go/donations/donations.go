@@ -13,6 +13,8 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const TYPE_PAYPAL = "PayPal"
@@ -94,17 +96,24 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 	// 1. Registered address, exact or canonical (reuses the shared util so the
 	//    canon form matches how addresses are stored).
 	canon := user.CanonicalizeEmail(email)
-	gdb.Raw("SELECT userid FROM users_emails WHERE (email = ? OR canon = ?) AND userid IS NOT NULL LIMIT 1",
-		email, canon).Scan(&userID)
+	// ORM migration site 5ae46192a944 (wave 1).
+	gdb.Table("users_emails").Select("userid").
+		Where("(email = ? OR canon = ?) AND userid IS NOT NULL", email, canon).
+		Limit(1).
+		Scan(&userID)
 	if userID > 0 {
 		return userID
 	}
 
 	// 2. Prior donation from the same Payer, linked to a still-valid user.
-	gdb.Raw("SELECT ud.userid FROM users_donations ud "+
-		"JOIN users u ON u.id = ud.userid "+
-		"WHERE ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL "+
-		"ORDER BY ud.timestamp DESC LIMIT 1", email).Scan(&userID)
+	// ORM migration site 36a30e931616 (wave 4).
+	gdb.Table("users_donations ud").
+		Select("ud.userid").
+		Joins("JOIN users u ON u.id = ud.userid").
+		Where("ud.Payer = ? AND ud.userid IS NOT NULL AND u.deleted IS NULL", email).
+		Order("ud.timestamp DESC").
+		Limit(1).
+		Scan(&userID)
 	return userID
 }
 
@@ -130,7 +139,8 @@ func GetDonations(c *fiber.Ctx) error {
 	target = getDonationTarget()
 	if groupID != "" {
 		var fundingtarget *int
-		db.Raw("SELECT fundingtarget FROM `groups` WHERE id = ?", groupID).Scan(&fundingtarget)
+		// ORM migration site e05d3c7dc0c1 (wave 1).
+		db.Table("groups").Select("fundingtarget").Where("id = ?", groupID).Scan(&fundingtarget)
 		if fundingtarget != nil && *fundingtarget > 0 {
 			target = *fundingtarget
 		}
@@ -141,34 +151,29 @@ func GetDonations(c *fiber.Ctx) error {
 	// Exclude certain payers (eBay partnerships, PayPal Giving Fund) from totals
 	excludedPayers := getExcludedPayers()
 
-	query := `
-		SELECT COALESCE(SUM(GrossAmount), 0) AS raised
-		FROM users_donations
-	`
-
-	if groupID != "" {
-		query += ` INNER JOIN memberships ON users_donations.userid = memberships.userid
-		           AND memberships.groupid = ?
-		`
-	}
-
-	query += ` WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01')`
-
-	// Build exclusion condition dynamically
-	for range excludedPayers {
-		query += ` AND Payer != ?`
-	}
-
-	// Build query arguments
-	var args []interface{}
-	if groupID != "" {
-		args = append(args, groupID)
-	}
+	// ORM migration site 31fea9e6f321 (Tier 3 keep-raw review). groupID != ""
+	// is the only toggle that changes the statement's SHAPE (it drives
+	// whether the memberships join is present); the number of excluded
+	// payers is env-configured (DONATIONS_EXCLUDE), not per-request user
+	// input, so it is effectively fixed at the default count in practice -
+	// 2 possible rendered forms, both declared in ormharness/shapes.json
+	// and proven by TestTier3Shapes_31fea9e6f321 (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	whereSQL := "timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01')"
+	var whereArgs []interface{}
 	for _, email := range excludedPayers {
-		args = append(args, email)
+		whereSQL += " AND Payer != ?"
+		whereArgs = append(whereArgs, email)
 	}
 
-	db.Raw(query, args...).Scan(&raised)
+	tx := db.Table("users_donations").Select("COALESCE(SUM(GrossAmount), 0) AS raised")
+	if groupID != "" {
+		tx = tx.Joins("INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ?", groupID)
+	}
+	tx.Where(whereSQL, whereArgs...).Scan(&raised)
 
 	return c.JSON(fiber.Map{
 		"target": target,
@@ -213,7 +218,8 @@ func AddDonation(c *fiber.Ctx) error {
 	// Permission check: need GiftAid permission for non-zero amounts.
 	if req.Amount > 0 {
 		var permissions *string
-		db.Raw("SELECT permissions FROM users WHERE id = ?", myid).Scan(&permissions)
+		// ORM migration site 86e67ec8afc4 (wave 1).
+		db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
 
 		hasGiftAid := false
 		if permissions != nil {
@@ -237,11 +243,11 @@ func AddDonation(c *fiber.Ctx) error {
 		ID   uint64
 		Name string
 	}
-	db.Raw(`SELECT id,
-		COALESCE(NULLIF(fullname, ''),
-		         NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''),
-		         '') AS name
-		FROM users WHERE id = ?`, req.UserID).Scan(&donor)
+	// ORM migration site 8f09f277831b (wave 1).
+	db.Table("users").
+		Select("id, COALESCE(NULLIF(fullname, ''), NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''), '') AS name").
+		Where("id = ?", req.UserID).
+		Scan(&donor)
 
 	if donor.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid userid")
@@ -258,28 +264,29 @@ func AddDonation(c *fiber.Ctx) error {
 	//
 	// Second pass: if no external address exists (e.g. social-login-only users whose
 	// only email is the alias), fall back to any email including the alias.
-	db.Raw(`SELECT email FROM users_emails
-		WHERE userid = ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE ?
-		  AND email NOT LIKE '%@yahoogroups.%'
-		ORDER BY preferred DESC, added DESC
-		LIMIT 1`,
-		req.UserID,
-		"%@"+utils.USER_DOMAIN,
-		"%@groups.ilovefreegle.org",
-		"%@direct.ilovefreegle.org",
-		"%@republisher.freegle.in",
-	).Scan(&preferredEmail)
+	// ORM migration site 9330b7d3045a (wave 1).
+	db.Table("users_emails").
+		Select("email").
+		Where("userid = ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE '%@yahoogroups.%'",
+			req.UserID,
+			"%@"+utils.USER_DOMAIN,
+			"%@groups.ilovefreegle.org",
+			"%@direct.ilovefreegle.org",
+			"%@republisher.freegle.in",
+		).
+		Order("preferred DESC, added DESC").
+		Limit(1).
+		Scan(&preferredEmail)
 
 	if preferredEmail == "" {
 		// Second pass: no external email found; accept any email including our-domain aliases.
-		db.Raw(`SELECT email FROM users_emails
-			WHERE userid = ?
-			ORDER BY preferred DESC, added DESC
-			LIMIT 1`, req.UserID).Scan(&preferredEmail)
+		// ORM migration site 3b4f1c2cf9eb (wave 1).
+		db.Table("users_emails").
+			Select("email").
+			Where("userid = ?", req.UserID).
+			Order("preferred DESC, added DESC").
+			Limit(1).
+			Scan(&preferredEmail)
 	}
 
 	if preferredEmail == "" {
@@ -291,11 +298,22 @@ func AddDonation(c *fiber.Ctx) error {
 		req.UserID, time.Now().UTC().Format("2006-01-02 15:04:05"), SOURCE_BANK_TRANSFER)
 
 	// Insert donation with ON DUPLICATE KEY UPDATE (TransactionID is unique).
-	result := db.Exec(`INSERT INTO users_donations
-		(userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, type, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE userid = VALUES(userid), timestamp = VALUES(timestamp)`,
-		req.UserID, preferredEmail, name, req.Date, transactionID, req.Amount, TYPE_EXTERNAL, SOURCE_BANK_TRANSFER)
+	// ORM migration site 6204c4ea5ebe (wave 3).
+	result := db.Table("users_donations").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},
+			{Column: clause.Column{Name: "timestamp"}, Value: clause.Column{Table: "excluded", Name: "timestamp"}},
+		},
+	}).Create(map[string]interface{}{
+		"userid":           req.UserID,
+		"Payer":            preferredEmail,
+		"PayerDisplayName": name,
+		"timestamp":        req.Date,
+		"TransactionID":    transactionID,
+		"GrossAmount":      req.Amount,
+		"type":             TYPE_EXTERNAL,
+		"source":           SOURCE_BANK_TRANSFER,
+	})
 
 	if result.Error != nil {
 		log.Printf("Failed to add donation for user %d: %v", req.UserID, result.Error)
@@ -304,7 +322,8 @@ func AddDonation(c *fiber.Ctx) error {
 
 	// Get the inserted ID.
 	var donationID uint64
-	db.Raw("SELECT id FROM users_donations WHERE TransactionID = ?", transactionID).Scan(&donationID)
+	// ORM migration site e2d485938df9 (wave 1).
+	db.Table("users_donations").Select("id").Where("TransactionID = ?", transactionID).Scan(&donationID)
 
 	if donationID == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Add failed")
@@ -314,12 +333,18 @@ func AddDonation(c *fiber.Ctx) error {
 	// the daily mail:donations:thank-prep digest, not a per-donation email.
 	if req.Amount > 0 {
 		var giftAidPeriod *string
-		db.Raw("SELECT period FROM giftaid WHERE userid = ? AND deleted IS NULL LIMIT 1", req.UserID).Scan(&giftAidPeriod)
+		// ORM migration site 21e8dbdd136c (wave 1).
+		db.Table("giftaid").Select("period").Where("userid = ? AND deleted IS NULL", req.UserID).Limit(1).Scan(&giftAidPeriod)
 
 		if giftAidPeriod == nil || *giftAidPeriod == PERIOD_THIS {
 			// Create a GiftAid notification for the user.
-			db.Exec("INSERT INTO users_notifications (touser, type, timestamp, seen) VALUES (?, 'GiftAid', NOW(), 0)",
-				req.UserID)
+			// ORM migration site dcb461443c86 (wave 2).
+			db.Table("users_notifications").Create(map[string]interface{}{
+				"touser":    req.UserID,
+				"type":      gorm.Expr("'GiftAid'"),
+				"timestamp": gorm.Expr("NOW()"),
+				"seen":      gorm.Expr("0"),
+			})
 		}
 	}
 
@@ -408,7 +433,8 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		var userID *uint64
 		if d.Email != "" {
 			var uid uint64
-			db.Raw("SELECT userid FROM users_emails WHERE email = ? AND userid IS NOT NULL LIMIT 1", d.Email).Scan(&uid)
+			// ORM migration site 16c4a7f6e566 (wave 1).
+			db.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", d.Email).Limit(1).Scan(&uid)
 			if uid > 0 {
 				userID = &uid
 			}
@@ -417,15 +443,24 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		// PayPal Giving Fund donations: type=PayPal, source from program mapping.
 		// Gift Aid is already claimed by PayPal — giftaidconsent defaults to 0
 		// which means GiftAidClaimService will never try to reclaim it.
-		result := db.Exec(`INSERT INTO users_donations
-			(userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, type, source)
-			VALUES (?, ?, ?, ?, ?, ?, 'PayPal', ?)
-			ON DUPLICATE KEY UPDATE
-				userid = VALUES(userid),
-				timestamp = VALUES(timestamp),
-				source = VALUES(source),
-				GrossAmount = VALUES(GrossAmount)`,
-			userID, d.Email, d.DonorName, d.Date, d.TransactionID, d.Amount, source)
+		// ORM migration site e71c28654c59 (wave 3).
+		result := db.Table("users_donations").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},
+				{Column: clause.Column{Name: "timestamp"}, Value: clause.Column{Table: "excluded", Name: "timestamp"}},
+				{Column: clause.Column{Name: "source"}, Value: clause.Column{Table: "excluded", Name: "source"}},
+				{Column: clause.Column{Name: "GrossAmount"}, Value: clause.Column{Table: "excluded", Name: "GrossAmount"}},
+			},
+		}).Create(map[string]interface{}{
+			"userid":           userID,
+			"Payer":            d.Email,
+			"PayerDisplayName": d.DonorName,
+			"timestamp":        d.Date,
+			"TransactionID":    d.TransactionID,
+			"GrossAmount":      d.Amount,
+			"type":             gorm.Expr("'PayPal'"),
+			"source":           source,
+		})
 
 		if result.Error != nil {
 			log.Printf("Bulk donation insert failed for txid %s: %v", d.TransactionID, result.Error)

@@ -55,6 +55,7 @@
                 Show {{ duplicateCount }} combined posts separately
               </b-dropdown-item>
               <b-dropdown-item
+                v-if="!isApp"
                 :href="'/chitchat/' + newsfeed?.id"
                 target="_blank"
               >
@@ -232,7 +233,7 @@
                   spellcheck="true"
                   :placeholder="commentPlaceholder"
                   class="p-0 ps-2 pt-2 entersend"
-                  autocapitalize="none"
+                  :autocapitalize="autocapitalizeMode"
                   @keydown.enter.shift.exact.prevent="newlineComment"
                   @keydown.alt.shift.enter.exact.prevent="newlineComment"
                   @focus="focusedComment"
@@ -323,6 +324,7 @@ import {
 import AutoHeightTextarea from './AutoHeightTextarea'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 import NewsReplies from '~/components/NewsReplies'
 import { untwem } from '~/composables/useTwem'
 import {
@@ -334,6 +336,7 @@ import {
 } from '~/composables/useScrollAnchor'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
+import { isIOS } from '~/composables/useIsIOS'
 
 // Use standard import to avoid screen-flicker
 import NewsRefer from '~/components/NewsRefer'
@@ -369,6 +372,12 @@ const props = defineProps({
 
 const emit = defineEmits(['rendered', 'expand-duplicates'])
 
+// iOS auto-capitalise engages the virtual Shift key, so Return at a sentence
+// start arrives as shift+enter and the keydown.enter.exact send never fires
+// (angular/angular#32963 - iOS keyboard design, not a fixed bug). Keep the
+// autocapitalize="none" workaround on iOS only.
+const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
+
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
 const NewsConvertModal = defineAsyncComponent(() =>
   import('./NewsConvertModal')
@@ -387,7 +396,13 @@ const teamStore = useTeamStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
 const { chitChatMod, supportOrAdmin } = useMe()
+
+// In the app there is no browser to open a new window in - target="_blank"
+// bounces through the OS back into the app, which just reopens it. Hide the
+// option there.
+const isApp = computed(() => mobileStore.isApp)
 
 const isMobile = computed(() => {
   return miscStore.breakpoint === 'xs' || miscStore.breakpoint === 'sm'

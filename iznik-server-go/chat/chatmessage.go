@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
 )
 
@@ -193,40 +194,47 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	// Mods reviewing a chat must see messages from soft-deleted users (V1 parity:
 	// the PHP GetMessages query had no users.deleted filter). Regular users only
 	// see their own messages when the sender has been deleted.
-	var deletedFilter string
+	//
+	// ORM migration site f557717fbfce (Tier 3 keep-raw review). Four independent
+	// toggles - modAccess (which also drives the deleted-sender filter),
+	// excludeID>0, descending, and limit>0 - give 2x2x2x2 = 16 possible rendered
+	// forms, all declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_f557717fbfce (iznik-server-go/test). The WHERE is built
+	// as a single string and passed to ONE Where() call rather than chained:
+	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	whereSQL := "chatid = ? AND " + reviewFilter
+	whereArgs := []interface{}{chatID, userID}
+
 	if !modAccess {
-		deletedFilter = " AND (users.deleted IS NULL OR users.id = ?)"
-	}
-
-	query := "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages " +
-		"LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id " +
-		"INNER JOIN users ON users.id = chat_messages.userid " +
-		"WHERE chatid = ? AND " + reviewFilter + deletedFilter
-
-	var args []interface{}
-	if modAccess {
-		args = []interface{}{chatID, userID}
-	} else {
-		args = []interface{}{chatID, userID, userID}
+		whereSQL += " AND (users.deleted IS NULL OR users.id = ?)"
+		whereArgs = append(whereArgs, userID)
 	}
 
 	if excludeID > 0 {
-		query += " AND chat_messages.id != ?"
-		args = append(args, excludeID)
+		whereSQL += " AND chat_messages.id != ?"
+		whereArgs = append(whereArgs, excludeID)
 	}
 
+	tx := db.Table("chat_messages").
+		Select("chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods").
+		Joins("LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id").
+		Joins("INNER JOIN users ON users.id = chat_messages.userid").
+		Where(whereSQL, whereArgs...)
+
 	if descending {
-		query += " ORDER BY date DESC"
+		tx = tx.Order("date DESC")
 	} else {
-		query += " ORDER BY date ASC"
+		tx = tx.Order("date ASC")
 	}
 
 	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+		tx = tx.Limit(limit)
 	}
 
 	messages := []ChatMessageQuery{}
-	db.Raw(query, args...).Scan(&messages)
+	tx.Scan(&messages)
 
 	// Flag messages held by the rippling reply-hold engine (a non-released rippling_held_replies
 	// row means the message is delivery-blocked — not a manual mod hold, which is chat_messages_held).
@@ -236,18 +244,23 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	// sender uses this to show a "waiting to send — we'll deliver it when the item reaches your
 	// area" indicator on their out-of-reach reply. Batch lookup to avoid N+1.
 	if len(messages) > 0 {
-		msgIDs := make([]string, 0, len(messages))
+		msgIDs := make([]uint64, 0, len(messages))
 		idxByID := make(map[uint64]int, len(messages))
 		for ix, m := range messages {
-			msgIDs = append(msgIDs, fmt.Sprintf("%d", m.ID))
+			msgIDs = append(msgIDs, m.ID)
 			idxByID[m.ID] = ix
 		}
 		type ripplingHeld struct {
 			Chatmsgid uint64 `gorm:"column:chatmsgid"`
 		}
+		// ORM migration site 7470288c95b7 (tier9). msgIDs is bound directly
+		// as a []uint64 slice rather than formatted as decimal text and
+		// joined into the SQL string.
 		var held []ripplingHeld
-		db.Raw("SELECT chatmsgid FROM rippling_held_replies WHERE chatmsgid IN (" +
-			strings.Join(msgIDs, ",") + ") AND status <> 'released'").Scan(&held)
+		db.Table("rippling_held_replies").
+			Select("chatmsgid").
+			Where("chatmsgid IN ? AND status <> 'released'", msgIDs).
+			Scan(&held)
 		for _, h := range held {
 			if ix, ok := idxByID[h.Chatmsgid]; ok {
 				if modAccess || messages[ix].Userid == userID {
@@ -308,7 +321,8 @@ func GetChatMessages(c *fiber.Ctx) error {
 		Groupid uint64
 	}
 	var room roomInfo
-	db.Raw("SELECT user1, user2, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&room)
+	// ORM migration site 3ae5a9640854 (wave 1).
+	db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
 
 	if room.User1 == 0 && room.User2 == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
@@ -386,52 +400,103 @@ type replyReachEvidence struct {
 func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach replyReachEvidence, clientSource *string) {
 	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
 	// predates this reply by more than the join grace (300s)? A join made to reply
-	// (added ~ now) is excluded.
+	// (added ~ now) is excluded, and so is a membership rippling itself created - see
+	// wasRippleJoin below.
+	// ORM migration site 848af7d73bfe (Tier 2 keep-raw review). BuildClauses
+	// override: see amp.go's ValidateToken for the mechanism and
+	// ormharness/bareexists_test.go for the proof.
 	var wasHome int
-	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
-		"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-		"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
-		"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
-		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasHome)
+	tx848af7d73bfe := db.Table("messages_groups").Select(
+		"EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid)
+	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
+	tx848af7d73bfe.Scan(&wasHome)
 
 	if !rippling.AttributionSchemaReady(db) {
-		db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) "+
-			"VALUES (?, ?, NOW(), ?)", refmsgid, myid, wasHome)
+		// ORM migration site 49e43e92d1e5 (wave 3).
+		db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"msgid":           refmsgid,
+			"userid":          myid,
+			"replied_at":      gorm.Expr("NOW()"),
+			"was_home_member": wasHome,
+		})
 		return
 	}
 
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
+	// ORM migration site 582f5b4bb7ce (Tier 2 keep-raw review). Same
+	// BuildClauses mechanism as above.
 	var wasNotified int
-	db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach_notified WHERE msgid = ? AND userid = ?)",
-		refmsgid, myid).Scan(&wasNotified)
+	tx582f5b4bb7ce := db.Table("rippling_reach_notified").Select(
+		"EXISTS(SELECT 1 FROM rippling_reach_notified WHERE msgid = ? AND userid = ?)",
+		refmsgid, myid)
+	tx582f5b4bb7ce.Statement.BuildClauses = []string{"SELECT"}
+	tx582f5b4bb7ce.Scan(&wasNotified)
 
 	// Established member of a group the post rippled INTO: added before the rippled copy
 	// arrived, so they were already there when it rippled in and saw it in their own group's
 	// feed/digest because of the ripple. The cut is the copy's arrival, NOT the 300s grace:
 	// the join-to-reply flow can join the rippled copy's group, and a pre-arrival membership
 	// is the only sound "they were already there" test.
+	// ORM migration site fc0c6fd4f6df (Tier 2 keep-raw review). Same
+	// BuildClauses mechanism as above.
 	var wasRippleGroup int
-	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
-		"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-		"AND mem.collection = ? AND mem.added < mg.arrival "+
-		"WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0)",
-		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasRippleGroup)
+	txfc0c6fd4f6df := db.Table("messages_groups").Select(
+		"EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+			"AND mem.collection = ? AND mem.added < mg.arrival "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid)
+	txfc0c6fd4f6df.Statement.BuildClauses = []string{"SELECT"}
+	txfc0c6fd4f6df.Scan(&wasRippleGroup)
+
+	// Member of an ORIGIN group of the post, but only via a membership RIPPLING created (their
+	// own post rippled into that group, so we auto-joined them - ExpandService in iznik-batch).
+	// They saw this post in that group's feed/digest, and they are only in that group because of
+	// an earlier ripple, so the reply belongs to rippling and not to home. Same 300s join grace
+	// as wasHome. Both bits can be set at once on a cross-post (one origin group joined
+	// ordinarily, another via a ripple); the ladder gives home precedence, because the ordinary
+	// membership alone would have shown them the post.
+	// Converted to the same BuildClauses form as its wasHome sibling above: the
+	// statement arrived from master as db.Raw, and this branch's Go inventory
+	// holds raw at 0.
+	var wasRippleJoin int
+	txWasRippleJoin := db.Table("messages_groups").Select(
+		"EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid)
+	txWasRippleJoin.Statement.BuildClauses = []string{"SELECT"}
+	txWasRippleJoin.Scan(&wasRippleJoin)
 
 	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
 	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the
 	// gate's reach lookup when it ran; only query rippling_reach (which may not exist yet -
 	// best-effort) when it didn't.
+	// ORM migration site 461f55d25b16 (Tier 2 keep-raw review). Same
+	// BuildClauses mechanism as above.
 	var postHadRippled int
-	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups WHERE msgid = ? AND rippled_in = 1 AND deleted = 0)",
-		refmsgid).Scan(&postHadRippled)
+	tx461f55d25b16 := db.Table("messages_groups").Select(
+		"EXISTS(SELECT 1 FROM messages_groups WHERE msgid = ? AND rippled_in = 1 AND deleted = 0)",
+		refmsgid)
+	tx461f55d25b16.Statement.BuildClauses = []string{"SELECT"}
+	tx461f55d25b16.Scan(&postHadRippled)
 	if postHadRippled == 0 && reach.reachRows > 0 {
 		postHadRippled = 1
 	}
 	if postHadRippled == 0 && !reach.checked {
+		// ORM migration site a4250aa0ada3 (Tier 2 keep-raw review). Same
+		// BuildClauses mechanism as above.
 		var hasReach int
-		if err := db.Raw("SELECT EXISTS(SELECT 1 FROM rippling_reach WHERE msgid = ?)",
-			refmsgid).Scan(&hasReach).Error; err == nil && hasReach == 1 {
+		txa4250aa0ada3 := db.Table("rippling_reach").Select(
+			"EXISTS(SELECT 1 FROM rippling_reach WHERE msgid = ?)", refmsgid)
+		txa4250aa0ada3.Statement.BuildClauses = []string{"SELECT"}
+		if err := txa4250aa0ada3.Scan(&hasReach).Error; err == nil && hasReach == 1 {
 			postHadRippled = 1
 		}
 	}
@@ -443,12 +508,18 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		v := 0
 		// Inside any origin group's catchment? polyindex is the group's DPA-or-CGA; groups
 		// with only a POINT placeholder can't contain anything and are excluded.
-		db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
-			"INNER JOIN `groups` g ON g.id = mg.groupid "+
-			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
-			"AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-			"AND ST_Contains(g.polyindex, ST_SRID(POINT(?, ?), ?)))",
-			refmsgid, reach.lng, reach.lat, utils.SRID).Scan(&v)
+		// ORM migration site 4fc47623d055 (Tier 2 keep-raw review; wrongly
+		// marked GENUINELY-RAW under "Spatial" - same BuildClauses mechanism
+		// as amp.go's bare-EXISTS conversions applies unchanged).
+		tx4fc47623d055 := db.Table("messages_groups").Select(
+			"EXISTS(SELECT 1 FROM messages_groups mg "+
+				"INNER JOIN `groups` g ON g.id = mg.groupid "+
+				"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 "+
+				"AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+				"AND ST_Contains(g.polyindex, ST_SRID(POINT(?, ?), ?)))",
+			refmsgid, reach.lng, reach.lat, utils.SRID)
+		tx4fc47623d055.Statement.BuildClauses = []string{"SELECT"}
+		tx4fc47623d055.Scan(&v)
 		inOrigin = &v
 		if reach.checked {
 			r := 0
@@ -459,14 +530,24 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		}
 	}
 
-	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, postHadRippled, inOrigin, inReach)
+	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, wasRippleJoin,
+		postHadRippled, inOrigin, inReach)
 
-	db.Exec("INSERT IGNORE INTO rippling_reply_attribution "+
-		"(msgid, userid, replied_at, was_home_member, was_notified, was_ripple_group_member, "+
-		"in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) "+
-		"VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
-		refmsgid, myid, wasHome, wasNotified, wasRippleGroup, inOrigin, inReach, postHadRippled,
-		attribution, rippling.SanitizeClientSource(clientSource))
+	// ORM migration site db03a274a8a2 (wave 3).
+	db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"msgid":                   refmsgid,
+		"userid":                  myid,
+		"replied_at":              gorm.Expr("NOW()"),
+		"was_home_member":         wasHome,
+		"was_notified":            wasNotified,
+		"was_ripple_group_member": wasRippleGroup,
+		"was_ripple_join":         wasRippleJoin,
+		"in_origin_catchment":     inOrigin,
+		"in_reach":                inReach,
+		"post_had_rippled":        postHadRippled,
+		"attribution":             attribution,
+		"client_source":           rippling.SanitizeClientSource(clientSource),
+	})
 }
 
 func CreateChatMessage(c *fiber.Ctx) error {
@@ -511,12 +592,20 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	chatid := []ChatRoomListEntry{}
 
 	// Allow user1, user2, or (for User2Mod chats) a moderator of the chat's group.
-	db.Raw("SELECT id FROM chat_rooms WHERE id = ? AND user1 = ? "+
-		"UNION SELECT id FROM chat_rooms WHERE id = ? AND user2 = ? "+
-		"UNION SELECT cr.id FROM chat_rooms cr "+
-		"INNER JOIN memberships m ON m.groupid = cr.groupid AND m.userid = ? AND m.role IN (?, ?) "+
-		"WHERE cr.id = ? AND cr.chattype = ?",
-		id, myid, id, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, id, utils.CHAT_TYPE_USER2MOD).Scan(&chatid)
+	// ORM migration site 33ad97a3417c (Tier 2 keep-raw review). Top-level
+	// UNION, nothing wrapping it - same BuildClauses={"SELECT"} mechanism as
+	// amp.go's bare-EXISTS conversions (see the comment there and
+	// ormharness/bareexists_test.go); the whole "SELECT ... UNION SELECT ..."
+	// text goes to .Select() as one fragment.
+	tx33ad97a3417c := db.Table("chat_rooms").Select(
+		"id FROM chat_rooms WHERE id = ? AND user1 = ? "+
+			"UNION SELECT id FROM chat_rooms WHERE id = ? AND user2 = ? "+
+			"UNION SELECT cr.id FROM chat_rooms cr "+
+			"INNER JOIN memberships m ON m.groupid = cr.groupid AND m.userid = ? AND m.role IN (?, ?) "+
+			"WHERE cr.id = ? AND cr.chattype = ?",
+		id, myid, id, myid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, id, utils.CHAT_TYPE_USER2MOD)
+	tx33ad97a3417c.Statement.BuildClauses = []string{"SELECT"}
+	tx33ad97a3417c.Scan(&chatid)
 
 	if len(chatid) == 0 {
 		// mods can also post to User2User chats if they moderate
@@ -527,7 +616,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			Groupid uint64
 		}
 		var room roomBasic
-		db.Raw("SELECT user1, user2, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&room)
+		// ORM migration site 3194998a3535 (wave 1).
+		db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
 
 		if room.User1 == 0 && room.User2 == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
@@ -542,8 +632,13 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// the client can show "this post is no longer available" instead. (CreateChatMessageLoveJunk
 	// already does the equivalent check; the in-app path never had it.)
 	if payload.Refmsgid != nil {
+		// ORM migration site a74101bfbfa2 (Tier 2 keep-raw review). Same
+		// BuildClauses mechanism as recordReplyAttribution's conversions above.
 		var refExists int
-		db.Raw("SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND deleted IS NULL)", *payload.Refmsgid).Scan(&refExists)
+		txa74101bfbfa2 := db.Table("messages").Select(
+			"EXISTS(SELECT 1 FROM messages WHERE id = ? AND deleted IS NULL)", *payload.Refmsgid)
+		txa74101bfbfa2.Statement.BuildClauses = []string{"SELECT"}
+		txa74101bfbfa2.Scan(&refExists)
 		if refExists == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "refmsg_gone")
 		}
@@ -567,7 +662,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	reach := replyReachEvidence{}
 	holdReply := false
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", id).Scan(&roomType)
+		// ORM migration site 79c2ce2c99fc (wave 1).
+		db.Table("chat_rooms").Select("chattype").Where("id = ?", id).Scan(&roomType)
 		if roomType == utils.CHAT_TYPE_USER2USER {
 			latlng := user.GetLatLng(myid)
 			if latlng.Lat != 0 || latlng.Lng != 0 {
@@ -589,16 +685,33 @@ func CreateChatMessage(c *fiber.Ctx) error {
 				}
 				var gateErr error
 				if rippling.ReachBoundsReady(db) {
+					// ORM migration site 67cd5e1cc4ec (Tier 3 keep-raw review).
+					// ReachInReachExpr always returns the same expression text
+					// (only the bind args vary per call) - the extractor
+					// couldn't fold that across a function call, but there is
+					// exactly one rendered form. Declared (as a single shape)
+					// in ormharness/shapes.json and proven by
+					// TestTier3Shapes_67cd5e1cc4ec (iznik-server-go/test).
 					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
-					args := append(exprArgs, *payload.Refmsgid)
-					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach "+
-						"FROM rippling_reach rr "+
-						"WHERE rr.msgid = ?", args...).Scan(&rc).Error
+					// Select takes ONLY the expression's own binds. Appending
+					// Refmsgid here as well - while Where binds it too - sent one
+					// argument more than the statement had placeholders, and
+					// MySQL rejected it with "expected 13 arguments, got 14".
+					//
+					// Layer 1 did not catch it: the rendered SQL TEXT is identical
+					// either way, and the golden comparison never counts binds.
+					// Only executing it fails, which is what the chat tests did.
+					gateErr = db.Table("rippling_reach rr").
+						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach", exprArgs...).
+						Where("rr.msgid = ?", *payload.Refmsgid).
+						Scan(&rc).Error
 				} else {
-					gateErr = db.Raw("SELECT COUNT(*) AS reach_rows, "+
-						"COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach "+
-						"FROM rippling_reach WHERE msgid = ?",
-						latlng.Lng, latlng.Lat, utils.SRID, *payload.Refmsgid).Scan(&rc).Error
+					// ORM migration site f31ae2ffe181 (wave 5).
+					gateErr = db.Table("rippling_reach").
+						Select("COUNT(*) AS reach_rows, COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach",
+							latlng.Lng, latlng.Lat, utils.SRID).
+						Where("msgid = ?", *payload.Refmsgid).
+						Scan(&rc).Error
 				}
 				if gateErr == nil {
 					reach.checked = true
@@ -646,12 +759,26 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
 	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
 	if holdReply {
-		db.Exec("INSERT INTO rippling_held_replies "+
-			"(chatid, chatmsgid, msgid, replieruserid, source, lat, lng, status, created_at) "+
-			"VALUES (?, ?, ?, ?, 'web', ?, ?, 'held', NOW())",
-			id, newid, *payload.Refmsgid, myid, reach.lat, reach.lng)
-		db.Exec("INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), 'held', 1) " +
-			"ON DUPLICATE KEY UPDATE count = count + 1")
+		// ORM migration site e9be2e263367 (wave 2).
+		db.Table("rippling_held_replies").Create(map[string]interface{}{
+			"chatid":        id,
+			"chatmsgid":     newid,
+			"msgid":         *payload.Refmsgid,
+			"replieruserid": myid,
+			"source":        gorm.Expr("'web'"),
+			"lat":           reach.lat,
+			"lng":           reach.lng,
+			"status":        gorm.Expr("'held'"),
+			"created_at":    gorm.Expr("NOW()"),
+		})
+		// ORM migration site ac238fc96e7e (wave 3).
+		db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+		}).Create(map[string]interface{}{
+			"day":   gorm.Expr("CURDATE()"),
+			"event": gorm.Expr("'held'"),
+			"count": gorm.Expr("1"),
+		})
 	}
 
 	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the
@@ -675,7 +802,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// hiccup must never fail the reply.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		var refGroup uint64
-		db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? ORDER BY groupid LIMIT 1", *payload.Refmsgid).Scan(&refGroup)
+		// ORM migration site 649b3df011ed (wave 1).
+		db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
 		if refGroup > 0 {
 			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
 		}
@@ -694,7 +822,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			Chattype string
 			Groupid  uint64
 		}
-		db.Raw("SELECT chattype, COALESCE(groupid, 0) AS groupid FROM chat_rooms WHERE id = ?", id).Scan(&reportRoom)
+		// ORM migration site d825142662c8 (wave 1).
+		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&reportRoom)
 		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
 			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
 		}
@@ -703,15 +832,20 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	if payload.Imageid != nil {
 		// Update the chat image to link it to this chat message.  This also stops it being purged in
 		// purge_chats.
-		db.Exec("UPDATE chat_images SET chatmsgid = ? WHERE id = ?;", newid, *payload.Imageid)
+		// ORM migration site b443c0f36dd2 (wave 2). Converted together with its
+		// identical twin in CreateChatMessageLoveJunk (8eddd54c5c0b): a half-
+		// converted pair renumbers the survivor's site ID, so gate (h) refuses
+		// the split state.
+		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
 	}
 
 	// If anyone has closed this chat, reopen it so it reappears in their list.
 	// Blocked chats are left as-is.  Only applies to User2User and User2Mod chats.
-	result := db.Exec("UPDATE chat_roster SET status = ? WHERE chatid = ? AND status = ? "+
-		"AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
-		utils.CHAT_STATUS_OFFLINE, id, utils.CHAT_STATUS_CLOSED,
-		id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD)
+	// ORM migration site 739b42667028 (wave 5).
+	result := db.Table("chat_roster").
+		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
+			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
+		Update("status", utils.CHAT_STATUS_OFFLINE)
 
 	if result.Error != nil {
 		stdlog.Printf("Failed to reopen closed chat roster for chat %d: %v", id, result.Error)
@@ -753,10 +887,13 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	var m msgInfo
 
-	db.Raw("SELECT fromuser, groupid FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"INNER JOIN users ON users.id = messages.fromuser "+
-		"WHERE messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).Scan(&m)
+	// ORM migration site 1f5fe9f4e306 (wave 4).
+	db.Table("messages").
+		Select("fromuser, groupid").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Joins("INNER JOIN users ON users.id = messages.fromuser").
+		Where("messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).
+		Scan(&m)
 
 	if m.Fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid message id "+strconv.FormatUint(*payload.Refmsgid, 10))
@@ -764,7 +901,8 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	// Find any groups in users_banned for this user and group.  If we find one, we can't reply.
 	var banned uint64
-	db.Raw("SELECT userid FROM users_banned WHERE userid = ? AND groupid = ?", myid, m.Groupid).Scan(&banned)
+	// ORM migration site e32ed86d4150 (wave 1).
+	db.Table("users_banned").Select("userid").Where("userid = ? AND groupid = ?", myid, m.Groupid).Scan(&banned)
 
 	if banned > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "User banned from group")
@@ -778,7 +916,8 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	// Find the chat between m.Fromuser and myid (check both user orderings -
 	// older rooms may not be normalized so user1/user2 can be in either order)
 	var chat ChatRoom
-	db.Raw("SELECT * FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
+	// ORM migration site 8137d3d33011 (wave 1).
+	db.Table("chat_rooms").Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
 		utils.CHAT_TYPE_USER2USER, myid, m.Fromuser, m.Fromuser, myid).Scan(&chat)
 
 	if chat.ID == 0 {
@@ -821,7 +960,8 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	if payload.Offerid != nil {
 		// Update the offer id in the chat room, which we need to be able to send back replies.  LoveJunk only allows
 		// one offer per Freegle user and hence this can be stored in the chat room.
-		db.Exec("UPDATE chat_rooms SET ljofferid = ? WHERE id = ?", *payload.Offerid, chat.ID)
+		// ORM migration site d0743f528af9 (wave 2).
+		db.Table("chat_rooms").Where("id = ?", chat.ID).Update("ljofferid", *payload.Offerid)
 	}
 
 	var chattype string
@@ -854,7 +994,9 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	if payload.Imageid != nil {
 		// Link the chat image to this message, matching CreateChatMessage behaviour.
-		db.Exec("UPDATE chat_images SET chatmsgid = ? WHERE id = ?;", newid, *payload.Imageid)
+		// ORM migration site 8eddd54c5c0b (wave 2). Converted together with its
+		// identical twin in CreateChatMessage (b443c0f36dd2).
+		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
 	}
 
 	var ret ChatMessageLovejunkResponse
@@ -888,7 +1030,8 @@ func PatchChatMessage(c *fiber.Ctx) error {
 
 	// Operations require message ownership.
 	var msgUserid uint64
-	db.Raw("SELECT userid FROM chat_messages WHERE id = ? AND chatid = ?", req.ID, req.Roomid).Scan(&msgUserid)
+	// ORM migration site 7b5ea85896db (wave 1).
+	db.Table("chat_messages").Select("userid").Where("id = ? AND chatid = ?", req.ID, req.Roomid).Scan(&msgUserid)
 
 	if msgUserid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -900,7 +1043,8 @@ func PatchChatMessage(c *fiber.Ctx) error {
 
 	// Update replyexpected if provided.
 	if req.Replyexpected != nil {
-		db.Exec("UPDATE chat_messages SET replyexpected = ? WHERE id = ?", *req.Replyexpected, req.ID)
+		// ORM migration site 89645312ccd2 (wave 2).
+		db.Table("chat_messages").Where("id = ?", req.ID).Update("replyexpected", *req.Replyexpected)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -926,7 +1070,8 @@ func DeleteChatMessage(c *fiber.Ctx) error {
 
 	// Verify the message exists and belongs to this user.
 	var msgUserid uint64
-	db.Raw("SELECT userid FROM chat_messages WHERE id = ?", id).Scan(&msgUserid)
+	// ORM migration site 60bd6b1b9bb3 (wave 1).
+	db.Table("chat_messages").Select("userid").Where("id = ?", id).Scan(&msgUserid)
 
 	if msgUserid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -937,9 +1082,11 @@ func DeleteChatMessage(c *fiber.Ctx) error {
 	}
 
 	// Soft-delete: set type to Default, deleted to 1, clear imageid, remove chat_images.
-	db.Exec("UPDATE chat_messages SET type = ?, deleted = 1, imageid = NULL WHERE id = ?",
-		utils.CHAT_MESSAGE_DEFAULT, id)
-	db.Exec("DELETE FROM chat_images WHERE chatmsgid = ?", id)
+	// ORM migration site 4c1209980f1f (wave 2).
+	db.Table("chat_messages").Where("id = ?", id).
+		Updates(map[string]interface{}{"type": utils.CHAT_MESSAGE_DEFAULT, "deleted": gorm.Expr("1"), "imageid": gorm.Expr("NULL")})
+	// ORM migration site 4b773363a4f4 (wave 2).
+	db.Table("chat_images").Where("chatmsgid = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -969,7 +1116,8 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 
 	// Check caller is a moderator on at least one group
 	var modCount int64
-	result := db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	// ORM migration site 581be541e60b (wave 1).
+	result := db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check moderator status for user %d: %v", myid, result.Error)
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
@@ -1017,8 +1165,9 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 
 	if groupid > 0 {
 		var modCount int64
-		result := db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
-			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+		// ORM migration site 3ee1550efb1a (wave 1).
+		result := db.Table("memberships").Where("userid = ? AND groupid = ? AND role IN (?, ?)",
+			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 		if result.Error != nil {
 			stdlog.Printf("Failed to check chat room mod permission user %d group %d: %v", myid, groupid, result.Error)
 			return false
@@ -1030,11 +1179,12 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 
 	// Fallback: check if mod of any group where either participant is a member.
 	var modCount int64
-	result := db.Raw("SELECT COUNT(*) FROM memberships m1 "+
-		"INNER JOIN memberships m2 ON m1.groupid = m2.groupid "+
-		"WHERE m1.userid = ? AND m1.role IN (?, ?) "+
-		"AND m2.userid IN (?, ?)",
-		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, user1, user2).Scan(&modCount)
+	// ORM migration site c49605990641 (wave 4).
+	result := db.Table("memberships m1").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid IN (?, ?)",
+			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, user1, user2).
+		Count(&modCount)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check chat room fallback mod permission user %d: %v", myid, result.Error)
 		return false
@@ -1055,7 +1205,8 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		Chattype string
 	}
 	var room roomCheck
-	db.Raw("SELECT id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype FROM chat_rooms WHERE id = ?", roomid).Scan(&room)
+	// ORM migration site 094f8f3b0e41 (wave 1).
+	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", roomid).Scan(&room)
 
 	if room.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
@@ -1083,11 +1234,6 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		Reportreason *string    `json:"reportreason"`
 	}
 
-	ctxq := ""
-	if ctx > 0 {
-		ctxq = " AND chat_messages.id < " + strconv.FormatUint(ctx, 10)
-	}
-
 	// Mod access: this endpoint is only called by moderators viewing a chat from
 	// the review queue, so include review messages.
 	isParticipant := myid == room.User1 || myid == room.User2
@@ -1099,27 +1245,38 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		reviewFilter = "(chat_messages.reviewrejected = 0 OR chat_messages.userid = ?)"
 	}
 
+	// ORM migration site 07113a2db28b (Tier 3 keep-raw review). isParticipant
+	// (which also drives the deleted-sender filter) and ctx>0 give 2x2 = 4
+	// possible rendered forms, all declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_07113a2db28b (iznik-server-go/test). The WHERE
+	// is built as a single string and passed to ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra paren
+	// pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	whereSQL := "chat_messages.chatid = ? AND " + reviewFilter
+	whereArgs := []interface{}{roomid, myid}
+
 	// Mods reviewing a chat must see messages from soft-deleted users.
 	// Participants only see their own messages when the sender is deleted.
-	var deletedFilterRoom string
-	var roomArgs []interface{}
 	if isParticipant {
-		deletedFilterRoom = " AND (users.deleted IS NULL OR users.id = ?)"
-		roomArgs = []interface{}{roomid, myid, myid, limit}
-	} else {
-		roomArgs = []interface{}{roomid, myid, limit}
+		whereSQL += " AND (users.deleted IS NULL OR users.id = ?)"
+		whereArgs = append(whereArgs, myid)
 	}
 
+	if ctx > 0 {
+		whereSQL += " AND chat_messages.id < ?"
+		whereArgs = append(whereArgs, ctx)
+	}
+
+	tx := db.Table("chat_messages").
+		Select("chat_messages.id, chat_messages.chatid, chat_messages.userid, "+
+			"chat_messages.type, chat_messages.message, chat_messages.date, "+
+			"chat_messages.refmsgid, chat_messages.reportreason").
+		Joins("INNER JOIN users ON users.id = chat_messages.userid").
+		Where(whereSQL, whereArgs...)
+
 	var msgs []msgRow
-	db.Raw("SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, "+
-		"chat_messages.type, chat_messages.message, chat_messages.date, "+
-		"chat_messages.refmsgid, chat_messages.reportreason "+
-		"FROM chat_messages "+
-		"INNER JOIN users ON users.id = chat_messages.userid "+
-		"WHERE chat_messages.chatid = ? "+
-		"AND "+reviewFilter+deletedFilterRoom+ctxq+
-		" ORDER BY chat_messages.id DESC LIMIT ?",
-		roomArgs...).Scan(&msgs)
+	tx.Order("chat_messages.id DESC").Limit(limit).Scan(&msgs)
 
 	if msgs == nil {
 		msgs = []msgRow{}
@@ -1145,7 +1302,8 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	// Get groups where user is a moderator.
 	var groupIDs []uint64
-	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
+	// ORM migration site 9617dfaa6475 (wave 1).
+	db.Table("memberships").Select("groupid").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
 
 	if len(groupIDs) == 0 {
 		return c.JSON(fiber.Map{
@@ -1163,12 +1321,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	}
 
 	ctx, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
-
-	groupIDStr := make([]string, len(groupIDs))
-	for i, gid := range groupIDs {
-		groupIDStr[i] = strconv.FormatUint(gid, 10)
-	}
-	groupIDList := strings.Join(groupIDStr, ",")
 
 	ctxq := ""
 	if ctx > 0 {
@@ -1206,6 +1358,21 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	widerReview := user.HasWiderReview(myid)
 
 	// Base query: messages from mod's own groups.
+	//
+	// The four "IN (?)" group-id lists below are bound to groupIDs (a
+	// []uint64) rather than spliced in as a literal comma-joined string. This
+	// is a DELIBERATE BEHAVIOUR CHANGE alongside the ORM conversion, not just
+	// a mechanical rewrite: it changes the rendered statement text from
+	// "IN (1,2,3)" to native "IN (?,?,?)" placeholders (GORM's slice-bind
+	// expansion), same category as this file's own 62a2f6fa4bdb and
+	// isochrone/message.go's markPinned (site 032b7f1b9500) - each has an
+	// approved-diff entry in tools/orm-migration/approved-diffs.json
+	// recording exactly this kind of change; this site's two entries are
+	// 5da587b4234d (this branch) and 1ff296c8656c (the widerReview branch
+	// below, which shares this baseQuery). groupIDs here is always the
+	// calling moderator's own memberships (never external input), so this
+	// was not an exploitable injection in practice, but binding it is
+	// strictly safer and removes the pattern.
 	baseQuery := "SELECT DISTINCT cm.id, cm.chatid, cm.userid, cm.type, cm.message, cm.date, " +
 		"cm.refmsgid, cm.reportreason, " +
 		"cm.imageid, COALESCE(ci.archived, 0) AS image_archived, " +
@@ -1215,8 +1382,8 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"0 AS widerchatreview, " +
 		"COALESCE(cmh.userid, 0) AS held_by, cmh.timestamp AS held_timestamp, " +
 		"cme.msgid, " +
-		"COALESCE((SELECT m1.groupid FROM memberships m1 WHERE m1.userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND m1.groupid IN (" + groupIDList + ") LIMIT 1), 0) AS groupid, " +
-		"COALESCE((SELECT m2.groupid FROM memberships m2 WHERE m2.userid = cm.userid AND m2.groupid IN (" + groupIDList + ") LIMIT 1), 0) AS groupidfrom " +
+		"COALESCE((SELECT m1.groupid FROM memberships m1 WHERE m1.userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND m1.groupid IN (?) LIMIT 1), 0) AS groupid, " +
+		"COALESCE((SELECT m2.groupid FROM memberships m2 WHERE m2.userid = cm.userid AND m2.groupid IN (?) LIMIT 1), 0) AS groupidfrom " +
 		"FROM chat_messages cm " +
 		"INNER JOIN chat_rooms cr ON cr.id = cm.chatid " +
 		"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
@@ -1226,11 +1393,11 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq +
 		" AND (" +
 		// User2Mod: group is one of mod's groups
-		"  (cr.chattype = ? AND cr.groupid IN (" + groupIDList + "))" +
+		"  (cr.chattype = ? AND cr.groupid IN (?))" +
 		// User2User case 1: recipient (other user) is on one of mod's groups
-		"  OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND groupid IN (" + groupIDList + ")))" +
+		"  OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END AND groupid IN (?)))" +
 		// User2User case 2: recipient has NO memberships, sender is on one of mod's groups (orphan safety net)
-		"  OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND EXISTS (SELECT 1 FROM memberships WHERE userid = cm.userid AND groupid IN (" + groupIDList + ")))" +
+		"  OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships WHERE userid = CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND EXISTS (SELECT 1 FROM memberships WHERE userid = cm.userid AND groupid IN (?)))" +
 		")"
 
 	var msgs []reviewRow
@@ -1266,16 +1433,67 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
 			"AND cmh.id IS NULL " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (" + groupIDList + "))" + ctxq
+			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
 
-		result := db.Raw("SELECT * FROM ("+baseQuery+widerQuery+") combined GROUP BY id ORDER BY widerchatreview ASC, id ASC LIMIT ?",
-			utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2USER, limit).Scan(&msgs)
+		// ORM migration site 1ff296c8656c (Batch C keep-raw review, revisited).
+		// Top-level UNION wrapped as a derived table with a trailing GROUP
+		// BY/ORDER BY/LIMIT that applies to the combined result, not either
+		// arm - same BuildClauses={"SELECT"} mechanism as this file's other
+		// UNION conversions (see 33ad97a3417c above and modconfig.go's
+		// e9ea468dab80): the whole "SELECT * FROM (...) combined GROUP BY
+		// ... ORDER BY ... LIMIT ?" text goes to .Select() as one fragment,
+		// so GORM renders only the SELECT clause and none of .Table()'s
+		// implied FROM. Kept as one text blob (rather than decomposed into
+		// native Joins/Where) so this reuses the exact same baseQuery and
+		// widerQuery variables as the else-branch below - a single source of
+		// truth for the query text, not two hand-maintained copies that
+		// could drift apart.
+		//
+		// The manifest's own extracted goldenSql for this site is
+		// "{{expr}}{{expr}}" (baseQuery/widerQuery are runtime-built Go
+		// variables, not extractor-foldable literals), so there is nothing
+		// for Layer 1 to compare against out of the box. Same fix as
+		// 62a2f6fa4bdb above (see that site's approved-diff entry): an
+		// approved-diff entry for 1ff296c8656c in
+		// tools/orm-migration/approved-diffs.json records the real
+		// post-conversion statement text, so Layer 1 (TestGolden_1ff296c8656c,
+		// test/orm_reviewqueue_test.go) proves this after all. It also has a
+		// Layer 2 result-parity test (TestLayer2_1ff296c8656c, same file) -
+		// the manifest's own keep-raw reason asked for that extra scrutiny
+		// given the query's size, on top of the text match.
+		tx1ff296c8656c := db.Table("chat_messages").Select(
+			"* FROM ("+baseQuery+widerQuery+") combined GROUP BY id ORDER BY widerchatreview ASC, id ASC LIMIT ?",
+			groupIDs, groupIDs,
+			utils.CHAT_TYPE_USER2MOD, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			groupIDs,
+			limit)
+		tx1ff296c8656c.Statement.BuildClauses = []string{"SELECT"}
+		result := tx1ff296c8656c.Scan(&msgs)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query wider chat review queue for user %d: %v", myid, result.Error)
 		}
 	} else {
-		result := db.Raw(baseQuery+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
-			utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2USER, limit).Scan(&msgs)
+		// ORM migration site 5da587b4234d (Batch C keep-raw review,
+		// revisited). Non-wider twin of 1ff296c8656c above, sharing baseQuery
+		// - same BuildClauses={"SELECT"} mechanism, same reasoning: the
+		// manifest goldenSql for this site is "{{expr}} GROUP BY cm.id ORDER
+		// BY cm.id ASC LIMIT ?", so there is no fixed golden text to compare
+		// against out of the box. An approved-diff entry for 5da587b4234d in
+		// tools/orm-migration/approved-diffs.json records the real
+		// post-conversion statement text, proved by Layer 1
+		// (TestGolden_5da587b4234d, test/orm_reviewqueue_test.go), plus a
+		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file).
+		tx5da587b4234d := db.Table("chat_messages").Select(
+			strings.TrimPrefix(baseQuery, "SELECT ")+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
+			groupIDs, groupIDs,
+			utils.CHAT_TYPE_USER2MOD, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			limit)
+		tx5da587b4234d.Statement.BuildClauses = []string{"SELECT"}
+		result := tx5da587b4234d.Scan(&msgs)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query chat review queue for user %d: %v", myid, result.Error)
 		}
@@ -1301,14 +1519,22 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	}
 	heldUsers := make(map[uint64]heldUserInfo)
 	if len(heldByUserIDs) > 0 {
-		ids := make([]string, 0, len(heldByUserIDs))
+		// ORM migration site 62a2f6fa4bdb (Tier 1 batch review). Was a literal
+		// (non-bind) IN-list, same shape markPinned had before it was
+		// switched to a bind (site 032b7f1b9500, isochrone/message.go) -
+		// swept into "INSERT id read back" only because getReviewQueue's
+		// other raw sites (the review-queue UNION itself) live in the same
+		// function; this statement is unrelated to those and reads no id.
+		ids := make([]uint64, 0, len(heldByUserIDs))
 		for id := range heldByUserIDs {
-			ids = append(ids, strconv.FormatUint(id, 10))
+			ids = append(ids, id)
 		}
 		var heldInfos []heldUserInfo
-		db.Raw("SELECT u.id, u.fullname AS name, " +
-			"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email " +
-			"FROM users u WHERE u.id IN (" + strings.Join(ids, ",") + ")").Scan(&heldInfos)
+		db.Table("users u").
+			Select("u.id, u.fullname AS name, "+
+				"(SELECT e.email FROM users_emails e WHERE e.userid = u.id AND e.preferred = 1 LIMIT 1) AS email").
+			Where("u.id IN ?", ids).
+			Scan(&heldInfos)
 		for _, h := range heldInfos {
 			heldUsers[h.ID] = h
 		}
@@ -1418,13 +1644,14 @@ type reviewMessage struct {
 
 func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 	var msg reviewMessage
-	result := db.Raw("SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.message, "+
-		"COALESCE(chat_messages_held.userid, 0) AS heldbyuser "+
-		"FROM chat_messages "+
-		"LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id "+
-		"INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid "+
-		"WHERE chat_messages.id = ? AND chat_messages.reviewrequired = 1",
-		msgID).Scan(&msg)
+	// ORM migration site f3911b4339db (wave 4).
+	result := db.Table("chat_messages").
+		Select("chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.message, "+
+			"COALESCE(chat_messages_held.userid, 0) AS heldbyuser").
+		Joins("LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id").
+		Joins("INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid").
+		Where("chat_messages.id = ? AND chat_messages.reviewrequired = 1", msgID).
+		Scan(&msg)
 	if result.Error != nil {
 		stdlog.Printf("Failed to fetch review message %d: %v", msgID, result.Error)
 	}
@@ -1446,11 +1673,17 @@ func checkHoldConflict(msg *reviewMessage, myid uint64) bool {
 // autoApproveModmails approves any ModMail messages after the given message in the same chat.
 func autoApproveModmails(db *gorm.DB, myid uint64, chatID uint64, afterMsgID uint64) {
 	var modmailIDs []uint64
-	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND id > ? AND reviewrequired = 1 AND type = 'ModMail'",
+	// ORM migration site 6f05a9b2bdbb (wave 1).
+	db.Table("chat_messages").Select("id").Where("chatid = ? AND id > ? AND reviewrequired = 1 AND type = 'ModMail'",
 		chatID, afterMsgID).Scan(&modmailIDs)
 
 	for _, id := range modmailIDs {
-		db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ? WHERE id = ?", myid, id)
+		// ORM migration site 7631a317a13b (wave 2). Converted together with its
+		// identical twin in approveChatMessage (a2ab9aecba3e): a half-converted
+		// pair renumbers the survivor's site ID, so gate (h) refuses the split
+		// state.
+		db.Table("chat_messages").Where("id = ?", id).
+			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid})
 	}
 }
 
@@ -1466,10 +1699,12 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 	// chat_messages.reviewrequired/reviewrejected on the source, and these recounted
 	// totals are written back to chat_rooms. A lagging replica read would persist
 	// stale valid/invalid counts that survive until the next approve/reject.
-	db.Clauses(dbresolver.Write).Raw("SELECT CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, "+
-		"COUNT(*) AS count FROM chat_messages WHERE chatid = ? "+
-		"GROUP BY CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END",
-		chatID).Scan(&counts)
+	// ORM migration site 66c473c2545e (wave 1).
+	db.Clauses(dbresolver.Write).Table("chat_messages").
+		Select("CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, COUNT(*) AS count").
+		Where("chatid = ?", chatID).
+		Group("CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END").
+		Scan(&counts)
 
 	var msgValid, msgInvalid int64
 	for _, c := range counts {
@@ -1482,13 +1717,15 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 
 	// For Mod2Mod chats, force msginvalid to 0
 	var chattype string
-	db.Raw("SELECT chattype FROM chat_rooms WHERE id = ?", chatID).Scan(&chattype)
+	// ORM migration site e74cc22cc352 (wave 1).
+	db.Table("chat_rooms").Select("chattype").Where("id = ?", chatID).Scan(&chattype)
 	if chattype == "Mod2Mod" {
 		msgInvalid = 0
 	}
 
-	db.Exec("UPDATE chat_rooms SET msgvalid = ?, msginvalid = ?, latestmessage = ? WHERE id = ?",
-		msgValid, msgInvalid, time.Now(), chatID)
+	// ORM migration site f4cc7314bea4 (wave 2).
+	db.Table("chat_rooms").Where("id = ?", chatID).
+		Updates(map[string]interface{}{"msgvalid": msgValid, "msginvalid": msgInvalid, "latestmessage": time.Now()})
 }
 
 func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, approveAllFuture bool) error {
@@ -1502,13 +1739,26 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	}
 
 	// Approve the message
-	if result := db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ? WHERE id = ?", myid, msgID); result.Error != nil {
+	// ORM migration site a2ab9aecba3e (wave 2). Converted together with its
+	// identical twin in autoApproveModmails (7631a317a13b).
+	if result := db.Table("chat_messages").Where("id = ?", msgID).
+		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid}); result.Error != nil {
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
 	}
 
 	// Log the approve action
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_CHAT, log.LOG_SUBTYPE_APPROVED, msg.Userid, myid, fmt.Sprintf("Chat message %d approved", msgID))
+	// ORM migration site ef470baa050b (wave 2). Converted together with its
+	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
+	// pair renumbers the survivor's site ID, so gate (h) refuses the split
+	// state.
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CHAT,
+		"subtype":   log.LOG_SUBTYPE_APPROVED,
+		"user":      msg.Userid,
+		"byuser":    myid,
+		"text":      fmt.Sprintf("Chat message %d approved", msgID),
+	})
 
 	// Auto-approve any ModMail messages after this one in the same chat
 	autoApproveModmails(db, myid, msg.Chatid, msgID)
@@ -1517,17 +1767,28 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	updateMessageCounts(db, msg.Chatid)
 
 	// Remove hold if it exists
-	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	// ORM migration site 2e5a6f9c7077 (wave 2). Converted together with its
+	// identical twins in rejectChatMessage (030c4c489394) and
+	// releaseChatMessage (91271beda4fa): a half-converted group renumbers the
+	// survivors' site IDs, so gate (h) refuses the split state.
+	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
 
 	// Whitelist the message text so similar messages aren't flagged again
 	//.
 	if msg.Message != "" {
-		db.Exec("INSERT IGNORE INTO spam_whitelist_subjects (subject, comment) VALUES (?, 'Marked as not spam')", msg.Message)
+		// ORM migration site af7676dc1734 (wave 3).
+		db.Table("spam_whitelist_subjects").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"subject": msg.Message,
+			"comment": gorm.Expr("'Marked as not spam'"),
+		})
 	}
 
 	if approveAllFuture {
 		// Set user's chatmodstatus to Unmoderated
-		db.Exec("UPDATE users SET chatmodstatus = 'Unmoderated' WHERE id = ?", msg.Userid)
+		// ORM migration site 818065956105 (wave 2). Golden sets a literal
+		// 'Unmoderated', so it goes through gorm.Expr rather than as a bind,
+		// which would have rendered "chatmodstatus = ?".
+		db.Table("users").Where("id = ?", msg.Userid).Update("chatmodstatus", gorm.Expr("'Unmoderated'"))
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1546,13 +1807,26 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Reject the message
-	if result := db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?", myid, msgID); result.Error != nil {
+	// ORM migration site 09878cd3c660 (wave 2). Converted together with its
+	// identical twin below for the duplicate-message flood path (29b68b1db029):
+	// a half-converted pair renumbers the survivor's site ID, so gate (h)
+	// refuses the split state.
+	if result := db.Table("chat_messages").Where("id = ?", msgID).
+		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")}); result.Error != nil {
 		stdlog.Printf("Failed to reject chat message %d: %v", msgID, result.Error)
 	}
 
 	// Log the reject action
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_CHAT, log.LOG_SUBTYPE_REJECTED, msg.Userid, myid, fmt.Sprintf("Chat message %d rejected", msgID))
+	// ORM migration site b8fc832d50a0 (wave 2). Converted together with its
+	// identical twin in approveChatMessage (ef470baa050b).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_CHAT,
+		"subtype":   log.LOG_SUBTYPE_REJECTED,
+		"user":      msg.Userid,
+		"byuser":    myid,
+		"text":      fmt.Sprintf("Chat message %d rejected", msgID),
+	})
 
 	// Auto-approve any ModMail messages after this one
 	autoApproveModmails(db, myid, msg.Chatid, msgID)
@@ -1565,14 +1839,18 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 		Chatid uint64
 	}
 	var dups []dupMsg
-	db.Raw("SELECT id, chatid FROM chat_messages WHERE date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
+	// ORM migration site 5e7534201c7c (wave 1).
+	db.Table("chat_messages").Select("id, chatid").Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
 		cutoff, msg.Message, msgID).Scan(&dups)
 
 	// Track affected chat IDs for count updates
 	affectedChats := map[uint64]bool{msg.Chatid: true}
 
 	for _, dup := range dups {
-		db.Exec("UPDATE chat_messages SET reviewrequired = 0, reviewedby = ?, reviewrejected = 1 WHERE id = ?", myid, dup.ID)
+		// ORM migration site 29b68b1db029 (wave 2). Converted together with its
+		// identical twin above (09878cd3c660).
+		db.Table("chat_messages").Where("id = ?", dup.ID).
+			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")})
 		affectedChats[dup.Chatid] = true
 	}
 
@@ -1582,7 +1860,10 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Remove hold if it exists
-	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	// ORM migration site 030c4c489394 (wave 2). Converted together with its
+	// identical twins in approveChatMessage (2e5a6f9c7077) and
+	// releaseChatMessage (91271beda4fa).
+	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1590,7 +1871,8 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
 	// Verify the message exists and requires review
 	var reviewRequired int
-	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	// ORM migration site f93f2b62ae60 (wave 1).
+	db.Table("chat_messages").Select("reviewrequired").Where("id = ?", msgID).Scan(&reviewRequired)
 	if reviewRequired != 1 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
 	}
@@ -1600,20 +1882,26 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 	// steal a hold rather than being told about it. Release is the deliberate way
 	// to break someone else's hold.
 	var currentHolder uint64
-	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&currentHolder)
+	// ORM migration site 776feb15b77b (wave 1).
+	db.Table("chat_messages_held").Select("userid").Where("msgid = ?", msgID).Scan(&currentHolder)
 	if currentHolder != 0 && currentHolder != myid {
 		return fiber.NewError(fiber.StatusConflict, "Message is held by another moderator")
 	}
 
 	// REPLACE INTO handles re-holding your own hold, which is a harmless no-op.
-	db.Exec("REPLACE INTO chat_messages_held (msgid, userid) VALUES (?, ?)", msgID, myid)
+	// ORM migration site 67871ee12b8f (tier4).
+	db.Table("chat_messages_held").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{"msgid": msgID, "userid": myid})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
 func releaseChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
 	// Delete the hold record
-	db.Exec("DELETE FROM chat_messages_held WHERE msgid = ?", msgID)
+	// ORM migration site 91271beda4fa (wave 2). Converted together with its
+	// identical twins in approveChatMessage (2e5a6f9c7077) and
+	// rejectChatMessage (030c4c489394).
+	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1666,7 +1954,11 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		Exclude *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
+	// ORM migration site 839103c648fe (wave 1).
+	db.Table("concern_keywords").
+		Select("keyword AS word, match_mode AS type, action, exclude").
+		Where("match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").
+		Scan(&keywords)
 
 	for _, kw := range keywords {
 		word := strings.TrimSpace(kw.Word)
@@ -1705,7 +1997,11 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 	urls := urlRegexp.FindAllString(msg, -1)
 	if len(urls) > 0 {
 		var whitelist []string
-		db.Raw("SELECT domain FROM spam_whitelist_links WHERE count >= 3 AND LENGTH(domain) > 5 AND domain NOT LIKE '%linkedin%' AND domain NOT LIKE '%goo.gl%' AND domain NOT LIKE '%bit.ly%' AND domain NOT LIKE '%tinyurl%'").Scan(&whitelist)
+		// ORM migration site 1bd8efb9de20 (wave 1).
+		db.Table("spam_whitelist_links").
+			Select("domain").
+			Where("count >= 3 AND LENGTH(domain) > 5 AND domain NOT LIKE '%linkedin%' AND domain NOT LIKE '%goo.gl%' AND domain NOT LIKE '%bit.ly%' AND domain NOT LIKE '%tinyurl%'").
+			Scan(&whitelist)
 
 		untrustedCount := 0
 		for _, u := range urls {
@@ -1774,7 +2070,8 @@ func redactChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	cleaned := emailRegexp.ReplaceAllString(msg.Message, "(email removed)")
 
 	if cleaned != msg.Message {
-		db.Exec("UPDATE chat_messages SET message = ? WHERE id = ?", cleaned, msgID)
+		// ORM migration site 8e568332ecdb (wave 2).
+		db.Table("chat_messages").Where("id = ?", msgID).Update("message", cleaned)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

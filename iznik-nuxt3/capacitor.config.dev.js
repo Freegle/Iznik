@@ -52,6 +52,7 @@ const config = {
       '@capacitor/camera',
       '@capacitor/share',
       '@capacitor/app',
+      '@capacitor/text-zoom', // C7 - apply system accessibility text size to the WebView
       '@capacitor/screen-orientation',
     ],
     // Debug build - no signing required
@@ -78,6 +79,7 @@ const config = {
       '@capacitor/camera',
       '@capacitor/share',
       '@capacitor/app',
+      '@capacitor/text-zoom', // C7 - apply system accessibility text size to the WebView
       '@capacitor/screen-orientation',
     ],
   },

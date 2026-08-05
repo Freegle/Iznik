@@ -9,56 +9,89 @@ import (
 
 func intp(v int) *int { return &v }
 
-// DeriveAttribution runs the six-rung precedence ladder. Every rung must be
+// DeriveAttribution runs the seven-rung precedence ladder. Every rung must be
 // individually reachable, and where two rungs' evidence is simultaneously
 // true the HIGHER-precedence rung must win.
 func TestDeriveAttribution_Ladder(t *testing.T) {
 	cases := []struct {
-		name                                                             string
-		wasHomeMember, wasNotified, wasRippleGroupMember, postHadRippled int
-		inOriginCatchment, inReach                                       *int
-		want                                                             string
+		name                                             string
+		wasHomeMember, wasNotified, wasRippleGroupMember int
+		wasRippleJoinMember, postHadRippled              int
+		inOriginCatchment, inReach                       *int
+		want                                             string
 	}{
 		// ---- Individual rungs, all other evidence absent ----
-		{"home wins with nothing else set", 1, 0, 0, 0, nil, nil, AttributionHome},
-		{"ripple_notified when only notified evidence set", 0, 1, 0, 0, nil, nil, AttributionRippleNotified},
-		{"ripple_group when only group-membership evidence set", 0, 0, 1, 0, nil, nil, AttributionRippleGroup},
-		{"organic_local when only catchment evidence set", 0, 0, 0, 0, intp(1), nil, AttributionOrganicLocal},
-		{"ripple_reach when post rippled and reach evidence set", 0, 0, 0, 1, nil, intp(1), AttributionRippleReach},
-		{"unknown when nothing resolvable", 0, 0, 0, 0, nil, nil, AttributionUnknown},
+		{"home wins with nothing else set", 1, 0, 0, 0, 0, nil, nil, AttributionHome},
+		{"ripple_notified when only notified evidence set", 0, 1, 0, 0, 0, nil, nil, AttributionRippleNotified},
+		{"ripple_group when only group-membership evidence set", 0, 0, 1, 0, 0, nil, nil, AttributionRippleGroup},
+		{"ripple_join when only ripple-created origin membership set", 0, 0, 0, 1, 0, nil, nil, AttributionRippleJoin},
+		{"organic_local when only catchment evidence set", 0, 0, 0, 0, 0, intp(1), nil, AttributionOrganicLocal},
+		{"ripple_reach when post rippled and reach evidence set", 0, 0, 0, 0, 1, nil, intp(1), AttributionRippleReach},
+		{"unknown when nothing resolvable", 0, 0, 0, 0, 0, nil, nil, AttributionUnknown},
 
 		// ---- Precedence collisions: higher rung must win over lower ones ----
-		{"home beats notified", 1, 1, 0, 0, nil, nil, AttributionHome},
-		{"home beats ripple_group", 1, 0, 1, 0, nil, nil, AttributionHome},
-		{"home beats organic_local", 1, 0, 0, 0, intp(1), nil, AttributionHome},
-		{"home beats ripple_reach", 1, 0, 0, 1, nil, intp(1), AttributionHome},
-		{"home beats everything at once", 1, 1, 1, 1, intp(1), intp(1), AttributionHome},
-		{"notified beats ripple_group", 0, 1, 1, 0, nil, nil, AttributionRippleNotified},
-		{"notified beats organic_local", 0, 1, 0, 0, intp(1), nil, AttributionRippleNotified},
-		{"notified beats ripple_reach", 0, 1, 0, 1, nil, intp(1), AttributionRippleNotified},
-		{"ripple_group beats organic_local", 0, 0, 1, 0, intp(1), nil, AttributionRippleGroup},
-		{"ripple_group beats ripple_reach", 0, 0, 1, 1, nil, intp(1), AttributionRippleGroup},
-		{"organic_local beats ripple_reach - deliberately ranked above reach", 0, 0, 0, 1, intp(1), intp(1), AttributionOrganicLocal},
+		{"home beats notified", 1, 1, 0, 0, 0, nil, nil, AttributionHome},
+		{"home beats ripple_group", 1, 0, 1, 0, 0, nil, nil, AttributionHome},
+		{"home beats organic_local", 1, 0, 0, 0, 0, intp(1), nil, AttributionHome},
+		{"home beats ripple_reach", 1, 0, 0, 0, 1, nil, intp(1), AttributionHome},
+		{"home beats everything at once", 1, 1, 1, 1, 1, intp(1), intp(1), AttributionHome},
+		{"notified beats ripple_group", 0, 1, 1, 0, 0, nil, nil, AttributionRippleNotified},
+		{"notified beats ripple_join", 0, 1, 0, 1, 0, nil, nil, AttributionRippleNotified},
+		{"notified beats organic_local", 0, 1, 0, 0, 0, intp(1), nil, AttributionRippleNotified},
+		{"notified beats ripple_reach", 0, 1, 0, 0, 1, nil, intp(1), AttributionRippleNotified},
+		{"ripple_group beats ripple_join", 0, 0, 1, 1, 0, nil, nil, AttributionRippleGroup},
+		{"ripple_group beats organic_local", 0, 0, 1, 0, 0, intp(1), nil, AttributionRippleGroup},
+		{"ripple_group beats ripple_reach", 0, 0, 1, 0, 1, nil, intp(1), AttributionRippleGroup},
+		{"ripple_join beats organic_local - membership exposure outranks maybe-saw-it-in-Browse", 0, 0, 0, 1, 0, intp(1), nil, AttributionRippleJoin},
+		{"ripple_join beats ripple_reach", 0, 0, 0, 1, 1, nil, intp(1), AttributionRippleJoin},
+		{"organic_local beats ripple_reach - deliberately ranked above reach", 0, 0, 0, 0, 1, intp(1), intp(1), AttributionOrganicLocal},
 
 		// ---- inOriginCatchment / inReach: nil vs 0 vs 1 ----
-		{"catchment nil does not trigger organic_local", 0, 0, 0, 0, nil, nil, AttributionUnknown},
-		{"catchment 0 does not trigger organic_local", 0, 0, 0, 0, intp(0), nil, AttributionUnknown},
-		{"catchment 1 triggers organic_local", 0, 0, 0, 0, intp(1), nil, AttributionOrganicLocal},
-		{"reach nil does not trigger ripple_reach even if post rippled", 0, 0, 0, 1, nil, nil, AttributionUnknown},
-		{"reach 0 does not trigger ripple_reach even if post rippled", 0, 0, 0, 1, nil, intp(0), AttributionUnknown},
-		{"reach 1 without postHadRippled does not trigger ripple_reach", 0, 0, 0, 0, nil, intp(1), AttributionUnknown},
-		{"reach 1 with postHadRippled triggers ripple_reach", 0, 0, 0, 1, nil, intp(1), AttributionRippleReach},
+		{"catchment nil does not trigger organic_local", 0, 0, 0, 0, 0, nil, nil, AttributionUnknown},
+		{"catchment 0 does not trigger organic_local", 0, 0, 0, 0, 0, intp(0), nil, AttributionUnknown},
+		{"catchment 1 triggers organic_local", 0, 0, 0, 0, 0, intp(1), nil, AttributionOrganicLocal},
+		{"reach nil does not trigger ripple_reach even if post rippled", 0, 0, 0, 0, 1, nil, nil, AttributionUnknown},
+		{"reach 0 does not trigger ripple_reach even if post rippled", 0, 0, 0, 0, 1, nil, intp(0), AttributionUnknown},
+		{"reach 1 without postHadRippled does not trigger ripple_reach", 0, 0, 0, 0, 0, nil, intp(1), AttributionUnknown},
+		{"reach 1 with postHadRippled triggers ripple_reach", 0, 0, 0, 0, 1, nil, intp(1), AttributionRippleReach},
 
 		// ---- Structural guard: a post that never rippled cannot be ripple-attributed via reach ----
-		{"postHadRippled=0 blocks ripple_reach even with reach evidence present", 0, 0, 0, 0, nil, intp(1), AttributionUnknown},
+		{"postHadRippled=0 blocks ripple_reach even with reach evidence present", 0, 0, 0, 0, 0, nil, intp(1), AttributionUnknown},
+
+		// ---- ripple_join needs no postHadRippled guard: the membership IS the ripple evidence.
+		//      It was created by a PREVIOUS ripple (of the member's own post), so it stands even
+		//      though THIS post never rippled anywhere.
+		{"ripple_join stands on a post that never rippled", 0, 0, 0, 1, 0, nil, nil, AttributionRippleJoin},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := DeriveAttribution(c.wasHomeMember, c.wasNotified, c.wasRippleGroupMember, c.postHadRippled, c.inOriginCatchment, c.inReach)
+			got := DeriveAttribution(c.wasHomeMember, c.wasNotified, c.wasRippleGroupMember,
+				c.wasRippleJoinMember, c.postHadRippled, c.inOriginCatchment, c.inReach)
 			assert.Equal(t, c.want, got, c.name)
 		})
 	}
+}
+
+// The "was already a member" test that every rippling stat leans on must ignore memberships
+// rippling ITSELF created (memberships.rippled = 1 - the auto-join written when the member's own
+// post rippled into that group). Counting those as pre-existing local membership makes rippling
+// look less effective than it is: the member is only in that group because of an earlier ripple.
+func TestEstablishedOriginMemberExists(t *testing.T) {
+	sql := EstablishedOriginMemberExists("cm.refmsgid", "cm.userid")
+
+	assert.Contains(t, sql, "mem.rippled = 0",
+		"ripple-created auto-joins must never count as pre-existing membership")
+	assert.Contains(t, sql, "og.rippled_in = 0",
+		"only ORIGIN groups count - a rippled-in copy's group is not the member's home")
+	assert.Contains(t, sql, "og.deleted = 0")
+	assert.Contains(t, sql, "mem.collection = 'Approved'")
+	assert.Contains(t, sql, "mem.added < og.arrival",
+		"established = joined before the post arrived, so a join-to-reply never counts")
+	assert.Contains(t, sql, "og.msgid = cm.refmsgid", "correlates on the caller's message column")
+	assert.Contains(t, sql, "mem.userid = cm.userid", "correlates on the caller's user column")
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(sql), "EXISTS("),
+		"returns an EXISTS fragment the caller can negate")
 }
 
 // SanitizeClientSource validates the client-reported reply surface against

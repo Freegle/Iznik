@@ -2494,6 +2494,46 @@ func TestJoinAndPostSavesDeadline(t *testing.T) {
 	assert.Equal(t, "2026-07-15", *deadline)
 }
 
+// Bundled apps (pre-fix webview bundles) send the deadline as a full ISO
+// datetime. messages.deadline is a DATE column: under STRICT_TRANS_TABLES the
+// datetime literal is rejected outright and, with the Exec error unchecked,
+// the deadline was silently lost (Discourse #9481). The handler must
+// normalise to the date part so both client generations save correctly.
+func TestJoinAndPostSavesDeadlineISODatetime(t *testing.T) {
+	prefix := uniquePrefix("msgmod_jap_dliso")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Create a draft message.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Deadline ISO test', 'Item with deadline', 'Item with deadline', NOW(), NOW(), 'Platform')",
+		userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	// JoinAndPost with an ISO datetime deadline, as bundled apps send it.
+	body := map[string]interface{}{
+		"id":       msgID,
+		"action":   "JoinAndPost",
+		"deadline": "2026-07-15T00:00:00.000Z",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var deadline *string
+	db.Raw("SELECT DATE_FORMAT(deadline, '%Y-%m-%d') FROM messages WHERE id = ?", msgID).Scan(&deadline)
+	require.NotNil(t, deadline, "ISO datetime deadline must not be silently lost")
+	assert.Equal(t, "2026-07-15", *deadline)
+}
+
 // TestJoinAndPostNewUserPassword verifies that when a new user (no password)
 // posts via JoinAndPost, the generated password can be used to log in.
 func TestJoinAndPostNewUserPassword(t *testing.T) {
@@ -8838,10 +8878,11 @@ func TestListMessagesMultiGroupNoDuplicates(t *testing.T) {
 }
 
 func TestMessageRepostPerGroupArrival(t *testing.T) {
-	// A multi-group message is only repostable when EVERY group it's on has
-	// passed its own repost interval (measured from that group's own arrival).
-	// repostAt is the latest per-group repost time (when the last group
-	// becomes eligible).
+	// Repost eligibility is per-group and ORed across groups, matching V1
+	// (Message::canRepost): the message is repostable as soon as ANY group has
+	// passed its own repost interval, measured from that group's own arrival.
+	// repostAt is the earliest per-group repost time: when the message first
+	// becomes repostable.
 	prefix := uniquePrefix("repost_pg")
 	db := database.DBConn
 
@@ -8852,9 +8893,7 @@ func TestMessageRepostPerGroupArrival(t *testing.T) {
 	CreateTestMembership(t, posterID, groupB, "Member")
 	_, token := CreateTestSession(t, posterID)
 
-	// Give both groups a real reposts config (offer interval 3 days). Without
-	// this the query falls back to a default that doesn't parse as JSON,
-	// yielding interval 0 (always eligible).
+	// Give both groups a real reposts config (offer interval 3 days).
 	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id IN (?, ?)", groupA, groupB)
 
 	// CreateTestMessage adds the message to groupA with arrival NOW.
@@ -8864,8 +8903,8 @@ func TestMessageRepostPerGroupArrival(t *testing.T) {
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 30 DAY), 'Approved', 0)", msgID, groupB)
 
 	// groupA arrived now (not yet eligible), groupB 30 days ago (eligible).
-	// Under the all-groups rule the message is NOT yet repostable, because
-	// groupA hasn't reached its interval.
+	// One eligible group is enough, so the message IS repostable, and repostAt
+	// is groupB's time, which is in the past.
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
 	assert.NoError(t, err)
@@ -8874,15 +8913,16 @@ func TestMessageRepostPerGroupArrival(t *testing.T) {
 	var msg message.Message
 	json2.Unmarshal(rsp(resp), &msg)
 
-	assert.False(t, msg.Canrepost, "Message should NOT be repostable while groupA is still within its repost interval")
+	assert.True(t, msg.Canrepost, "Message should be repostable when groupB is past its repost interval, even though groupA is not")
 	assert.NotNil(t, msg.Repostat, "Repostat should be set")
 	if msg.Repostat != nil {
-		assert.True(t, msg.Repostat.After(time.Now()), "Latest repost time should be in the future (groupA not yet eligible)")
+		assert.True(t, msg.Repostat.Before(time.Now()), "Earliest repost time should be in the past (groupB is eligible)")
 	}
 
-	// Now age groupA's arrival past the interval too. With BOTH groups past
-	// their repost interval, the message becomes repostable.
-	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE msgid = ? AND groupid = ?", msgID, groupA)
+	// Now bring groupB's arrival forward too, so NO group has passed its
+	// interval. Only then is the message not repostable, and repostAt is the
+	// earliest of the two future times.
+	db.Exec("UPDATE messages_groups SET arrival = NOW() WHERE msgid = ? AND groupid = ?", msgID, groupB)
 
 	resp, err = getApp().Test(httptest.NewRequest("GET", url, nil))
 	assert.NoError(t, err)
@@ -8890,11 +8930,125 @@ func TestMessageRepostPerGroupArrival(t *testing.T) {
 
 	json2.Unmarshal(rsp(resp), &msg)
 
-	assert.True(t, msg.Canrepost, "Message should be repostable once every group is past its repost interval")
+	assert.False(t, msg.Canrepost, "Message should not be repostable when no group has passed its repost interval")
 	assert.NotNil(t, msg.Repostat, "Repostat should be set")
 	if msg.Repostat != nil {
-		assert.True(t, msg.Repostat.Before(time.Now()), "Latest repost time should be in the past once all groups are eligible")
+		assert.True(t, msg.Repostat.After(time.Now()), "Earliest repost time should be in the future when no group is eligible")
 	}
+}
+
+func TestMessageRepostNotBlockedByLaterRippledGroup(t *testing.T) {
+	// Regression: a post that ripples out to a new group gets a fresh
+	// messages_groups row with arrival=NOW(). That must not reset the repost
+	// gate for the whole post: the member's own group passed its interval days
+	// ago and the Repost button has to stay available. Real case: msg 121232945
+	// sat on Croydon from 2026-07-29 (4-day interval, eligible 08-02) but
+	// rippled into Lewisham on 08-03, which hid the button until 08-07.
+	prefix := uniquePrefix("repost_ripple")
+	db := database.DBConn
+
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, homeGroup, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	// Both groups use a 4-day offer interval, as the London groups do.
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 4, 'wanted', 4, 'max', 3, 'chaseups', 6)) WHERE id IN (?, ?)", homeGroup, rippledGroup)
+
+	msgID := CreateTestMessage(t, posterID, homeGroup, "OFFER: Repost ripple test", 55.9533, -3.1883)
+
+	// Home group: posted 7 days ago, so past its 4-day interval.
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 7 DAY) WHERE msgid = ? AND groupid = ?", msgID, homeGroup)
+
+	// Rippled in 2 days ago, still inside its own 4-day interval.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 2 DAY), 'Approved', 0, 1)", msgID, rippledGroup)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.Len(t, msg.MessageGroups, 2, "Message should be on both groups")
+	assert.True(t, msg.Canrepost, "A later ripple into another group must not hide the Repost option on the home group")
+}
+
+func TestMessageRepostDisabledOnOneGroupDoesNotBlockOthers(t *testing.T) {
+	// A group can turn reposting off by setting a very high interval (>= 365).
+	// V1 treats that as "this group never becomes eligible", not "nobody can
+	// repost this post".
+	prefix := uniquePrefix("repost_off")
+	db := database.DBConn
+
+	openGroup := CreateTestGroup(t, prefix+"_open")
+	disabledGroup := CreateTestGroup(t, prefix+"_disabled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, openGroup, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id = ?", openGroup)
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3650, 'wanted', 3650, 'max', 5, 'chaseups', 5)) WHERE id = ?", disabledGroup)
+
+	msgID := CreateTestMessage(t, posterID, openGroup, "OFFER: Repost disabled-group test", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE msgid = ? AND groupid = ?", msgID, openGroup)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 30 DAY), 'Approved', 0)", msgID, disabledGroup)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.True(t, msg.Canrepost, "A group with reposting disabled must not block reposting on the other groups")
+}
+
+func TestMessageRepostDefaultsWhenGroupHasNoRepostSettings(t *testing.T) {
+	// A group with no `reposts` entry falls back to V1's defaults
+	// (offer 3 / wanted 7). Previously the SQL fallback emitted a PHP hash
+	// literal that failed to parse as JSON, giving interval 0 and making every
+	// such group instantly eligible.
+	prefix := uniquePrefix("repost_def")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix+"_nosettings")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	// No reposts key at all.
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT() WHERE id = ?", groupID)
+
+	// Arrival now, inside the 3-day default offer interval.
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Repost default settings test", 55.9533, -3.1883)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.False(t, msg.Canrepost, "A just-posted message should not be repostable under the default 3-day offer interval")
+	assert.NotNil(t, msg.Repostat, "Repostat should be set")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.After(time.Now()), "Default repost time should be 3 days after arrival")
+	}
+
+	// Age it past the default interval and it becomes repostable.
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 5 DAY) WHERE msgid = ?", msgID)
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &msg)
+	assert.True(t, msg.Canrepost, "Message older than the default 3-day offer interval should be repostable")
 }
 
 func TestPostMessageSpamLastGroupSoftDeletesMessage(t *testing.T) {

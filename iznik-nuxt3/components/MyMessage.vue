@@ -793,15 +793,18 @@ const isPromised = computed(() => {
   return message.value?.promised && !message.value?.outcomes?.length
 })
 
+// The v2 API returns this as `repostat`; V1 called it `canrepostat`. We read the
+// v2 name - reading the V1 name meant this was always undefined, so the
+// "Will auto-repost..." hint never appeared.
 const willAutoRepost = computed(() => {
-  if (taken.value || received.value || !message.value?.canrepostat) {
+  if (taken.value || received.value || !message.value?.repostat) {
     return false
   }
-  return dayjs(message.value.canrepostat).isAfter(dayjs())
+  return dayjs(message.value.repostat).isAfter(dayjs())
 })
 
 const canrepostatago = computed(() => {
-  return message.value?.canrepostat ? timeago(message.value.canrepostat) : null
+  return message.value?.repostat ? timeago(message.value.repostat) : null
 })
 
 const messageGroups = computed(() => {

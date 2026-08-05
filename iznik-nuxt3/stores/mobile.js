@@ -93,6 +93,14 @@ export const useMobileStore = defineStore({
       const { AppLauncher } = await import('@capacitor/app-launcher')
       const { App } = await import('@capacitor/app')
 
+      // Consume any image shared into the app (Android FreegleShare bridge /
+      // iOS freegleshare:// deep link) and route to the give flow as early as
+      // possible. This used to run after App.getInfo(), the Android
+      // background-push-log read and getDeviceInfo() below - all irrelevant
+      // to the share flow - which delayed the give-flow navigation on a
+      // share-triggered cold start with nothing on screen in the meantime.
+      this.initShareIntent(App)
+
       // Log app and plugin versions for debugging
       const runtimeConfig = useRuntimeConfig()
       const appInfo = await App.getInfo()
@@ -133,10 +141,45 @@ export const useMobileStore = defineStore({
       await this.getDeviceInfo(Device)
       this.fixWindowOpen(AppLauncher)
       this.initDeepLinks(App)
-      this.initShareIntent(App)
+      this.initTextZoom(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
+      this.initBackButton(App)
+    },
+
+    async initTextZoom(App) {
+      // Respect the OS accessibility text-size setting. WKWebView ignores iOS
+      // Dynamic Type for web content entirely, so without this the app renders
+      // at a fixed text size no matter what the member set in Settings ->
+      // Accessibility. getPreferred() returns the zoom the system wants
+      // (Dynamic Type on iOS, font scale on Android); applying it makes text
+      // grow WITH REFLOW, unlike pinch zoom which scales the whole viewport
+      // including the navbars.
+      try {
+        const { TextZoom } = await import('@capacitor/text-zoom')
+
+        const apply = async () => {
+          try {
+            const { value } = await TextZoom.getPreferred()
+            if (value && value > 0) {
+              await TextZoom.set({ value })
+              dbg()?.info('Applied preferred text zoom', { value })
+            }
+          } catch (e) {
+            dbg()?.debug('Text zoom apply failed', e?.message)
+          }
+        }
+
+        await apply()
+
+        // The member can change the OS setting while we're backgrounded, and
+        // getPreferred() only reflects it on next read - re-apply on resume.
+        App.addListener('resume', apply)
+      } catch (e) {
+        // Plugin unavailable (old installed build without it) - nothing to do.
+        dbg()?.debug('Text zoom unavailable', e?.message)
+      }
     },
 
     async getDeviceInfo(Device) {
@@ -209,6 +252,23 @@ export const useMobileStore = defineStore({
         }
       }
       return urlParams
+    },
+
+    initBackButton(App) {
+      if (process.client) {
+        // Once any JS listener is registered, Capacitor's native default (which
+        // swallows the back button/gesture once the webview history is empty,
+        // trapping the user in the app) no longer runs. Mirror that default's
+        // history navigation, but at the root background the app, which is the
+        // standard Android response to back on a task's topmost screen.
+        App.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back()
+          } else {
+            App.minimizeApp()
+          }
+        })
+      }
     },
 
     initWakeUpActions(App) {

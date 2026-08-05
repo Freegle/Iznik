@@ -9,6 +9,8 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // maxScrollPosition caps a recorded position so a malformed or malicious client
@@ -71,16 +73,29 @@ func RecordScrollDepth(c *fiber.Ctx) error {
 		// Upsert keyed on the unique session id: keep the furthest position the
 		// session reached. Idempotent across the debounced client's repeat sends
 		// and any re-entry, so a session is counted exactly once.
-		db.Exec("INSERT INTO browse_scroll_depth (session, userid, max_position, items_available, context) VALUES (?, ?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE "+
-			"max_position = GREATEST(max_position, VALUES(max_position)), "+
-			"items_available = COALESCE(VALUES(items_available), items_available), "+
-			"userid = COALESCE(VALUES(userid), userid)",
-			req.Session, userid, req.MaxPosition, items, ctx)
+		// ORM migration site b39f76d2f182 (wave 3).
+		db.Table("browse_scroll_depth").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"max_position":    gorm.Expr("GREATEST(max_position, VALUES(max_position))"),
+				"items_available": gorm.Expr("COALESCE(VALUES(items_available), items_available)"),
+				"userid":          gorm.Expr("COALESCE(VALUES(userid), userid)"),
+			}),
+		}).Create(map[string]interface{}{
+			"session":         req.Session,
+			"userid":          userid,
+			"max_position":    req.MaxPosition,
+			"items_available": items,
+			"context":         ctx,
+		})
 	} else {
 		// Legacy clients without a session id: a single fire-and-forget insert.
-		db.Exec("INSERT INTO browse_scroll_depth (userid, max_position, items_available, context) VALUES (?, ?, ?, ?)",
-			userid, req.MaxPosition, items, ctx)
+		// ORM migration site b90542fe5559 (wave 2).
+		db.Table("browse_scroll_depth").Create(map[string]interface{}{
+			"userid":          userid,
+			"max_position":    req.MaxPosition,
+			"items_available": items,
+			"context":         ctx,
+		})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -128,10 +143,12 @@ func ScrollDepthCurve(c *fiber.Ctx) error {
 		MaxPosition int   `gorm:"column:max_position"`
 		Cnt         int64 `gorm:"column:cnt"`
 	}
-	db.Raw(`SELECT max_position, COUNT(*) AS cnt
-	        FROM browse_scroll_depth
-	        WHERE created_at BETWEEN ? AND ?
-	        GROUP BY max_position`, startDate, endDateTime).Scan(&rows)
+	// ORM migration site 44d646441e3f (wave 1).
+	db.Table("browse_scroll_depth").
+		Select("max_position, COUNT(*) AS cnt").
+		Where("created_at BETWEEN ? AND ?", startDate, endDateTime).
+		Group("max_position").
+		Scan(&rows)
 
 	var total int64
 	maxObserved := 0

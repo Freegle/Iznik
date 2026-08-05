@@ -59,6 +59,41 @@ worktree_last_activity() {
   printf '%s' "$best"
 }
 
+# Is a test suite running in this worktree right now?
+#
+# worktree_last_activity above measures git refs and changed-file mtimes, so a
+# worktree whose only current activity is a LONG TEST RUN looks completely idle:
+# a clean tree, no edits, no git operations, for the ten to fifteen minutes a Go
+# suite takes. That is indistinguishable from abandonment by mtime alone, and it
+# bit twice in ninety minutes on 2026-08-03 - both sweeps landing just as a run
+# finished, killing the containers before the detailed result could be read. The
+# status container holds its per-test log in memory only, so stopping it mid-run
+# or just after destroys the evidence that the run happened at all, which is far
+# more costly than the RAM the sweep reclaims.
+#
+# Ask the worktree's own status container instead. Any suite reporting an
+# in-flight state means real work is in flight regardless of what the filesystem
+# looks like. Both non-terminal states count: a suite reports "started" from the
+# POST until the runner actually spawns (test discovery alone is tens of seconds
+# for Playwright), and only then flips to "running". Matching "running" alone
+# left that startup window unguarded, and a sweep landed in it on 2026-08-05,
+# killing a 184-test run seconds after it was kicked off.
+# Fails open (returns 1, "not running") if the port is unknown or unreachable -
+# an unreachable status container is not evidence of activity.
+worktree_suite_running() {
+  local wt="$1" port suite state
+  port="$(grep -E '^PORT_STATUS=' "$wt/.env" 2>/dev/null | cut -d= -f2)"
+  [ -n "$port" ] || return 1
+  for suite in go laravel vitest playwright php; do
+    state="$(curl -s --max-time 3 "http://localhost:${port}/api/tests/${suite}/status" 2>/dev/null \
+             | jq -r '.status // empty' 2>/dev/null)"
+    case "$state" in
+      running|started) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 stopped=0 considered=0
 while IFS= read -r wt; do
   [ -n "$wt" ] || continue
@@ -80,6 +115,12 @@ while IFS= read -r wt; do
   idle=$((now - last))
   if (( idle < IDLE_SECS )); then
     continue                                       # active recently -> leave it
+  fi
+
+  # Idle by mtime, but a suite may still be running - see worktree_suite_running.
+  if worktree_suite_running "$wt"; then
+    log "SKIP $proj — idle ${idle}s by mtime, but a test suite is RUNNING; leaving ${running} containers up"
+    continue
   fi
 
   if [ "$DRYRUN" = "1" ]; then

@@ -98,6 +98,19 @@ func TestCreateImageNoAuthUnlinked(t *testing.T) {
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
 	assert.Equal(t, float64(0), result["ret"])
+
+	// Read the row back rather than trusting the 200. messages_attachments.contenttype
+	// is NOT NULL with no default, and doCreate used to omit it for imgtype=Message:
+	// under a lenient sql_mode MySQL silently substituted '' and the endpoint still
+	// answered 200, so a status-only assertion passed while the column was junk. It
+	// stayed that way long enough for 54,057 of the most recent 200,000 production
+	// rows to carry ''. Asserting the stored value is what makes this test able to
+	// fail for the reason it exists.
+	db := database.DBConn
+	var contenttype string
+	db.Raw("SELECT contenttype FROM messages_attachments WHERE id = ?",
+		uint64(result["id"].(float64))).Scan(&contenttype)
+	assert.Equal(t, "image/jpeg", contenttype)
 }
 
 // TestCreateImageCrossUserDenied verifies a logged-in user cannot attach an image to another

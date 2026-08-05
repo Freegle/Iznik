@@ -34,18 +34,14 @@ func Sitemap(c *fiber.Ctx) error {
 
 	entries := []SitemapEntry{}
 
-	db.Raw(""+
-		"SELECT msgid AS id, "+
-		// modified tracks edits; arrival is when it landed. Either is a fair lastmod,
-		// so take whichever is later, and fall back to arrival when modified is null.
-		"GREATEST(COALESCE(modified, arrival), arrival) AS lastmod "+
-		"FROM messages_spatial "+
-		"WHERE successful = 0 "+
-		"AND msgtype IN (?, ?) "+
-		"AND arrival IS NOT NULL "+
-		"ORDER BY arrival DESC",
-		utils.OFFER, utils.WANTED,
-	).Scan(&entries)
+	// ORM migration site fd13a45cf36f (wave 1). modified tracks edits; arrival is
+	// when it landed. Either is a fair lastmod, so take whichever is later, and
+	// fall back to arrival when modified is null.
+	db.Table("messages_spatial").
+		Select("msgid AS id, GREATEST(COALESCE(modified, arrival), arrival) AS lastmod").
+		Where("successful = 0 AND msgtype IN (?, ?) AND arrival IS NOT NULL", utils.OFFER, utils.WANTED).
+		Order("arrival DESC").
+		Scan(&entries)
 
 	if entries == nil {
 		entries = make([]SitemapEntry, 0)

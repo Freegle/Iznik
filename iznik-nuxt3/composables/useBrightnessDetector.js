@@ -88,11 +88,24 @@ export async function analyzeBrightness(image, sampleSize = 128) {
  * @param {string} url - Image URL
  * @returns {Promise<HTMLImageElement>} - Loaded image element
  */
-function loadImageFromUrl(url) {
+function loadImageFromUrl(url, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
+    // Neither onload nor onerror is guaranteed to fire for every URL/WebView
+    // combination (seen with capacitor:// file URLs shortly after the native
+    // side writes the file) - without a timeout a stall here hangs the whole
+    // quality check, and with it the upload, forever with no error shown.
+    const timer = setTimeout(() => {
+      reject(new Error('Image load timed out'))
+    }, timeoutMs)
     const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = reject
+    img.onload = () => {
+      clearTimeout(timer)
+      resolve(img)
+    }
+    img.onerror = (e) => {
+      clearTimeout(timer)
+      reject(e)
+    }
     img.src = url
   })
 }

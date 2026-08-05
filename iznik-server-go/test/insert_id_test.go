@@ -10,32 +10,56 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// Unit guard for the shared helper that the read/write-split id fixes route through
-// (Discourse 9832 class). The returned id must be the AUTO_INCREMENT id of the row we just
-// inserted, taken from the write connection - never a separate replica-routable SELECT.
-// Also pins that ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id) reports the EXISTING row's id,
-// which the items / isochrones_users fixes rely on.
-func TestExecInsertGetID(t *testing.T) {
+// Unit guard for the id-readback guarantee the read/write-split fixes depend on
+// (Discourse 9832 class): the id must be the AUTO_INCREMENT id of the row just
+// inserted, taken from the WRITE result, never from a separate SELECT that the
+// pool could route to a lagging replica. It also pins that
+// ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id) reports the EXISTING row id,
+// which the items and isochrones_users fixes rely on.
+//
+// This used to exercise database.ExecInsertGetID. That helper has been deleted:
+// every production caller was converted to gorm.WithResult(), leaving it reachable
+// only from this test, and dead code that exists to keep its own test passing is
+// worth neither. The guarantee is not dead though - eleven converted sites depend
+// on it - so the guard was retargeted onto the surviving mechanism rather than
+// deleted with the helper. gorm.WithResult() hands back the driver sql.Result, so
+// LastInsertId comes from the same write connection the INSERT used.
+//
+// Note .Clauses(res), NOT .Set("gorm:result", res) - the latter silently does
+// nothing, which is a mistake this project has already made once.
+func TestInsertIdReadBackFromWriteResult(t *testing.T) {
 	db := database.DBConn
 	name := "eiid " + uniquePrefix("execinsert")
 
-	id, err := database.ExecInsertGetID(db,
-		"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", name)
-	require.NoError(t, err)
-	require.NotZero(t, id, "helper must return the new row id")
+	insert := func() uint64 {
+		res := gorm.WithResult()
+		err := db.Table("items").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			},
+		}).Create(map[string]interface{}{"name": name}).Error
+		require.NoError(t, err)
+		require.NotNil(t, res.Result)
+		got, err := res.Result.LastInsertId()
+		require.NoError(t, err)
+		return uint64(got)
+	}
+
+	id := insert()
+	require.NotZero(t, id, "the write result must carry the new row id")
 
 	var got string
 	db.Raw("SELECT name FROM items WHERE id = ?", id).Scan(&got)
 	assert.Equal(t, name, got, "returned id points at the row we just inserted")
 
-	// Re-inserting the same unique name must return the SAME id via LAST_INSERT_ID(id),
-	// not a new row - the "row already existed" path the upsert fixes depend on.
-	id2, err := database.ExecInsertGetID(db,
-		"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", name)
-	require.NoError(t, err)
-	assert.Equal(t, id, id2, "upsert of an existing unique name reports its existing id")
+	// Re-inserting the same unique name must report the SAME id via
+	// LAST_INSERT_ID(id) rather than creating a new row - the "row already
+	// existed" path the upsert conversions depend on.
+	assert.Equal(t, id, insert(), "upsert of an existing unique name reports its existing id")
 
 	db.Exec("DELETE FROM items WHERE id = ?", id)
 }
@@ -76,7 +100,6 @@ func TestCreateAddressReturnsItsOwnId(t *testing.T) {
 
 	db.Exec("DELETE FROM users_addresses WHERE userid = ?", userID)
 }
-
 
 // ---- anondraft ----
 // Regression guard for the read/write-split "INSERT then SELECT" bug in
@@ -159,7 +182,6 @@ func TestAnonDraftSessionReturnsItsOwnNewId(t *testing.T) {
 	db.Exec("DELETE FROM users WHERE id IN (?, ?)", userID1, userID2)
 }
 
-
 // ---- itemsedit ----
 func TestEditMessageCreatesNewItemAndLinks(t *testing.T) {
 	prefix := uniquePrefix("edit-item-id")
@@ -201,7 +223,6 @@ func TestEditMessageCreatesNewItemAndLinks(t *testing.T) {
 	assert.Equal(t, itemID, linkedItemID,
 		"messages_items must link the message to the newly-created item id")
 }
-
 
 // ---- email ----
 // TestAddEmailReturnsItsOwnNewId is a contract guard for the read/write-split fix
@@ -272,7 +293,6 @@ func TestAddEmailReturnsItsOwnNewId(t *testing.T) {
 	assert.Equal(t, emailB, rowB.Email, "second emailid must point at the second address")
 	assert.Equal(t, userID, rowB.Userid, "second emailid must belong to the test user")
 }
-
 
 // ---- story ----
 // Regression guard for the read/write-split "INSERT then SELECT the new id" class
@@ -353,7 +373,6 @@ func TestConvertToStoryReturnsItsOwnNewId(t *testing.T) {
 	assert.Equal(t, posterB, gotUserB,
 		"second story must be attributed to the second newsfeed author")
 }
-
 
 // ---- isochrone ----
 // TestCreateIsochroneReturnsOwnNewId is a contract guard for two read/write-split
@@ -465,7 +484,6 @@ func TestCreateIsochroneReturnsOwnNewId(t *testing.T) {
 			"isochrones_users row %d must belong to the creating user %d", id, userID)
 	}
 }
-
 
 // ---- stripe ----
 // Regression guard for the read/write-split "INSERT then SELECT the new id" bug in

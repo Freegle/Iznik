@@ -68,7 +68,8 @@ func GetChanges(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var partnerID uint64
-	db.Raw("SELECT id FROM partners_keys WHERE `key` = ?", partner).Scan(&partnerID)
+	// ORM migration site baf96c48b316 (wave 1).
+	db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 	if partnerID == 0 {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
@@ -104,25 +105,40 @@ func GetChanges(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, deleted AS timestamp, 'Deleted' AS `type` FROM messages WHERE deleted > ? "+
-			"UNION SELECT msgid AS id, timestamp, outcome AS `type` FROM messages_outcomes WHERE timestamp > ? "+
-			"UNION SELECT messages_edits.msgid AS id, timestamp, 'Edited' AS `type` FROM messages_edits "+
-			"INNER JOIN messages_groups ON messages_groups.msgid = messages_edits.msgid AND collection = ? WHERE timestamp > ? "+
-			"UNION SELECT msgid AS id, promisedat AS timestamp, 'Promised' AS `type` FROM messages_promises WHERE promisedat > ? "+
-			"UNION SELECT msgid AS id, timestamp, 'Reneged' AS `type` FROM messages_reneged WHERE timestamp > ? "+
-			"UNION SELECT msgid AS id, arrival AS timestamp, 'ApprovedOrReposted' AS `type` FROM messages_groups "+
-			"WHERE messages_groups.arrival > ? AND messages_groups.collection = ?",
-			mysqlTime, mysqlTime, utils.COLLECTION_APPROVED, mysqlTime, mysqlTime, mysqlTime, mysqlTime, utils.COLLECTION_APPROVED).Scan(&messages)
+		// ORM migration site 19b190d43a85 (Tier 2 keep-raw review). Top-level
+		// UNION, nothing wrapping it: BuildClauses={"SELECT"} suppresses the
+		// FROM GORM would otherwise inject once .Table() is called, so the
+		// whole "SELECT ... UNION SELECT ..." text can be given to .Select()
+		// as one fragment - the first SELECT keyword comes from the clause
+		// itself (see amp.go's bare-EXISTS conversions for the same
+		// mechanism), every subsequent one is literal text in the fragment.
+		tx := db.Table("messages").Select(
+			"id, deleted AS timestamp, 'Deleted' AS `type` FROM messages WHERE deleted > ? "+
+				"UNION SELECT msgid AS id, timestamp, outcome AS `type` FROM messages_outcomes WHERE timestamp > ? "+
+				"UNION SELECT messages_edits.msgid AS id, timestamp, 'Edited' AS `type` FROM messages_edits "+
+				"INNER JOIN messages_groups ON messages_groups.msgid = messages_edits.msgid AND collection = ? WHERE timestamp > ? "+
+				"UNION SELECT msgid AS id, promisedat AS timestamp, 'Promised' AS `type` FROM messages_promises WHERE promisedat > ? "+
+				"UNION SELECT msgid AS id, timestamp, 'Reneged' AS `type` FROM messages_reneged WHERE timestamp > ? "+
+				"UNION SELECT msgid AS id, arrival AS timestamp, 'ApprovedOrReposted' AS `type` FROM messages_groups "+
+				"WHERE messages_groups.arrival > ? AND messages_groups.collection = ?",
+			mysqlTime, mysqlTime, utils.COLLECTION_APPROVED, mysqlTime, mysqlTime, mysqlTime, mysqlTime, utils.COLLECTION_APPROVED)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		tx.Scan(&messages)
 	}()
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, lastupdated FROM users WHERE lastupdated IS NOT NULL AND lastupdated >= ?", mysqlTime).Scan(&users)
+		// ORM migration site 9e34a0df6578 (wave 1).
+		db.Table("users").Select("id, lastupdated").Where("lastupdated IS NOT NULL AND lastupdated >= ?", mysqlTime).Scan(&users)
 	}()
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, rater, ratee, rating, timestamp, visible, tn_rating_id, text, reason FROM ratings WHERE timestamp >= ? AND visible = 1", mysqlTime).Scan(&ratings)
+		// ORM migration site 82b4c19c846e (wave 1).
+		db.Table("ratings").
+			Select("id, rater, ratee, rating, timestamp, visible, tn_rating_id, text, reason").
+			Where("timestamp >= ? AND visible = 1", mysqlTime).
+			Scan(&ratings)
 	}()
 
 	wg.Wait()

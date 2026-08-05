@@ -146,6 +146,88 @@ class ReplyAttributionBackfillServiceTest extends TestCase
         $this->assertSame('unknown', $row->attribution);
     }
 
+    /**
+     * Rippling auto-joins a poster to every group their post rippled into (memberships.rippled=1).
+     * A legacy row's frozen was_home_member bit was set for those members too, so the backfill has
+     * to look at the membership's PROVENANCE: backed only by a ripple-created join it is
+     * ripple_join (rippling's own downstream effect, not pre-existing local membership); backed by
+     * an ordinary join it stays home.
+     */
+    public function test_home_bit_backed_only_by_a_ripple_join_becomes_ripple_join(): void
+    {
+        $poster = $this->createTestUser();
+        $originGroup = $this->createTestGroup();
+        $message = $this->createTestMessage($poster, $originGroup, ['arrival' => now()->subDays(10)]);
+        DB::table('messages_groups')->where('msgid', $message->id)
+            ->update(['arrival' => now()->subDays(10)]);
+
+        // Auto-joined by an EARLIER ripple of their own post, long before this post existed.
+        $rippleJoined = $this->createTestUser();
+        $this->createMembership($rippleJoined, $originGroup, [
+            'added' => now()->subDays(30),
+            'rippled' => 1,
+        ]);
+        $this->insertLegacyRow($message->id, $rippleJoined->id, 1);
+
+        // Ordinary member of the same group, equally established.
+        $ordinary = $this->createTestUser();
+        $this->createMembership($ordinary, $originGroup, [
+            'added' => now()->subDays(30),
+            'rippled' => 0,
+        ]);
+        $this->insertLegacyRow($message->id, $ordinary->id, 1);
+
+        // Membership gone entirely (they left since): nothing survives to reclassify against, so
+        // the frozen bit must be honoured rather than the row being demoted.
+        $departed = $this->createTestUser();
+        $this->insertLegacyRow($message->id, $departed->id, 1);
+
+        $this->service->backfill();
+
+        $joined = $this->attributionRow($message->id, $rippleJoined->id);
+        $this->assertSame('ripple_join', $joined->attribution);
+        $this->assertSame(1, (int) $joined->was_ripple_join);
+
+        $home = $this->attributionRow($message->id, $ordinary->id);
+        $this->assertSame('home', $home->attribution);
+        $this->assertSame(0, (int) $home->was_ripple_join);
+
+        $gone = $this->attributionRow($message->id, $departed->id);
+        $this->assertSame('home', $gone->attribution, 'a decayed membership keeps the frozen bit');
+    }
+
+    /**
+     * Holding BOTH kinds of membership of the post's origin groups is home: the ordinary one alone
+     * would have shown them the post, so rippling gets no credit for the reply.
+     */
+    public function test_ordinary_membership_alongside_a_ripple_join_stays_home(): void
+    {
+        $poster = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $message = $this->createTestMessage($poster, $groupA);
+        DB::table('messages_groups')->where('msgid', $message->id)
+            ->update(['arrival' => now()->subDays(10)]);
+        // Cross-posted: a second ORIGIN group (rippled_in = 0).
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => 'Approved',
+            'arrival' => now()->subDays(10),
+            'rippled_in' => 0,
+        ]);
+
+        $replier = $this->createTestUser();
+        $this->createMembership($replier, $groupA, ['added' => now()->subDays(30), 'rippled' => 1]);
+        $this->createMembership($replier, $groupB, ['added' => now()->subDays(30), 'rippled' => 0]);
+        $this->insertLegacyRow($message->id, $replier->id, 1);
+
+        $this->service->backfill();
+
+        $row = $this->attributionRow($message->id, $replier->id);
+        $this->assertSame('home', $row->attribution);
+    }
+
     public function test_already_derived_rows_are_untouched_and_limit_respected(): void
     {
         $poster = $this->createTestUser();

@@ -5,6 +5,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type GetABTestRequest struct {
@@ -39,7 +41,8 @@ func GetABTest(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var variants []ABTestVariant
-	db.Raw("SELECT * FROM abtest WHERE uid = ? AND suggest = 1 ORDER BY rate DESC, RAND()", uid).Scan(&variants)
+	// ORM migration site b8d3220fdb2f (wave 1).
+	db.Table("abtest").Where("uid = ? AND suggest = 1", uid).Order("rate DESC, RAND()").Scan(&variants)
 
 	if len(variants) == 0 {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "variant": nil})
@@ -87,7 +90,25 @@ func PostABTest(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	if req.Shown != nil && *req.Shown {
-		db.Exec("INSERT INTO abtest (uid, variant, shown, action, rate) VALUES (?, ?, 1, 0, 0) ON DUPLICATE KEY UPDATE shown = shown + 1, rate = COALESCE(100 * action / shown, 0)", req.UID, req.Variant)
+		// ORM migration site 7e75c8eb601d (wave 3). DoUpdates is an explicit
+		// ordered clause.Set, not clause.Assignments(map...): rate's expression
+		// reads shown, which this same statement also assigns, and MySQL
+		// evaluates a SET list left to right - shown must stay first, exactly
+		// as the original wrote it, so rate picks up the incremented value.
+		// clause.Assignments(map...) sorts keys alphabetically ("rate" before
+		// "shown"), which would silently swap the order and change the result.
+		db.Table("abtest").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "shown"}, Value: gorm.Expr("shown + 1")},
+				{Column: clause.Column{Name: "rate"}, Value: gorm.Expr("COALESCE(100 * action / shown, 0)")},
+			},
+		}).Create(map[string]interface{}{
+			"uid":     req.UID,
+			"variant": req.Variant,
+			"shown":   gorm.Expr("1"),
+			"action":  gorm.Expr("0"),
+			"rate":    gorm.Expr("0"),
+		})
 	}
 
 	if req.Action != nil && *req.Action {
@@ -95,7 +116,21 @@ func PostABTest(c *fiber.Ctx) error {
 		if req.Score != nil && *req.Score > 0 {
 			score = *req.Score
 		}
-		db.Exec("INSERT INTO abtest (uid, variant, shown, action, rate) VALUES (?, ?, 0, ?, 0) ON DUPLICATE KEY UPDATE action = action + ?, rate = COALESCE(100 * action / shown, 0)", req.UID, req.Variant, score, score)
+		// ORM migration site 7e4882220657 (wave 3). Same reasoning as
+		// 7e75c8eb601d above: rate reads action, which this statement also
+		// assigns, so action must stay first in an explicit ordered Set.
+		db.Table("abtest").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "action"}, Value: gorm.Expr("action + ?", score)},
+				{Column: clause.Column{Name: "rate"}, Value: gorm.Expr("COALESCE(100 * action / shown, 0)")},
+			},
+		}).Create(map[string]interface{}{
+			"uid":     req.UID,
+			"variant": req.Variant,
+			"shown":   gorm.Expr("0"),
+			"action":  score,
+			"rate":    gorm.Expr("0"),
+		})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

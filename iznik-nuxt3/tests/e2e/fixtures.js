@@ -336,6 +336,8 @@ const test = base.test.extend({
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*yesterday\.ilovefreegle\.org/, // ModYesterday.vue polls the live Yesterday backup host directly (real prod system, not part of the CI Docker stack) — its response code depends on that system's own restore/refresh cycle, outside test control
+      /Failed to load resource.*connect\.facebook\.net/, // Facebook SDK — external script the app runs fine without; container network transiently fails to reach it
+      /Failed to load resource.*gstatic\.com/, // Google Sign-In assets — external script the app runs fine without; container network transiently fails to reach it
       /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
       /Failed to load resource.*adtrafficquality\.google.*sodar/, // Google CSE script internally calls sodar (ad traffic quality) — external service, not our code
     ]
@@ -817,6 +819,7 @@ const test = base.test.extend({
             error.message.includes('ERR_NETWORK_CHANGED') ||
             error.message.includes('net::ERR_') ||
             error.message.includes('Execution context was destroyed') ||
+            error.message.includes('is interrupted by another navigation') ||
             error.message.includes(
               'Target page, context or browser has been closed'
             )
@@ -1686,12 +1689,19 @@ const testWithFixtures = test.extend({
       // and becomes visible in the ModTools pending queue immediately.
       try {
         const statusUrl = process.env.STATUS_API_URL || 'http://localhost:8081'
-        const ccResp = await fetch(`${statusUrl}/api/utility/run-contentcheck`, { method: 'POST' })
+        const ccResp = await fetch(
+          `${statusUrl}/api/utility/run-contentcheck`,
+          { method: 'POST' }
+        )
         if (!ccResp.ok) {
-          console.warn(`postMessage: run-contentcheck returned ${ccResp.status} — message may be hidden in pending queue`)
+          console.warn(
+            `postMessage: run-contentcheck returned ${ccResp.status} — message may be hidden in pending queue`
+          )
         }
       } catch (e) {
-        console.warn(`postMessage: run-contentcheck failed — message may be hidden in pending queue: ${e.message}`)
+        console.warn(
+          `postMessage: run-contentcheck failed — message may be hidden in pending queue: ${e.message}`
+        )
       }
 
       // Return information about the post

@@ -1,0 +1,311 @@
+# ORM migration tooling
+
+Tooling for the raw-SQL-to-ORM rewrite described in
+[`plans/database-migration-evaluation-2026-07.md`](../../plans/database-migration-evaluation-2026-07.md),
+section 7 ("The raw-SQL-to-ORM rewrite: a locked-in process"). Read that
+section first — this file only covers how to run the tools; the *why* and the
+full process (harness layers, conversion waves, definition of done) live
+there.
+
+## The manifest is the contract
+
+`manifest.json` is a machine-generated inventory of every raw SQL call site in
+`iznik-server-go` (`.Raw(`, `.Exec(`, and the `database/sql` equivalents).
+It is committed to the repo and is the single source of truth the CI gate
+enforces against — not anyone's memory or diligence (plan 7.1: "missing a
+site or silently deferring one is structurally impossible").
+
+Each site has exactly one **status**:
+
+| Status | Meaning |
+|---|---|
+| `raw` | Not yet converted. The default for every newly-discovered site. |
+| `in-progress` | A conversion is underway (e.g. mid-PR, or blocked on something). |
+| `converted` | Rewritten to use the ORM. Requires a passing Layer-1 parity test bearing the site's ID (Gate 2, below) before this status is legitimate. |
+| `keep-raw` | Deliberately staying raw (plan 7.5: the genuinely hard sites). **Must carry a non-empty `reason`** — the ratchet fails the build otherwise. |
+| `test-fixture` | Go test file SQL (`_test.go`), out of scope for ORM-ification but in scope for the later engine migration (plan 7.6). |
+| `retired` | The call site was deleted from the codebase; kept in the manifest as a record rather than silently disappearing. |
+
+The programme is done (plan 7.4) when `raw` and `in-progress` are both zero.
+
+## Running the extractor
+
+```bash
+cd tools/orm-migration
+go run . -root ../../iznik-server-go -out manifest.json -repo ../..
+```
+
+(`-root`, `-out` and `-repo` all default to the right thing when run from this
+directory, so `go run .` alone is normally enough.) It re-scans the source,
+regenerates every derived field (file, line, SQL text, complexity, wave,
+mysqlisms, etc.), and **merges forward** the reviewed fields (`status`,
+`reason`, `approvedDiff`) from whatever is currently at `-out` by ID, so
+re-running it never resets a reviewed decision. Run it, review the diff, and
+commit `manifest.json` whenever you convert, retire or re-triage a site.
+
+**Do not hand-edit a site's `status` to `converted`.** The extractor sets that
+itself: a site whose raw SQL is gone from the code *and* which a parity test
+names (see Gate 2 below) is promoted automatically on the next run. Writing it
+by hand does nothing durable - the next regeneration derives it again - and it
+is actively misleading, because the one case where the hand-edit changes the
+output is the case where no parity test exists, which is exactly the case the
+status is supposed to flag.
+
+If a site you converted is still not showing as `converted` after a regenerate,
+the missing thing is the parity test, or the extractor cannot see the assertion
+you used - check `parityAssertions` in `extract.go`, and see gate (m). Reach for
+that before reaching for the JSON. The one time this map fell behind the harness,
+68 sites with real passing tests reported as unproven, and the natural reading -
+"the manifest is stale, I should fix up the statuses" - was wrong in a way that
+would have papered over the actual bug.
+
+## Gate 1: the CI inventory ratchet (`ci-ratchet.sh`)
+
+Implements plan 7.1 point 3. Runs the extractor against a **temp** copy of
+the manifest (the committed `manifest.json` is never modified by this script)
+and fails the build if:
+
+1. **New raw SQL isn't in the manifest.** The code has a call site whose ID
+   the committed manifest doesn't know about.
+2. **The golden SQL has drifted.** A site's `goldenSql` in the committed
+   manifest no longer matches what the extractor finds in the real source —
+   either the manifest was hand-edited, or the source changed without
+   re-running the extractor. This matters because Layer-1 parity tests
+   compare against `goldenSql`; if it's wrong, those tests are proving
+   nothing.
+3. **The raw+in-progress count went up.** Compared against a baseline: an
+   explicit top-level `"ratchet": {"baseline": N}` in the manifest if
+   present, otherwise the manifest's own `counts.raw + counts["in-progress"]`
+   (self-initialising — the very first run always passes). To bank progress
+   and tighten the ratchet, lower `ratchet.baseline` in the same PR that
+   reduces the count; the script never does this automatically (see the
+   script header for why).
+4. **A `keep-raw` site has no reason.** Deferral must always carry a written
+   justification (plan 7.4).
+
+Run it the same way locally and in CI:
+
+```bash
+tools/orm-migration/ci-ratchet.sh
+```
+
+It needs `go` and `jq` on `PATH` and works from any `cwd`. Output is prefixed
+`CI-RATCHET:` so failures are easy to `grep` out of CI logs.
+
+## Gate 2: no `converted` site without a passing parity test
+
+Plan 7.2, Layer 1: a site cannot be marked `converted` unless a parity test
+bearing its ID exists and passes ("the extractor checks test existence
+mechanically"). **This is now wired up and enforced**, in three places:
+
+- `extract.go`'s `parityTestedIDs` walks every `_test.go` file under the source
+  root and records which site IDs are passed as string literals to a harness
+  assertion. It parses rather than greps, deliberately: matching the ID anywhere
+  in a file let a *comment* saying "site abc123 is deliberately not converted"
+  satisfy the gate asserting that it was.
+- A site whose raw SQL is gone and which such a test names is promoted to
+  `converted` automatically. One that vanished with no test to vouch for it
+  keeps its old status, so **ratchet gate (f)** can refuse it — "it disappeared"
+  is never a route out of the inventory.
+- **Ratchet gate (m)** checks `parityAssertions` against the harness's real
+  surface: every exported `ormharness` assertion taking a `siteID` must be
+  listed. Without that, adding an assertion silently un-proves every site using
+  it (see the note under "Running the extractor").
+
+A test may reach an assertion through a local helper of its own rather than
+calling `ormharness` directly — `message_list_tier9_test.go` builds its
+parametrized cases in `assertUnionAllSiteShape(t, siteID, ...)` and forwards.
+`forwardingHelpers` resolves those to a fixed point, so such a test still counts.
+It is deliberately narrow: the forwarded argument must be an identifier naming a
+parameter of the enclosing function, because an ID the helper *computes* is not
+the ID written at the call site, and crediting the literal would vouch for
+something the test never asserted.
+
+`AssertHintSurvivesInRawSQL` is intentionally *not* a parity assertion: it proves
+an index hint survives in a statement that is **staying raw**, so counting it
+would promote a keep-raw site on the strength of a test asserting the opposite.
+
+## Laravel (iznik-batch): manifest and harness
+
+`tools/orm-migration/services/laravel/` holds the same raw-SQL inventory for
+iznik-batch (Laravel), generated by a separate tool:
+`tools/orm-migration/php-extractor/extract.php`, a
+[nikic/php-parser](https://github.com/nikic/PHP-Parser) AST walk over
+iznik-batch - the PHP counterpart to `extract.go`, not a reuse of it (Go
+cannot read PHP). Read `extract.php`'s own header comment first: it explains
+the raw-SQL method surface, how it was verified against the Laravel framework
+source rather than copied from the migration plan's memory of it, and several
+places where this port is a deliberate simplification of - not a shortfall
+against - the Go design (no receiver-ambiguity defence is needed, because
+every enumerated method name is an unambiguous Laravel facade/builder call;
+no LIMIT/OFFSET or column-order golden-normalisation is needed either, for
+reasons specific to how Laravel compiles SQL - though those two only matter
+once a Layer 1 harness exists, which this branch does not build).
+
+Run it the same way as the Go extractor:
+
+```bash
+cd tools/orm-migration/php-extractor
+composer install   # once; nikic/php-parser only, not iznik-batch's own vendor
+php extract.php
+```
+
+This manifest carries the full raw/in-progress/converted/keep-raw/
+test-fixture/retired lifecycle, same as the main manifest - unlike
+`services/spatial`/`services/routing`, which start (and stay) fully triaged.
+It also carries one status those do not: **`excluded`**, for call sites this
+extractor finds but which are not this migration's problem at all - the
+`app/Services/EeeSqliteService.php` cluster runs against a separate, local
+SQLite database, not the shared Percona/MySQL cluster the ORM rewrite and the
+Postgres migration are both about. `excluded` is deliberately not `keep-raw`:
+`keep-raw` means "considered and deferred", and these were never in scope to
+defer. See `services/laravel/keep-raw.json`'s own comment for the `surface`
+field that rule entries can set, needed because that same directory
+(`app/Console/Commands/Eee/`) also contains real, in-scope MySQL writes in
+the same files as the excluded SQLite reads.
+
+**Gate (q)** in `ci-ratchet.sh` checks this manifest the same way gates
+(b)/(c)/(d)/(e)/(g) check the main one - new raw SQL, golden-SQL drift, the
+raw+in-progress ceiling, keep-raw/excluded sites needing a reason, and
+manifest staleness - but not (f)/(h)-(o), which all guard the conversion/
+parity-test lifecycle that does not exist here yet. It self-guards on two
+things: the manifest being absent (same as gate (p)), and `php`/`composer` not
+being on `PATH` - Go and jq are hard requirements for this whole script, but
+`php` being equally hard would break every unrelated gate on a machine
+without it.
+
+That second self-guard is a **local-run convenience only**. In CI the orb's
+ratchet step installs `php-cli` and `composer` on demand (the same pattern it
+uses for Go, and guarded on `services/laravel/manifest.json` existing so a
+branch without the Laravel inventory pays nothing), and exports
+`ORM_RATCHET_REQUIRE_PHP=1`. With that set, a missing `php` or `composer` is a
+hard **FAIL**, never a skip: a gate that skips in CI reads green while checking
+nothing, which is exactly the "we quietly deferred a bit" failure mode section
+7.1 of the plan exists to make structurally impossible. If CI ever reports gate
+(q) as skipped, the provisioning has broken and that is the bug to fix - do not
+unset the variable.
+
+One more thing gate (q) does NOT do, unlike gate (d) for the main manifest:
+fall back to a self-initialising baseline when `ratchet.baseline` is absent.
+That fallback derives its ceiling from the very count it is supposed to
+limit, which lets debt creep upward while the gate reports OK - see gate
+(q)'s comment in `ci-ratchet.sh` for the full reasoning. `ratchet.baseline`
+is a hard requirement for this manifest from its first commit onward.
+
+### The harness (Layer 1 and Layer 2)
+
+`iznik-batch/tests/Support/OrmHarness/` holds the Laravel counterpart to
+`iznik-server-go/ormharness`, ported design not reinvented - each class's own
+header comment names the Go file it corresponds to and explains where the
+port had to diverge (and why that is a genuine simplification, not a
+shortfall): `Canonical.php` (Layer 1's canonicaliser, `canonical.go`),
+`GoldenSql.php` (Layer 1's assertion, `golden.go`), `ResultParity.php`
+(Layer 2, `resultparity.go`), and `Manifest.php` (loads
+`services/laravel/manifest.json`, no Go equivalent needed - PHPUnit runs
+from a full checkout, unlike the compiled Go binary `golden.go`'s
+`go:embed` comment explains).
+
+**`GoldenSql::assert()` only covers SELECT-shaped sites** (and WHERE-fragment
+sites reached through one) - `Query\Builder::toSql()` is hardcoded to
+`compileSelect()` in Laravel itself, so it cannot render an UPDATE or DELETE
+without executing it. `assertUpdate()`/`assertDelete()` exist for those two
+verbs, calling the Grammar's `compileUpdate()`/`compileDelete()` directly
+(the same non-executing methods Laravel's own `->update()`/`->delete()` call
+internally before running anything). There is no `assertInsert()` yet - only
+3 raw `DB::insert()` sites exist in the manifest, so building it was left
+until the first one needs it, per the same "add a gate when it starts
+guarding something real" judgement applied to Gate 2 below.
+
+**Cross-language canonicaliser pinning.** `Canonical.php` is a faithful
+line-by-line port of `canonical.go`'s `Canonical()`, not shared code - PHP
+cannot import Go, and compiling the Go canonicaliser into a subprocess
+PHPUnit shells out to was considered and rejected (see `Canonical.php`'s
+header for the full reasoning: it would need to live under
+`iznik-server-go/`, off-limits here, and would add a compiled-binary runtime
+dependency to the Laravel suite that does not exist today). Instead:
+`tools/orm-migration/canonical-corpus.json` is a shared JSON corpus of cases
+derived from `canonical_test.go`, checked by a PHPUnit test
+(`iznik-batch/tests/Unit/OrmHarness/CanonicalTest.php`) against the PHP port
+and by a Go test (`iznik-server-go/ormharness/canonical_corpus_test.go`)
+against the original - so a change that alters behaviour on only one side
+fails CI on both. That corpus file has to exist in **three places, not one**:
+neither test runner's container can read `tools/orm-migration/` directly
+(the Go apiv2 image's build context is `iznik-server-go` alone; the batch
+container only bind-mounts `iznik-batch`), so a byte-identical copy lives in
+each service's own tree, embedded into the Go test binary via `go:embed`.
+`tools/orm-migration/canonical-corpus.json` is the one to actually edit;
+`tools/orm-migration/check-canonical-corpus-sync.sh` (wired into gate (q))
+fails the build if any copy drifts.
+
+**Gate 2 (parity-test-proves-conversion) is not wired into gate (q) yet.**
+Its Go equivalents are gates (f)/(m)/(n): nothing may leave the inventory
+without a passing parity test naming it, the extractor has to recognise
+every harness assertion that proves a site, and "converted" has to mean the
+raw SQL is actually gone. All three guard the conversion lifecycle, and
+nothing is being converted yet - the manifest's `raw` count has not moved.
+Adding them now would be guarding against a failure mode that cannot occur;
+they land with the first real conversion batch, when `php-extractor` grows
+a `parityTestedIDs`-equivalent AST walk (mirroring `extract.go`'s
+`forwardingHelpers`) that recognises a site id passed to `GoldenSql::assert`/
+`assertUpdate`/`assertDelete`/`ResultParity::assertForSite`.
+
+**Layers 3 (shadow reads) and 4 (write replay) have no Laravel-side
+substrate yet**, checked while building the harness, not assumed: Layer 3's
+Go design reads a shadow-execution flag from a config table with no Laravel
+equivalent, and would need Laravel's queue (already used - beanstalkd) for
+the "run new query asynchronously" half, since PHP has no goroutine
+equivalent. Layer 4's natural substrate on the Go side, the "yesterday"
+snapshot-restore system, explicitly disables the batch container
+(`docker-compose.override.yesterday.yml`: "scheduled jobs should not run
+against backup database") - the opposite of what replay needs. Given
+iznik-batch is scheduled console jobs rather than a live per-request
+service, two schema-cloned test databases seeded via factories (diff the
+old and new write paths against each) is a more realistic substitute than
+extending "yesterday" for this purpose, but that is a design decision for
+whoever picks up that phase, not something built here.
+
+## Burn-down reporting (`burndown.mjs`)
+
+Plan 7.3: "the burn-down (manifest status counts over time) is a dashboard,
+so progress and any stall are visible, not anecdotal." Prints counts by
+status, wave, complexity and kind, a per-wave remaining/done breakdown, and
+the modules with the most remaining raw+in-progress work (the natural unit
+for planning the next PR, per the "one module or package per PR" batch rule).
+
+```bash
+node tools/orm-migration/burndown.mjs                # text report
+node tools/orm-migration/burndown.mjs --json          # machine-readable, for a dashboard
+node tools/orm-migration/burndown.mjs --top=25        # more modules in the "top remaining" table
+node tools/orm-migration/burndown.mjs --manifest=path # point at a different manifest
+```
+
+No dependencies (Node ESM, stdlib only).
+
+## Wave order
+
+Fixed conversion order (plan 7.3), enforced by convention and the batch rule,
+not mechanically by these tools yet:
+
+0. **Pilot** — ten mixed-shape sites through all four harness layers, to
+   calibrate cost. Nothing else converts until the pilot retrospective.
+1. Single-table `SELECT` with simple predicates.
+2. Single-table `INSERT`/`UPDATE`/`DELETE`.
+3. Upserts, via `clause.OnConflict` / `Model::upsert()`.
+4. Multi-table `SELECT`s with no MySQL-only functions.
+5. Triage of everything left into `keep-raw` (with reason) or an individually
+   planned conversion.
+
+The extractor assigns each site a suggested `wave` using this order; see
+`wave()` in `extract.go`.
+
+## Testing the ratchet itself
+
+`ci-ratchet.sh` reads the manifest path from `$RATCHET_MANIFEST` (default:
+`manifest.json` in this directory) and the source root from `$RATCHET_ROOT`
+(default: `iznik-server-go`), so you can exercise a failure mode without
+touching the committed manifest:
+
+```bash
+jq '.ratchet = {"baseline": 0}' iznik-server-go/ormharness/manifest.json > /tmp/perturbed.json
+RATCHET_MANIFEST=/tmp/perturbed.json tools/orm-migration/ci-ratchet.sh   # exits 1
+```

@@ -38,7 +38,11 @@ export function variant(stdmsg) {
     case 'Edit':
       return 'primary'
     case 'Hold Message':
-      return 'warning'
+      // Amber is what the rejects use. Holding a post keeps it, so it belongs
+      // with the greens; sorted alphabetically it otherwise ran into the block
+      // of rejects and got picked by mistake. The pause icon still tells them
+      // apart from the plain leaves.
+      return 'primary'
     default:
       return 'white'
   }

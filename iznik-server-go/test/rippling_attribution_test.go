@@ -7,36 +7,42 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func iptr(v int) *int { return &v }
+func iptr(v int) *int       { return &v }
 func sptr(s string) *string { return &s }
 
 // The attribution ladder over the evidence bits. Precedence and the hard guard are the whole
 // point of the graded scheme, so every rung and the interesting overlaps are pinned here.
 func TestDeriveAttribution(t *testing.T) {
 	cases := []struct {
-		name                                             string
-		wasHome, wasNotified, wasRippleGroup, hadRippled int
-		inOrigin, inReach                                *int
-		want                                             string
+		name                                 string
+		wasHome, wasNotified, wasRippleGroup int
+		wasRippleJoin, hadRippled            int
+		inOrigin, inReach                    *int
+		want                                 string
 	}{
-		{"home member", 1, 0, 0, 1, nil, nil, rippling.AttributionHome},
+		{"home member", 1, 0, 0, 0, 1, nil, nil, rippling.AttributionHome},
 		{"home wins over ripple evidence (conservative: never over-credit rippling)",
-			1, 1, 1, 1, iptr(1), iptr(1), rippling.AttributionHome},
-		{"notified ledger hit", 0, 1, 0, 1, nil, nil, rippling.AttributionRippleNotified},
-		{"notified outranks rippled-group membership", 0, 1, 1, 1, nil, nil, rippling.AttributionRippleNotified},
-		{"established member of a rippled-into group", 0, 0, 1, 1, nil, nil, rippling.AttributionRippleGroup},
+			1, 1, 1, 1, 1, iptr(1), iptr(1), rippling.AttributionHome},
+		{"notified ledger hit", 0, 1, 0, 0, 1, nil, nil, rippling.AttributionRippleNotified},
+		{"notified outranks rippled-group membership", 0, 1, 1, 0, 1, nil, nil, rippling.AttributionRippleNotified},
+		{"established member of a rippled-into group", 0, 0, 1, 0, 1, nil, nil, rippling.AttributionRippleGroup},
+		{"origin-group member only because an earlier ripple auto-joined them",
+			0, 0, 0, 1, 1, nil, nil, rippling.AttributionRippleJoin},
+		{"a ripple-created membership is credited even on a post that never rippled",
+			0, 0, 0, 1, 0, nil, nil, rippling.AttributionRippleJoin},
 		{"non-member inside origin catchment: would have seen it in Browse anyway",
-			0, 0, 0, 1, iptr(1), iptr(1), rippling.AttributionOrganicLocal},
+			0, 0, 0, 0, 1, iptr(1), iptr(1), rippling.AttributionOrganicLocal},
 		{"outside catchment, inside reach: exposure existed only because of the ripple",
-			0, 0, 0, 1, iptr(0), iptr(1), rippling.AttributionRippleReach},
+			0, 0, 0, 0, 1, iptr(0), iptr(1), rippling.AttributionRippleReach},
 		{"inside reach but post never rippled: hard guard blocks ripple_reach",
-			0, 0, 0, 0, iptr(0), iptr(1), rippling.AttributionUnknown},
-		{"no location on file: reach containment unknowable", 0, 0, 0, 1, nil, nil, rippling.AttributionUnknown},
-		{"outside both", 0, 0, 0, 1, iptr(0), iptr(0), rippling.AttributionUnknown},
+			0, 0, 0, 0, 0, iptr(0), iptr(1), rippling.AttributionUnknown},
+		{"no location on file: reach containment unknowable", 0, 0, 0, 0, 1, nil, nil, rippling.AttributionUnknown},
+		{"outside both", 0, 0, 0, 0, 1, iptr(0), iptr(0), rippling.AttributionUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := rippling.DeriveAttribution(c.wasHome, c.wasNotified, c.wasRippleGroup, c.hadRippled, c.inOrigin, c.inReach)
+			got := rippling.DeriveAttribution(c.wasHome, c.wasNotified, c.wasRippleGroup,
+				c.wasRippleJoin, c.hadRippled, c.inOrigin, c.inReach)
 			assert.Equal(t, c.want, got)
 		})
 	}

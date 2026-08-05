@@ -74,6 +74,15 @@ export function useReachDistance(onPersisted) {
     settings.browseMaxMinutes = minutes
     if (radius !== null) {
       settings.browseMaxDistance = radius
+    } else {
+      // The derivation failed (no known location, or the routing call errored).
+      // The old cached radius belongs to a DIFFERENT slider position - keeping
+      // it silently filters the feed and digests to a cap the slider no longer
+      // shows (seen live: slider at 25 minutes, feed capped at a stale 1 mile).
+      // Fail open instead: the server's own reach still governs, and the next
+      // successful slider change - or the browse:backfill-max-distance batch
+      // command - restores a derived cap.
+      settings.browseMaxDistance = BROWSE_DISTANCE_UNLIMITED
     }
     await authStore.saveAndGet({ settings })
     if (onPersisted)

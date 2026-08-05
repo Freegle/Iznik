@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AIImageChallenge represents an AI image to review
@@ -165,9 +166,9 @@ func GetChallenge(c *fiber.Ctx) error {
 
 	// Get user's trust level
 	var trustLevel string
-	err := db.Raw(`
-		SELECT COALESCE(trustlevel, ?) FROM users WHERE id = ?
-	`, TrustBasic, userID).Scan(&trustLevel).Error
+	// ORM migration site 2d399fd44a2c (wave 1).
+	err := db.Table("users").Select("COALESCE(trustlevel, ?)", TrustBasic).
+		Where("id = ?", userID).Scan(&trustLevel).Error
 
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -186,11 +187,12 @@ func GetChallenge(c *fiber.Ctx) error {
 		groupIDs = []uint64{uint64(groupID)}
 	} else {
 		// Get all user's Freegle groups
-		db.Raw(`
-			SELECT groupid FROM memberships
-			INNER JOIN `+"`groups`"+` ON memberships.groupid = `+"`groups`"+`.id
-			WHERE userid = ? AND type = ?
-		`, userID, utils.GROUP_TYPE_FREEGLE).Scan(&groupIDs)
+		// ORM migration site 41b78139b026 (wave 4).
+		db.Table("memberships").
+			Select("groupid").
+			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
+			Where("userid = ? AND type = ?", userID, utils.GROUP_TYPE_FREEGLE).
+			Scan(&groupIDs)
 	}
 
 	// Try Invite challenge first
@@ -258,35 +260,32 @@ func GetChallenge(c *fiber.Ctx) error {
 
 	// Try search term challenge
 	if contains(challengeTypes, ChallengeSearchTerm) {
-		// Check if user is in a group with word matching enabled
-		var enabled int
-		var query string
-		var params []interface{}
-
+		// Check if user is in a group with word matching enabled.
+		//
+		// ORM migration site 80c36f2da91e (Tier 3 keep-raw review). groupID>0
+		// is the only toggle - 2 possible rendered forms, both declared in
+		// ormharness/shapes.json and proven by TestTier3Shapes_80c36f2da91e
+		// (iznik-server-go/test).
+		// WHERE built as a single string for ONE Where() call: GORM's
+		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+		// paren pair once there is more than one Where expression to
+		// combine (clause/where.go buildExprs), which would diverge from
+		// the golden.
+		enabledWhereSQL := "memberships.userid = ?"
+		enabledWhereArgs := []interface{}{userID}
 		if groupID > 0 {
 			// Filter to specific group if provided
-			query = `
-				SELECT COUNT(*)
-				FROM memberships
-				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-				WHERE memberships.userid = ?
-				AND memberships.groupid = ?
-				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
-			`
-			params = []interface{}{userID, groupID}
-		} else {
-			// Check all user's groups
-			query = `
-				SELECT COUNT(*)
-				FROM memberships
-				INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-				WHERE memberships.userid = ?
-				AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)
-			`
-			params = []interface{}{userID}
+			enabledWhereSQL += " AND memberships.groupid = ?"
+			enabledWhereArgs = append(enabledWhereArgs, groupID)
 		}
+		enabledWhereSQL += " AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)"
 
-		db.Raw(query, params...).Scan(&enabled)
+		var enabled int
+		db.Table("memberships").
+			Select("COUNT(*)").
+			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
+			Where(enabledWhereSQL, enabledWhereArgs...).
+			Scan(&enabled)
 
 		if enabled > 0 {
 			// Get 10 random popular items
@@ -296,11 +295,15 @@ func GetChallenge(c *fiber.Ctx) error {
 			}
 			var terms []ItemTerm
 
-			db.Raw(`
-				SELECT DISTINCT id, name AS term
-				FROM (SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t
-				ORDER BY RAND() LIMIT 10
-			`).Scan(&terms)
+			// ORM migration site 39233a746ed4 (wave 5). Derived-table trick: GORM's
+			// Table() passes its name argument through verbatim (no quoting) once it
+			// contains a space, so a parenthesized subquery can be given as the
+			// "table name".
+			db.Table("(SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t").
+				Select("DISTINCT id, name AS term").
+				Order("RAND()").
+				Limit(10).
+				Scan(&terms)
 
 			if len(terms) > 0 {
 				var searchTerms []SearchTerm
@@ -336,19 +339,22 @@ func contains(slice []string, str string) bool {
 // getInviteChallenge returns an invite challenge if the user hasn't been asked recently
 func getInviteChallenge(db *gorm.DB, userID uint64) *Challenge {
 	// Check if we've asked in the last 31 days
-	var count int
-	db.Raw(`
-		SELECT COUNT(*) FROM microactions
-		WHERE userid = ? AND actiontype = ?
-		AND DATEDIFF(NOW(), timestamp) < 31
-	`, userID, ChallengeInvite).Scan(&count)
+	var count int64
+	// ORM migration site fa53f46653e6 (wave 1).
+	db.Table("microactions").
+		Where("userid = ? AND actiontype = ? AND DATEDIFF(NOW(), timestamp) < 31", userID, ChallengeInvite).
+		Count(&count)
 
 	if count == 0 {
 		// Record a placeholder to ensure we don't ask too often
-		db.Exec(`
-			INSERT INTO microactions (actiontype, userid, version, comments, score_negative)
-			VALUES (?, ?, 4, 'Ask to invite', 0)
-		`, ChallengeInvite, userID)
+		// ORM migration site d4ce9c3f1fc1 (wave 2).
+		db.Table("microactions").Create(map[string]interface{}{
+			"actiontype":     ChallengeInvite,
+			"userid":         userID,
+			"version":        gorm.Expr("4"),
+			"comments":       gorm.Expr("'Ask to invite'"),
+			"score_negative": gorm.Expr("0"),
+		})
 
 		return &Challenge{
 			Type: ChallengeInvite,
@@ -364,35 +370,32 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 		return nil
 	}
 
-	// Convert group IDs to comma-separated string for SQL
-	groupIDStrs := make([]string, len(groupIDs))
-	for i, id := range groupIDs {
-		groupIDStrs[i] = fmt.Sprintf("%d", id)
-	}
-	groupIDsStr := strings.Join(groupIDStrs, ",")
-
 	type MessageResult struct {
 		Msgid uint64 `json:"msgid"`
 	}
 	var msg MessageResult
 
-	err := db.Raw(`
-		SELECT messages_groups.msgid
-		FROM messages_groups
-		INNER JOIN messages ON messages.id = messages_groups.msgid
-		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid
-		LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?
-		WHERE messages_groups.groupid IN (`+groupIDsStr+`)
-			AND DATE(messages.arrival) = CURDATE()
-			AND fromuser != ?
-			AND microvolunteering = 1
-			AND messages.deleted IS NULL
-			AND microactions.id IS NULL
-			AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1)
-			AND collection = ?
-			AND autoreposts = 0
-		ORDER BY messages_groups.arrival ASC LIMIT 1
-	`, userID, userID, utils.COLLECTION_PENDING).Scan(&msg).Error
+	// ORM migration site 309561e40e15 (Tier 3 keep-raw review). groupIDsStr
+	// was a hand-built comma-joined literal-int list; GORM's native "IN (?)"
+	// slice-bind is the direct replacement (proven pattern, see plan 7.5) and
+	// gives this exactly one rendered form, declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_309561e40e15
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	pendingWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+		"AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL " +
+		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
+		"AND collection = ? AND autoreposts = 0"
+	err := db.Table("messages_groups").
+		Select("messages_groups.msgid").
+		Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
+		Joins("LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?", userID).
+		Where(pendingWhereSQL, groupIDs, userID, utils.COLLECTION_PENDING).
+		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -410,13 +413,6 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 		return nil
 	}
 
-	// Convert group IDs to comma-separated string for SQL
-	groupIDStrs := make([]string, len(groupIDs))
-	for i, id := range groupIDs {
-		groupIDStrs[i] = fmt.Sprintf("%d", id)
-	}
-	groupIDsStr := strings.Join(groupIDStrs, ",")
-
 	type MessageResult struct {
 		Msgid uint64 `json:"msgid"`
 	}
@@ -424,29 +420,31 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 
 	resultApprove := "Approve"
 
-	err := db.Raw(`
-		SELECT messages_spatial.msgid,
-			(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount,
-			(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount
-		FROM messages_spatial
-		INNER JOIN messages_groups ON messages_spatial.msgid = messages_groups.msgid
-		INNER JOIN messages ON messages.id = messages_spatial.msgid
-		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid
-		LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ?
-		LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid
-		WHERE messages_groups.groupid IN (`+groupIDsStr+`)
-			AND DATE(messages.arrival) = CURDATE()
-			AND fromuser != ?
-			AND microvolunteering = 1
-			AND messages_outcomes.id IS NULL
-			AND messages.deleted IS NULL
-			AND microactions.id IS NULL
-			AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1)
-			AND collection = ?
-			AND autoreposts = 0
-		HAVING approvalcount < ? AND reviewcount < ?
-		ORDER BY messages_groups.arrival ASC LIMIT 1
-	`, resultApprove, userID, userID, utils.COLLECTION_APPROVED, ApprovalQuorum, DissentingQuorum).Scan(&msg).Error
+	// ORM migration site bde82a974f05 (Tier 3 keep-raw review). Same
+	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
+	// exactly one rendered form, declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_bde82a974f05 (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	approvedWhereSQL := "messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
+		"AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
+		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
+		"AND collection = ? AND autoreposts = 0"
+	err := db.Table("messages_spatial").
+		Select("messages_spatial.msgid, "+
+			"(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount, "+
+			"(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount",
+			resultApprove).
+		Joins("INNER JOIN messages_groups ON messages_spatial.msgid = messages_groups.msgid").
+		Joins("INNER JOIN messages ON messages.id = messages_spatial.msgid").
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
+		Joins("LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ?", userID).
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid").
+		Where(approvedWhereSQL, groupIDs, userID, utils.COLLECTION_APPROVED).
+		Having("approvalcount < ? AND reviewcount < ?", ApprovalQuorum, DissentingQuorum).
+		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -464,13 +462,6 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Cha
 		return nil
 	}
 
-	// Convert group IDs to comma-separated string for SQL
-	groupIDStrs := make([]string, len(groupIDs))
-	for i, id := range groupIDs {
-		groupIDStrs[i] = fmt.Sprintf("%d", id)
-	}
-	groupIDsStr := strings.Join(groupIDStrs, ",")
-
 	type PhotoResult struct {
 		ID uint64 `json:"id"`
 	}
@@ -478,17 +469,19 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Cha
 
 	today := time.Now().Format("2006-01-02")
 
-	err := db.Raw(`
-		SELECT messages_attachments.id,
-			(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount
-		FROM messages_groups
-		INNER JOIN messages_attachments ON messages_attachments.msgid = messages_groups.msgid
-		LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ?
-		INNER JOIN `+"`groups`"+` ON groups.id = messages_groups.groupid AND microvolunteering = 1 AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.photorotate') = 1)
-		WHERE arrival >= ? AND groupid IN (`+groupIDsStr+`) AND microactions.id IS NULL
-		HAVING reviewcount < ?
-		ORDER BY RAND() LIMIT 9
-	`, userID, today, DissentingQuorum).Scan(&photos).Error
+	// ORM migration site ff5193d35cf8 (Tier 3 keep-raw review). Same
+	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
+	// exactly one rendered form, declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_ff5193d35cf8 (iznik-server-go/test).
+	err := db.Table("messages_groups").
+		Select("messages_attachments.id, "+
+			"(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount").
+		Joins("INNER JOIN messages_attachments ON messages_attachments.msgid = messages_groups.msgid").
+		Joins("LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ?", userID).
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid AND microvolunteering = 1 AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.photorotate') = 1)").
+		Where("arrival >= ? AND groupid IN (?) AND microactions.id IS NULL", today, groupIDs).
+		Having("reviewcount < ?", DissentingQuorum).
+		Order("RAND()").Limit(9).Scan(&photos).Error
 
 	if err == nil && len(photos) > 0 {
 		var photoList []Photo
@@ -535,18 +528,15 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	var img AIImageResult
 
-	err := db.Raw(`
-		SELECT ai.id, ai.name, ai.externaluid, ai.usage_count
-		FROM ai_images ai
-		LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?
-		WHERE ai.externaluid IS NOT NULL
-			AND ai.externaluid != ''
-			AND ai.status = 'active'
-			AND ma.id IS NULL
-			AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) < ?
-		ORDER BY ai.usage_count DESC
-		LIMIT 1
-	`, userID, ChallengeAIImageReview, ChallengeAIImageReview, AIImageReviewQuorum).Scan(&img).Error
+	// ORM migration site 8c2181ff22ae (wave 5).
+	err := db.Table("ai_images ai").
+		Select("ai.id, ai.name, ai.externaluid, ai.usage_count").
+		Joins("LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?", userID, ChallengeAIImageReview).
+		Where("ai.externaluid IS NOT NULL AND ai.externaluid != '' AND ai.status = 'active' AND ma.id IS NULL AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) < ?",
+			ChallengeAIImageReview, AIImageReviewQuorum).
+		Order("ai.usage_count DESC").
+		Limit(1).
+		Scan(&img).Error
 
 	if err != nil || img.ID == 0 {
 		return nil
@@ -591,24 +581,16 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	var att AttachmentResult
 
-	err := db.Raw(`
-		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
-		FROM eee_classified_attachments ec
-		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
-		INNER JOIN messages m ON m.id = ec.messageid
-		WHERE m.deleted IS NULL
-			AND ma_att.externaluid IS NOT NULL
-			AND ma_att.externaluid != ''
-			AND NOT EXISTS (
-				SELECT 1 FROM microactions ma
-				WHERE ma.eee_attachment_id = ma_att.id
-				  AND ma.userid = ?
-				  AND ma.actiontype = ?
-			)
-			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
-		ORDER BY ec.classified_at DESC
-		LIMIT 1
-	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
+	// ORM migration site 9f06198e9799 (wave 5).
+	err := db.Table("eee_classified_attachments ec").
+		Select("ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject").
+		Joins("INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid").
+		Joins("INNER JOIN messages m ON m.id = ec.messageid").
+		Where("m.deleted IS NULL AND ma_att.externaluid IS NOT NULL AND ma_att.externaluid != '' AND NOT EXISTS ( SELECT 1 FROM microactions ma WHERE ma.eee_attachment_id = ma_att.id AND ma.userid = ? AND ma.actiontype = ? ) AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?",
+			userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).
+		Order("ec.classified_at DESC").
+		Limit(1).
+		Scan(&att).Error
 
 	if err != nil || att.Attid == 0 {
 		return nil
@@ -702,20 +684,22 @@ func PostResponse(c *fiber.Ctx) error {
 			// (a platform-wide content-takedown). Mirrors GetChallenge's own
 			// group-membership scoping on the read side.
 			var eligible int64
-			db.Raw(`SELECT COUNT(*) FROM messages_groups
-				INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?
-				INNER JOIN messages ON messages.id = messages_groups.msgid
-				WHERE messages_groups.msgid = ? AND messages_groups.deleted = 0
-					AND COALESCE(messages.fromuser, 0) != ? AND messages.deleted IS NULL`,
-				myid, req.Msgid, myid).Scan(&eligible)
+			// ORM migration site f272e5ec73c0 (wave 4).
+			db.Table("messages_groups").
+				Select("COUNT(*)").
+				Joins("INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?", myid).
+				Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
+				Where("messages_groups.msgid = ? AND messages_groups.deleted = 0 AND COALESCE(messages.fromuser, 0) != ? AND messages.deleted IS NULL", req.Msgid, myid).
+				Scan(&eligible)
 			if eligible == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this message")
 			}
 
 			// Mark any notifications regarding this message as read
-			db.Exec(`UPDATE users_notifications SET seen = 1
-				WHERE touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'`,
-				myid, req.Msgid)
+			// ORM migration site 0e09727e66aa (wave 2).
+			db.Table("users_notifications").
+				Where("touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'", myid, req.Msgid).
+				Update("seen", gorm.Expr("1"))
 
 			// Record the response - insert or update
 			var msgcategory interface{}
@@ -728,19 +712,29 @@ func PostResponse(c *fiber.Ctx) error {
 				comments = *req.Comments
 			}
 
-			db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
-				VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-				ON DUPLICATE KEY UPDATE result = ?, comments = ?, version = ?, msgcategory = ?`,
-				ChallengeCheckMessage, myid, req.Msgid, response, msgcategory, comments, Version,
-				response, comments, Version, msgcategory)
+			// ORM migration site e78fcf444c47 (wave 3).
+			db.Table("microactions").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"result": response, "comments": comments, "version": Version, "msgcategory": msgcategory,
+				}),
+			}).Create(map[string]interface{}{
+				"actiontype":     ChallengeCheckMessage,
+				"userid":         myid,
+				"msgid":          req.Msgid,
+				"result":         response,
+				"msgcategory":    msgcategory,
+				"comments":       comments,
+				"version":        Version,
+				"score_negative": gorm.Expr("0"),
+			})
 
 			// If rejection, check if we have quorum to send for review
 			if response == "Reject" {
 				var rejectCount int64
-				db.Raw(`SELECT COUNT(*) FROM microactions
-					WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
-					AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`,
-					req.Msgid).Scan(&rejectCount)
+				// ORM migration site 5a4706a34749 (wave 1).
+				db.Table("microactions").
+					Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", req.Msgid).
+					Count(&rejectCount)
 
 				if rejectCount >= int64(ApprovalQuorum) {
 					// Quorum reached — pull the post back to Pending on ALL the
@@ -759,10 +753,20 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to a SearchTerm challenge.
 		// The result column is enum('Approve','Reject') NOT NULL with no default.
 		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Exec(`INSERT INTO microactions (actiontype, userid, item1, item2, version, result, score_negative)
-			VALUES (?, ?, ?, ?, ?, 'Approve', 0)
-			ON DUPLICATE KEY UPDATE userid = userid, version = ?`,
-			ChallengeSearchTerm, myid, req.Searchterm1, req.Searchterm2, Version, Version)
+		// ORM migration site 4bc6d0615816 (wave 3).
+		db.Table("microactions").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"userid": gorm.Expr("userid"), "version": Version,
+			}),
+		}).Create(map[string]interface{}{
+			"actiontype":     ChallengeSearchTerm,
+			"userid":         myid,
+			"item1":          req.Searchterm1,
+			"item2":          req.Searchterm2,
+			"version":        Version,
+			"result":         gorm.Expr("'Approve'"),
+			"score_negative": gorm.Expr("0"),
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -779,26 +783,34 @@ func PostResponse(c *fiber.Ctx) error {
 		// CheckMessage there is deliberately no author exclusion: getPhotoRotateChallenge
 		// can legitimately serve a user their own freshly-posted photo to review.
 		var eligible int64
-		db.Raw(`SELECT COUNT(*) FROM messages_attachments
-			INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0
-			INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?
-			INNER JOIN messages ON messages.id = messages_attachments.msgid
-			WHERE messages_attachments.id = ? AND messages.deleted IS NULL`,
-			myid, req.Photoid).Scan(&eligible)
+		// ORM migration site ec2405eade43 (wave 4).
+		db.Table("messages_attachments").
+			Select("COUNT(*)").
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0").
+			Joins("INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?", myid).
+			Joins("INNER JOIN messages ON messages.id = messages_attachments.msgid").
+			Where("messages_attachments.id = ? AND messages.deleted IS NULL", req.Photoid).
+			Scan(&eligible)
 		if eligible == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this photo")
 		}
 
-		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, rotatedimage, result, version, score_negative)
-			VALUES (?, ?, ?, ?, ?, 0)`,
-			ChallengePhotoRotate, myid, req.Photoid, response, Version)
+		// ORM migration site f82ee651d4b9 (wave 3).
+		db.Table("microactions").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"actiontype":     ChallengePhotoRotate,
+			"userid":         myid,
+			"rotatedimage":   req.Photoid,
+			"result":         response,
+			"version":        Version,
+			"score_negative": gorm.Expr("0"),
+		})
 
 		// Check if we have enough votes to rotate the photo
 		rotated := false
 		if req.Response != nil && *req.Response == "Reject" {
 			var voteCount int64
-			db.Raw("SELECT COUNT(*) FROM microactions WHERE rotatedimage = ? AND result = 'Reject'",
-				req.Photoid).Scan(&voteCount)
+			// ORM migration site c94e3bfae9b3 (wave 1).
+			db.Table("microactions").Where("rotatedimage = ? AND result = 'Reject'", req.Photoid).Count(&voteCount)
 
 			if voteCount >= int64(ApprovalQuorum) {
 				// Enough votes - the batch process handles the actual rotation
@@ -822,11 +834,20 @@ func PostResponse(c *fiber.Ctx) error {
 				}
 			}
 
-			db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative)
-				VALUES (?, ?, ?, ?, ?, ?, 0)
-				ON DUPLICATE KEY UPDATE result = ?, containspeople = ?, version = ?`,
-				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
-				response, containsPeople, Version)
+			// ORM migration site 6dadb189bddc (wave 3).
+			db.Table("microactions").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"result": response, "containspeople": containsPeople, "version": Version,
+				}),
+			}).Create(map[string]interface{}{
+				"actiontype":     ChallengeAIImageReview,
+				"userid":         myid,
+				"aiimageid":      req.AIImageID,
+				"result":         response,
+				"containspeople": containsPeople,
+				"version":        Version,
+				"score_negative": gorm.Expr("0"),
+			})
 
 			// After recording the vote, check the quorums. 'Suppress' ("this item
 			// should never have an AI image") is terminal, so check it first; 'Reject'
@@ -847,11 +868,22 @@ func PostResponse(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid EEE label values")
 		}
 
-		db.Exec(`INSERT INTO microactions (actiontype, userid, eee_attachment_id, eee_condition, eee_weight, eee_size, result, version, score_negative)
-			VALUES (?, ?, ?, ?, ?, ?, 'Approve', ?, 0)
-			ON DUPLICATE KEY UPDATE eee_condition = ?, eee_weight = ?, eee_size = ?, version = ?`,
-			ChallengeEEELabel, myid, req.EEEAttachmentID, *req.EEECondition, *req.EEEWeight, *req.EEESize, Version,
-			*req.EEECondition, *req.EEEWeight, *req.EEESize, Version)
+		// ORM migration site 9b0560d85c4d (wave 3).
+		db.Table("microactions").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"eee_condition": *req.EEECondition, "eee_weight": *req.EEEWeight, "eee_size": *req.EEESize, "version": Version,
+			}),
+		}).Create(map[string]interface{}{
+			"actiontype":        ChallengeEEELabel,
+			"userid":            myid,
+			"eee_attachment_id": req.EEEAttachmentID,
+			"eee_condition":     *req.EEECondition,
+			"eee_weight":        *req.EEEWeight,
+			"eee_size":          *req.EEESize,
+			"result":            gorm.Expr("'Approve'"),
+			"version":           Version,
+			"score_negative":    gorm.Expr("0"),
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -859,9 +891,13 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to an Invite challenge.
 		// The result column is enum('Approve','Reject') NOT NULL. Set to 'Approve' as
 		// the default value since invite responses don't map to approve/reject.
-		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, version, result)
-			VALUES (?, ?, ?, 'Approve')`,
-			ChallengeInvite, myid, Version)
+		// ORM migration site 6602f9905a74 (wave 3).
+		db.Table("microactions").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"actiontype": ChallengeInvite,
+			"userid":     myid,
+			"version":    Version,
+			"result":     gorm.Expr("'Approve'"),
+		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -916,8 +952,12 @@ func ModFeedback(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Update the microaction with mod feedback and scores.
-	db.Exec("UPDATE microactions SET modfeedback = ?, score_positive = ?, score_negative = ? WHERE id = ?",
-		req.Feedback, req.ScorePositive, req.ScoreNegative, req.ID)
+	// ORM migration site c5c083c3dc6e (wave 2).
+	db.Table("microactions").Where("id = ?", req.ID).Updates(map[string]interface{}{
+		"modfeedback":    req.Feedback,
+		"score_positive": req.ScorePositive,
+		"score_negative": req.ScoreNegative,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -931,8 +971,9 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string) {
 	if msgid == 0 {
 		return
 	}
-	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND collection = ?",
-		utils.COLLECTION_PENDING, reason, msgid, utils.COLLECTION_APPROVED)
+	// ORM migration site 5092091807c2 (wave 2).
+	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 }
 
 // FreezeReachIfOriginPending freezes a post's ripple once its ORIGIN copy is no longer
@@ -947,12 +988,16 @@ func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 		return
 	}
 	var approvedOrigin int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?",
-		msgid, utils.COLLECTION_APPROVED).Scan(&approvedOrigin)
+	// ORM migration site 85e57d30b7c7 (wave 1).
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+		Count(&approvedOrigin)
 	if approvedOrigin > 0 {
 		return
 	}
-	db.Exec("UPDATE rippling_reach SET status = 'held', next_expansion_at = NULL WHERE msgid = ? AND status <> 'held'", msgid)
+	// ORM migration site 328303c750b3 (wave 2).
+	db.Table("rippling_reach").Where("msgid = ? AND status <> 'held'", msgid).
+		Updates(map[string]interface{}{"status": gorm.Expr("'held'"), "next_expansion_at": gorm.Expr("NULL")})
 }
 
 // reporterIsModOf reports whether the reporter's verdict on the group they reported on
@@ -965,8 +1010,10 @@ func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
 		return false
 	}
 	var c int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND role IN (?, ?)",
-		reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&c)
+	// ORM migration site 2b059ba266dc (wave 1).
+	db.Table("memberships").
+		Where("userid = ? AND groupid = ? AND role IN (?, ?)", reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&c)
 	return c > 0
 }
 
@@ -990,7 +1037,8 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	// A poster reporting their own post must not count toward the quorum.
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", msgid).Scan(&fromuser)
+	// ORM migration site 1514d35d670c (wave 1).
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
 	if fromuser == reporterID {
 		return
 	}
@@ -1001,10 +1049,21 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 	if comments == "" {
 		comments = "Reported via the website"
 	}
-	db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
-			VALUES (?, ?, ?, 'Reject', 'ShouldntBeHere', ?, ?, 0)
-			ON DUPLICATE KEY UPDATE result = 'Reject', msgcategory = 'ShouldntBeHere', comments = ?, version = ?`,
-		ChallengeCheckMessage, reporterID, msgid, comments, Version, comments, Version)
+	// ORM migration site 062b91c70acc (wave 3).
+	db.Table("microactions").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"result": gorm.Expr("'Reject'"), "msgcategory": gorm.Expr("'ShouldntBeHere'"), "comments": comments, "version": Version,
+		}),
+	}).Create(map[string]interface{}{
+		"actiontype":     ChallengeCheckMessage,
+		"userid":         reporterID,
+		"msgid":          msgid,
+		"result":         gorm.Expr("'Reject'"),
+		"msgcategory":    gorm.Expr("'ShouldntBeHere'"),
+		"comments":       comments,
+		"version":        Version,
+		"score_negative": gorm.Expr("0"),
+	})
 
 	const reason = "Members or moderators think there is something wrong with this message."
 
@@ -1015,9 +1074,10 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
 		var rejectCount int64
-		db.Raw(`SELECT COUNT(*) FROM microactions
-			WHERE msgid = ? AND result = 'Reject' AND comments IS NOT NULL
-			AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')`, msgid).Scan(&rejectCount)
+		// ORM migration site bc4e3f39c868 (wave 1).
+		db.Table("microactions").
+			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
+			Count(&rejectCount)
 		if rejectCount >= int64(ApprovalQuorum) {
 			SendForReviewAllGroups(db, msgid, reason)
 		}
@@ -1053,18 +1113,6 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	}
 
 	// Build query matching V1: microactions joined with memberships filtered by group.
-	ctxq := ""
-	args := []interface{}{}
-
-	args = append(args, groupIDs, start)
-
-	if context > 0 {
-		ctxq = " AND microactions.id < ?"
-		args = append(args, context)
-	}
-
-	args = append(args, limitParam)
-
 	type MicroAction struct {
 		ID            uint64    `json:"id"`
 		Actiontype    string    `json:"actiontype"`
@@ -1082,11 +1130,27 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		Modfeedback   *string   `json:"modfeedback"`
 	}
 
+	// ORM migration site 3762cb36efcf (Tier 3 keep-raw review). context>0 is
+	// the only toggle - 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_3762cb36efcf
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	microactionsWhereSQL := "memberships.groupid IN (?) AND microactions.timestamp >= ?"
+	microactionsWhereArgs := []interface{}{groupIDs, start}
+	if context > 0 {
+		microactionsWhereSQL += " AND microactions.id < ?"
+		microactionsWhereArgs = append(microactionsWhereArgs, context)
+	}
+
 	var items []MicroAction
-	db.Raw("SELECT DISTINCT microactions.* FROM microactions "+
-		"INNER JOIN memberships ON memberships.userid = microactions.userid "+
-		"WHERE memberships.groupid IN (?) AND microactions.timestamp >= ?"+ctxq+
-		" ORDER BY microactions.id DESC LIMIT ?", args...).Scan(&items)
+	db.Table("microactions").
+		Select("DISTINCT microactions.*").
+		Joins("INNER JOIN memberships ON memberships.userid = microactions.userid").
+		Where(microactionsWhereSQL, microactionsWhereArgs...).
+		Order("microactions.id DESC").Limit(limitParam).Scan(&items)
 
 	if items == nil {
 		items = []MicroAction{}
@@ -1110,10 +1174,22 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 // (poster or moderator) deletes an AI-generated attachment from a message. This signals
 // that the AI illustration was inappropriate for the item.
 func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
-	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
-		VALUES (?, ?, ?, 'Reject', ?, 0)
-		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
-		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+	// ORM migration site c2b7425e88e0 (wave 3). Converted together with its
+	// identical twin in ForceRejectAIImage (98a9897d62e5): a half-converted
+	// pair renumbers the survivor's site ID, so gate (h) refuses the split
+	// state.
+	db.Table("microactions").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"result": gorm.Expr("'Reject'"), "version": Version,
+		}),
+	}).Create(map[string]interface{}{
+		"actiontype":     ChallengeAIImageReview,
+		"userid":         userID,
+		"aiimageid":      aiImageID,
+		"result":         gorm.Expr("'Reject'"),
+		"version":        Version,
+		"score_negative": gorm.Expr("0"),
+	})
 	checkAIImageRejectQuorum(db, aiImageID)
 }
 
@@ -1122,11 +1198,21 @@ func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
 // is bad for any post of that item (not just irrelevant to the current post).
 // Records an audit microaction so the rejection is traceable.
 func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
-	db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
-	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
-		VALUES (?, ?, ?, 'Reject', ?, 0)
-		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
-		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+	// ORM migration site 92faccbe5a21 (wave 2).
+	db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
+	// ORM migration site 98a9897d62e5 (wave 3). Twin of c2b7425e88e0 above.
+	db.Table("microactions").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"result": gorm.Expr("'Reject'"), "version": Version,
+		}),
+	}).Create(map[string]interface{}{
+		"actiontype":     ChallengeAIImageReview,
+		"userid":         userID,
+		"aiimageid":      aiImageID,
+		"result":         gorm.Expr("'Reject'"),
+		"version":        Version,
+		"score_negative": gorm.Expr("0"),
+	})
 }
 
 // checkAIImageRejectQuorum checks whether an AI image has reached the reject quorum
@@ -1134,13 +1220,16 @@ func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
 // so the image is hidden from end users and surfaced for admin regeneration.
 func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 	var totalVotes, rejectVotes int64
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
-		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Reject'`,
-		aiImageID, ChallengeAIImageReview).Scan(&rejectVotes)
+	// ORM migration site 253bc6651f22 (wave 1).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = ?", aiImageID, ChallengeAIImageReview).Count(&totalVotes)
+	// ORM migration site 4a4e6ef7b504 (wave 1).
+	db.Table("microactions").
+		Where("aiimageid = ? AND actiontype = ? AND result = 'Reject'", aiImageID, ChallengeAIImageReview).
+		Count(&rejectVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
-		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+		// ORM migration site c1b4117a14d4 (wave 2).
+		db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
 	}
 }
 
@@ -1151,12 +1240,16 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 // Regenerate refuses. Suppress overrides a prior 'rejected' state.
 func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
 	var totalVotes, suppressVotes int64
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
-		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
-	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Suppress'`,
-		aiImageID, ChallengeAIImageReview).Scan(&suppressVotes)
+	// ORM migration site bb15df86ae5f (wave 1).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = ?", aiImageID, ChallengeAIImageReview).Count(&totalVotes)
+	// ORM migration site c011457f1962 (wave 1).
+	db.Table("microactions").
+		Where("aiimageid = ? AND actiontype = ? AND result = 'Suppress'", aiImageID, ChallengeAIImageReview).
+		Count(&suppressVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
-		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)
+		// ORM migration site d62b9f1b747c (wave 2).
+		db.Table("ai_images").Where("id = ? AND status IN ('active','rejected')", aiImageID).
+			Update("status", gorm.Expr("'suppressed'"))
 	}
 }
