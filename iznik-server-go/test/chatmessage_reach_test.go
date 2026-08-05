@@ -180,6 +180,7 @@ type attributionRow struct {
 	WasHomeMember  int     `gorm:"column:was_home_member"`
 	WasNotified    *int    `gorm:"column:was_notified"`
 	WasRippleGroup *int    `gorm:"column:was_ripple_group_member"`
+	WasRippleJoin  *int    `gorm:"column:was_ripple_join"`
 	InOrigin       *int    `gorm:"column:in_origin_catchment"`
 	InReach        *int    `gorm:"column:in_reach"`
 	PostHadRippled *int    `gorm:"column:post_had_rippled"`
@@ -190,7 +191,7 @@ type attributionRow struct {
 func fetchAttribution(t *testing.T, msgID, uid uint64) (attributionRow, bool) {
 	var rows []attributionRow
 	database.DBConn.Raw("SELECT was_home_member, was_notified, was_ripple_group_member, "+
-		"in_origin_catchment, in_reach, post_had_rippled, attribution, client_source "+
+		"was_ripple_join, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source "+
 		"FROM rippling_reply_attribution WHERE msgid = ? AND userid = ?", msgID, uid).Scan(&rows)
 	if len(rows) == 0 {
 		return attributionRow{}, false
@@ -390,4 +391,84 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 		assert.Equal(t, 0, *row.InOrigin)
 	}
 	assert.Nil(t, row.ClientSource, "an ill-formed client surface is dropped")
+}
+
+// Rippling auto-joins a poster to every group their post rippled into (memberships.rippled = 1).
+// When one of those groups later hosts a post of its own and that member replies, the reply is NOT
+// home: the member is only in that group because of an earlier ripple, so without rippling they
+// would never have seen it. Counting them as an established local member - which is what every
+// "was already a member" test did before this - hands rippling's own downstream effect to the
+// home column and makes rippling read as less effective than it is.
+func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("ripplejoin")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	// A post that never rippled anywhere: proves the ripple-join rung stands on the membership's
+	// own provenance and needs no ripple on THIS post.
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: ripple-join attribution test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+
+	// Ripple-created membership: long-established, but rippling put them there.
+	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
+	CreateTestMembership(t, joinedID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 "+
+		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, joinedID, posterID, msgID, ""))
+	row, ok := fetchAttribution(t, msgID, joinedID)
+	assert.True(t, ok, "attribution row recorded for the ripple-joined member's reply")
+	assert.Equal(t, 0, row.WasHomeMember,
+		"a ripple-created auto-join is not evidence of established local membership")
+	if assert.NotNil(t, row.WasRippleJoin) {
+		assert.Equal(t, 1, *row.WasRippleJoin, "the ripple-join evidence bit is frozen in the row")
+	}
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "ripple_join", *row.Attribution,
+			"credited to rippling: the membership itself is a ripple side-effect")
+	}
+
+	// Control: an ordinary member of the SAME group, equally established, still reads as home.
+	// Only the provenance of the membership differs, so this pins the fix to memberships.rippled
+	// rather than to anything about the post or the group.
+	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
+	CreateTestMembership(t, ordinaryID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 "+
+		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, ordinaryID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, ordinaryID)
+	assert.True(t, ok)
+	assert.Equal(t, 1, row.WasHomeMember, "an ordinary membership is still home")
+	if assert.NotNil(t, row.WasRippleJoin) {
+		assert.Equal(t, 0, *row.WasRippleJoin)
+	}
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "home", *row.Attribution)
+	}
+
+	// A member holding BOTH kinds of membership of origin groups of one post is home: the
+	// ordinary one alone would have shown them the post, so rippling gets no credit. (Cross-posts
+	// are the real-world case - one origin group joined normally, another via a ripple.)
+	secondGroupID := CreateTestGroup(t, prefix+"_second")
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0, 0)", msgID, secondGroupID)
+	bothID := CreateTestUser(t, prefix+"_both", "User")
+	CreateTestMembership(t, bothID, groupID, "Member")
+	CreateTestMembership(t, bothID, secondGroupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 "+
+		"WHERE userid = ? AND groupid = ?", bothID, groupID)
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 "+
+		"WHERE userid = ? AND groupid = ?", bothID, secondGroupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, bothID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, bothID)
+	assert.True(t, ok)
+	assert.Equal(t, 1, row.WasHomeMember)
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "home", *row.Attribution,
+			"one ordinary origin membership is enough for home, whatever else they hold")
+	}
 }

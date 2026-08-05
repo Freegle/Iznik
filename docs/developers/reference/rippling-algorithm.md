@@ -344,6 +344,9 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
+- `memberships.rippled = 1` - marks a membership rippling created, when the member's own post
+  rippled into that group and we auto-joined them (§5). Every statistic that asks "were they
+  already a member?" must exclude these - see §10a.
 
 ## 10. The sysadmin analytics tab
 
@@ -390,3 +393,37 @@ cause (slow SQL) is invisible from the console. Two rules follow, both learned t
 
 The component loads the three surfaces independently: a failure or delay in one fills in its own
 panels late (or reports its own error there) rather than blanking the tab.
+
+### 10a. "Was this replier already a member?" - and why ripple-created joins don't count
+
+Almost every effectiveness figure on the tab turns on one test: was the replier an **established
+member of an origin group** of the post? If yes the reply is `home` - they'd have seen it anyway,
+rippling gets no credit. If no, rippling reached them. That single test drives the rippled-reply
+and rippled-taker shares, the reply→take comparison, and the **rescue floor** (posts taken with no
+home-group reply at all - the takes that would otherwise have gone nowhere).
+
+The test has three qualifiers, all load-bearing, and it lives in one place -
+`rippling.EstablishedOriginMemberExists` in `rippling/attribution.go`:
+
+- **origin groups only** (`messages_groups.rippled_in = 0`) - being in a group the post *rippled
+  into* is not being local to it,
+- **joined before the post arrived** - the reply flow joins people to groups in order to reply, so
+  a join made seconds ago is not evidence of anything,
+- **not a ripple-created join** (`memberships.rippled = 0`) - rippling auto-joins a poster to every
+  group their post rippled into (§5), so a frequent poster accumulates memberships of distant
+  groups purely as a side-effect of rippling. When one of those groups later hosts a post of its
+  own, that member is only there to see it *because* of an earlier ripple.
+
+The third qualifier was missing until August 2026, and it mattered: on production 92k memberships
+carry `rippled = 1`, and ~7% of all replies scored `home` were backed by nothing else. Rippling's
+own knock-on reach was being counted in the column that means "rippling had nothing to do with
+this", so every effectiveness figure on the tab read low.
+
+Those replies now have their own attribution channel, `ripple_join`, one rung below `ripple_group`
+in the ladder (`rippling.DeriveAttribution`) - both are membership-level exposure that exists
+because of a ripple. It carries no "did this post ripple?" guard, unlike `ripple_reach`: the ripple
+that earns the credit already happened, to a different post, and left the membership behind as its
+record. The evidence bit is frozen per reply in `rippling_reply_attribution.was_ripple_join`, and
+`ripple:backfill-reply-attribution` reconstructs it for older rows - re-reading a frozen
+`was_home_member` bit as `ripple_join` where the surviving membership shows that provenance, while
+leaving rows whose membership has since decayed away on their original answer.

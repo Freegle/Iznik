@@ -304,14 +304,16 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
-	// Four replies on an isolated day (5 days ago), one per interesting bucket: a home
-	// member, a graded ripple_notified capture, a graded ripple_reach capture, and a
-	// legacy pre-migration row (attribution NULL, was_home_member=0) which must fold into
+	// Five replies on an isolated day (5 days ago), one per interesting bucket: a home
+	// member, a graded ripple_notified capture, a graded ripple_reach capture, a graded
+	// ripple_join capture (someone rippling itself put in the group), and a legacy
+	// pre-migration row (attribution NULL, was_home_member=0) which must fold into
 	// unknown - NOT be credited to rippling as the old replies-minus-home number did.
 	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, attribution) VALUES " +
 		"(900000091, 900000091, NOW() - INTERVAL 5 DAY, 1, 'home'), " +
 		"(900000091, 900000092, NOW() - INTERVAL 5 DAY, 0, 'ripple_notified'), " +
 		"(900000091, 900000093, NOW() - INTERVAL 5 DAY, 0, 'ripple_reach'), " +
+		"(900000091, 900000095, NOW() - INTERVAL 5 DAY, 0, 'ripple_join'), " +
 		"(900000091, 900000094, NOW() - INTERVAL 5 DAY, 0, NULL)")
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = 900000091")
 
@@ -327,21 +329,83 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	assert.Equal(t, true, result["attribution_channels_available"],
 		"graded columns exist on the migrated test DB")
 
-	// The seeded day's split row: 4 replies -> 1 home, 1 notified, 1 reach, 1 unknown;
-	// ripple share counts only the definite ripple channels (2/4 = 50%).
+	// The seeded day's split row: 5 replies -> 1 home, 1 notified, 1 reach, 1 join, 1 unknown;
+	// ripple share counts only the definite ripple channels (3/5 = 60%).
 	found := false
 	for _, r := range split {
-		if m, ok := r.(map[string]interface{}); ok && m["replies"] == float64(4) && m["home"] == float64(1) {
+		if m, ok := r.(map[string]interface{}); ok && m["replies"] == float64(5) && m["home"] == float64(1) {
 			found = true
 			assert.Equal(t, float64(1), m["ripple_notified"], "one notified-ledger reply")
 			assert.Equal(t, float64(1), m["ripple_reach"], "one reach-fed browse reply")
+			assert.Equal(t, float64(1), m["ripple_join"], "one ripple-created-membership reply")
 			assert.Equal(t, float64(1), m["unknown"],
 				"a legacy un-evidenced row folds into unknown, not ripple")
-			assert.Equal(t, float64(2), m["ripple"], "ripple = notified + group + reach only")
-			assert.Equal(t, float64(50), m["ripple_pct"])
+			assert.Equal(t, float64(3), m["ripple"], "ripple = notified + group + join + reach")
+			assert.Equal(t, float64(60), m["ripple_pct"])
 		}
 	}
 	assert.True(t, found, "the seeded channel split is surfaced")
+}
+
+// Rows captured before the ripple-join fix froze was_home_member = 1 for members rippling itself
+// auto-joined. The live derivation (used for any row the backfill has not yet visited) must sort
+// those into ripple_join off the membership's surviving provenance, while a row backed by an
+// ordinary membership still reads home. Without this, the un-backfilled tail of the chart keeps
+// crediting rippling's own side-effect to the home column.
+func TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance(t *testing.T) {
+	prefix := uniquePrefix("ripplejoinderive")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy derive test item", 51.5, -0.1)
+	// The post arrived a month ago, so both memberships below predate it.
+	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 30 DAY WHERE msgid = ?", msgID)
+
+	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
+	CreateTestMembership(t, joinedID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 1 "+
+		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
+
+	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
+	CreateTestMembership(t, ordinaryID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 0 "+
+		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
+
+	// A user with no membership left at all: their frozen home bit is all the evidence there is,
+	// so it must be honoured rather than reclassified.
+	goneID := CreateTestUser(t, prefix+"_gone", "User")
+
+	// Legacy shape: was_home_member = 1, attribution NULL (backfill has not run).
+	day := "2020-03-15 12:00:00"
+	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+
+		"(?, ?, ?, 1), (?, ?, ?, 1), (?, ?, ?, 1)",
+		msgID, joinedID, day, msgID, ordinaryID, day, msgID, goneID, day)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf(
+		"/api/rippling/metrics?start=2020-03-01%%2000:00:00&end=2020-04-01%%2000:00:00&jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	split, _ := result["reply_source_split"].([]interface{})
+
+	found := false
+	for _, r := range split {
+		if m, ok := r.(map[string]interface{}); ok && m["day"] == "2020-03-15" {
+			found = true
+			assert.Equal(t, float64(1), m["ripple_join"],
+				"the ripple-created membership reclassifies out of home")
+			assert.Equal(t, float64(2), m["home"],
+				"the ordinary membership - and the decayed one - stay home")
+			assert.Equal(t, float64(1), m["ripple"], "ripple_join counts towards the ripple share")
+		}
+	}
+	assert.True(t, found, "the seeded legacy day is surfaced")
 }
 
 // The ?start= / ?end= range bounds every headline KPI so a treatment group's before-vs-after can

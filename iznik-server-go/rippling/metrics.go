@@ -97,12 +97,14 @@ type CaptureSummary struct {
 // ReplySourceRow is the daily split of Interested replies by attribution channel (the graded
 // ladder captured at reply time in rippling_reply_attribution - see rippling/attribution.go):
 // home (established origin-group member), ripple_notified (we mailed them the post via the
-// ripple), ripple_group (saw it in their own group because it rippled in), ripple_reach
-// (Browse exposure that existed only because the reach extended to them), organic_local
-// (non-member who'd have seen it in Browse anyway), unknown (search / deep link / no location).
-// Rows the backfill hasn't derived yet fold into home/unknown off the legacy was_home_member
-// bit. Ripple/RipplePct is the headline: channels that are DEFINITELY rippling - unlike the
-// old replies-minus-home number, unknown is not credited to rippling.
+// ripple), ripple_group (saw it in their own group because it rippled in), ripple_join (in the
+// origin group only because an earlier ripple auto-joined them there), ripple_reach (Browse
+// exposure that existed only because the reach extended to them), organic_local (non-member
+// who'd have seen it in Browse anyway), unknown (search / deep link / no location).
+// Rows the backfill hasn't derived yet are bucketed live off the legacy was_home_member bit,
+// qualified by the surviving membership's provenance. Ripple/RipplePct is the headline: channels
+// that are DEFINITELY rippling - unlike the old replies-minus-home number, unknown is not
+// credited to rippling.
 type ReplySourceRow struct {
 	Day     string `json:"day"     gorm:"column:day"`
 	Replies int    `json:"replies" gorm:"column:replies"`
@@ -110,11 +112,12 @@ type ReplySourceRow struct {
 
 	RippleNotified int `json:"ripple_notified" gorm:"column:ripple_notified"`
 	RippleGroup    int `json:"ripple_group"    gorm:"column:ripple_group"`
+	RippleJoin     int `json:"ripple_join"     gorm:"column:ripple_join"`
 	RippleReach    int `json:"ripple_reach"    gorm:"column:ripple_reach"`
 	OrganicLocal   int `json:"organic_local"   gorm:"column:organic_local"`
 	Unknown        int `json:"unknown"         gorm:"column:unknown"`
 
-	Ripple    int     `json:"ripple"`     // computed in Go (notified + group + reach)
+	Ripple    int     `json:"ripple"`     // computed in Go (notified + group + join + reach)
 	RipplePct float64 `json:"ripple_pct"` // computed in Go
 }
 
@@ -143,15 +146,32 @@ type GroupOption struct {
 //     migration landing and the backfill running would read as a misleading zero-ripple
 //     chart (every attribution NULL folding to home/unknown).
 //   - legacy (graded columns not yet migrated): derive the durable channels live from the
-//     notified ledger and rippled-group memberships. Correct for home/notified/group; the
-//     location channels (ripple_reach/organic_local) are not derivable retrospectively
-//     (locations drift, polygons grow) so they read 0 and those replies sit in unknown.
+//     notified ledger, rippled-group memberships and origin-membership provenance. Correct for
+//     home/notified/group/join; the location channels (ripple_reach/organic_local) are not
+//     derivable retrospectively (locations drift, polygons grow) so they read 0 and those
+//     replies sit in unknown.
 //
 // srcGroup is the optional origin-group scoping JOIN (aliases rra); it takes one bind arg
 // before the two replied_at window args.
 func ReplySourceSplitSQL(wide bool, srcGroup string) string {
+	// "The only origin-group membership backing this row is one rippling created" - the frozen
+	// was_home_member bit on a legacy row cannot tell home from ripple_join, because the capture
+	// that wrote it did not look at membership provenance. Re-derived here from the surviving
+	// memberships: a ripple-created one present AND no ordinary one. When BOTH are absent (the
+	// member has left since) this is false and the frozen bit's answer of home stands - decay
+	// must not silently demote a genuine home reply.
+	rippleJoinOnly := `(EXISTS(SELECT 1 FROM messages_groups mgj
+	                   INNER JOIN memberships memj ON memj.groupid = mgj.groupid
+	                     AND memj.userid = rra.userid AND memj.collection = 'Approved'
+	                     AND memj.added < mgj.arrival AND memj.rippled = 1
+	                   WHERE mgj.msgid = rra.msgid AND mgj.rippled_in = 0 AND mgj.deleted = 0)
+	              AND NOT EXISTS(SELECT 1 FROM messages_groups mgo
+	                   INNER JOIN memberships memo ON memo.groupid = mgo.groupid
+	                     AND memo.userid = rra.userid AND memo.collection = 'Approved'
+	                     AND memo.added < mgo.arrival AND memo.rippled = 0
+	                   WHERE mgo.msgid = rra.msgid AND mgo.rippled_in = 0 AND mgo.deleted = 0))`
 	derive := `CASE
-	       WHEN rra.was_home_member = 1 THEN 'home'
+	       WHEN rra.was_home_member = 1 AND NOT ` + rippleJoinOnly + ` THEN 'home'
 	       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn
 	                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
 	                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'
@@ -161,6 +181,7 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 	                     AND mem.added < mgr.arrival
 	                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1
 	                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'
+	       WHEN ` + rippleJoinOnly + ` THEN 'ripple_join'
 	       ELSE 'unknown'
 	       END`
 	bucket := derive
@@ -173,6 +194,7 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 		       SUM(bucket = 'home') AS home,
 		       SUM(bucket = 'ripple_notified') AS ripple_notified,
 		       SUM(bucket = 'ripple_group') AS ripple_group,
+		       SUM(bucket = 'ripple_join') AS ripple_join,
 		       SUM(bucket = 'ripple_reach') AS ripple_reach,
 		       SUM(bucket = 'organic_local') AS organic_local,
 		       SUM(bucket = 'unknown') AS unknown
@@ -433,8 +455,9 @@ func Metrics(c *fiber.Ctx) error {
 	//     reply time - the only sound attribution, since replying joins the member to the group).
 	//     Two variants sharing one output shape:
 	//     - wide: read the attribution channel the Go reply handler derived at capture time.
-	//       Rows the backfill hasn't visited (attribution NULL) fold into home/unknown off the
-	//       legacy was_home_member bit.
+	//       Rows the backfill hasn't visited (attribution NULL) are bucketed live off the legacy
+	//       was_home_member bit, qualified by the surviving membership's provenance so a
+	//       ripple-created auto-join reads as ripple_join rather than home.
 	//     - legacy (graded columns not yet migrated, e.g. production before the deploy): derive
 	//       the durable channels live from the notified ledger and rippled-group memberships.
 	//       Correct for notified/group/home; the location channels (ripple_reach/organic_local)
@@ -493,7 +516,8 @@ func Metrics(c *fiber.Ctx) error {
 	// channels that are DEFINITELY rippling - unknown is not credited (the old replies-minus-home
 	// number silently attributed every un-evidenced reply to rippling).
 	for i := range replySources {
-		replySources[i].Ripple = replySources[i].RippleNotified + replySources[i].RippleGroup + replySources[i].RippleReach
+		replySources[i].Ripple = replySources[i].RippleNotified + replySources[i].RippleGroup +
+			replySources[i].RippleJoin + replySources[i].RippleReach
 		if replySources[i].Replies > 0 {
 			replySources[i].RipplePct = float64(replySources[i].Ripple) / float64(replySources[i].Replies) * 100
 		}
