@@ -6,6 +6,7 @@ covers:
   - iznik-server-go/firstreply/**
   - iznik-server-go/chat/chatprompt.go
   - iznik-nuxt3/components/ChatMessagePrompt.vue
+  - iznik-nuxt3/components/ChatPromptPost.vue
   - iznik-nuxt3/modtools/components/ModSysAdminFirstReply.vue
 ---
 
@@ -241,6 +242,16 @@ the Freegle account). Rating, blocking and reporting are dropped, because almost
 a conversation and none of those verbs mean anything pointed at Freegle. The "these are
 automated" note lives there **once** rather than on every message, and Hide is offered plainly -
 as is the settings toggle that stops them entirely.
+
+There are **three** chat headers and the member-facing ones are not the obvious file.
+`ChatHeader.vue` is only rendered by ModTools (`ModChatPane.vue`); what a member actually sees
+is the header built inline in `ChatPane.vue` (desktop) and `ChatMobileNavbar.vue` (mobile). All
+three carry the variant, so check all three when changing it.
+
+The posts a question covers are listed by `ChatPromptPost.vue` - a compact thumbnail-and-subject
+row, modelled on the bulk freegling item list, rather than `ChatMessageSummary`'s full card. One
+question routinely covers five posts, and five full-bleed photo tiles would bury the question
+under them.
 
 `delivery` and `deadline` were modals fired the instant someone finished posting.
 `DeliveryAskModal.vue` and `DeadlineAskModal.vue` are still in the tree and neither is wired

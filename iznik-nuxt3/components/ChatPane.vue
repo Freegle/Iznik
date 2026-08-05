@@ -27,7 +27,50 @@
       <!-- Profile header for desktop (md+) - mobile uses ChatMobileNavbar -->
       <VisibleWhen :at="['md', 'lg', 'xl', 'xxl']">
         <div v-if="chat" class="desktop-profile-header">
-          <div class="profile-header-main">
+          <!-- Freegle's own chat. Deliberately not the usual header: almost
+               nothing in here is a conversation, so rating, blocking or
+               reporting it makes no sense, and there is no "last seen" or
+               "replies in" worth showing for an account that is not a person.
+               The "these are automated" note lives here once rather than on
+               every single message, and Hide is offered plainly for anyone who
+               would rather not see them. -->
+          <div v-if="chat.systemchat" class="profile-header-main">
+            <ProfileImage
+              :image="chat.icon"
+              :name="chat.name"
+              class="profile-header-avatar"
+              is-thumbnail
+              size="lg"
+            />
+            <div class="profile-header-info">
+              <div class="profile-header-name">
+                <span>{{ chat.name }}</span>
+              </div>
+              <div class="profile-header-stats systemchat-note">
+                Automated messages about your posts. Freegle doesn't read
+                replies here.
+              </div>
+            </div>
+            <div class="profile-header-actions">
+              <b-button
+                v-if="unseen"
+                variant="white"
+                class="action-btn action-btn--mark-read"
+                @click="markRead"
+              >
+                Mark read
+                <b-badge variant="danger" class="ms-1">{{ unseen }}</b-badge>
+              </b-button>
+              <b-button
+                variant="white"
+                class="action-btn"
+                @click="chat.status === 'Closed' ? unhide() : showhide()"
+              >
+                {{ chat.status === 'Closed' ? 'Unhide' : 'Hide' }}
+              </b-button>
+            </div>
+          </div>
+          <div v-else class="profile-header-main">
             <ProfileImage
               :image="chat.icon"
               :name="chat.name"
@@ -235,14 +278,14 @@ import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ChatBlockModal = defineAsyncComponent(() =>
-  import('~/components/ChatBlockModal')
+const ChatBlockModal = defineAsyncComponent(
+  () => import('~/components/ChatBlockModal'),
 )
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal'),
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal'),
 )
 
 const chatStore = useChatStore()
@@ -263,8 +306,8 @@ function resize() {
 // Pre-reserve sticky-ad height for non-donors so chatHolder doesn't shrink when the ad renders.
 const allowAd = computed(() => !recentDonor.value)
 
-const ChatNotVisible = defineAsyncComponent(() =>
-  import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(
+  () => import('~/components/ChatNotVisible.vue'),
 )
 
 const { chat, otheruser, milesaway, unseen } = await setupChat(props.id)
@@ -450,7 +493,7 @@ function checkScroll() {
     // messagesToShow in the v-for loop we only trigger a render of the new items.
     messagesToShow.value = Math.min(
       chatmessages?.value?.length,
-      messagesToShow?.value + 10
+      messagesToShow?.value + 10,
     )
 
     scrollTimer.value = setTimeout(checkScroll, scrollInterval.value)
@@ -704,6 +747,12 @@ function typing() {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* Said once, in the header, instead of on every message. */
+.systemchat-note {
+  font-size: 0.875rem;
+  color: $color-gray--dark;
 }
 
 .stat-chip {

@@ -440,4 +440,61 @@ class EngagementServiceTest extends TestCase
         $this->assertSame(1, $stats['sent'], 'dry run still reports what it would have sent');
         $this->assertCount(0, $this->kindsAsked((int) $user->id));
     }
+
+    /**
+     * A message we cannot record having sent must not be left sent.
+     *
+     * The cadence gate reads firstreply_prompts_sent to decide whether a member
+     * has already heard a given question. If the message lands but the row does
+     * not, that member is asked the same thing again on every single run - the
+     * unstoppable-bot failure this whole design exists to prevent. Silently too,
+     * since the per-member catch logs a warning and carries on to the next one.
+     *
+     * Pinned by asserting the two happen in ONE transaction, rather than by
+     * provoking a real failure. Provoking one needs the insert to break, and
+     * every way of breaking it from inside the test is DDL - which MySQL
+     * implicitly commits, destroying the very transaction under test and making
+     * the check pass or fail for reasons that have nothing to do with the code.
+     * Given a shared transaction, the rollback is the framework's guarantee.
+     */
+    public function test_a_prompt_is_recorded_in_the_same_transaction_as_it_is_sent(): void
+    {
+        [$user] = $this->seedMemberWithPosts(2);
+
+        $outer = DB::transactionLevel();
+
+        // Watch the depth at the moment the message is written. Deeper than the
+        // level the run started at means an enclosing transaction is open, and
+        // that transaction is the one the bookkeeping insert then joins.
+        $spy = new class(app(FreegleUserService::class)) extends PromptService {
+            public ?int $levelDuringSend = null;
+
+            public function send(
+                int $userId,
+                string $kind,
+                string $text,
+                array $options = [],
+                array $msgids = []
+            ): ?int {
+                $this->levelDuringSend = DB::transactionLevel();
+
+                return parent::send($userId, $kind, $text, $options, $msgids);
+            }
+        };
+
+        $this->app->instance(PromptService::class, $spy);
+
+        $stats = $this->service()->run();
+
+        $this->assertSame(1, $stats['sent']);
+        $this->assertNotNull($spy->levelDuringSend, 'the prompt was never sent');
+        $this->assertGreaterThan(
+            $outer,
+            $spy->levelDuringSend,
+            'sending must happen inside a transaction that also covers recording it'
+        );
+
+        // And the record really is there, so the member is not asked again.
+        $this->assertCount(1, $this->kindsAsked((int) $user->id));
+    }
 }

@@ -121,25 +121,41 @@ class EngagementService
 
                 $msgids = array_map(static fn ($p) => (int) $p->msgid, $applicable);
 
-                $sent = $this->prompts->send(
-                    $userId,
-                    $kind,
-                    $prompt['text'],
-                    $prompt['options'],
-                    $msgids
-                );
+                // Send and record in ONE transaction. The cadence gate is only as
+                // good as the record of what was sent, so a message that got
+                // delivered but not recorded is re-sent on every subsequent run,
+                // for ever - which is precisely the unstoppable-bot failure this
+                // whole design exists to avoid. Sending is itself transactional
+                // and touches nothing but the database (delivery and push happen
+                // later, off processingrequired), so if the bookkeeping row will
+                // not write, the message can and must be rolled back with it.
+                $sent = null;
+
+                DB::transaction(function () use ($userId, $kind, $prompt, $msgids, &$sent) {
+                    $sent = $this->prompts->send(
+                        $userId,
+                        $kind,
+                        $prompt['text'],
+                        $prompt['options'],
+                        $msgids
+                    );
+
+                    if ($sent === null) {
+                        return;
+                    }
+
+                    DB::table('firstreply_prompts_sent')->insert([
+                        'userid' => $userId,
+                        'kind' => $kind,
+                        'postcount' => count($msgids),
+                        'sent_at' => now(),
+                    ]);
+                });
 
                 if ($sent === null) {
                     $stats['skipped']++;
                     continue;
                 }
-
-                DB::table('firstreply_prompts_sent')->insert([
-                    'userid' => $userId,
-                    'kind' => $kind,
-                    'postcount' => count($msgids),
-                    'sent_at' => now(),
-                ]);
 
                 $this->metrics->record('prompt_sent');
                 $this->metrics->record('prompt_sent_' . $kind);
