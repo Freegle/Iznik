@@ -177,6 +177,54 @@ describe('AutoHeightTextarea', () => {
       expect(textarea.attributes('rows')).toBe('3')
     })
 
+    // The growth check only ran off the currentValue watcher, which never fires
+    // for the value we were mounted with - so a box arriving pre-filled (a
+    // standard message template) sat at its minimum rows with a scrollbar, and
+    // moderators reported the wording looking like it wasn't there at all.
+    it('grows to fit content it was mounted with', async () => {
+      const wrapper = createWrapper({
+        rows: 3,
+        maxRows: 10,
+        modelValue: 'A standard message that wraps over rather a lot of lines.',
+      })
+
+      const el = wrapper.find('textarea').element
+      Object.defineProperty(el, 'scrollHeight', {
+        value: 500,
+        configurable: true,
+      })
+      Object.defineProperty(el, 'clientHeight', {
+        value: 20,
+        configurable: true,
+      })
+
+      await flushPromises()
+
+      expect(Number(wrapper.find('textarea').attributes('rows'))).toBe(10)
+    })
+
+    it('leaves a pre-filled box alone when it already fits', async () => {
+      const wrapper = createWrapper({
+        rows: 3,
+        maxRows: 10,
+        modelValue: 'Short.',
+      })
+
+      const el = wrapper.find('textarea').element
+      Object.defineProperty(el, 'scrollHeight', {
+        value: 20,
+        configurable: true,
+      })
+      Object.defineProperty(el, 'clientHeight', {
+        value: 60,
+        configurable: true,
+      })
+
+      await flushPromises()
+
+      expect(wrapper.find('textarea').attributes('rows')).toBe('3')
+    })
+
     // The box grows as you type but only ever grew. Sending a comment clears
     // the text, so an empty box kept the height it had reached - on mobile that
     // left an 8-row box with nothing in it, pushed up against the last reply.

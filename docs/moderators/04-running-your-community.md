@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -48,6 +48,11 @@ set.
 Freegle provides plenty of starting-point messages for common situations, and a library
 of whole-community **broadcast** templates (for example bank holidays, keeping it local,
 no-shows, too many emails, safety, reselling). Adapt them to your own voice.
+
+A message can mark part of its wording as something you must fill in each time, or as
+something optional, using `<editthis>` and `<optional>` tags. See
+[fill-in boxes and optional bits](02-moderating-posts.md#fill-in-boxes-and-optional-bits)
+for what a moderator then sees when they send it.
 
 ## Stories and newsletters
 

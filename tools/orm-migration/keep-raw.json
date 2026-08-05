@@ -221,7 +221,7 @@
       "porting": "PostgreSQL: the builder is the porting unit, one function rather than fragments scattered through the handler. The statement is ordinary parameterised SQL - the pieces to check on port are the date arithmetic and the LIKE search, not the structure."
     },
     {
-      "id": "791c683326a8",
+      "id": "0608bbe6423f",
       "file": "iznik-server-go/rippling/analytics.go",
       "function": "rippledOutSection",
       "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
@@ -229,11 +229,11 @@
       "porting": "PostgreSQL: ordinary parameterised aggregate SQL once ported dialect-by-dialect (EXISTS/NOT EXISTS, no MySQL-only functions) - the chunking loop itself is plain Go and needs no port. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again."
     },
     {
-      "id": "8cdbd33d1052",
+      "id": "1f03ad9be65b",
       "file": "iznik-server-go/rippling/analytics.go",
       "function": "rippledOutSection",
       "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
-      "reason": "Same situation as site 791c683326a8 in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's per-day chunked rewrite of the rescue-floor query, accepted as-is rather than re-converted under the merge.",
+      "reason": "Same situation as site 0608bbe6423f in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's per-day chunked rewrite of the rescue-floor query, accepted as-is rather than re-converted under the merge.",
       "porting": "PostgreSQL: ordinary parameterised SQL (EXISTS/NOT EXISTS subqueries), no MySQL-only functions - the chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again."
     },
     {
@@ -241,7 +241,7 @@
       "file": "iznik-server-go/emailtracking/emailtracking.go",
       "function": "DigestClickPositions",
       "category": "Master merge: reintroduced verbatim, chunking not yet re-converted",
-      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction, not a fresh review decision - recorded here because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query (the digest-size denominator) with a per-date-window chunked db.Raw() loop (chunkDateWindows) plus a FORCE INDEX(sent_at) hint, a deliberate fix for a real production hang (a wide default/admin-selected date range over email_tracking - millions of rows, JSON metadata per row - made the chart hang without it), which must not be silently reverted. Accepted master's rewrite as-is (raw) rather than re-converted to GORM under a merge, for the same reason given on site 791c683326a8: re-converting a chunked-loop call site without a validated Layer 1/2 parity pass for its new shape is not a decision to make casually inside a conflict resolution.",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction, not a fresh review decision - recorded here because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query (the digest-size denominator) with a per-date-window chunked db.Raw() loop (chunkDateWindows) plus a FORCE INDEX(sent_at) hint, a deliberate fix for a real production hang (a wide default/admin-selected date range over email_tracking - millions of rows, JSON metadata per row - made the chart hang without it), which must not be silently reverted. Accepted master's rewrite as-is (raw) rather than re-converted to GORM under a merge, for the same reason given on site 0608bbe6423f: re-converting a chunked-loop call site without a validated Layer 1/2 parity pass for its new shape is not a decision to make casually inside a conflict resolution.",
       "porting": "PostgreSQL: JSON_LENGTH has a Postgres equivalent (jsonb_array_length after a cast) and FORCE INDEX has no direct equivalent (Postgres has no per-query index hints; the planner would need a different nudge, e.g. a partial/covering index). The chunking loop itself is plain Go. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again."
     },
     {

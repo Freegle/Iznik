@@ -1387,7 +1387,7 @@ func TestTier3Shapes_1dee90c3c378(t *testing.T) {
 	ormharness.AssertGoldenShapes(t, "1dee90c3c378", shapes)
 }
 
-func TestTier3Shapes_791c683326a8(t *testing.T) {
+func TestTier3Shapes_0608bbe6423f(t *testing.T) {
 	shapes := make([]ormharness.Shape, len(rippleStrata))
 	for i, st := range rippleStrata {
 		st := st
@@ -1412,10 +1412,10 @@ func TestTier3Shapes_791c683326a8(t *testing.T) {
 					"SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled"))
 		}}
 	}
-	ormharness.AssertGoldenShapes(t, "791c683326a8", shapes)
+	ormharness.AssertGoldenShapes(t, "0608bbe6423f", shapes)
 }
 
-func TestTier3Shapes_8cdbd33d1052(t *testing.T) {
+func TestTier3Shapes_1f03ad9be65b(t *testing.T) {
 	shapes := make([]ormharness.Shape, len(rippleStrata))
 	for i, st := range rippleStrata {
 		st := st
@@ -1437,7 +1437,7 @@ func TestTier3Shapes_8cdbd33d1052(t *testing.T) {
 			return find(tx.Table(inner, "2026-01-01", "2026-01-31").Select("COUNT(*)"))
 		}}
 	}
-	ormharness.AssertGoldenShapes(t, "8cdbd33d1052", shapes)
+	ormharness.AssertGoldenShapes(t, "1f03ad9be65b", shapes)
 }
 
 // --- rippling/metrics.go: Metrics client_source_summary (10ee37c98574) -----

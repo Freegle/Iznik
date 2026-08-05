@@ -4,8 +4,8 @@
   "counts": {
     "converted": 1592,
     "keep-raw": 51,
-    "retired": 41,
-    "test-fixture": 4276
+    "retired": 43,
+    "test-fixture": 4287
   },
   "ratchet": {
     "baseline": 0,
@@ -1445,7 +1445,7 @@
     "02fa105c0e46": {
       "id": "02fa105c0e46",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 316,
+      "line": 318,
       "function": "TestRipplingMetricsReplyKPIs",
       "receiver": "db",
       "method": "Exec",
@@ -3007,6 +3007,36 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "0608bbe6423f": {
+      "id": "0608bbe6423f",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "line": 869,
+      "function": "rippledOutSection",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages",
+        "messages",
+        "messages_by",
+        "messages_groups",
+        "rippling_reach",
+        "rippling_reply_attribution"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 2,
+      "goldenSql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT {{expr}}) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers \u003e 0{{expr}} JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date \u003e= ? AND cm.date \u003c ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d",
+      "presentInCode": true,
+      "hasParityTest": true,
+      "status": "keep-raw",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction (a site whose raw SQL is present cannot be 'converted', whatever its history), not a fresh review decision - recorded here explicitly because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query with a per-day chunked db.Raw() loop (dayWindows), a deliberate performance fix (the unchunked form was the slowest query on the rippling analytics tab and could stall the applier over a wide date range) that must not be silently reverted. The inner query text inside the loop is byte-identical to what this site id already named from an earlier point in this branch's history, which is why the id and its stale 'converted' status carried forward unchanged rather than the site appearing as new. Master's rewrite was accepted as-is (raw) rather than re-converted to GORM under a merge: re-doing an ORM conversion for a chunked-loop call site without a validated Layer 1/2 parity pass for that exact new shape is exactly the risk this reason exists to avoid taking casually.",
+      "porting": "PostgreSQL: ordinary parameterised aggregate SQL once ported dialect-by-dialect (EXISTS/NOT EXISTS, no MySQL-only functions) - the chunking loop itself is plain Go and needs no port. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
     "06212f0893f6": {
       "id": "06212f0893f6",
@@ -7492,7 +7522,7 @@
     "0e8d38a1ea8d": {
       "id": "0e8d38a1ea8d",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 419,
+      "line": 483,
       "function": "TestRipplingMetricsClientSourceSummary",
       "receiver": "db",
       "method": "Exec",
@@ -7833,7 +7863,7 @@
     "0f5e5f7495f1": {
       "id": "0f5e5f7495f1",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 516,
+      "line": 580,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Raw",
@@ -10913,7 +10943,7 @@
     "1606767f15d9": {
       "id": "1606767f15d9",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 359,
+      "line": 423,
       "function": "TestRipplingMetricsDateRange",
       "receiver": "db",
       "method": "Exec",
@@ -12986,7 +13016,7 @@
     "19dfb7afe1c8": {
       "id": "19dfb7afe1c8",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 290,
+      "line": 291,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -14800,28 +14830,6 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
-    "1d331c2bdf57": {
-      "id": "1d331c2bdf57",
-      "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 192,
-      "function": "fetchAttribution",
-      "receiver": "database.DBConn",
-      "method": "Raw",
-      "sqlSource": "literal",
-      "kind": "SELECT",
-      "tables": [
-        "rippling_reply_attribution"
-      ],
-      "mysqlisms": null,
-      "complexity": "simple",
-      "wave": 1,
-      "dynamic": false,
-      "args": 2,
-      "goldenSql": "SELECT was_home_member, was_notified, was_ripple_group_member, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source FROM rippling_reply_attribution WHERE msgid = ? AND userid = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
     "1d4c672aae97": {
       "id": "1d4c672aae97",
       "file": "iznik-server-go/test/communityevent_test.go",
@@ -15894,6 +15902,36 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "1f03ad9be65b": {
+      "id": "1f03ad9be65b",
+      "file": "iznik-server-go/rippling/analytics.go",
+      "line": 915,
+      "function": "rippledOutSection",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "chat_messages",
+        "memberships",
+        "messages",
+        "messages_by",
+        "messages_groups",
+        "rippling_reach"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": true,
+      "args": 2,
+      "goldenSql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at \u003e= ? AND rr.created_at \u003c ? AND rr.total_freeglers \u003e 0{{expr}} AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival AND mem.rippled = 0 WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x",
+      "presentInCode": true,
+      "hasParityTest": true,
+      "status": "keep-raw",
+      "reason": "Same situation as site 0608bbe6423f in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's per-day chunked rewrite of the rescue-floor query, accepted as-is rather than re-converted under the merge.",
+      "porting": "PostgreSQL: ordinary parameterised SQL (EXISTS/NOT EXISTS subqueries), no MySQL-only functions - the chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
+      "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
+    },
     "1f060eed6f1a": {
       "id": "1f060eed6f1a",
       "file": "iznik-server-go/test/comment_test.go",
@@ -16482,7 +16520,7 @@
     "1fe0c3c98dcb": {
       "id": "1fe0c3c98dcb",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 295,
+      "line": 296,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -19703,7 +19741,7 @@
     "25606d2bf854": {
       "id": "25606d2bf854",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 289,
+      "line": 290,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -21156,7 +21194,7 @@
       "presentInCode": true,
       "hasParityTest": true,
       "status": "keep-raw",
-      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction, not a fresh review decision - recorded here because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query (the digest-size denominator) with a per-date-window chunked db.Raw() loop (chunkDateWindows) plus a FORCE INDEX(sent_at) hint, a deliberate fix for a real production hang (a wide default/admin-selected date range over email_tracking - millions of rows, JSON metadata per row - made the chart hang without it), which must not be silently reverted. Accepted master's rewrite as-is (raw) rather than re-converted to GORM under a merge, for the same reason given on site 791c683326a8: re-converting a chunked-loop call site without a validated Layer 1/2 parity pass for its new shape is not a decision to make casually inside a conflict resolution.",
+      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction, not a fresh review decision - recorded here because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query (the digest-size denominator) with a per-date-window chunked db.Raw() loop (chunkDateWindows) plus a FORCE INDEX(sent_at) hint, a deliberate fix for a real production hang (a wide default/admin-selected date range over email_tracking - millions of rows, JSON metadata per row - made the chart hang without it), which must not be silently reverted. Accepted master's rewrite as-is (raw) rather than re-converted to GORM under a merge, for the same reason given on site 0608bbe6423f: re-converting a chunked-loop call site without a validated Layer 1/2 parity pass for its new shape is not a decision to make casually inside a conflict resolution.",
       "porting": "PostgreSQL: JSON_LENGTH has a Postgres equivalent (jsonb_array_length after a cast) and FORCE INDEX has no direct equivalent (Postgres has no per-query index hints; the planner would need a different nudge, e.g. a partial/covering index). The chunking loop itself is plain Go. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again.",
       "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
@@ -25651,6 +25689,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "311e054e5fc3": {
+      "id": "311e054e5fc3",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 463,
+      "function": "TestCreateChatMessage_RippleJoinedMemberIsNotHome",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "memberships"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 WHERE userid = ? AND groupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "3121e59f8708": {
       "id": "3121e59f8708",
       "file": "iznik-server-go/test/message_test.go",
@@ -26993,6 +27053,28 @@
       "dynamic": false,
       "args": 3,
       "goldenSql": "SELECT COUNT(*) FROM users_notifications WHERE fromuser = ? AND touser = ? AND type = 'LovedComment' AND newsfeedid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "33777b64298d": {
+      "id": "33777b64298d",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 461,
+      "function": "TestCreateChatMessage_RippleJoinedMemberIsNotHome",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "memberships"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 WHERE userid = ? AND groupid = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -30032,6 +30114,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT ST_GeometryType(outer_bound) FROM rippling_reach WHERE msgid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "398e37b8dbe4": {
+      "id": "398e37b8dbe4",
+      "file": "iznik-server-go/test/rippling_metrics_test.go",
+      "line": 366,
+      "function": "TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "messages_groups"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "UPDATE messages_groups SET arrival = NOW() - INTERVAL 30 DAY WHERE msgid = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -33384,7 +33488,7 @@
     "406a2a7f55a2": {
       "id": "406a2a7f55a2",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 271,
+      "line": 272,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -35957,7 +36061,7 @@
     "4515443dd7b5": {
       "id": "4515443dd7b5",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 288,
+      "line": 289,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -36274,7 +36378,7 @@
     "45f745297365": {
       "id": "45f745297365",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 302,
+      "line": 303,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -38900,30 +39004,6 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "DELETE FROM messages WHERE id = ?",
-      "presentInCode": true,
-      "hasParityTest": false,
-      "status": "test-fixture"
-    },
-    "4aca823636db": {
-      "id": "4aca823636db",
-      "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 311,
-      "function": "TestRipplingMetricsReplyKPIs",
-      "receiver": "db",
-      "method": "Exec",
-      "sqlSource": "literal",
-      "kind": "INSERT",
-      "tables": [
-        "rippling_reply_attribution"
-      ],
-      "mysqlisms": [
-        "insert-ignore"
-      ],
-      "complexity": "complex",
-      "wave": 3,
-      "dynamic": false,
-      "args": 0,
-      "goldenSql": "INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, attribution) VALUES (900000091, 900000091, NOW() - INTERVAL 5 DAY, 1, 'home'), (900000091, 900000092, NOW() - INTERVAL 5 DAY, 0, 'ripple_notified'), (900000091, 900000093, NOW() - INTERVAL 5 DAY, 0, 'ripple_reach'), (900000091, 900000094, NOW() - INTERVAL 5 DAY, 0, NULL)",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -48185,7 +48265,7 @@
     "5da587b4234d": {
       "id": "5da587b4234d",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1465,
+      "line": 1488,
       "function": "getReviewQueue",
       "receiver": "db.Table()",
       "method": "Select",
@@ -48921,6 +49001,28 @@
       "porting": "PostgreSQL/PostGIS: most ST_* names carry over, but three things change. ST_Distance_Sphere becomes ST_DistanceSphere or a cast to geography; MySQL's axis order for SRID 4326 is lat/lng while PostGIS is lng/lat, which silently transposes coordinates if unhandled; and MBRContains and friends have no PostGIS equivalent - use \u0026\u0026 (bounding-box overlap) or ST_Intersects. Getting the axis order wrong shows wrong nearby posts without erroring.",
       "category": "Spatial"
     },
+    "5eff0d74192a": {
+      "id": "5eff0d74192a",
+      "file": "iznik-server-go/test/rippling_metrics_test.go",
+      "line": 523,
+      "function": "TestReplySourceSplitLegacyVariant",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "rippling_reply_attribution"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM rippling_reply_attribution WHERE msgid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "5f0475ee01ad": {
       "id": "5f0475ee01ad",
       "file": "iznik-server-go/test/paypalipn_test.go",
@@ -48939,6 +49041,28 @@
       "dynamic": false,
       "args": 1,
       "goldenSql": "SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "5f0d6d6d90da": {
+      "id": "5f0d6d6d90da",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 412,
+      "function": "TestCreateChatMessage_RippleJoinedMemberIsNotHome",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "DELETE",
+      "tables": [
+        "rippling_reply_attribution"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "DELETE FROM rippling_reply_attribution WHERE msgid = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -52001,7 +52125,7 @@
     "64bf01533b9a": {
       "id": "64bf01533b9a",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 494,
+      "line": 558,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Raw",
@@ -53287,7 +53411,7 @@
     "67139f930c4d": {
       "id": "67139f930c4d",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 478,
+      "line": 542,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Exec",
@@ -56877,6 +57001,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "6d77120c8fe1": {
+      "id": "6d77120c8fe1",
+      "file": "iznik-server-go/test/rippling_metrics_test.go",
+      "line": 384,
+      "function": "TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "rippling_reply_attribution"
+      ],
+      "mysqlisms": [
+        "insert-ignore"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 9,
+      "goldenSql": "INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES (?, ?, ?, 1), (?, ?, ?, 1), (?, ?, ?, 1)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "6d7a9d9836f4": {
       "id": "6d7a9d9836f4",
       "file": "iznik-server-go/test/message_test.go",
@@ -57217,8 +57365,8 @@
     "6e158350f693": {
       "id": "6e158350f693",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 459,
-      "function": "TestReplySourceSplitLegacyVariant",
+      "line": 387,
+      "function": "TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance",
       "receiver": "db",
       "method": "Exec",
       "sqlSource": "literal",
@@ -59664,7 +59812,7 @@
     "726db329f67c": {
       "id": "726db329f67c",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 314,
+      "line": 315,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -62668,7 +62816,7 @@
     "772566ceda46": {
       "id": "772566ceda46",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 313,
+      "line": 314,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -63740,10 +63888,10 @@
       "dynamic": true,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers \u003e 0{{expr}} JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date \u003e= ? AND cm.date \u003c ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d",
-      "presentInCode": true,
-      "hasParityTest": true,
-      "status": "keep-raw",
-      "reason": "Auto-demoted from converted to keep-raw by extract.go's own gate (n) correction (a site whose raw SQL is present cannot be 'converted', whatever its history), not a fresh review decision - recorded here explicitly because that demotion carries no reason of its own. Context: merging origin/master into feat/orm-migration-v2 replaced this function's single GORM query with a per-day chunked db.Raw() loop (dayWindows), a deliberate performance fix (the unchunked form was the slowest query on the rippling analytics tab and could stall the applier over a wide date range) that must not be silently reverted. The inner query text inside the loop is byte-identical to what this site id already named from an earlier point in this branch's history, which is why the id and its stale 'converted' status carried forward unchanged rather than the site appearing as new. Master's rewrite was accepted as-is (raw) rather than re-converted to GORM under a merge: re-doing an ORM conversion for a chunked-loop call site without a validated Layer 1/2 parity pass for that exact new shape is exactly the risk this reason exists to avoid taking casually.",
+      "presentInCode": false,
+      "hasParityTest": false,
+      "status": "retired",
+      "reason": "Renumbered, not removed. Merging origin/master into feat/orm-migration-v2 changed this statement text in rippledOutSection: master moved the established-origin-member EXISTS into rippling.EstablishedOriginMemberExists (adding mem.rippled = 0 so a ripple-created auto-join no longer counts as an origin member) and added ripple_join to the client_rippled attribution IN-list. A site ID hashes path plus normalised SQL, so both edits renumber it. The same call site is inventoried as 0608bbe6423f, which carries the keep-raw rule, the Tier-3 shape declaration and the parity test that used to name this ID.",
       "porting": "PostgreSQL: ordinary parameterised aggregate SQL once ported dialect-by-dialect (EXISTS/NOT EXISTS, no MySQL-only functions) - the chunking loop itself is plain Go and needs no port. Re-attempt the GORM conversion on the current (chunked) call site with a fresh Layer 1/2 parity pass before counting it converted again.",
       "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
@@ -64171,7 +64319,7 @@
     "79d0f795939b": {
       "id": "79d0f795939b",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 462,
+      "line": 526,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Exec",
@@ -66299,6 +66447,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "7e0af7c68995": {
+      "id": "7e0af7c68995",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 193,
+      "function": "fetchAttribution",
+      "receiver": "database.DBConn",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "rippling_reply_attribution"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "SELECT was_home_member, was_notified, was_ripple_group_member, was_ripple_join, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source FROM rippling_reply_attribution WHERE msgid = ? AND userid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "7e1e15fa75ae": {
       "id": "7e1e15fa75ae",
       "file": "iznik-server-go/test/session_test.go",
@@ -66536,7 +66706,7 @@
     "7e791fd94e9a": {
       "id": "7e791fd94e9a",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 484,
+      "line": 548,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Exec",
@@ -66787,7 +66957,7 @@
     "7ea789f116f7": {
       "id": "7ea789f116f7",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 1441,
+      "line": 1464,
       "function": "getReviewQueue",
       "receiver": "db.Table()",
       "method": "Select",
@@ -66832,7 +67002,7 @@
     "7eb729a7e914": {
       "id": "7eb729a7e914",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 474,
+      "line": 538,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Exec",
@@ -71279,7 +71449,7 @@
     "8765e9b1b1f2": {
       "id": "8765e9b1b1f2",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 278,
+      "line": 279,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -73917,10 +74087,10 @@
       "dynamic": true,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at \u003e= ? AND rr.created_at \u003c ? AND rr.total_freeglers \u003e 0{{expr}} AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x",
-      "presentInCode": true,
-      "hasParityTest": true,
-      "status": "keep-raw",
-      "reason": "Same situation as site 791c683326a8 in this same function (see that entry for the full explanation): auto-demoted from converted to keep-raw by gate (n)'s own correction after merging origin/master's per-day chunked rewrite of the rescue-floor query, accepted as-is rather than re-converted under the merge.",
+      "presentInCode": false,
+      "hasParityTest": false,
+      "status": "retired",
+      "reason": "Renumbered, not removed. Same master merge and same cause as 791c683326a8, in the same function: the rescue-floor query gained mem.rippled = 0 in its NOT EXISTS, which renumbers the site. Now inventoried as 1f03ad9be65b, carrying the keep-raw rule, shape declaration and parity test.",
       "porting": "PostgreSQL: ordinary parameterised SQL (EXISTS/NOT EXISTS subqueries), no MySQL-only functions - the chunking loop is plain Go. Re-attempt the GORM conversion with a fresh Layer 1/2 parity pass before counting it converted again.",
       "category": "Master merge: reintroduced verbatim, chunking not yet re-converted"
     },
@@ -75409,6 +75579,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "8f67ba66fbee": {
+      "id": "8f67ba66fbee",
+      "file": "iznik-server-go/test/rippling_metrics_test.go",
+      "line": 370,
+      "function": "TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "memberships"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 1 WHERE userid = ? AND groupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "8f67d19175c7": {
       "id": "8f67d19175c7",
       "file": "iznik-server-go/test/paypalipn_test.go",
@@ -76645,6 +76837,30 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "91b328a20a6c": {
+      "id": "91b328a20a6c",
+      "file": "iznik-server-go/test/rippling_metrics_test.go",
+      "line": 312,
+      "function": "TestRipplingMetricsReplyKPIs",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "rippling_reply_attribution"
+      ],
+      "mysqlisms": [
+        "insert-ignore"
+      ],
+      "complexity": "complex",
+      "wave": 3,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, attribution) VALUES (900000091, 900000091, NOW() - INTERVAL 5 DAY, 1, 'home'), (900000091, 900000092, NOW() - INTERVAL 5 DAY, 0, 'ripple_notified'), (900000091, 900000093, NOW() - INTERVAL 5 DAY, 0, 'ripple_reach'), (900000091, 900000095, NOW() - INTERVAL 5 DAY, 0, 'ripple_join'), (900000091, 900000094, NOW() - INTERVAL 5 DAY, 0, NULL)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "91b6041f4986": {
       "id": "91b6041f4986",
       "file": "iznik-server-go/test/session_test.go",
@@ -77235,7 +77451,7 @@
     "92fa875c79ab": {
       "id": "92fa875c79ab",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 470,
+      "line": 534,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Exec",
@@ -79719,7 +79935,7 @@
     "97a43716fcd0": {
       "id": "97a43716fcd0",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 335,
+      "line": 336,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -91806,7 +92022,7 @@
     "af86d0d9161e": {
       "id": "af86d0d9161e",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 460,
+      "line": 524,
       "function": "TestReplySourceSplitLegacyVariant",
       "receiver": "db",
       "method": "Exec",
@@ -95542,7 +95758,7 @@
     "b6ccd9ccd2d7": {
       "id": "b6ccd9ccd2d7",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 333,
+      "line": 334,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -102653,7 +102869,7 @@
     "c4a7c5009cf0": {
       "id": "c4a7c5009cf0",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 357,
+      "line": 421,
       "function": "TestRipplingMetricsDateRange",
       "receiver": "db",
       "method": "Exec",
@@ -105283,7 +105499,7 @@
     "ca0b9d2c9704": {
       "id": "ca0b9d2c9704",
       "file": "iznik-server-go/chat/chatmessage.go",
-      "line": 577,
+      "line": 600,
       "function": "CreateChatMessage",
       "receiver": "db.Table()",
       "method": "Select",
@@ -107463,7 +107679,7 @@
     "ce76da020596": {
       "id": "ce76da020596",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 360,
+      "line": 361,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -107959,7 +108175,7 @@
     "cf15f823aea6": {
       "id": "cf15f823aea6",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 382,
+      "line": 383,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -113177,7 +113393,7 @@
     "d91c81b6c972": {
       "id": "d91c81b6c972",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 231,
+      "line": 232,
       "function": "TestCreateChatMessage_RecordsReplyAttribution",
       "receiver": "db",
       "method": "Exec",
@@ -114066,6 +114282,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "dae60e5f1bc2": {
+      "id": "dae60e5f1bc2",
+      "file": "iznik-server-go/test/rippling_metrics_test.go",
+      "line": 375,
+      "function": "TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "memberships"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 0 WHERE userid = ? AND groupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "daf10bce6a66": {
       "id": "daf10bce6a66",
       "file": "iznik-server-go/test/user_test.go",
@@ -114137,7 +114375,7 @@
     "db122ee9a619": {
       "id": "db122ee9a619",
       "file": "iznik-server-go/test/rippling_metrics_test.go",
-      "line": 423,
+      "line": 487,
       "function": "TestRipplingMetricsClientSourceSummary",
       "receiver": "db",
       "method": "Exec",
@@ -115328,7 +115566,7 @@
     "dd5aca23bc78": {
       "id": "dd5aca23bc78",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 347,
+      "line": 348,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -115632,6 +115870,28 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "de17bee3ebe4": {
+      "id": "de17bee3ebe4",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 438,
+      "function": "TestCreateChatMessage_RippleJoinedMemberIsNotHome",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "memberships"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 WHERE userid = ? AND groupid = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -120959,7 +121219,7 @@
     "e8642f73dfc1": {
       "id": "e8642f73dfc1",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 236,
+      "line": 237,
       "function": "TestCreateChatMessage_RecordsReplyAttribution",
       "receiver": "db",
       "method": "Exec",
@@ -124088,6 +124348,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "ee7f92dd2235": {
+      "id": "ee7f92dd2235",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 456,
+      "function": "TestCreateChatMessage_RippleJoinedMemberIsNotHome",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "messages_groups"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 0)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "ee91e5bd3d67": {
       "id": "ee91e5bd3d67",
       "file": "iznik-server-go/test/session_test.go",
@@ -124180,7 +124462,7 @@
     "eec9a0a7950d": {
       "id": "eec9a0a7950d",
       "file": "iznik-server-go/test/chatmessage_reach_test.go",
-      "line": 298,
+      "line": 299,
       "function": "TestCreateChatMessage_AttributionLadder",
       "receiver": "db",
       "method": "Exec",
@@ -131289,6 +131571,28 @@
       "reason": "ingestBulkItemPhotos() inserts into messages_attachments and then reads the generated id back with LastInsertId() on the same connection. LAST_INSERT_ID() is connection-scoped session state, so the read is only correct while it shares a connection with the write. Converting this would move the id onto GORM map-Create's undocumented \"@id\" writeback and hand the connection choice to the dbresolver plugin. The failure mode is not an error: it is a row created against the wrong parent id, found days later. Enforced by ratchet gate (k); see tools/orm-migration/lastinsertid-sites.json.",
       "porting": "PostgreSQL: INSERT ... RETURNING id. This is the one category that gets EASIER on Postgres - RETURNING is part of the statement, so the id comes back with the insert and the connection-scoped LAST_INSERT_ID() problem disappears entirely. GORM exposes it via clause.Returning, so these sites may become convertible during the port rather than staying raw.",
       "category": "INSERT whose generated id is read back"
+    },
+    "fb90844387c6": {
+      "id": "fb90844387c6",
+      "file": "iznik-server-go/test/chatmessage_reach_test.go",
+      "line": 417,
+      "function": "TestCreateChatMessage_RippleJoinedMemberIsNotHome",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "UPDATE",
+      "tables": [
+        "memberships"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 2,
+      "goldenSql": "UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 WHERE userid = ? AND groupid = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
     },
     "fb9d4f2b2ed2": {
       "id": "fb9d4f2b2ed2",

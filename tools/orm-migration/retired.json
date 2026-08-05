@@ -148,6 +148,14 @@
     {
       "id": "ce0d84b77df2",
       "reason": "Code deleted. database/insert.go held only ExecInsertGetID, a wrapper that ran a raw INSERT and returned LastInsertId. Every production caller was converted to gorm.WithResult(), leaving it reachable only from its own unit test, so it was removed rather than carried as permanent keep-raw debt for something nothing calls. The guarantee it protected is NOT dead - eleven converted sites depend on the id coming back from the write result rather than a replica-routable SELECT (the Discourse 9832 bug class), and on ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id) reporting the existing row id - so its unit guard was retargeted onto gorm.WithResult() instead of being deleted with it (test/insert_id_test.go, TestInsertIdReadBackFromWriteResult)."
+    },
+    {
+      "id": "791c683326a8",
+      "reason": "Renumbered, not removed. Merging origin/master into feat/orm-migration-v2 changed this statement text in rippledOutSection: master moved the established-origin-member EXISTS into rippling.EstablishedOriginMemberExists (adding mem.rippled = 0 so a ripple-created auto-join no longer counts as an origin member) and added ripple_join to the client_rippled attribution IN-list. A site ID hashes path plus normalised SQL, so both edits renumber it. The same call site is inventoried as 0608bbe6423f, which carries the keep-raw rule, the Tier-3 shape declaration and the parity test that used to name this ID."
+    },
+    {
+      "id": "8cdbd33d1052",
+      "reason": "Renumbered, not removed. Same master merge and same cause as 791c683326a8, in the same function: the rescue-floor query gained mem.rippled = 0 in its NOT EXISTS, which renumbers the site. Now inventoried as 1f03ad9be65b, carrying the keep-raw rule, shape declaration and parity test."
     }
   ]
 }

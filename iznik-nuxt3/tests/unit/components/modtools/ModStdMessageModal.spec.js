@@ -651,6 +651,179 @@ describe('ModStdMessageModal', () => {
     })
   })
 
+  // Shape of the standard messages moderators actually configure: a must-fill
+  // box, then two optional bits separated by single line breaks.
+  const optionalsStdmsg = () =>
+    createStdmsg({
+      action: 'Leave',
+      body:
+        'Hello,\n\nThanks for using $groupname.  <editthis></editthis>\n' +
+        '<optional>You can edit your post at $editlink</optional>\n' +
+        '<optional>Please get back to us if you have any questions.</optional>\n\n' +
+        'With kind regards,\n$myname',
+      insert: 'Top',
+    })
+
+  const optionalIndexes = (wrapper) =>
+    wrapper.vm.segments
+      .map((seg, i) => (seg.type === 'optional' ? i : -1))
+      .filter((i) => i >= 0)
+
+  describe('segmented editor — a send that is refused', () => {
+    it('stops the send button spinning', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+
+      const callback = vi.fn()
+      await wrapper.vm.process(callback)
+
+      expect(mockMessageStore.reply).not.toHaveBeenCalled()
+      // Without this the button span on until SpinButton's 20s "callback
+      // forgotten" timeout, which reads as the send having hung.
+      expect(callback).toHaveBeenCalled()
+    })
+
+    it('says nothing has been sent and marks what is outstanding', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+
+      await wrapper.vm.process(vi.fn())
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.directiveWarning).toContain('Nothing has been sent yet')
+      expect(wrapper.vm.directiveWarning).toContain('Keep or Remove')
+      // One must-fill box plus two undecided optionals.
+      expect(wrapper.vm.blockedSegments).toHaveLength(3)
+      expect(wrapper.find('.seg-blocked').exists()).toBe(true)
+    })
+
+    it('drops each mark as that bit is dealt with', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+      await wrapper.vm.process(vi.fn())
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.blockedSegments).toHaveLength(3)
+
+      const [first, second] = optionalIndexes(wrapper)
+      wrapper.vm.decideOptional(first, false)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.blockedSegments).toHaveLength(2)
+
+      wrapper.vm.decideOptional(second, true)
+      await wrapper.vm.$nextTick()
+      // The wording keeps up, rather than still asking for the optionals once
+      // they have both been decided.
+      expect(wrapper.vm.blockedSegments).toHaveLength(1)
+      expect(wrapper.vm.directiveWarning).not.toContain('Keep or Remove')
+      expect(wrapper.vm.directiveWarning).toContain('highlighted box')
+
+      wrapper.vm.segments.find((s) => s.type === 'editthis').value =
+        'Please could you add the size to your post.'
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.blockedSegments).toHaveLength(0)
+      expect(wrapper.vm.directiveWarning).toBe(null)
+    })
+  })
+
+  describe('segmented editor — optional sections', () => {
+    it('lets you undo a Keep and reword the wording you kept', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+
+      wrapper.vm.segments.find((s) => s.type === 'editthis').value =
+        'Please could you add the size to your post.'
+
+      const [first, second] = optionalIndexes(wrapper)
+      wrapper.vm.decideOptional(first, false)
+      wrapper.vm.decideOptional(second, false)
+      await wrapper.vm.$nextTick()
+
+      // Kept wording is still an editable box, not fixed text.
+      expect(wrapper.findAll('.seg-optional-kept textarea').length).toBe(2)
+
+      wrapper.vm.segments[first].content =
+        'You can edit your post on your My Posts page.'
+      // Keep used to be final - you could only undo a Remove.
+      wrapper.vm.decideOptional(second, true)
+
+      await wrapper.vm.process()
+
+      const bodyArg = mockMessageStore.reply.mock.calls[0][0].body
+      expect(bodyArg).toContain('You can edit your post on your My Posts page.')
+      expect(bodyArg).not.toContain(
+        'Please get back to us if you have any questions.'
+      )
+    })
+  })
+
+  describe('segmented editor — paragraph spacing', () => {
+    it('shows the line break between blocks as a toggle, not an empty box', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      // The single "\n" between the two optionals rendered as a full-height
+      // empty textarea, which read as a field someone had forgotten to fill in.
+      expect(wrapper.find('.seg-gap-toggle').exists()).toBe(true)
+    })
+
+    it('adds a blank line between paragraphs when toggled', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+
+      wrapper.vm.segments.find((s) => s.type === 'editthis').value =
+        'Please could you add the size to your post.'
+      optionalIndexes(wrapper).forEach((i) =>
+        wrapper.vm.decideOptional(i, false)
+      )
+
+      const gaps = wrapper.vm.segments
+        .map((seg, i) => (wrapper.vm.isGap(seg) ? i : -1))
+        .filter((i) => i >= 0)
+      expect(gaps.length).toBeGreaterThan(0)
+      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gaps[0]])).toBe(
+        false
+      )
+
+      gaps.forEach((i) => wrapper.vm.toggleGap(i))
+      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gaps[0]])).toBe(true)
+
+      await wrapper.vm.process()
+
+      const bodyArg = mockMessageStore.reply.mock.calls[0][0].body
+      expect(bodyArg).toContain(
+        'add the size to your post.\n\nYou can edit your post at'
+      )
+    })
+
+    it('leaves an inline space between blocks alone', async () => {
+      const inline = createStdmsg({
+        action: 'Leave',
+        body: 'Hello. <optional>One.</optional> <optional>Two.</optional>\n\nBye.',
+        insert: 'Top',
+      })
+      const wrapper = mountComponent({}, { stdmsgData: inline })
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      // The single space between the two optionals is wording, not paragraph
+      // spacing, so it must not become a blank-line control.
+      expect(wrapper.vm.segments.some((s) => wrapper.vm.isGap(s))).toBe(false)
+      expect(wrapper.find('.seg-gap-toggle').exists()).toBe(false)
+    })
+
+    it('takes the blank line back out again', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
+      await wrapper.vm.fillin()
+
+      const gap = wrapper.vm.segments.findIndex((seg) => wrapper.vm.isGap(seg))
+      wrapper.vm.toggleGap(gap)
+      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gap])).toBe(true)
+      wrapper.vm.toggleGap(gap)
+      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gap])).toBe(false)
+    })
+  })
+
   describe('editLink — TrashNothing awareness', () => {
     const tnMessage = () =>
       createMessage({

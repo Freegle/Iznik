@@ -400,7 +400,8 @@ type replyReachEvidence struct {
 func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach replyReachEvidence, clientSource *string) {
 	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
 	// predates this reply by more than the join grace (300s)? A join made to reply
-	// (added ~ now) is excluded.
+	// (added ~ now) is excluded, and so is a membership rippling itself created - see
+	// wasRippleJoin below.
 	// ORM migration site 848af7d73bfe (Tier 2 keep-raw review). BuildClauses
 	// override: see amp.go's ValidateToken for the mechanism and
 	// ormharness/bareexists_test.go for the proof.
@@ -408,7 +409,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
 			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid)
 	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
@@ -452,6 +453,26 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		myid, utils.COLLECTION_APPROVED, refmsgid)
 	txfc0c6fd4f6df.Statement.BuildClauses = []string{"SELECT"}
 	txfc0c6fd4f6df.Scan(&wasRippleGroup)
+
+	// Member of an ORIGIN group of the post, but only via a membership RIPPLING created (their
+	// own post rippled into that group, so we auto-joined them - ExpandService in iznik-batch).
+	// They saw this post in that group's feed/digest, and they are only in that group because of
+	// an earlier ripple, so the reply belongs to rippling and not to home. Same 300s join grace
+	// as wasHome. Both bits can be set at once on a cross-post (one origin group joined
+	// ordinarily, another via a ripple); the ladder gives home precedence, because the ordinary
+	// membership alone would have shown them the post.
+	// Converted to the same BuildClauses form as its wasHome sibling above: the
+	// statement arrived from master as db.Raw, and this branch's Go inventory
+	// holds raw at 0.
+	var wasRippleJoin int
+	txWasRippleJoin := db.Table("messages_groups").Select(
+		"EXISTS(SELECT 1 FROM messages_groups mg "+
+			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
+			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid)
+	txWasRippleJoin.Statement.BuildClauses = []string{"SELECT"}
+	txWasRippleJoin.Scan(&wasRippleJoin)
 
 	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
 	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the
@@ -509,7 +530,8 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		}
 	}
 
-	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, postHadRippled, inOrigin, inReach)
+	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, wasRippleJoin,
+		postHadRippled, inOrigin, inReach)
 
 	// ORM migration site db03a274a8a2 (wave 3).
 	db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
@@ -519,6 +541,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		"was_home_member":         wasHome,
 		"was_notified":            wasNotified,
 		"was_ripple_group_member": wasRippleGroup,
+		"was_ripple_join":         wasRippleJoin,
 		"in_origin_catchment":     inOrigin,
 		"in_reach":                inReach,
 		"post_had_rippled":        postHadRippled,
