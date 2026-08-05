@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:27:26Z",
+    "generated": "2026-08-05T17:28:43Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 426,
+        "keep-raw": 427,
         "converted": 95,
-        "raw": 210,
+        "raw": 209,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -722,10 +722,10 @@
             "goldenSql": "INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype) SELECT ?, groupid, collection, arrival, autoreposts, msgtype FROM messages_groups WHERE msgid = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "An INSERT ... SELECT whose select list begins with a BOUND LITERAL rather than a column - 'SELECT ?, groupid, collection, ... FROM messages_groups WHERE msgid = ?', copying one message's group rows onto another message's id. Laravel has insertUsing()/insertOrIgnoreUsing() for insert-from-select, so the shape is supported; what is not is selecting a placeholder. ->select() takes column names, and the only ways to put a bound literal in a select list are selectRaw() or DB::raw(), both raw sites here - so the site would change surface and convert nothing. Restructuring it (read the rows, then insert them) is a different statement and loses the atomicity the INSERT...SELECT gives inside its transaction.",
+            "porting": "PostgreSQL: INSERT ... SELECT with a literal in the select list is standard and ports unchanged; the IGNORE modifier becomes ON CONFLICT DO NOTHING. The obstacle here is the query builder, not the database.",
+            "category": "INSERT ... SELECT with a bound literal",
             "approvedDiff": ""
         },
         "00811b58fbbf": {

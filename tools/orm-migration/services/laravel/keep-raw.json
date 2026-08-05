@@ -174,6 +174,13 @@
       "reason": "An IN whose list is COLUMNS rather than values - 'messages_by.userid IN (chat_rooms.user1, chat_rooms.user2)', meaning 'this user is either side of the chat'. whereIn() binds its array, so passing the column names would compare the userid against the literal strings 'chat_rooms.user1' and 'chat_rooms.user2' - which MySQL evaluates rather than rejects, so the query would run, match nothing, and look correct. whereColumn handles one column pair, not membership of a list of them, and there is no whereColumnIn. The only route is whereRaw, itself a raw site here.",
       "porting": "PostgreSQL: 'x IN (a, b)' over columns is standard SQL and ports unchanged; it can also be written 'x = ANY(ARRAY[a, b])' if that reads better. No dialect work needed - the obstacle here is the query builder, not the database.",
       "category": "IN over a column list"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*(INSERT|REPLACE)\\b[\\s\\S]*\\bSELECT\\s+\\?/i",
+      "reason": "An INSERT ... SELECT whose select list begins with a BOUND LITERAL rather than a column - 'SELECT ?, groupid, collection, ... FROM messages_groups WHERE msgid = ?', copying one message's group rows onto another message's id. Laravel has insertUsing()/insertOrIgnoreUsing() for insert-from-select, so the shape is supported; what is not is selecting a placeholder. ->select() takes column names, and the only ways to put a bound literal in a select list are selectRaw() or DB::raw(), both raw sites here - so the site would change surface and convert nothing. Restructuring it (read the rows, then insert them) is a different statement and loses the atomicity the INSERT...SELECT gives inside its transaction.",
+      "porting": "PostgreSQL: INSERT ... SELECT with a literal in the select list is standard and ports unchanged; the IGNORE modifier becomes ON CONFLICT DO NOTHING. The obstacle here is the query builder, not the database.",
+      "category": "INSERT ... SELECT with a bound literal"
     }
   ]
 }
