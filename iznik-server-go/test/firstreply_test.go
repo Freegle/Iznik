@@ -587,3 +587,140 @@ func TestFirstReplyMetricsEndpoint_CountsPostsFromTheGroupedSet(t *testing.T) {
 	assert.GreaterOrEqual(t, engaged, float64(3),
 		"three distinct posts were covered, counted once each despite one appearing twice")
 }
+
+// An expired question still renders, but it must not still be answerable.
+//
+// A week-old "could you deliver?" under an item that has long gone is not
+// merely stale: answering it would edit a finished post. The message stays in
+// the thread so the conversation reads back in order - a gap where a question
+// was is more confusing than a question with no buttons - but the answer is
+// refused.
+func TestAnswerChatPrompt_RefusesAnExpiredPrompt(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpromptexpired")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: expired prompt", 51.5, -0.1)
+
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
+	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+
+	db.Exec("UPDATE chat_prompts SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE chatmsgid = ?", chatMsgID)
+
+	_, token := CreateTestSession(t, posterID)
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/chat/%d/message/%d/prompt?jwt=%s", chatID, chatMsgID, token),
+		strings.NewReader(`{"answer":"maybe"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 410, resp.StatusCode)
+
+	var deliveryPossible int
+	db.Raw("SELECT deliverypossible FROM messages WHERE id = ?", msgID).Scan(&deliveryPossible)
+	assert.Equal(t, 0, deliveryPossible, "an expired prompt must not still edit the post")
+}
+
+// "There's no rush" is a real answer that changes nothing.
+//
+// It matters because it is not a refusal: it stops us asking again, so it has to
+// be recorded, but there is no date to write and the post must be left exactly
+// as it was. Conflating "answered" with "changed the post" is what makes the
+// sysadmin answer-rate numbers lie.
+func TestAnswerChatPrompt_NoRushRecordsWithoutPatchingThePost(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpromptnorush")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: no rush", 51.5, -0.1)
+
+	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
+	options := `[{"value":"date","label":"Pick a date","input":"date"},{"value":"norush","label":"There's no rush"}]`
+	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "deadline", options)
+	defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+
+	_, token := CreateTestSession(t, posterID)
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/chat/%d/message/%d/prompt?jwt=%s", chatID, chatMsgID, token),
+		strings.NewReader(`{"answer":"norush"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, false, body["applied"], "nothing was patched, and the panel must not claim otherwise")
+
+	var deadline *string
+	db.Raw("SELECT deadline FROM messages WHERE id = ?", msgID).Scan(&deadline)
+	assert.Nil(t, deadline, "no rush is not a date")
+
+	// But it IS recorded, so the question is not asked again.
+	var answer string
+	db.Raw("SELECT answer FROM chat_prompts WHERE chatmsgid = ?", chatMsgID).Scan(&answer)
+	assert.Equal(t, "norush", answer)
+}
+
+// A bare end date means midnight, which silently drops everything that happened
+// TODAY - the most interesting part of the window and the least likely to be
+// questioned, because the panel still looks perfectly plausible. The handler
+// widens a date-only bound to cover its whole day.
+//
+// This is a regression test for a real one: the dashboard's own date filter
+// sends bare dates, and the average "hours earlier" read 5.6 instead of 3.7
+// because the most recent passthroughs were being excluded.
+func TestFirstReplyMetrics_BareEndDateIncludesToday(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frmetricstoday")
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: today", 51.5, -0.1)
+
+	// A passthrough recorded a few minutes ago, with a known saving.
+	db.Exec("INSERT INTO firstreply_passthroughs (msgid, userid, source, lat, lng, created_at, waited_hours, computed_at) "+
+		"VALUES (?, ?, 'web', 51.5, -0.1, NOW(), 9.5, NOW())", msgID, posterID)
+	defer db.Exec("DELETE FROM firstreply_passthroughs WHERE msgid = ?", msgID)
+
+	today := time.Now().Format("2006-01-02")
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/firstreply/metrics?start=%s&end=%s&jwt=%s", today, today, token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	pt, _ := result["passthrough"].(map[string]interface{})
+	assert.NotNil(t, pt)
+	sized, _ := pt["sized"].(float64)
+	assert.GreaterOrEqual(t, sized, float64(1),
+		"a passthrough from earlier today must be inside a window whose end is today's date")
+}
+
+// The endpoint is Support/Admin only - it reports on members and their posts.
+func TestFirstReplyMetrics_RequiresSupportOrAdmin(t *testing.T) {
+	prefix := uniquePrefix("frmetricsauth")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/firstreply/metrics?jwt=%s", token), nil))
+
+	assert.Equal(t, 403, resp.StatusCode)
+}
