@@ -71,8 +71,13 @@ worktree_last_activity() {
 # or just after destroys the evidence that the run happened at all, which is far
 # more costly than the RAM the sweep reclaims.
 #
-# Ask the worktree's own status container instead. Any suite reporting "running"
-# means real work is in flight regardless of what the filesystem looks like.
+# Ask the worktree's own status container instead. Any suite reporting an
+# in-flight state means real work is in flight regardless of what the filesystem
+# looks like. Both non-terminal states count: a suite reports "started" from the
+# POST until the runner actually spawns (test discovery alone is tens of seconds
+# for Playwright), and only then flips to "running". Matching "running" alone
+# left that startup window unguarded, and a sweep landed in it on 2026-08-05,
+# killing a 184-test run seconds after it was kicked off.
 # Fails open (returns 1, "not running") if the port is unknown or unreachable -
 # an unreachable status container is not evidence of activity.
 worktree_suite_running() {
@@ -82,7 +87,9 @@ worktree_suite_running() {
   for suite in go laravel vitest playwright php; do
     state="$(curl -s --max-time 3 "http://localhost:${port}/api/tests/${suite}/status" 2>/dev/null \
              | jq -r '.status // empty' 2>/dev/null)"
-    [ "$state" = "running" ] && return 0
+    case "$state" in
+      running|started) return 0 ;;
+    esac
   done
   return 1
 }
