@@ -1392,15 +1392,15 @@ func TestTier3Shapes_0608bbe6423f(t *testing.T) {
 	for i, st := range rippleStrata {
 		st := st
 		shapes[i] = ormharness.Shape{Name: st.name, Build: func(tx *gorm.DB) *gorm.DB {
+			// Calls the same helper the code does rather than spelling the EXISTS
+			// out again: it is where the mem.rippled = 0 provenance test lives, and
+			// a second copy here silently stops matching the moment either moves.
 			inner := "(SELECT " +
-				"(NOT EXISTS(SELECT 1 FROM messages_groups og " +
-				"INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid " +
-				"AND mem.collection = 'Approved' AND mem.added < og.arrival " +
-				"WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, " +
+				"(NOT " + rippling.EstablishedOriginMemberExists("cm.refmsgid", "cm.userid") + ") AS rippled, " +
 				"EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, " +
 				"EXISTS(SELECT 1 FROM rippling_reply_attribution rra " +
 				"WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid " +
-				"AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled " +
+				"AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled " +
 				"FROM chat_messages cm " +
 				"JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0" + st.sql +
 				" JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer'" +
@@ -1431,7 +1431,7 @@ func TestTier3Shapes_1f03ad9be65b(t *testing.T) {
 				"SELECT 1 FROM chat_messages ch " +
 				"INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 " +
 				"INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid " +
-				"AND mem.collection = 'Approved' AND mem.added < og.arrival " +
+				"AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 " +
 				"WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')" +
 				") x"
 			return find(tx.Table(inner, "2026-01-01", "2026-01-31").Select("COUNT(*)"))
@@ -1474,7 +1474,8 @@ func TestTier3Shapes_10ee37c98574(t *testing.T) {
 func TestTier3Shapes_568a5645fba7(t *testing.T) {
 	srcGroupJoin := " JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0"
 	selectCols := "day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, " +
-		"SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_reach') AS ripple_reach, " +
+		"SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_join') AS ripple_join, " +
+		"SUM(bucket = 'ripple_reach') AS ripple_reach, " +
 		"SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown"
 	build := func(wide bool, srcGroup string, args ...interface{}) func(tx *gorm.DB) *gorm.DB {
 		return func(tx *gorm.DB) *gorm.DB {
