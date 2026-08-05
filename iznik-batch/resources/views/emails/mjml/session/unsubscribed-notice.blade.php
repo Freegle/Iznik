@@ -90,14 +90,16 @@
       </mj-column>
     </mj-section>
 
-    {{-- One tap to stop the rest, for the member who meant "stop emailing me" rather than
-         "stop this one kind". Needs no login. Keeps replies to their posts, so offering
-         something and never hearing back is not a way this can end. --}}
+    {{-- Stop the rest, for the member who meant "stop emailing me" rather than "stop this
+         one kind". Needs no login - it asks to confirm rather than acting on the click,
+         because link scanners follow URLs in mail without anyone asking them to. Keeps
+         replies to their posts, so offering something and never hearing back is not a way
+         this can end. --}}
     @if($canStopMore)
     <mj-section padding="25px 0 0 0">
       <mj-column>
         <mj-text font-size="14px" line-height="1.5" padding="0 25px 10px 25px">
-          <p>Want to stop the rest too? One tap, no need to log in. You'll still hear when someone replies to your posts, so you won't miss anyone.</p>
+          <p>Want to stop the rest too? No need to log in - we'll just ask you to confirm. You'll still hear when someone replies to your posts, so you won't miss anyone.</p>
         </mj-text>
         <mj-button mj-class="btn-dark" href="{{ $stopMostUrl }}" border-radius="3px" font-size="14px" padding="0 25px 10px 25px">
           Stop these emails too

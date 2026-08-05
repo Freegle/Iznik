@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -50,13 +51,53 @@ func TestUnsubscribeOneClickPost(t *testing.T) {
 	assert.Equal(t, int64(0), live, "one-click POST must turn digests off")
 }
 
+// TestUnsubscribeGetOnlyAsks: a GET must change nothing. Link scanners, prefetchers and
+// antivirus proxies follow URLs in mail with nobody having clicked - which is why RFC 8058
+// put one-click on POST - so following the link cannot be the same as meaning it.
+func TestUnsubscribeGetOnlyAsks(t *testing.T) {
+	userID, key := unsubscribeFixture(t, uniquePrefix("unsubget"))
+	db := database.DBConn
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/unsubscribe?u=%v&k=%s&t=digest", userID, key), nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "Stop these emails?", "GET should render the confirmation")
+	assert.Contains(t, string(body), "method=\"POST\"", "confirmation must post back to apply it")
+
+	var live int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND emailfrequency != 0", userID).Scan(&live)
+	assert.Equal(t, int64(1), live, "a GET must not turn anything off")
+}
+
+// TestUnsubscribeConfirmedPostShowsAPage: the confirmation form marks itself, so a human
+// gets a page rather than the JSON a mail client wants.
+func TestUnsubscribeConfirmedPostShowsAPage(t *testing.T) {
+	userID, key := unsubscribeFixture(t, uniquePrefix("unsubconfirm"))
+	db := database.DBConn
+
+	req := httptest.NewRequest("POST", "/api/user/unsubscribe",
+		strings.NewReader(fmt.Sprintf("u=%v&k=%s&t=digest&confirm=1", userID, key)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, _ := getApp().Test(req, 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "Done")
+
+	var live int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND emailfrequency != 0", userID).Scan(&live)
+	assert.Equal(t, int64(0), live, "confirming must apply it")
+}
+
 // TestUnsubscribeIsTargeted: unsubscribing from one category leaves the others alone,
 // and never deletes the account.
 func TestUnsubscribeIsTargeted(t *testing.T) {
 	userID, key := unsubscribeFixture(t, uniquePrefix("unsubtargeted"))
 	db := database.DBConn
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET",
+	resp, _ := getApp().Test(httptest.NewRequest("POST",
 		fmt.Sprintf("/api/user/unsubscribe?u=%v&k=%s&t=digest", userID, key), nil), 60000)
 	require.Equal(t, 200, resp.StatusCode)
 

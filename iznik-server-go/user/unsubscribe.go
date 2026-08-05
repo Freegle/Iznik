@@ -93,6 +93,10 @@ func validUnsubscribeType(t string) bool {
 // instead means the RFC 8058 POST gets a 200 back from the page renderer, mail clients
 // report a successful unsubscribe to the member, and nothing is actually turned off.
 //
+// POST applies it; GET only asks. Link scanners, prefetchers and antivirus proxies follow
+// URLs in mail with nobody having clicked anything, which is exactly why RFC 8058 put
+// one-click on POST, so a link a member can click must confirm before acting.
+//
 // @Router /user/unsubscribe [post]
 // @Summary Turn off one category of Freegle email
 // @Tags user
@@ -136,13 +140,21 @@ func Unsubscribe(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid key")
 	}
 
-	applyUnsubscribe(db, uid, unsubType)
-
-	// One-click (POST from a mail client) wants a 200; a browser click (GET) gets a
-	// friendly confirmation page.
+	// A GET changes nothing. Link scanners, prefetchers and antivirus proxies follow URLs
+	// in mail without anyone asking them to - which is the whole reason RFC 8058 put
+	// one-click on POST - so a link a member can click has to ask first.
 	if c.Method() == fiber.MethodGet {
 		c.Set("Content-Type", "text/html; charset=utf-8")
-		return c.SendString(unsubscribePage(unsubType))
+		return c.SendString(confirmPage(uid, key, unsubType))
+	}
+
+	applyUnsubscribe(db, uid, unsubType)
+
+	// A mail client doing RFC 8058 one-click wants a 200 and nothing else. Our own confirm
+	// form marks itself, and gets a page saying it worked.
+	if c.FormValue("confirm") != "" {
+		c.Set("Content-Type", "text/html; charset=utf-8")
+		return c.SendString(donePage(unsubType))
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -193,19 +205,56 @@ func applyUnsubscribe(db *gorm.DB, uid uint64, unsubType string) {
 	}
 }
 
-func unsubscribePage(unsubType string) string {
+func describeFor(unsubType string) string {
 	what := unsubDescriptions[unsubType]
 	if what == "" {
 		what = "these emails"
 	}
+	return what
+}
+
+func pageHead(title string) string {
+	return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+		"<title>" + html.EscapeString(title) + "</title></head>" +
+		"<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;" +
+		"max-width:32rem;margin:3rem auto;padding:0 1rem;color:#333;line-height:1.5\">"
+}
+
+// confirmPage asks before doing anything, so that following the link is not the same as
+// meaning it. The form POSTs back to the same URL, which is what actually applies it.
+func confirmPage(uid uint64, key, unsubType string) string {
+	what := describeFor(unsubType)
 
 	var b strings.Builder
-	b.WriteString("<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-	b.WriteString("<title>Unsubscribed</title></head>")
-	b.WriteString("<body style=\"font-family:sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#333\">")
-	b.WriteString("<h2 style=\"color:#338808\">Done</h2>")
-	b.WriteString("<p>We've turned off " + html.EscapeString(what) + ".</p>")
-	if unsubType != UnsubAll {
+	b.WriteString(pageHead("Stop these emails?"))
+	b.WriteString("<h2 style=\"color:#338808;margin-bottom:0.5rem\">Stop these emails?</h2>")
+	b.WriteString("<p>Just to check: you want us to turn off <strong>" + html.EscapeString(what) + "</strong>.</p>")
+	if unsubType == UnsubAllExceptReplies {
+		b.WriteString("<p>You'll still hear when someone replies to your posts, so you won't miss anyone.</p>")
+	}
+	b.WriteString("<form method=\"POST\" style=\"margin:1.5rem 0\">")
+	b.WriteString("<input type=\"hidden\" name=\"u\" value=\"" + strconv.FormatUint(uid, 10) + "\">")
+	b.WriteString("<input type=\"hidden\" name=\"k\" value=\"" + html.EscapeString(key) + "\">")
+	b.WriteString("<input type=\"hidden\" name=\"t\" value=\"" + html.EscapeString(unsubType) + "\">")
+	b.WriteString("<input type=\"hidden\" name=\"confirm\" value=\"1\">")
+	b.WriteString("<button type=\"submit\" style=\"background:#338808;color:#fff;border:0;border-radius:3px;" +
+		"font-size:1rem;font-weight:bold;padding:0.75rem 1.5rem;cursor:pointer\">Yes, stop them</button>")
+	b.WriteString("</form>")
+	b.WriteString("<p>Changed your mind? <a href=\"" + userSiteBase() + "/settings\" style=\"color:#338808\">" +
+		"Go to your Freegle settings</a> instead.</p>")
+	b.WriteString("</body></html>")
+
+	return b.String()
+}
+
+func donePage(unsubType string) string {
+	var b strings.Builder
+	b.WriteString(pageHead("Done"))
+	b.WriteString("<h2 style=\"color:#338808;margin-bottom:0.5rem\">Done</h2>")
+	b.WriteString("<p>We've turned off " + html.EscapeString(describeFor(unsubType)) + ".</p>")
+	if unsubType == UnsubAllExceptReplies {
+		b.WriteString("<p>You'll still hear when someone replies to your posts.</p>")
+	} else if unsubType != UnsubAll {
 		b.WriteString("<p>You may still get other kinds of email from Freegle.</p>")
 	}
 	b.WriteString("<p>You can change any of this, or turn everything off, in your ")

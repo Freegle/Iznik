@@ -113,6 +113,27 @@ unsubscribeType(), and add them to self::EXPECTED.
 It also fails if a declared category stops matching the pinned one, or if a listed mailable
 is deleted — so the answer always lands in the diff where a reviewer sees it.
 
+## GET asks, POST applies
+
+The apiv2 endpoint only changes something on a **POST**. A GET renders a confirmation page
+with a form that posts back.
+
+That is not fussiness: link scanners, prefetchers and antivirus proxies follow URLs in mail
+with nobody having clicked anything, which is the whole reason RFC 8058 put one-click on
+POST in the first place. A link a member can click has to ask first, or following it is the
+same as meaning it.
+
+So there are three paths through the same endpoint:
+
+| Request | Result |
+|---|---|
+| `GET` | "Stop these emails?" page with a confirm button. Nothing changes. |
+| `POST` with `confirm=1` | Applies it, renders a "Done" page. This is our own form posting back. |
+| `POST` without it | Applies it, returns `{"ret":0,"status":"Success"}`. This is RFC 8058 one-click, which must not ask anything. |
+
+`relevantoff` still acts on GET. It predates this and is out of scope here, but it has the
+same exposure and is worth revisiting.
+
 ## The two implementations
 
 The mailto: arm is handled by `IncomingMailService::handleOneClickUnsubscribe()` (PHP,
@@ -158,8 +179,9 @@ in `stores/mobile.js` did the same thing on tap and now routes to `/unsubscribe`
 The mailto: arm sends `UnsubscribedNotice`. It says what we turned off, which categories may
 still email them, and gives two ways out:
 
-- **"Stop these emails too"** — one tap, keyed to the apiv2 endpoint with
-  `t=allexceptreplies`, so it needs no login. Per-category unsubscribing has a failure mode:
+- **"Stop these emails too"** — keyed to the apiv2 endpoint with `t=allexceptreplies`, so it
+  needs no login; it lands on the confirmation page above rather than acting on the click.
+  Per-category unsubscribing has a failure mode:
   the member who meant "stop emailing me" turns off one kind, keeps getting the rest, and
   concludes unsubscribe is broken. That is half of what Support sees (Discourse #6484), and
   making them find Settings and log in to finish is how it happens. Hidden when the only
@@ -190,10 +212,6 @@ It lands in Mailpit. `--unsubscribed-type` takes any category and defaults to `d
 "what may still reach you" list is worked out from the member's real settings, so the
 preview shows what they would actually see. Nothing is changed — the command runs inside a
 transaction that is rolled back.
-
-Note the trade: an in-body link that acts on GET can be followed by a link scanner. That is
-the same trade `relevantoff` already makes in the matched-posts footer, and the blast radius
-is bounded — bulk email off, replies and the account untouched, reversible from Settings.
 
 The https: one-click arm does not send an acknowledgement. The mail client has already
 told the member it worked, and Gmail treats a one-click as final — emailing someone who

@@ -77,13 +77,14 @@ class UnsubscribedNotice extends MjmlMailable
     }
 
     /**
-     * One tap to stop the bulk mail while still hearing when someone replies to your posts.
+     * Stop the bulk mail while still hearing when someone replies to your posts.
      *
      * Someone who turned off one kind of email and finds they still get others should not
      * have to hunt through Settings - that is the frustration behind most "I unsubscribed
      * and you're still emailing me" reports. Points at the same key-authenticated apiv2
-     * endpoint the header uses, so it needs no login: a GET applies it and renders a
-     * confirmation.
+     * endpoint the header uses, so it needs no login. A GET renders a confirmation the
+     * member has to click, rather than acting: link scanners follow URLs in mail with
+     * nobody having clicked anything.
      *
      * Deliberately not "stop all email": that reads as "leave Freegle", and it would also
      * mean someone offers a sofa, a neighbour replies, and they never find out. Leaving is

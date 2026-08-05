@@ -80,8 +80,8 @@ class UnsubscribedNoticeTest extends TestCase
 
     public function test_stop_the_rest_link_is_keyed_so_it_needs_no_login(): void
     {
-        // The whole point of one tap is that it works from the email. A link the member has
-        // to log in to follow is the Settings page again.
+        // The point of the link is that it works from the email. A link the member has to
+        // log in to follow is the Settings page again.
         $data = $this->digestCase();
 
         $this->assertMatchesRegularExpression('/[?&]k=[a-f0-9]{32}\b/', $data['stopMostUrl']);

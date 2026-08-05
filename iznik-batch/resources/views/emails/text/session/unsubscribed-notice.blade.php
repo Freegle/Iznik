@@ -18,7 +18,7 @@ You may still get these from us:
 @endforeach
 @if($canStopMore)
 
-Want to stop the rest too? One tap, no need to log in. You'll still hear when someone replies to your posts, so you won't miss anyone:
+Want to stop the rest too? No need to log in - we'll just ask you to confirm. You'll still hear when someone replies to your posts, so you won't miss anyone:
 {{ $stopMostUrl }}
 @endif
 @endif
