@@ -167,6 +167,11 @@
       "id": "0f2ac58b064f",
       "sql": "select `rr`.`msgid` from `rippling_reach` as `rr` left join `rippling_reach_shadow` as `s` on `s`.`msgid` = `rr`.`msgid` where (`s`.`msgid` is null or `rr`.`updated_at` >= ?) limit 1000",
       "reason": "Laravel inlines LIMIT rather than binding it, so the golden's second placeholder becomes a literal - the test's representative value, since the diff is compared after bindings are substituted; the production call still passes $chunk. The parentheses around the OR are Laravel making explicit what the raw statement got from precedence, and are what the closure exists to preserve. LEFT JOIN and the IS NULL arm are unchanged, which is what makes this find rows with no shadow row."
+    },
+    {
+      "id": "0c92b9505326",
+      "sql": "select distinct `messages`.`id`, `lovejunk`.`status` from `messages` inner join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `messages_edits` on `messages_edits`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages_edits`.`timestamp` > `lovejunk`.`timestamp` and `messages`.`type` = ? and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc",
+      "reason": "Three inlined constants now bound (type = 'Offer', collection = 'Approved', onlovejunk = 1) and orderBy writing asc explicitly. Unchanged, and the parts that decide the rows: all four joins in their original ORDER, DISTINCT, and the column-to-column predicate messages_edits.timestamp > lovejunk.timestamp - which whereColumn renders as a column comparison rather than binding the second name as a string."
     }
   ]
 }

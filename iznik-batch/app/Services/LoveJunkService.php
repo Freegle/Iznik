@@ -22,20 +22,24 @@ class LoveJunkService
         $result = ['sent' => 0, 'edited' => 0, 'completed_or_deleted' => 0, 'failed' => 0];
         $since = now()->subDay()->toDateString();
 
-        $edited = DB::select("
-            SELECT DISTINCT messages.id, lovejunk.status
-            FROM messages
-            INNER JOIN lovejunk ON lovejunk.msgid = messages.id
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN messages_edits ON messages_edits.msgid = messages.id
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
-            WHERE messages.arrival >= ?
-              AND messages_edits.timestamp > lovejunk.timestamp
-              AND messages.type = 'Offer'
-              AND messages_groups.collection = 'Approved'
-              AND groups.onlovejunk = 1
-            ORDER BY messages.arrival ASC
-        ", [$since]);
+        $edited = DB::table('messages')
+            ->distinct()
+            ->select('messages.id', 'lovejunk.status')
+            ->join('lovejunk', 'lovejunk.msgid', '=', 'messages.id')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('messages_edits', 'messages_edits.msgid', '=', 'messages.id')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages.arrival', '>=', $since)
+            // Column-to-column: an edit made AFTER we last told LoveJunk about
+            // the message. whereColumn, not where - a plain where would bind
+            // the string 'lovejunk.timestamp'.
+            ->whereColumn('messages_edits.timestamp', '>', 'lovejunk.timestamp')
+            ->where('messages.type', 'Offer')
+            ->where('messages_groups.collection', 'Approved')
+            ->where('groups.onlovejunk', 1)
+            ->orderBy('messages.arrival')
+            ->get()
+            ->all();
 
         foreach ($edited as $msg) {
             $lj = json_decode($msg->status, true);
