@@ -53,6 +53,14 @@ class UnsubscribeConfirmMail extends MjmlMailable
             ->applyLogging('Unsubscribe');
     }
 
+    /**
+     * Transactional - confirms an unsubscribe already in progress - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;

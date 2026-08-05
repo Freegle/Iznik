@@ -6,6 +6,7 @@ use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -22,6 +23,11 @@ use Illuminate\Mail\Mailables\Envelope;
 class RippleIntroMail extends MjmlMailable
 {
     use LoggableEmail;
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
+    }
 
     /**
      * @param User                                  $user          The poster who has been auto-joined.

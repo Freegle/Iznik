@@ -91,6 +91,14 @@ class AdminMail extends MjmlMailable
     }
 
     /**
+     * Transactional - a moderator or admin message, not bulk mail - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * Get the recipient's user ID for common header tracking.
      */
     protected function getRecipientUserId(): ?int

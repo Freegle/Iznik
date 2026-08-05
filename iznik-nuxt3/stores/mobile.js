@@ -344,25 +344,25 @@ export const useMobileStore = defineStore({
                 k: params.k,
               })
             }
+            // An unsubscribe link opened in the app used to delete the account outright,
+            // with nothing asked and nothing confirmed - someone tapping "Unsubscribe" in
+            // an email meant to stop the email, not to lose their account and history.
+            // Send them to the unsubscribe page, which is what the same link does in a
+            // browser, and let them choose.
             if (route.includes('one-click-unsubscribe')) {
+              let target = '/unsubscribe'
               const ustart = route.indexOf('/', 1)
               if (ustart !== -1) {
                 const kstart = route.indexOf('/', ustart + 1)
                 if (kstart !== -1) {
-                  const uid = parseInt(route.substring(ustart + 1, kstart))
-                  const authStore = useAuthStore()
-                  const loggedInAs = authStore.user?.id
-                  if (loggedInAs === uid) {
-                    const ret = await authStore.forget()
-                    if (!ret) {
-                      authStore.forceLogin = false
-                      router.push('/unsubscribe/unsubscribed')
-                      return
-                    }
+                  const uid = route.substring(ustart + 1, kstart)
+                  const key = route.substring(kstart + 1).split(/[?#]/)[0]
+                  if (uid && key) {
+                    target = '/unsubscribe?u=' + uid + '&k=' + key
                   }
                 }
               }
-              router.push('/unsubscribe')
+              router.push(target)
               return
             }
             setTimeout(() => {

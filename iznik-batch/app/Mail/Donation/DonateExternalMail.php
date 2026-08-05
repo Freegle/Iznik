@@ -4,6 +4,7 @@ namespace App\Mail\Donation;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -23,6 +24,11 @@ class DonateExternalMail extends MjmlMailable
     public const SOURCE_EXTERNAL = 'external';
     public const SOURCE_PAYPAL = 'paypal';
     public const SOURCE_STRIPE = 'stripe';
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
+    }
 
     public function __construct(
         public string $userName,

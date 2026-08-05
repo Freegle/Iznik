@@ -35,6 +35,14 @@ class TrystCalendarInviteMail extends MjmlMailable
         );
     }
 
+    /**
+     * Transactional - a handover they arranged - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;

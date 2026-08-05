@@ -19,6 +19,7 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
+use App\Services\UnsubscribeService;
 
 class ChatNotification extends MjmlMailable implements RetryableMailable
 {
@@ -212,6 +213,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             ],
             $hasAmp
         );
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_CHAT;
     }
 
     /**
@@ -494,12 +500,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             // Add mail type header for tracking.
             $headers->addTextHeader('X-Freegle-Mail-Type', 'ChatNotification');
 
-            // Add List-Unsubscribe headers for RFC 8058 one-click unsubscribe.
-            // Only for persisted users with valid IDs.
-            if ($this->recipient->exists && $this->recipient->id) {
-                $headers->addTextHeader('List-Unsubscribe', $this->recipient->listUnsubscribe());
-                $headers->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
-            }
+            // List-Unsubscribe is added by MjmlMailable::addListUnsubscribeHeaders() from
+            // the category this mailable declares. It used to be added here as well,
+            // pointing at the one-click page that deletes the account - so the mail
+            // carried two conflicting List-Unsubscribe headers, one of which answered
+            // "stop emailing me about chats" by removing the member's account.
 
             // Add referenced message IDs if available.
             if ($this->refMessage) {

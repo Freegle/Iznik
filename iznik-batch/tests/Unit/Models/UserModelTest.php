@@ -549,14 +549,12 @@ class UserModelTest extends TestCase
         $this->assertEquals($key1, $key2);
     }
 
-    public function test_list_unsubscribe_returns_formatted_url(): void
+    public function test_list_unsubscribe_url_returns_the_account_unsubscribe_link(): void
     {
         $user = $this->createTestUser();
 
-        $result = $user->listUnsubscribe();
+        $result = $user->listUnsubscribeUrl();
 
-        $this->assertStringStartsWith('<', $result);
-        $this->assertStringEndsWith('>', $result);
         $this->assertStringContainsString('/one-click-unsubscribe/', $result);
         $this->assertStringContainsString((string) $user->id, $result);
     }

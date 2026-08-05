@@ -7,6 +7,7 @@ use App\Mail\Traits\TrackableEmail;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Symfony\Component\Mime\Email;
+use App\Services\UnsubscribeService;
 
 /**
  * One email in the first-week onboarding tip sequence. Every day shares the one
@@ -76,6 +77,11 @@ class ReengageMail extends MjmlMailable
     public function getEmailType(): string
     {
         return 'Reengage';
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ENGAGEMENT;
     }
 
     protected function getRecipientUserId(): ?int
