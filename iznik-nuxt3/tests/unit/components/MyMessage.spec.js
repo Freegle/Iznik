@@ -177,7 +177,7 @@ describe('MyMessage', () => {
       promises: [],
       promised: false,
       canrepost: true,
-      canrepostat: null,
+      repostat: null,
       area: 'Test Area',
       location: { name: 'AB1 2CD' },
       item: { name: 'Test item' },
@@ -779,7 +779,7 @@ describe('MyMessage', () => {
   describe('No Replies Section', () => {
     it('shows no-replies message when no replies and will auto-repost', async () => {
       mockData.message.replies = []
-      mockData.message.canrepostat = new Date(
+      mockData.message.repostat = new Date(
         Date.now() + 86400000
       ).toISOString() // Tomorrow
       const wrapper = await createWrapper()
@@ -790,7 +790,7 @@ describe('MyMessage', () => {
     it('does not show no-replies when message has outcomes', async () => {
       mockData.message.replies = []
       mockData.message.outcomes = [{ outcome: 'Taken' }]
-      mockData.message.canrepostat = new Date(
+      mockData.message.repostat = new Date(
         Date.now() + 86400000
       ).toISOString()
       const wrapper = await createWrapper({ showOld: true })
