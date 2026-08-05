@@ -2,19 +2,26 @@
 
 ## Overview
 
-Freegle uses Grafana Loki for centralised log aggregation, running in parallel with MySQL logging during the migration period. Logs are collected from:
+Freegle uses Grafana Loki for centralised log aggregation. Logs come from three places:
 
-- **iznik-server-go** (Go v2 API)
-- **iznik-batch** (Laravel batch processing)
+- **iznik-server-go** (the apiv2 Go API) - request logs, client-side logs relayed from the
+  browser, and rows mirrored from the `logs` table.
+- **iznik-batch** (Laravel) - batch jobs, outbound and incoming mail.
+- **Container stdout/stderr** on the edge host, shipped by Grafana Alloy.
 
-All logging uses fire-and-forget async patterns to avoid impacting API latency.
+All application logging is fire-and-forget: a logging failure must never fail or slow the
+request that produced it.
+
+> The V1 PHP API (`iznik-server`) also logged here. It was **removed from the repo on
+> 2026-07-09**, so `api_version="v1"` lines only exist in historical data and nothing emits
+> them now.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Application Servers                                  │
-│   PHP API (v1)  │  Go API (v2)  │  Laravel Batch  │  Other Services         │
+│   Go API (apiv2)  │  Laravel Batch  │  Browser (via apiv2)  │  Containers   │
 └────────┬────────┴───────┬───────┴────────┬────────┴───────────┬─────────────┘
          │                │                │                     │
          ▼                ▼                ▼                     ▼
@@ -33,22 +40,168 @@ All logging uses fire-and-forget async patterns to avoid impacting API latency.
 
 **Current Status:** MySQL and Loki run in parallel. MySQL remains source of truth until all read dependencies are migrated.
 
-## Log Categories and Retention
+## What we log
 
-| Category | Source | Labels | Retention | Notes |
-|----------|--------|--------|-----------|-------|
-| API Requests | api | `source=api` | 7 days | Basic request info (endpoint, method, status, duration) |
-| API Headers | api | `source=api_headers` | 7 days | Request/response headers for debugging |
-| Login/Logout | logs_table | `subtype=Login/Logout` | 365 days | User authentication events |
-| User Created | logs_table | `subtype=Created` | 31 days | New user registrations |
-| User Deleted | logs_table | `subtype=Deleted` | 31 days | User account deletions |
-| Bounces | logs_table | `subtype=Bounce` | 90 days | Email bounce events |
-| Email Sends | email | `source=email` | 31 days | Outbound email tracking |
-| Plugin | logs_table | `type=Plugin` | 1 day | Plugin activity (high volume) |
-| Batch Jobs | batch | `source=batch` | 31 days | Laravel queue/scheduled jobs |
-| Client Logs | client | `source=client` | 7 days | Browser-side events |
+Everything carries `app="freegle"` and a `source` label saying which pipeline produced it.
+`source` is the first thing to filter on, and the only reliable way to know what fields a line
+will have.
 
-Retention times align with `purge_logs.php` policies from the database.
+| `source` | Emitted by | What it is |
+|---|---|---|
+| `api` | apiv2 | One line per request: endpoint, method, status, duration, `user_id`, `session_id` |
+| `api_headers` | apiv2 | Request/response headers for the same request, split out because they are bulky |
+| `client` | Browser, relayed via `POST /clientlog` | Browser-side events and errors. **Carries `session_id` but no `user_id`** |
+| `logs_table` | apiv2 | Rows mirrored from the MySQL `logs` table - carries `type` and `subtype` |
+| `email` | Laravel | Outbound mail: recipient, type, spool outcome |
+| `incoming_mail` | Laravel | Inbound mail routing decisions |
+| `bounce` | Laravel | Bounce processing |
+| `batch` | Laravel | Scheduled/queue job start, finish, failure |
+| `batch_event` | Laravel | Notable events inside a job, where the job itself is too coarse |
+| `chat_reply` | apiv2 | Chat reply creation, for the "my reply vanished" class of support case |
+| `deprecated_endpoint` | apiv2 | Calls to endpoints marked for removal, so we can see who still uses them |
+| `search`, `similar_posts`, `vector_search` | apiv2 | Search and recommendation serving |
+
+### Which lines identify a user
+
+This matters more than it looks: `user_id` is a **JSON field in the body**, not a label, and
+not every source has one.
+
+- `api`, `api_headers`, `email`, `incoming_mail`, `chat_reply`, `vector_search` - `user_id` in
+  the JSON body (0 means anonymous).
+- `client` - **`session_id` only**. To get a member's browser activity you have to harvest
+  their session ids from `api` lines first and query by those.
+- `batch`, `batch_event` - system level, no user.
+
+`iznik-server-go/userdump/loki.go` implements the three-pass version of this (by `user_id`,
+then full-text by email address, then by harvested `session_id`) for subject access requests.
+
+## Retention
+
+Set per stream in `conf/loki-config.yaml`, and deliberately mirrors the retention the old
+`purge_logs.php` applied to the database.
+
+| Stream | Retention |
+|---|---|
+| default (anything not listed) | 31 days |
+| `{source="api"}`, `{source="api_headers"}`, `{source="client"}` | 7 days |
+| `{subtype="Login"}`, `{subtype="Logout"}` | 365 days |
+| `{subtype="Bounce"}` | 90 days |
+| `{subtype="Created"}`, `{subtype="Deleted"}` | 31 days |
+| `{source="email"}`, `{source="batch"}`, `{source="batch_event"}` | 31 days |
+| `{type="Plugin"}` | 1 day (high volume, low value) |
+
+**Old data is simply not there.** A support case about something three weeks ago will find
+nothing in `api` or `client`, and that is expected rather than a fault. `reject_old_samples`
+is off so historical backfill is accepted.
+
+## How it gets there
+
+Three different paths, which is worth knowing because they fail differently.
+
+### 1. Applications, in Docker: straight to Loki
+
+`LOKI_ENABLED=true` and `LOKI_URL=http://loki:3100` (set in `docker-compose.yml`). Apps POST to
+`/loki/api/v1/push` themselves. Simplest path; if Loki is down the log is dropped and the
+request carries on.
+
+### 2. Applications, on live servers: JSON files, then Alloy
+
+Apps write newline-delimited JSON to `/var/log/freegle` (`freegle.loki.log_path`), and Grafana
+Alloy tails those files and ships them. See `iznik-batch/app/Services/LokiService.php` for the
+writing side: each entry is `{timestamp, labels{}, message{}}`, where `labels` become Loki
+labels and `message` becomes the JSON body.
+
+This exists because a file survives Loki being down or slow, where a direct push does not.
+Logrotate keeps the files bounded (step 6 below).
+
+### 3. Container output on the edge host: Alloy via the Docker socket
+
+`alloy-edge.alloy`, run under the `edge` compose profile. It discovers containers on the Docker
+socket and ships stdout/stderr for the user-facing ones only - `frontend-nginx`, `tusd`,
+`delivery`, `tile-server`, `wiki-media`, `wiki-mysql` - labelled **`app="edge"`**,
+`container=<name>`, `stream=stdout|stderr`.
+
+Note the different `app` label: `{app="freegle"}` finds application logs, `{app="edge"}` finds
+container logs, and a query for one will never show the other. This pipeline was added after an
+upload failure went unnoticed for want of tusd's own output (2026-07-09).
+
+## Querying: the API calls
+
+### The Loki HTTP API
+
+| Endpoint | Used for |
+|---|---|
+| `POST /loki/api/v1/push` | Ingestion (apps in Docker, and Alloy everywhere) |
+| `GET /loki/api/v1/query_range` | Everything that reads a time window - the normal case |
+| `GET /loki/api/v1/query` | Instant queries, used for the counts endpoint |
+| `GET /loki/api/v1/labels`, `/label/<name>/values` | Discovering what labels exist |
+
+Local Docker: `http://localhost:3100`. Production is reached over an SSH tunnel the developer
+runs from the Windows host; from WSL that is **the default-gateway IP on port 3102**, not
+localhost.
+
+```bash
+GW=$(ip route | awk '/^default/{print $3; exit}')
+
+curl -s -G "http://$GW:3102/loki/api/v1/query_range" \
+  --data-urlencode 'query={app="freegle", source="api"} | json | user_id="12345"' \
+  --data-urlencode "start=$(date -u -d '2026-08-01 09:00:00' +%s)000000000" \
+  --data-urlencode "end=$(date -u -d '2026-08-01 10:00:00' +%s)000000000" \
+  --data-urlencode 'limit=300' \
+  --data-urlencode 'direction=backward'
+```
+
+Four things that catch people out every time:
+
+- **Timestamps are nanoseconds.** Seconds-since-epoch silently returns nothing rather than
+  erroring, so `+%s` needs `000000000` after it.
+- **Use `-G` with `--data-urlencode`.** A LogQL query put straight in the URL will be mangled by
+  the braces, quotes and pipes.
+- **Label values must be quoted** inside the selector: `{source="api"}`, never `{source=api}`.
+- **The label endpoints default to a one-hour lookback.** Asking what values exist without
+  passing `start`/`end` will suggest a label is unused when it simply had no traffic in the
+  last hour.
+
+And a modelling point rather than a syntax one: **`user_id` and `session_id` are JSON fields,
+not labels.** They must be filtered after a `| json` stage, not in the `{}` selector. Only
+low-cardinality things belong in labels - a user id as a label would mean a Loki stream per
+user, which is exactly what Loki is not for.
+
+```logql
+# Wrong - user_id is not a label, so this matches nothing
+{app="freegle", user_id="12345"}
+
+# Right
+{app="freegle"} | json | user_id="12345"
+```
+
+`trace_id` is the awkward one: it is a **JSON field on most sources but a real label on
+`source="email"`**, which is the only source that promotes it. So
+`{app="freegle", trace_id="..."}` finds the mail lines for a trace and silently misses the API
+and client lines; `{app="freegle"} | json | trace_id="..."` finds them all. Prefer the second
+form unless you specifically want the mail.
+
+That promotion is also a cardinality smell worth keeping an eye on - one stream per trace is
+the pattern Loki's own guidance warns against. It is small today (8 series in 24h on a dev
+instance); if email volume makes it a problem, the fix is to demote it to a JSON field like
+everywhere else.
+
+### The ModTools API
+
+Moderators do not query Loki directly. `iznik-server-go/systemlogs/systemlogs.go` wraps it:
+
+| Route | Returns |
+|---|---|
+| `GET /api/modtools/systemlogs` | Log entries, filtered and permission-checked |
+| `GET /api/modtools/systemlogs/counts` | Counts by source, for the filter UI |
+
+Both sit behind `RequireModeratorMiddleware`, and the handler additionally checks that the
+moderator may see the specific user or group asked about - a moderator can only see logs for
+users in their own groups. `buildLogQLQuery` assembles the LogQL, putting `source`, `type`,
+`subtype` and `level` in the label selector and everything else after `| json`.
+
+`POST /api/clientlog` is the ingestion side of `source="client"`: the browser posts batches of
+events, and apiv2 relays them with `source=client` plus an `event_type` label.
 
 ---
 
@@ -276,8 +429,8 @@ sudo journalctl -u alloy -f
 ### LogQL Examples
 
 ```logql
-# All v1 API errors in last hour
-{source="api", api_version="v1", status_code=~"5.."}
+# API errors in the last hour
+{source="api", status_code=~"5.."}
 
 # Login events for a specific user
 {source="logs_table", subtype="Login"} |= "user_id\":12345"
@@ -304,27 +457,43 @@ sudo journalctl -u alloy -f
 
 ### Log Labels
 
+Labels are the only thing you may put in the `{}` selector, and they are deliberately
+low-cardinality. Anything per-user or per-request is a JSON field instead - see above.
+
+The live label set, as reported by `GET /loki/api/v1/labels`:
+
+`api_version`, `app`, `email_type`, `event_type`, `filename`, `host`, `job_name`, `level`,
+`method`, `service_name`, `source`, `status_code`, `subtype`, `trace_id`, `type`
+
 **All logs:**
 | Label | Description |
 |-------|-------------|
-| `app` | Application name (`freegle` or `freegle-batch`) |
-| `source` | Log source (`api`, `api_headers`, `logs_table`, `email`, `batch`) |
-| `hostname` | Server hostname (live only) |
+| `app` | `freegle` for application logs, `edge` for shipped container output |
+| `source` | Which pipeline produced it - see "What we log" |
+| `host` | Container or server hostname |
+| `filename` | Source log file, where the line came via Alloy tailing a file |
+| `level` | `info`, `error`, ... |
 
 **API-specific:**
 | Label | Description |
 |-------|-------------|
-| `api_version` | `v1` (PHP) or `v2` (Go) |
+| `api_version` | `v2` (Go). `v1` appears only in historical data - the PHP API is gone |
 | `method` | HTTP method |
 | `status_code` | HTTP response status |
 | `level` | `info` or `error` (5xx only) |
 
-**Logs table:**
+**Logs table (`source="logs_table"`):**
 | Label | Description |
 |-------|-------------|
 | `type` | Log type (User, Group, Message, etc.) |
 | `subtype` | Log subtype (Login, Logout, Created, etc.) |
 | `groupid` | Group ID if applicable |
+
+**Container logs (`app="edge"`):**
+| Label | Description |
+|-------|-------------|
+| `container` | Container name, e.g. `freegledocker-tusd` |
+| `stream` | `stdout` or `stderr` |
 
 </details>
 
@@ -474,10 +643,12 @@ Check retention configuration in `conf/loki-config.yaml`. Logs are automatically
 ### Performance
 
 All logging uses async patterns:
-- **PHP**: `register_shutdown_function()` with non-blocking sockets
-- **Go**: Goroutines with background flusher
-- **Laravel**: Custom Monolog handler with fire-and-forget
+- **Go**: goroutines with a background flusher
+- **Laravel**: writes JSON lines for Alloy to pick up, fire-and-forget
 - **Batching**: 10 entries or 5 seconds before sending
+
+(The V1 PHP API used `register_shutdown_function()` with non-blocking sockets. That code is
+gone.)
 
 </details>
 
@@ -504,22 +675,15 @@ All logging uses async patterns:
 
 ### MySQL Dependencies to Migrate
 
-Before disabling MySQL logging, these read operations need Loki alternatives:
+Before disabling MySQL logging, the remaining read paths against the `logs` table need Loki
+alternatives.
 
-**logs table:**
-| File | Query Purpose |
-|------|---------------|
-| Dashboard.php | Moderator last active time |
-| Group.php | Auto/manual approve counts |
-| group_stats.php | Last autoapprove timestamp |
-| User.php | User activity, merge logs, mod actions |
-| Log.php | ModTools logs API |
-| Message.php | Recent message activity |
-| Spam.php | Group counts for spam detection |
+**This list needs re-deriving.** It was written against the V1 PHP classes
+(`Dashboard.php`, `Spam.php`, `Log.php`, `group_stats.php`, `web_graph.php`), and V1 was
+removed from the repo on 2026-07-09 - those files no longer exist. The surviving names
+(`Group.php`, `User.php`, `Message.php`) are now Laravel *models*, which are not the same code
+and do not necessarily make the same queries.
 
-**Other tables:**
-| Table | Used By |
-|-------|---------|
-| logs_emails | User.php (email history) |
-| logs_events | web_graph.php (analytics) |
-| logs_jobs | Jobs.php (job tracking) |
+Rather than leave a table that reads as current, the honest statement is: work out what still
+reads `logs`, `logs_emails`, `logs_events` and `logs_jobs` by grepping `iznik-batch` and
+`iznik-server-go`, and record the answer here. `logs_api` is already unreferenced in code.
