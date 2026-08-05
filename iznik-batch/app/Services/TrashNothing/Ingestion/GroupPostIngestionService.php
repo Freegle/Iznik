@@ -87,23 +87,26 @@ class GroupPostIngestionService
             DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()]);
         }
 
-        // Repost detection: TN gives no explicit link between a repost and its
-        // original post — reposting on TN creates an entirely new post_id with a
-        // new published date, not a mutation of the original (confirmed by the TN
-        // team). We detect it by matching an existing live message in the same
-        // group, with a normalized-matching subject and coordinates within
+        // Repost/crosspost detection: TN gives no explicit link between a
+        // repost (or a crosspost to another group) and the original post —
+        // both create an entirely new post_id with a new published date, not
+        // a mutation/reference to the original (confirmed by the TN team).
+        // We detect either by matching an existing live message ANYWHERE
+        // (not scoped to $group — see findRepostCandidate()), with a
+        // normalized-matching subject and coordinates within
         // REPOST_MATCH_RADIUS_METERS — deliberately NOT requiring the same
         // resolved fromuser, since TN's numeric user id is scoped per
         // group-affiliation, not stable per real person (see
         // findRepostCandidate()'s docblock for the live example that proved
-        // this). When matched, bump the EXISTING message (same DB pattern as
-        // AutoRepostService::repost(), which handles Freegle's own
-        // inactivity-triggered auto-reposts) rather than creating a duplicate
-        // new one — Freegle already has its own reposting/rippling mechanisms,
-        // so a second independent message for the same real-world donation
-        // would just be redundant clutter for mods and members. Skips entirely
-        // if $lat/$lng are missing — no coordinates, no reliable match.
-        $repostCandidate = $this->findRepostCandidate($group->id, $subject, $lat, $lng);
+        // this). When matched, bump the EXISTING message in its OWN group
+        // (same DB pattern as AutoRepostService::repost(), which handles
+        // Freegle's own inactivity-triggered auto-reposts) rather than
+        // creating a duplicate new one in $group — Freegle already has its
+        // own cross-posting/rippling mechanisms, so a TN crosspost to a
+        // different group must never result in a second independent FD
+        // message for the same real-world donation. Skips entirely if
+        // $lat/$lng are missing — no coordinates, no reliable match.
+        $repostCandidate = $this->findRepostCandidate($subject, $lat, $lng);
         if ($repostCandidate !== null) {
             $postDate = $this->normalizePostDate($date);
             // Idempotency compares against the candidate's own `date` (the latest
@@ -120,14 +123,17 @@ class GroupPostIngestionService
                 return 'duplicate';
             }
 
-            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $repostCandidate->msgid . ',groupid=' . $group->id . ' set=arrival=now(),autoreposts+1 (tn-repost)');
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $repostCandidate->msgid . ',groupid=' . $repostCandidate->groupid . ' set=arrival=now(),autoreposts+1 (tn-repost)');
             if (!$this->dryRun) {
-                // Logged against the ORIGINAL message's own poster, not this repost's
-                // resolved user — see findRepostCandidate()'s docblock on why the two
-                // can legitimately be different Freegle stub users for the same person.
-                $this->bumpAsRepost($repostCandidate->msgid, $group->id, $repostCandidate->fromuser, $postDate);
+                // Bumped in the candidate's OWN group — which may differ from
+                // $group when this TN post_id is a crosspost rather than a same-
+                // group repost — and logged against the ORIGINAL message's own
+                // poster, not this repost's resolved user. See
+                // findRepostCandidate()'s docblock for why the two can
+                // legitimately be different Freegle stub users for the same person.
+                $this->bumpAsRepost($repostCandidate->msgid, $repostCandidate->groupid, $repostCandidate->fromuser, $postDate);
             }
-            $this->loki->logEvent('tn-sync', 'post-repost-bump', ['tn_post_id' => $postId, 'msg_id' => $repostCandidate->msgid, 'group_id' => $group->id]);
+            $this->loki->logEvent('tn-sync', 'post-repost-bump', ['tn_post_id' => $postId, 'msg_id' => $repostCandidate->msgid, 'group_id' => $repostCandidate->groupid]);
             return 'reposted';
         }
 
@@ -483,12 +489,24 @@ class GroupPostIngestionService
     }
 
     /**
-     * Finds an existing live message in the same group, with a
-     * normalized-matching subject and coordinates within
-     * REPOST_MATCH_RADIUS_METERS, to detect a TN repost. "Live" means still
-     * Approved/Pending, not deleted, and with no outcome recorded (an
-     * already-taken/withdrawn item isn't a repost target — a new post with
-     * the same subject/location after that is a fresh item, not a repost).
+     * Finds an existing live message ANYWHERE — not scoped to any particular
+     * group — with a normalized-matching subject and coordinates within
+     * REPOST_MATCH_RADIUS_METERS, to detect a TN repost or crosspost.
+     * "Live" means still Approved/Pending, not deleted, and with no outcome
+     * recorded (an already-taken/withdrawn item isn't a repost target — a
+     * new post with the same subject/location after that is a fresh item,
+     * not a repost).
+     *
+     * Deliberately group-agnostic: TN gives every crosspost (a poster
+     * cross-posting the same real item to multiple TN groups) its own
+     * post_id too, exactly like a repost, and resolves each one via
+     * Location::groupsNear() independently — which can legitimately land on
+     * a different Freegle group per post_id even though it's the same
+     * donation. Freegle already has its own cross-posting/rippling
+     * mechanism, so a TN crosspost must never create a second independent
+     * FD message; searching across all groups (rather than just the
+     * newly-resolved $group) is what makes that hold regardless of which
+     * group either post_id happens to resolve to.
      *
      * Deliberately does NOT filter by fromuser. TN's own numeric user id is
      * scoped per group-affiliation, not stable per real person — confirmed
@@ -496,14 +514,13 @@ class GroupPostIngestionService
      * subject/coordinates/group, resolved to two different Freegle stub
      * users (99010031 vs 5595742) because TN supplied two different
      * fd_user_ids for what all other evidence points to being the same
-     * poster. Matching on subject + tight coordinate radius + group is
-     * accepted as sufficient — the risk of two different real people
-     * independently posting identical subject text at the same ~50m spot is
-     * negligible.
+     * poster. Matching on subject + tight coordinate radius is accepted as
+     * sufficient — the risk of two different real people independently
+     * posting identical subject text at the same ~50m spot is negligible.
      *
-     * @return object{msgid: int, date: ?\Illuminate\Support\Carbon, fromuser: int}|null
+     * @return object{msgid: int, groupid: int, date: ?\Illuminate\Support\Carbon, fromuser: int}|null
      */
-    private function findRepostCandidate(int $groupId, string $subject, mixed $lat, mixed $lng): ?object
+    private function findRepostCandidate(string $subject, mixed $lat, mixed $lng): ?object
     {
         if ($lat === null || $lng === null) {
             return null;
@@ -511,18 +528,26 @@ class GroupPostIngestionService
 
         $normalizedSubject = $this->normalizeSubjectForRepostMatch($subject);
 
+        // Now that the search isn't scoped to a single group (see docblock),
+        // an ORDER BY arrival / LIMIT alone would just return the most
+        // recently active messages system-wide — almost never the real
+        // candidate. A coordinate bounding box around REPOST_MATCH_RADIUS_METERS
+        // keeps the query narrow and correct; haversineMeters() below still
+        // does the precise circular check within that box.
+        $latDelta = self::REPOST_MATCH_RADIUS_METERS / 111320;
+        $lngDelta = self::REPOST_MATCH_RADIUS_METERS / (111320 * max(cos(deg2rad((float) $lat)), 0.01));
+
         $candidates = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->leftJoin('messages_outcomes as mo', 'mo.msgid', '=', 'mg.msgid')
-            ->where('mg.groupid', $groupId)
             ->where('mg.deleted', 0)
             ->whereIn('mg.collection', [MessageGroup::COLLECTION_APPROVED, MessageGroup::COLLECTION_PENDING])
             ->whereNull('mo.id')
-            ->whereNotNull('m.lat')
-            ->whereNotNull('m.lng')
+            ->whereBetween('m.lat', [(float) $lat - $latDelta, (float) $lat + $latDelta])
+            ->whereBetween('m.lng', [(float) $lng - $lngDelta, (float) $lng + $lngDelta])
             ->orderByDesc('mg.arrival')
             ->limit(50)
-            ->select(['mg.msgid', 'm.date', 'm.subject', 'm.lat', 'm.lng', 'm.fromuser'])
+            ->select(['mg.msgid', 'mg.groupid', 'm.date', 'm.subject', 'm.lat', 'm.lng', 'm.fromuser'])
             ->get();
 
         foreach ($candidates as $candidate) {
@@ -532,6 +557,7 @@ class GroupPostIngestionService
             if ($this->haversineMeters((float) $lat, (float) $lng, (float) $candidate->lat, (float) $candidate->lng) <= self::REPOST_MATCH_RADIUS_METERS) {
                 return (object) [
                     'msgid'    => (int) $candidate->msgid,
+                    'groupid'  => (int) $candidate->groupid,
                     'date'     => $candidate->date ? \Illuminate\Support\Carbon::parse($candidate->date) : null,
                     'fromuser' => (int) $candidate->fromuser,
                 ];

@@ -558,4 +558,50 @@ class GroupPostIngestionServiceTest extends TestCase
             DB::table('logs')->where('msgid', $original->id)->where('subtype', 'Repost')->where('user', $originalPoster->id)->count(),
         );
     }
+
+    public function test_crosspost_to_a_different_group_bumps_the_original_instead_of_creating_a_second_message(): void
+    {
+        // TN gives a crosspost to another group its own distinct post_id too,
+        // resolved independently via Location::groupsNear() — it can legitimately
+        // land on a different Freegle group than the original. Freegle already
+        // has its own cross-posting/rippling, so this must never create a second
+        // FD message: the match has to be found regardless of which group the
+        // candidate currently lives in.
+        $locationId = $this->createTestLocation();
+        $user   = $this->createTestUser(['lastlocation' => $locationId]);
+        $group1 = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $group2 = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group1, ['ourPostingStatus' => 'DEFAULT']);
+        $this->createMembership($user, $group2, ['ourPostingStatus' => 'DEFAULT']);
+
+        $original = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Old wooden bookshelf',
+            'lat'     => 55.9533,
+            'lng'     => -3.1883,
+            'arrival' => now()->subMinutes(10),
+        ]);
+        $originalArrival = MessageGroup::where('msgid', $original->id)->where('groupid', $group1->id)->first()->arrival;
+
+        $postId = 'tn-crosspost-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'title'     => 'Old wooden bookshelf',
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+            'date'      => now()->addMinute()->toIso8601String(),
+        ]);
+
+        // Resolved to group2, not group1 — a genuine TN crosspost.
+        $result = $this->makeService(dryRun: false)->ingest($post, $group2);
+
+        $this->assertSame('reposted', $result);
+        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A crosspost must not create a second message in the new group');
+
+        // group1's original message is bumped, not a new row in group2.
+        $this->assertNull(MessageGroup::where('msgid', $original->id)->where('groupid', $group2->id)->first());
+        $mg1 = MessageGroup::where('msgid', $original->id)->where('groupid', $group1->id)->first();
+        $this->assertSame(1, $mg1->autoreposts);
+        $this->assertTrue($mg1->arrival->gt($originalArrival));
+    }
 }
