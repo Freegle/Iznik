@@ -451,7 +451,12 @@ export const useComposeStore = defineStore({
           // Build options for submitDraft with deadline/delivery/aiDeclined if set
           const submitOptions = {}
           if (message.deadline) {
-            submitOptions.deadline = new Date(message.deadline).toISOString()
+            // messages.deadline is a DATE column. Under strict sql_mode MySQL
+            // rejects an ISO datetime outright and apiv2 doesn't surface the
+            // error, so the deadline was silently lost (Discourse #9481).
+            // The date input gives YYYY-MM-DD already; a repost draft may
+            // carry a full ISO datetime from the API, so truncate.
+            submitOptions.deadline = String(message.deadline).substring(0, 10)
           }
           if (message.deliveryPossible !== undefined) {
             submitOptions.deliverypossible = message.deliveryPossible

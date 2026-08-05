@@ -216,6 +216,16 @@ Mobile-specific Stripe implementation:
    - Timing logic to avoid annoying users
    - Platform-specific app store links
 
+8. **Hardware Back Button (Android)**
+   - `initBackButton()` in `stores/mobile.js` listens for Capacitor's
+     `backButton` event (fired for both the back button and the back
+     gesture)
+   - Navigates back through webview history while there is any, then
+     backgrounds the app with `App.minimizeApp()` at the root — the
+     standard Android behaviour
+   - Without this listener Capacitor swallows back presses once history
+     is empty and the app cannot be exited
+
 </details>
 
 ---
@@ -249,6 +259,7 @@ A dedicated Pinia store handles all mobile-specific state and functionality:
 - `initPushNotifications()`: Configure push notification system
 - `checkForAppUpdate()`: Check for app updates
 - `initWakeUpActions()`: Handle app resume/wake events
+- `initBackButton()`: Android back button/gesture — history back, minimize at root
 
 </details>
 
@@ -280,6 +291,11 @@ Several components have mobile-specific behavior:
 5. **Chat Components**
    - Optimized for mobile screens
    - Native sharing integration
+   - The chat box and ChitChat comment box use
+     `autocapitalize="sentences"` except on iOS (app and Safari), where
+     auto-capitalise engages the virtual Shift key so Return arrives as
+     shift+enter and breaks send-on-enter (`composables/useIsIOS.js`;
+     angular/angular#32963 — iOS keyboard design, not a fixed bug)
 
 ### Ads & Analytics
 

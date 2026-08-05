@@ -2948,6 +2948,17 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "messagetype": msgType})
 }
 
+// deadlineDate reduces a client-supplied deadline to its date part.
+// messages.deadline is a DATE column; bundled apps send a full ISO datetime
+// ("2026-07-15T00:00:00.000Z"), which strict sql_mode rejects as a DATE
+// literal. Current clients send plain YYYY-MM-DD, which passes through.
+func deadlineDate(deadline string) string {
+	if len(deadline) > 10 {
+		return deadline[:10]
+	}
+	return deadline
+}
+
 // handleJoinAndPost joins a group and posts a message in one action.
 func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -3064,7 +3075,12 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Save deadline and deliverypossible if provided.
 	if req.Deadline != nil && *req.Deadline != "" {
-		db.Exec("UPDATE messages SET deadline = ? WHERE id = ?", *req.Deadline, req.ID)
+		// messages.deadline is a DATE column and bundled apps send a full ISO
+		// datetime, which strict sql_mode rejects outright - and with the Exec
+		// error unchecked the deadline was silently lost (Discourse #9481).
+		if err := db.Exec("UPDATE messages SET deadline = ? WHERE id = ?", deadlineDate(*req.Deadline), req.ID).Error; err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid deadline")
+		}
 	}
 	if req.Deliverypossible != nil {
 		db.Exec("UPDATE messages SET deliverypossible = ? WHERE id = ?", *req.Deliverypossible, req.ID)
@@ -3287,7 +3303,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			setClauses = append(setClauses, "deadline = NULL")
 		} else {
 			setClauses = append(setClauses, "deadline = ?")
-			args = append(args, *req.Deadline)
+			args = append(args, deadlineDate(*req.Deadline))
 		}
 	}
 	// Resolve location name to locationid if provided.

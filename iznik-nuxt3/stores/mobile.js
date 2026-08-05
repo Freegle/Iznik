@@ -145,6 +145,7 @@ export const useMobileStore = defineStore({
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
       this.initWakeUpActions(App)
+      this.initBackButton(App)
     },
 
     async initTextZoom(App) {
@@ -251,6 +252,23 @@ export const useMobileStore = defineStore({
         }
       }
       return urlParams
+    },
+
+    initBackButton(App) {
+      if (process.client) {
+        // Once any JS listener is registered, Capacitor's native default (which
+        // swallows the back button/gesture once the webview history is empty,
+        // trapping the user in the app) no longer runs. Mirror that default's
+        // history navigation, but at the root background the app, which is the
+        // standard Android response to back on a task's topmost screen.
+        App.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back()
+          } else {
+            App.minimizeApp()
+          }
+        })
+      }
     },
 
     initWakeUpActions(App) {

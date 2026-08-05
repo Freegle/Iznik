@@ -488,6 +488,17 @@ form {
   z-index: 199999 !important;
 }
 
+/*
+ * The sticky ad zone (LayoutCommon .sticky) is z-index 10000, above Bootstrap
+ * modals (1055), so it hid the bottom of the donation ask on mobile and the
+ * modal could not be scrolled clear of it. Lift the donation modal over the ad
+ * (but below JustGiving at 100000 and confirm modals at 200000). The backdrop
+ * is a child of .modal here, so it rides this stacking context too.
+ */
+.donation-modal-stripe {
+  z-index: 10010 !important;
+}
+
 .error__wrapper {
   display: flex;
   flex-direction: column;
