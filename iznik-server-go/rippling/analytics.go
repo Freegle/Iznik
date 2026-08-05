@@ -346,10 +346,7 @@ func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) [
 		SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng,
 		       DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
 		       EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker,
-		       (NOT EXISTS(SELECT 1 FROM messages_groups og
-		                   INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid
-		                     AND mem.collection = 'Approved' AND mem.added < og.arrival
-		                   WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled
+		       (NOT `+EstablishedOriginMemberExists("samp.msgid", "cm.userid")+`) AS rippled
 		FROM (
 		    SELECT rr.msgid
 		    FROM rippling_reach rr
@@ -844,14 +841,11 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 			       SUM(client_rippled) AS client_rippled
 			FROM (
 			    SELECT
-			      (NOT EXISTS(SELECT 1 FROM messages_groups og
-			                  INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid
-			                    AND mem.collection = 'Approved' AND mem.added < og.arrival
-			                  WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled,
+			      (NOT `+EstablishedOriginMemberExists("cm.refmsgid", "cm.userid")+`) AS rippled,
 			      EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker,
 			      EXISTS(SELECT 1 FROM rippling_reply_attribution rra
 			             WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid
-			               AND rra.attribution IN ('ripple_notified','ripple_group','ripple_reach')) AS client_rippled
+			               AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled
 			    FROM chat_messages cm
 			    JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0`+stratumSQL+`
 			    JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer'
@@ -874,6 +868,9 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 
 	// Rescue floor: DISTINCT posts that were taken AND had at least one reply AND had NO reply
 	// from an established home-group member - so the take could only have come via rippling.
+	// The membership test must match EstablishedOriginMemberExists (same clauses, mem.rippled = 0
+	// included) but is spelled out as a flat join rather than calling it: this is the slowest
+	// query on the tab and nesting an EXISTS per chat_messages row changes its plan.
 	var rescued int
 	go func() {
 		defer wg.Done()
@@ -892,7 +889,7 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 			          SELECT 1 FROM chat_messages ch
 			          INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0
 			          INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid
-			            AND mem.collection = 'Approved' AND mem.added < og.arrival
+			            AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0
 			          WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested')
 			) x`, w[0], w[1]).Scan(&chunkRescued).Error; err != nil {
 				// As above: all-or-nothing rather than a silent undercount.

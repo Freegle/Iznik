@@ -386,11 +386,12 @@ type replyReachEvidence struct {
 func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach replyReachEvidence, clientSource *string) {
 	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
 	// predates this reply by more than the join grace (300s)? A join made to reply
-	// (added ~ now) is excluded.
+	// (added ~ now) is excluded, and so is a membership rippling itself created - see
+	// wasRippleJoin below.
 	var wasHome int
 	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
 		"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-		"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
+		"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
 		"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasHome)
 
@@ -417,6 +418,20 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		"AND mem.collection = ? AND mem.added < mg.arrival "+
 		"WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasRippleGroup)
+
+	// Member of an ORIGIN group of the post, but only via a membership RIPPLING created (their
+	// own post rippled into that group, so we auto-joined them - ExpandService in iznik-batch).
+	// They saw this post in that group's feed/digest, and they are only in that group because of
+	// an earlier ripple, so the reply belongs to rippling and not to home. Same 300s join grace
+	// as wasHome. Both bits can be set at once on a cross-post (one origin group joined
+	// ordinarily, another via a ripple); the ladder gives home precedence, because the ordinary
+	// membership alone would have shown them the post.
+	var wasRippleJoin int
+	db.Raw("SELECT EXISTS(SELECT 1 FROM messages_groups mg "+
+		"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+		"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
+		"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+		myid, utils.COLLECTION_APPROVED, refmsgid).Scan(&wasRippleJoin)
 
 	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
 	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the
@@ -459,14 +474,15 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		}
 	}
 
-	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, postHadRippled, inOrigin, inReach)
+	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, wasRippleJoin,
+		postHadRippled, inOrigin, inReach)
 
 	db.Exec("INSERT IGNORE INTO rippling_reply_attribution "+
 		"(msgid, userid, replied_at, was_home_member, was_notified, was_ripple_group_member, "+
-		"in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) "+
-		"VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
-		refmsgid, myid, wasHome, wasNotified, wasRippleGroup, inOrigin, inReach, postHadRippled,
-		attribution, rippling.SanitizeClientSource(clientSource))
+		"was_ripple_join, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) "+
+		"VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		refmsgid, myid, wasHome, wasNotified, wasRippleGroup, wasRippleJoin, inOrigin, inReach,
+		postHadRippled, attribution, rippling.SanitizeClientSource(clientSource))
 }
 
 func CreateChatMessage(c *fiber.Ctx) error {

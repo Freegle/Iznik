@@ -365,6 +365,49 @@ describe('ModSysAdminRipplingAnalytics', () => {
     wrapper.unmount()
   })
 
+  // ripple_join = a reply from someone who is only in the group because an earlier ripple of their
+  // own post auto-joined them there. It is a rippling channel, so it needs its own band on the
+  // attribution chart - folded into "Home members" it would read as pre-existing local membership
+  // and hide rippling's own downstream effect.
+  it('charts the ripple-join channel as its own band', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    mockFetchMetrics.mockResolvedValueOnce({
+      reply_source_split: [
+        {
+          day: '2026-06-24',
+          home: 5,
+          ripple_notified: 2,
+          ripple_group: 1,
+          ripple_join: 4,
+          ripple_reach: 1,
+          organic_local: 3,
+          unknown: 0,
+        },
+      ],
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const charts = wrapper.findAllComponents({ name: 'GChart' })
+    const attribution = charts.find((c) =>
+      (c.props('data')?.[0] || []).includes('Home members')
+    )
+    expect(attribution).toBeTruthy()
+
+    const header = attribution.props('data')[0]
+    const label = 'Rippled into the group before'
+    expect(header).toContain(label)
+
+    // The seeded day's row must carry the count in the ripple_join column, not anywhere else.
+    const row = attribution
+      .props('data')
+      .slice(1)
+      .find((r) => r[header.indexOf(label)] === 4)
+    expect(row).toBeTruthy()
+    expect(row[header.indexOf('Home members')]).toBe(5)
+    wrapper.unmount()
+  })
+
   // The metrics endpoint feeds only the attribution + hotspot panels. It used to be awaited in the
   // same Promise.all as the KPIs, so when it 504'd on production (its heavy KPI queries ran for
   // minutes, and a gateway timeout reads to the browser as a CORS failure) the whole tab showed

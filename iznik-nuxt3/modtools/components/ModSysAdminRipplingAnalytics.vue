@@ -376,7 +376,9 @@
       <p class="text-muted small mb-2">
         Each reply attributed at reply time to the channel that led the replier
         to the post. Greens are rippling; teal is your own established members;
-        greys couldn't be credited either way.
+        greys couldn't be credited either way. "Rippled into the group before"
+        means they are only in the group because an earlier ripple of their own
+        post joined them to it — so that reply is rippling's doing too.
       </p>
       <div class="panel">
         <div class="panel-body">
@@ -546,11 +548,20 @@ const heldSourceBreakdown = computed(() => {
     .join(' · ')
 })
 
+/*
+ * Non-rippling channels first (greys/teal), then the rippling ones (greens) - the stack reads
+ * top-to-bottom as "would have seen it anyway" down to "only saw it because of rippling".
+ * ripple_join is a rippling channel: those members are in the group ONLY because an earlier
+ * ripple of their own post auto-joined them there, so without rippling they would never have
+ * seen the post. It used to be counted under Home members, which hid rippling's own knock-on
+ * reach inside the bucket that means rippling gets no credit.
+ */
 const CHANNELS = [
   { key: 'home', label: 'Home members' },
   { key: 'organic_local', label: 'Local non-members' },
   { key: 'unknown', label: 'Unknown' },
   { key: 'ripple_group', label: 'Rippled into their group' },
+  { key: 'ripple_join', label: 'Rippled into the group before' },
   { key: 'ripple_notified', label: 'Ripple mail' },
   { key: 'ripple_reach', label: 'Reach-fed browse' },
 ]
@@ -588,13 +599,15 @@ function channelStackOptions() {
     hAxis: { format: 'dd MMM', textStyle: { fontSize: 10 } },
     annotations: { style: 'line' },
     areaOpacity: 0.85,
+    /* Index order tracks CHANNELS: 0-2 non-rippling (teal/grey), 3-6 rippling (greens). */
     series: {
       0: { color: '#1592a6' },
       1: { color: '#6c757d' },
       2: { color: '#98a2ab' },
       3: { color: '#28a745' },
-      4: { color: '#146c43' },
-      5: { color: '#45b463' },
+      4: { color: '#1c8c3a' },
+      5: { color: '#146c43' },
+      6: { color: '#45b463' },
     },
   }
 }

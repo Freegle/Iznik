@@ -17,11 +17,12 @@ func TestReplySourceSplitSQL_LegacyNarrow(t *testing.T) {
 
 	// Legacy path derives the bucket live - no COALESCE(rra.attribution, ...) wrapper.
 	assert.NotContains(t, sql, "COALESCE(rra.attribution")
-	assert.Contains(t, sql, "WHEN rra.was_home_member = 1 THEN 'home'")
+	assert.Contains(t, sql, "THEN 'home'")
 	assert.Contains(t, sql, "WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn")
 	assert.Contains(t, sql, "THEN 'ripple_notified'")
 	assert.Contains(t, sql, "WHEN EXISTS(SELECT 1 FROM messages_groups mgr")
 	assert.Contains(t, sql, "THEN 'ripple_group'")
+	assert.Contains(t, sql, "THEN 'ripple_join'")
 	assert.Contains(t, sql, "ELSE 'unknown'")
 
 	// Output shape: one row per day with every channel summed off the bucket.
@@ -30,6 +31,7 @@ func TestReplySourceSplitSQL_LegacyNarrow(t *testing.T) {
 	assert.Contains(t, sql, "SUM(bucket = 'home') AS home")
 	assert.Contains(t, sql, "SUM(bucket = 'ripple_notified') AS ripple_notified")
 	assert.Contains(t, sql, "SUM(bucket = 'ripple_group') AS ripple_group")
+	assert.Contains(t, sql, "SUM(bucket = 'ripple_join') AS ripple_join")
 	assert.Contains(t, sql, "SUM(bucket = 'ripple_reach') AS ripple_reach")
 	assert.Contains(t, sql, "SUM(bucket = 'organic_local') AS organic_local")
 	assert.Contains(t, sql, "SUM(bucket = 'unknown') AS unknown")
@@ -54,8 +56,41 @@ func TestReplySourceSplitSQL_WideWrapsWithCoalesce(t *testing.T) {
 	// Wide path prefers the captured column, falling back to the same live
 	// derivation used by the legacy path for rows the backfill hasn't reached.
 	assert.Contains(t, sql, "COALESCE(rra.attribution, CASE")
-	assert.Contains(t, sql, "WHEN rra.was_home_member = 1 THEN 'home'")
+	assert.Contains(t, sql, "THEN 'home'")
 	assert.Contains(t, sql, "END) AS bucket")
+}
+
+// The live derivation reads the frozen was_home_member bit, which on rows captured before this
+// fix was set for ripple-created auto-joins too. Such a row must not read as home: the member is
+// only in the group because an earlier ripple put them there. The derivation therefore qualifies
+// the home rung by the surviving membership's PROVENANCE, and keeps the rungs in ladder order -
+// ripple_join sits below notified and group, exactly as in DeriveAttribution.
+func TestReplySourceSplitSQL_RippleJoinRefinesTheFrozenHomeBit(t *testing.T) {
+	sql := ReplySourceSplitSQL(false, "")
+
+	homeIdx := strings.Index(sql, "THEN 'home'")
+	notifiedIdx := strings.Index(sql, "THEN 'ripple_notified'")
+	groupIdx := strings.Index(sql, "THEN 'ripple_group'")
+	joinIdx := strings.Index(sql, "THEN 'ripple_join'")
+	unknownIdx := strings.Index(sql, "ELSE 'unknown'")
+	if assert.True(t, homeIdx >= 0 && notifiedIdx >= 0 && groupIdx >= 0 && joinIdx >= 0) {
+		assert.Less(t, homeIdx, notifiedIdx, "ladder order: home first")
+		assert.Less(t, notifiedIdx, groupIdx)
+		assert.Less(t, groupIdx, joinIdx, "ripple_join ranks below ripple_group, as in DeriveAttribution")
+		assert.Less(t, joinIdx, unknownIdx)
+	}
+
+	// Both halves of "only a ripple-created membership backs the home bit" must be present:
+	// a ripple-created origin membership exists, AND no ordinary one does.
+	assert.Contains(t, sql, "memj.rippled = 1",
+		"ripple_join needs a ripple-created origin membership")
+	assert.Contains(t, sql, "memo.rippled = 0",
+		"...and no ordinary origin membership, else it is genuinely home")
+
+	// The home rung is guarded by the negation of that same test, so a row whose only surviving
+	// origin membership is a ripple-join can never fall through to home.
+	assert.Contains(t, sql, "rra.was_home_member = 1 AND NOT (",
+		"the frozen home bit is qualified, not trusted blindly")
 }
 
 func TestReplySourceSplitSQL_SrcGroupSplicedIntoFROM(t *testing.T) {
