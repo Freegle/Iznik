@@ -32,6 +32,9 @@ class Wave2RosterTest extends TestCase
     //   WHERE chatid = ? AND userid = ? AND (lastmsgemailed IS NULL OR lastmsgemailed < ?)
     private const SITE_MARK_EMAILED = '4efc9c6192c6';
 
+    // INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)
+    private const SITE_LINK_ITEM = 'a420de83662c';
+
     public function test_roster_inserts(): void
     {
         $build = fn () => [
@@ -63,6 +66,14 @@ class Wave2RosterTest extends TestCase
                       ->orWhere('lastmsgemailed', '<', 3);
                 }),
             ['lastmsgemailed' => 3],
+        ]);
+    }
+
+    public function test_link_item_to_message(): void
+    {
+        GoldenSql::assertInsertOrIgnore(self::SITE_LINK_ITEM, fn () => [
+            DB::table('messages_items'),
+            ['msgid' => 1, 'itemid' => 2],
         ]);
     }
 }

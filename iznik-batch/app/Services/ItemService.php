@@ -82,10 +82,7 @@ class ItemService
      */
     public function linkToMessage(int $msgid, int $itemid): void
     {
-        DB::statement(
-            'INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)',
-            [$msgid, $itemid]
-        );
+        DB::table('messages_items')->insertOrIgnore(['msgid' => $msgid, 'itemid' => $itemid]);
     }
 
     /**

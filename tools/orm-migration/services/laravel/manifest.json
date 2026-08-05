@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-05T17:32:18Z",
+    "generated": "2026-08-05T17:33:30Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 464,
-        "converted": 95,
+        "keep-raw": 465,
+        "converted": 96,
         "excluded": 70,
-        "raw": 172,
+        "raw": 170,
         "retired": 1,
         "test-fixture": 352
     },
@@ -9674,10 +9674,10 @@
             "goldenSql": "INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = ?",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id). The assignment looks like a no-op and is the whole point: it makes MySQL report the EXISTING row's id through LAST_INSERT_ID() when the insert collides, so one statement means 'give me the id of this item, creating it if new'. Neither upsert() nor insertOrIgnore() reproduces that - upsert() cannot express the LAST_INSERT_ID call without DB::raw, and insertOrIgnore() returns nothing useful on a collision, so the caller would need a follow-up SELECT. That follow-up is exactly the read-after-write this project has been bitten by before: on a read/write split it can land on a replica that has not seen the insert yet (the 9832 bug class), which is why the Go side kept eleven equivalent sites raw for the same reason.",
+            "porting": "PostgreSQL: LAST_INSERT_ID() does not exist and the idiom is unnecessary - INSERT ... ON CONFLICT DO UPDATE ... RETURNING id returns the id directly, for both the inserted and the conflicting row. This is one of the few sites that gets simpler on Postgres.",
+            "category": "LAST_INSERT_ID id-readback idiom",
             "approvedDiff": ""
         },
         "a420de83662c": {
@@ -9702,9 +9702,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -9713,7 +9713,7 @@
         "f0853aba40bc": {
             "id": "f0853aba40bc",
             "file": "iznik-batch/app/Services/ItemService.php",
-            "line": 141,
+            "line": 138,
             "class": "ItemService",
             "function": "standardWeights",
             "receiver": "DB::table()",
