@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-05T17:33:30Z",
+    "generated": "2026-08-05T17:34:46Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 465,
+        "keep-raw": 467,
         "converted": 96,
         "excluded": 70,
-        "raw": 170,
+        "raw": 168,
         "retired": 1,
         "test-fixture": 352
     },
@@ -5221,10 +5221,10 @@
             "goldenSql": "INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE value = 1",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "INSERT IGNORE combined WITH ON DUPLICATE KEY UPDATE. Laravel can express either alone - insertOrIgnore() and upsert() - but not both: upsert() emits 'insert ... on duplicate key update' with no IGNORE, and that is not a cosmetic loss. Once ON DUPLICATE KEY UPDATE is present the IGNORE no longer governs duplicate keys at all; what it still does is downgrade OTHER errors on the row - a foreign-key violation, a truncated value - from a failure into a warning. Dropping it turns statements that currently skip a bad row into statements that abort the surrounding work, which on ChatExpectedService's reply tracking would fail a batch run rather than lose one row.",
+            "porting": "PostgreSQL: neither modifier exists in this form. ON CONFLICT DO UPDATE covers the duplicate-key half; the error-tolerance half has no equivalent and has to be decided explicitly - either accept that these rows now raise, or filter the offending cases beforehand. Worth deciding per statement rather than inheriting, since the current behaviour may itself be accidental.",
+            "category": "INSERT IGNORE with ON DUPLICATE KEY UPDATE",
             "approvedDiff": ""
         },
         "96489b97d4c7": {
@@ -5281,10 +5281,10 @@
             "goldenSql": "INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value) VALUES (?, ?, ?, -1) ON DUPLICATE KEY UPDATE value = -1",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "INSERT IGNORE combined WITH ON DUPLICATE KEY UPDATE. Laravel can express either alone - insertOrIgnore() and upsert() - but not both: upsert() emits 'insert ... on duplicate key update' with no IGNORE, and that is not a cosmetic loss. Once ON DUPLICATE KEY UPDATE is present the IGNORE no longer governs duplicate keys at all; what it still does is downgrade OTHER errors on the row - a foreign-key violation, a truncated value - from a failure into a warning. Dropping it turns statements that currently skip a bad row into statements that abort the surrounding work, which on ChatExpectedService's reply tracking would fail a batch run rather than lose one row.",
+            "porting": "PostgreSQL: neither modifier exists in this form. ON CONFLICT DO UPDATE covers the duplicate-key half; the error-tolerance half has no equivalent and has to be decided explicitly - either accept that these rows now raise, or filter the offending cases beforehand. Worth deciding per statement rather than inheriting, since the current behaviour may itself be accidental.",
+            "category": "INSERT IGNORE with ON DUPLICATE KEY UPDATE",
             "approvedDiff": ""
         },
         "3a4378f7f24e": {
