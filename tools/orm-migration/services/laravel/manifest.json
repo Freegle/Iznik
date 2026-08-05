@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:21:45Z",
+    "generated": "2026-08-05T17:22:57Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 416,
+        "keep-raw": 420,
         "converted": 94,
-        "raw": 221,
+        "raw": 217,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -6630,10 +6630,10 @@
             "goldenSql": "REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ?))",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "REPLACE INTO has no query-builder form at all - Laravel offers insert, insertOrIgnore and upsert, and none of them emit it. Nor is upsert() a drop-in substitute, which is the trap worth naming: REPLACE DELETES the conflicting row and inserts a new one, so columns absent from the statement revert to their defaults and any ON DELETE CASCADE fires; ON DUPLICATE KEY UPDATE modifies the existing row in place and leaves untouched columns alone. On the stats table that difference is invisible in normal running and would surface as silently reset columns, so substituting upsert() here would be a behaviour change disguised as a conversion.",
+            "porting": "PostgreSQL: no REPLACE INTO. The closest equivalent is INSERT ... ON CONFLICT DO UPDATE, which has the ON DUPLICATE KEY UPDATE semantics rather than the delete-and-reinsert ones - so porting these means deciding, per statement, which behaviour was actually wanted. Worth doing deliberately at that point rather than assuming the current one was chosen on purpose.",
+            "category": "REPLACE INTO",
             "approvedDiff": ""
         },
         "b63556946c2d": {
@@ -15388,10 +15388,10 @@
             "goldenSql": "REPLACE INTO stats (date, groupid, type, count) VALUES {{expr}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "REPLACE INTO has no query-builder form at all - Laravel offers insert, insertOrIgnore and upsert, and none of them emit it. Nor is upsert() a drop-in substitute, which is the trap worth naming: REPLACE DELETES the conflicting row and inserts a new one, so columns absent from the statement revert to their defaults and any ON DELETE CASCADE fires; ON DUPLICATE KEY UPDATE modifies the existing row in place and leaves untouched columns alone. On the stats table that difference is invisible in normal running and would surface as silently reset columns, so substituting upsert() here would be a behaviour change disguised as a conversion.",
+            "porting": "PostgreSQL: no REPLACE INTO. The closest equivalent is INSERT ... ON CONFLICT DO UPDATE, which has the ON DUPLICATE KEY UPDATE semantics rather than the delete-and-reinsert ones - so porting these means deciding, per statement, which behaviour was actually wanted. Worth doing deliberately at that point rather than assuming the current one was chosen on purpose.",
+            "category": "REPLACE INTO",
             "approvedDiff": ""
         },
         "3d0ac38a73a1": {
@@ -15418,10 +15418,10 @@
             "goldenSql": "REPLACE INTO stats (date, groupid, type, count) VALUES (?, ?, ?, ?)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "REPLACE INTO has no query-builder form at all - Laravel offers insert, insertOrIgnore and upsert, and none of them emit it. Nor is upsert() a drop-in substitute, which is the trap worth naming: REPLACE DELETES the conflicting row and inserts a new one, so columns absent from the statement revert to their defaults and any ON DELETE CASCADE fires; ON DUPLICATE KEY UPDATE modifies the existing row in place and leaves untouched columns alone. On the stats table that difference is invisible in normal running and would surface as silently reset columns, so substituting upsert() here would be a behaviour change disguised as a conversion.",
+            "porting": "PostgreSQL: no REPLACE INTO. The closest equivalent is INSERT ... ON CONFLICT DO UPDATE, which has the ON DUPLICATE KEY UPDATE semantics rather than the delete-and-reinsert ones - so porting these means deciding, per statement, which behaviour was actually wanted. Worth doing deliberately at that point rather than assuming the current one was chosen on purpose.",
+            "category": "REPLACE INTO",
             "approvedDiff": ""
         },
         "e76bf0ee62ee": {
@@ -15448,10 +15448,10 @@
             "goldenSql": "REPLACE INTO stats (date, groupid, type, breakdown) VALUES (?, ?, ?, ?)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "REPLACE INTO has no query-builder form at all - Laravel offers insert, insertOrIgnore and upsert, and none of them emit it. Nor is upsert() a drop-in substitute, which is the trap worth naming: REPLACE DELETES the conflicting row and inserts a new one, so columns absent from the statement revert to their defaults and any ON DELETE CASCADE fires; ON DUPLICATE KEY UPDATE modifies the existing row in place and leaves untouched columns alone. On the stats table that difference is invisible in normal running and would surface as silently reset columns, so substituting upsert() here would be a behaviour change disguised as a conversion.",
+            "porting": "PostgreSQL: no REPLACE INTO. The closest equivalent is INSERT ... ON CONFLICT DO UPDATE, which has the ON DUPLICATE KEY UPDATE semantics rather than the delete-and-reinsert ones - so porting these means deciding, per statement, which behaviour was actually wanted. Worth doing deliberately at that point rather than assuming the current one was chosen on purpose.",
+            "category": "REPLACE INTO",
             "approvedDiff": ""
         },
         "806463d18415": {
