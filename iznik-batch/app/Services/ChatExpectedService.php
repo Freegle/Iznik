@@ -83,10 +83,9 @@ class ChatExpectedService
         // each statement holds a single-row lock for milliseconds.
         $updated = 0;
         foreach ($idsQuery->pluck('id') as $id) {
-            $updated += DB::update(
-                'UPDATE chat_messages SET replyexpected = 0 WHERE id = ?',
-                [$id],
-            );
+            $updated += DB::table('chat_messages')
+                ->where('id', $id)
+                ->update(['replyexpected' => 0]);
         }
 
         return $updated;
@@ -116,10 +115,9 @@ class ChatExpectedService
         // chat_messages writers.
         $updated = 0;
         foreach ($idsQuery->pluck('id') as $id) {
-            $updated += DB::update(
-                'UPDATE chat_messages SET replyexpected = 0 WHERE id = ?',
-                [$id],
-            );
+            $updated += DB::table('chat_messages')
+                ->where('id', $id)
+                ->update(['replyexpected' => 0]);
         }
 
         return $updated;
@@ -215,7 +213,9 @@ class ChatExpectedService
 
             if (!$dryRun) {
                 if ($value === 1) {
-                    DB::update('UPDATE chat_messages SET replyreceived = 1 WHERE id = ?', [$msg->id]);
+                    DB::table('chat_messages')
+                        ->where('id', $msg->id)
+                        ->update(['replyreceived' => 1]);
                 }
 
                 if (($existing[$msg->id] ?? null) !== $value) {
@@ -370,15 +370,15 @@ class ChatExpectedService
                 $other = $msg->user1 == $userId ? $msg->user2 : $msg->user1;
 
                 // Check if the other user has an outstanding un-replied message
-                $outstanding = DB::select(
-                    "SELECT cm.date FROM chat_messages cm
-                     WHERE cm.chatid = ?
-                       AND cm.userid = ?
-                       AND cm.id > ?
-                     ORDER BY cm.id DESC
-                     LIMIT 1",
-                    [$msg->chatid, $other, $msg->id]
-                );
+                $outstanding = DB::table('chat_messages as cm')
+                    ->select('cm.date')
+                    ->where('cm.chatid', $msg->chatid)
+                    ->where('cm.userid', $other)
+                    ->where('cm.id', '>', $msg->id)
+                    ->orderByDesc('cm.id')
+                    ->limit(1)
+                    ->get()
+                    ->all();
 
                 if (!empty($outstanding)) {
                     // Other user replied — compute how long it took
@@ -388,14 +388,19 @@ class ChatExpectedService
                     }
                 } else {
                     // No reply from the other user: find if we're waiting on them
-                    $lastOther = DB::select(
-                        "SELECT MAX(date) AS max FROM chat_messages
-                         WHERE chatid = ? AND id < ? AND userid = ?",
-                        [$msg->chatid, $msg->id, $other]
-                    );
+                    // ->max() rather than ->select(DB::raw('MAX(date) AS max')):
+                    // DB::raw() is itself a raw site in the inventory (surface
+                    // "expression"), so wrapping the aggregate in it would move
+                    // this site between surfaces rather than remove it - the raw
+                    // count would not drop and nothing would have been converted.
+                    $lastOtherMax = DB::table('chat_messages')
+                        ->where('chatid', $msg->chatid)
+                        ->where('id', '<', $msg->id)
+                        ->where('userid', $other)
+                        ->max('date');
 
-                    if (!empty($lastOther) && $lastOther[0]->max) {
-                        $delay = strtotime($msg->date) - strtotime($lastOther[0]->max);
+                    if ($lastOtherMax) {
+                        $delay = strtotime($msg->date) - strtotime($lastOtherMax);
                         if ($delay > 0 && $delay < $maxDelay) {
                             $delays[] = $delay;
                         }
