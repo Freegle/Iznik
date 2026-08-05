@@ -226,26 +226,18 @@ class GiftAidClaimService
                         ->where('giftaidconsent', 0)
                         ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
                         ->update(['giftaidconsent' => 1]),
-                    'This' => DB::update(
-                        'UPDATE users_donations SET giftaidconsent = 1
-                         WHERE userid = ? AND giftaidconsent = 0
-                           AND timestamp >= ? AND date(timestamp) = ?',
-                        [
-                            $giftaid->userid,
-                            self::GIFT_AID_EARLIEST_DATE,
-                            date('Y-m-d', strtotime($giftaid->timestamp)),
-                        ]
-                    ),
-                    'Future' => DB::update(
-                        'UPDATE users_donations SET giftaidconsent = 1
-                         WHERE userid = ? AND giftaidconsent = 0
-                           AND timestamp >= ? AND date(timestamp) >= ?',
-                        [
-                            $giftaid->userid,
-                            self::GIFT_AID_EARLIEST_DATE,
-                            date('Y-m-d', strtotime($giftaid->timestamp)),
-                        ]
-                    ),
+                    'This' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)
+                        ->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
+                        ->whereDate('timestamp', '=', date('Y-m-d', strtotime($giftaid->timestamp)))
+                        ->update(['giftaidconsent' => 1]),
+                    'Future' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)
+                        ->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
+                        ->whereDate('timestamp', '>=', date('Y-m-d', strtotime($giftaid->timestamp)))
+                        ->update(['giftaidconsent' => 1]),
                     default => 0,
                 };
             }

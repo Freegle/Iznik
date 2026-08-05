@@ -127,6 +127,21 @@
       "id": "54bddc06f05c",
       "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?",
       "reason": "Second consent variant, identical statement to 3d1dc34753bd - same reasoning. The two differ only in the date the caller passes."
+    },
+    {
+      "id": "d5c7a6502341",
+      "sql": "select distinct `locations`.`id`, `lat`, `lng`, `name` from `locations` where `lat` < `lng` and `locations`.`name` NOT LIKE ?",
+      "reason": "Inlined constant now bound: the 'BF%' pattern becomes a bind. Note what did NOT change - whereColumn('lat','<','lng') still emits a column-to-column comparison, which is the part that would have been a silent bug if written as a plain where() binding the string 'lng'."
+    },
+    {
+      "id": "a61080618cba",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ? and date(`timestamp`) = ?",
+      "reason": "Inlined constants now bound, as with the other consent variants. whereDate emits date(`timestamp`) = ? exactly as the raw statement did, so the calendar-day comparison is preserved rather than approximated by a range on the raw column."
+    },
+    {
+      "id": "3dc022a277c1",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ? and date(`timestamp`) >= ?",
+      "reason": "The >= variant of a61080618cba - same reasoning."
     }
   ]
 }

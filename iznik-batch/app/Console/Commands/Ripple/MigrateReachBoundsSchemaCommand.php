@@ -134,8 +134,8 @@ class MigrateReachBoundsSchemaCommand extends Command
         $this->info('Swapped. Old table kept as rippling_reach_old — DROP it manually once satisfied.');
 
         // 5) Verify: counts + a sample sandwich check.
-        $oldN = (int) DB::selectOne('SELECT COUNT(*) AS n FROM rippling_reach_old', [], false)->n;
-        $newN = (int) DB::selectOne('SELECT COUNT(*) AS n FROM rippling_reach', [], false)->n;
+        $oldN = (int) DB::table('rippling_reach_old')->count();
+        $newN = (int) DB::table('rippling_reach')->count();
         $badSample = (int) DB::selectOne(
             'SELECT COUNT(*) AS n FROM (
                 SELECT msgid FROM rippling_reach
