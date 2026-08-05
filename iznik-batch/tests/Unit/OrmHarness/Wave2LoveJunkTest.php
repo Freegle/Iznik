@@ -21,6 +21,9 @@ class Wave2LoveJunkTest extends TestCase
     // SELECT DISTINCT messages.id, lovejunk.status FROM messages INNER JOIN ... x4
     private const SITE_EDITED = '0c92b9505326';
 
+    // SELECT messages.id ... LEFT JOIN lovejunk ... AND NOT EXISTS (...)
+    private const SITE_NEW = '8784a573032d';
+
     public function test_edited_messages_sweep(): void
     {
         GoldenSql::assert(self::SITE_EDITED, fn () => DB::table('messages')
@@ -35,6 +38,33 @@ class Wave2LoveJunkTest extends TestCase
             ->where('messages.type', 'Offer')
             ->where('messages_groups.collection', 'Approved')
             ->where('groups.onlovejunk', 1)
+            ->orderBy('messages.arrival'));
+    }
+
+    /**
+     * The anti-join is the point: leftJoin plus "lovejunk.msgid IS NULL" finds
+     * messages NOT yet sent to LoveJunk. An inner join returns exactly the
+     * opposite set - every message already sent - which would re-send the lot.
+     *
+     * NOT EXISTS maps to whereNotExists. Laravel writes "select *" inside the
+     * subquery where the raw statement wrote "select 1"; the select list of an
+     * EXISTS is not evaluated, so that is a recorded approved diff rather than
+     * a difference.
+     */
+    public function test_new_messages_sweep(): void
+    {
+        GoldenSql::assert(self::SITE_NEW, fn () => DB::table('messages')
+            ->select('messages.id')
+            ->leftJoin('lovejunk', 'lovejunk.msgid', '=', 'messages.id')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages.arrival', '>=', '2026-01-01')
+            ->where('messages.type', 'Offer')
+            ->whereNull('lovejunk.msgid')
+            ->where('messages_groups.collection', 'Approved')
+            ->where('groups.onlovejunk', 1)
+            ->whereNotExists(fn ($q) => $q->from('messages_bulk_items')
+                ->whereColumn('messages_bulk_items.msgid', 'messages.id'))
             ->orderBy('messages.arrival'));
     }
 }

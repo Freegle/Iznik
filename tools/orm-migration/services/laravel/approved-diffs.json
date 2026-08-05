@@ -172,6 +172,11 @@
       "id": "0c92b9505326",
       "sql": "select distinct `messages`.`id`, `lovejunk`.`status` from `messages` inner join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `messages_edits` on `messages_edits`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages_edits`.`timestamp` > `lovejunk`.`timestamp` and `messages`.`type` = ? and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc",
       "reason": "Three inlined constants now bound (type = 'Offer', collection = 'Approved', onlovejunk = 1) and orderBy writing asc explicitly. Unchanged, and the parts that decide the rows: all four joins in their original ORDER, DISTINCT, and the column-to-column predicate messages_edits.timestamp > lovejunk.timestamp - which whereColumn renders as a column comparison rather than binding the second name as a string."
+    },
+    {
+      "id": "8784a573032d",
+      "sql": "select `messages`.`id` from `messages` left join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages`.`type` = ? and `lovejunk`.`msgid` is null and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? and not exists (select * from `messages_bulk_items` where `messages_bulk_items`.`msgid` = `messages`.`id`) order by `messages`.`arrival` asc",
+      "reason": "Inlined constants now bound, plus one genuine rendering difference: whereNotExists writes 'select *' inside the subquery where the raw statement wrote 'select 1'. The select list of an EXISTS is never evaluated - MySQL only asks whether a row exists - so the two are equivalent. Unchanged, and load-bearing: the LEFT JOIN plus 'lovejunk.msgid IS NULL' anti-join, which is what selects messages NOT yet sent; an inner join would return precisely the opposite set and re-send everything."
     }
   ]
 }

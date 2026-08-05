@@ -51,23 +51,24 @@ class LoveJunkService
             }
         }
 
-        $newMsgs = DB::select("
-            SELECT messages.id
-            FROM messages
-            LEFT JOIN lovejunk ON lovejunk.msgid = messages.id
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
-            WHERE messages.arrival >= ?
-              AND messages.type = 'Offer'
-              AND lovejunk.msgid IS NULL
-              AND messages_groups.collection = 'Approved'
-              AND groups.onlovejunk = 1
-              AND NOT EXISTS (
-                SELECT 1 FROM messages_bulk_items
-                WHERE messages_bulk_items.msgid = messages.id
-              )
-            ORDER BY messages.arrival ASC
-        ", [$since]);
+        $newMsgs = DB::table('messages')
+            ->select('messages.id')
+            // leftJoin + "lovejunk.msgid IS NULL" is the anti-join that finds
+            // messages we have NOT sent yet; an inner join would return the
+            // exact opposite set.
+            ->leftJoin('lovejunk', 'lovejunk.msgid', '=', 'messages.id')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages.arrival', '>=', $since)
+            ->where('messages.type', 'Offer')
+            ->whereNull('lovejunk.msgid')
+            ->where('messages_groups.collection', 'Approved')
+            ->where('groups.onlovejunk', 1)
+            ->whereNotExists(fn ($q) => $q->from('messages_bulk_items')
+                ->whereColumn('messages_bulk_items.msgid', 'messages.id'))
+            ->orderBy('messages.arrival')
+            ->get()
+            ->all();
 
         foreach ($newMsgs as $msg) {
             if ($dryRun) {

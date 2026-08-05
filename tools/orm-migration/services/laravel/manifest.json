@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:09:25Z",
+    "generated": "2026-08-05T17:10:50Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 79,
-        "raw": 236,
+        "converted": 80,
+        "raw": 235,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -9851,18 +9851,18 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT messages.id FROM messages LEFT JOIN lovejunk ON lovejunk.msgid = messages.id INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN `groups` ON groups.id = messages_groups.groupid WHERE messages.arrival >= ? AND messages.type = 'Offer' AND lovejunk.msgid IS NULL AND messages_groups.collection = 'Approved' AND groups.onlovejunk = 1 AND NOT EXISTS ( SELECT 1 FROM messages_bulk_items WHERE messages_bulk_items.msgid = messages.id ) ORDER BY messages.arrival ASC",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select `messages`.`id` from `messages` left join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages`.`type` = ? and `lovejunk`.`msgid` is null and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? and not exists (select * from `messages_bulk_items` where `messages_bulk_items`.`msgid` = `messages`.`id`) order by `messages`.`arrival` asc"
         },
         "a792f4c8557c": {
             "id": "a792f4c8557c",
             "file": "iznik-batch/app/Services/LoveJunkService.php",
-            "line": 86,
+            "line": 87,
             "class": "LoveJunkService",
             "function": "sync",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -9896,7 +9896,7 @@
         "63bbb51470ed": {
             "id": "63bbb51470ed",
             "file": "iznik-batch/app/Services/LoveJunkService.php",
-            "line": 165,
+            "line": 166,
             "class": "LoveJunkService",
             "function": "completeOrDelete",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -9925,7 +9925,7 @@
         "b3867b4b17c4": {
             "id": "b3867b4b17c4",
             "file": "iznik-batch/app/Services/LoveJunkService.php",
-            "line": 239,
+            "line": 240,
             "class": "LoveJunkService",
             "function": "buildPayload",
             "receiver": "Illuminate\\Support\\Facades\\DB",
