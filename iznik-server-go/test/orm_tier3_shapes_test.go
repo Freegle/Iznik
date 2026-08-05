@@ -1307,10 +1307,7 @@ func TestTier3Shapes_f382f9bfe80b(t *testing.T) {
 				Select("samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, "+
 					"DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, "+
 					"EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, "+
-					"(NOT EXISTS(SELECT 1 FROM messages_groups og "+
-					"INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid "+
-					"AND mem.collection = 'Approved' AND mem.added < og.arrival "+
-					"WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled").
+					"(NOT "+rippling.EstablishedOriginMemberExists("samp.msgid", "cm.userid")+") AS rippled").
 				Joins("JOIN messages m ON m.id = samp.msgid").
 				Joins("JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL").
 				Joins("JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?", "2026-01-01", "2026-01-31").

@@ -2,7 +2,7 @@
   "generated": "derived-from-source",
   "root": "iznik-server-go",
   "counts": {
-    "converted": 1592,
+    "converted": 1593,
     "keep-raw": 51,
     "retired": 43,
     "test-fixture": 4287
@@ -41307,7 +41307,7 @@
     "4fbcc572bf8f": {
       "id": "4fbcc572bf8f",
       "file": "iznik-server-go/test/orm_tier2b_test.go",
-      "line": 105,
+      "line": 125,
       "function": "TestTier2_33ad97a3417c",
       "receiver": "tx.Table()",
       "method": "Select",
@@ -69992,7 +69992,7 @@
       "wave": 5,
       "dynamic": false,
       "args": 3,
-      "goldenSql": "SELECT EXISTS(SELECT 1 FROM messages_groups mg INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? AND mem.collection = ? AND mem.added \u003c NOW() - INTERVAL 300 SECOND WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+      "goldenSql": "SELECT EXISTS(SELECT 1 FROM messages_groups mg INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? AND mem.collection = ? AND mem.added \u003c NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted",
@@ -80286,6 +80286,31 @@
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
+    },
+    "9894f2a0d95d": {
+      "id": "9894f2a0d95d",
+      "file": "iznik-server-go/chat/chatmessage.go",
+      "line": 467,
+      "function": "recordReplyAttribution",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "memberships",
+        "messages_groups"
+      ],
+      "mysqlisms": null,
+      "complexity": "complex",
+      "wave": 5,
+      "dynamic": false,
+      "args": 3,
+      "goldenSql": "SELECT EXISTS(SELECT 1 FROM messages_groups mg INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? AND mem.collection = ? AND mem.added \u003c NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+      "presentInCode": false,
+      "hasParityTest": true,
+      "status": "converted",
+      "porting": "PostgreSQL: SELECT EXISTS(SELECT 1 FROM ...) is standard and ports unchanged. The reason this is raw is a GORM limitation (its builder always emits a FROM once Table() is called), not a dialect one, so the port is a no-op.",
+      "category": "Bare SELECT EXISTS, no top-level FROM"
     },
     "98952905ecad": {
       "id": "98952905ecad",
@@ -114345,7 +114370,7 @@
       "wave": 3,
       "dynamic": false,
       "args": 10,
-      "goldenSql": "INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, was_notified, was_ripple_group_member, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
+      "goldenSql": "INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member, was_notified, was_ripple_group_member, was_ripple_join, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted"
@@ -126992,7 +127017,7 @@
       "wave": 5,
       "dynamic": true,
       "args": 5,
-      "goldenSql": "SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at \u003e= ? AND rr.created_at \u003c ? AND rr.total_freeglers \u003e 0{{expr}} AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') ORDER BY RAND() LIMIT ? ) samp JOIN messages m ON m.id = samp.msgid JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date \u003e= ? AND cm.date \u003c ? JOIN users u ON u.id = cm.userid JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL ORDER BY samp.msgid",
+      "goldenSql": "SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added \u003c og.arrival AND mem.rippled = 0 WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at \u003e= ? AND rr.created_at \u003c ? AND rr.total_freeglers \u003e 0{{expr}} AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') ORDER BY RAND() LIMIT ? ) samp JOIN messages m ON m.id = samp.msgid JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date \u003e= ? AND cm.date \u003c ? JOIN users u ON u.id = cm.userid JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL ORDER BY samp.msgid",
       "presentInCode": false,
       "hasParityTest": true,
       "status": "converted",

@@ -461,18 +461,18 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// as wasHome. Both bits can be set at once on a cross-post (one origin group joined
 	// ordinarily, another via a ripple); the ladder gives home precedence, because the ordinary
 	// membership alone would have shown them the post.
-	// Converted to the same BuildClauses form as its wasHome sibling above: the
-	// statement arrived from master as db.Raw, and this branch's Go inventory
-	// holds raw at 0.
+	// ORM migration site 9894f2a0d95d. Converted to the same BuildClauses form
+	// as its wasHome sibling above; the statement arrived from master as
+	// db.Raw, and the Go inventory holds raw at 0.
 	var wasRippleJoin int
-	txWasRippleJoin := db.Table("messages_groups").Select(
+	tx9894f2a0d95d := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
 			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
 			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid)
-	txWasRippleJoin.Statement.BuildClauses = []string{"SELECT"}
-	txWasRippleJoin.Scan(&wasRippleJoin)
+	tx9894f2a0d95d.Statement.BuildClauses = []string{"SELECT"}
+	tx9894f2a0d95d.Scan(&wasRippleJoin)
 
 	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
 	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the

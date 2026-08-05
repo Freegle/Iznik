@@ -30,7 +30,27 @@ func TestTier2_848af7d73bfe(t *testing.T) {
 		tx = tx.Table("messages_groups").Select(
 			"EXISTS(SELECT 1 FROM messages_groups mg "+
 				"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-				"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND "+
+				"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
+				"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
+			1, "Approved", 2)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		return tx.Find(&dest)
+	})
+}
+
+// 9894f2a0d95d is wasHome's mirror image: the same statement with
+// mem.rippled = 1, asking whether the only origin-group membership backing
+// this reply is one rippling itself created. It arrived on master as raw SQL
+// with the ripple_join work (PR #1257) and was converted in the same merge
+// that brought it in - but with no manifest entry and no test, so nothing held
+// the conversion to the statement master actually wrote. This is that test.
+func TestTier2_9894f2a0d95d(t *testing.T) {
+	ormharness.AssertGoldenSQL(t, "9894f2a0d95d", func(tx *gorm.DB) *gorm.DB {
+		var dest int
+		tx = tx.Table("messages_groups").Select(
+			"EXISTS(SELECT 1 FROM messages_groups mg "+
+				"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
+				"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
 				"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 			1, "Approved", 2)
 		tx.Statement.BuildClauses = []string{"SELECT"}

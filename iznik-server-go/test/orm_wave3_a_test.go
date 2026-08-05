@@ -101,6 +101,7 @@ func TestWave3A_db03a274a8a2(t *testing.T) {
 			"was_home_member":         1,
 			"was_notified":            0,
 			"was_ripple_group_member": 0,
+			"was_ripple_join":         0,
 			"in_origin_catchment":     nil,
 			"in_reach":                nil,
 			"post_had_rippled":        1,
