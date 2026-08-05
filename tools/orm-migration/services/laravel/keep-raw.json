@@ -105,6 +105,20 @@
       "reason": "Functions the DATABASE must evaluate: RAND() for sampling, and the clock/date arithmetic family (NOW, DATE_SUB, DATEDIFF, YEAR). The builder equivalents would compute the value in PHP and bind it, which moves the clock from the database to the application and changes what the query means under clock skew, timezone differences, or a long-running batch. DATEDIFF is the sharpest case: it counts CALENDAR DAY boundaries, so rewriting DATEDIFF(NOW(), t) < 2 as t >= now()->subDays(2) silently changes which rows match. These stay raw on correctness grounds, not convenience. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
       "porting": "PostgreSQL: NOW() and CURRENT_DATE carry over; RAND() becomes random(); DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'); DATEDIFF has no direct equivalent and becomes a date subtraction yielding an integer, which is the same calendar-day semantics. Each needs rewriting, none needs redesigning.",
       "category": "Non-deterministic or clock function (expression)"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*(CREATE|DROP|ALTER|TRUNCATE|RENAME)\\s/i",
+      "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+      "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+      "category": "Schema operation in application code"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\{\\{built at runtime/",
+      "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+      "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+      "category": "SQL assembled at runtime"
     }
   ]
 }

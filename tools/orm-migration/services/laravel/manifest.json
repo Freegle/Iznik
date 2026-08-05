@@ -1,9 +1,9 @@
 {
-    "generated": "2026-08-05T16:42:06Z",
+    "generated": "2026-08-05T16:43:37Z",
     "root": "iznik-batch",
     "counts": {
-        "raw": 367,
-        "keep-raw": 309,
+        "keep-raw": 343,
+        "raw": 333,
         "converted": 55,
         "excluded": 70,
         "retired": 1,
@@ -34,10 +34,10 @@
             "goldenSql": "DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "a93d477d3f2f": {
@@ -62,10 +62,10 @@
             "goldenSql": "CREATE TEMPORARY TABLE tmp_ai_usage_counts ( externaluid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PRIMARY KEY, cnt INT NOT NULL ) AS SELECT ma.externaluid, COUNT(*) AS cnt FROM messages_attachments ma WHERE JSON_EXTRACT(ma.externalmods, '$.ai') = TRUE AND ma.externaluid IS NOT NULL AND ma.externaluid != '' GROUP BY ma.externaluid",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "20f86f5a7879": {
@@ -117,10 +117,10 @@
             "goldenSql": "DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "c4573eab864d": {
@@ -195,10 +195,10 @@
             "goldenSql": "{{built at runtime: $query}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "8a6d9645f2ff": {
@@ -804,10 +804,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "f3b13bf782e1": {
@@ -2155,10 +2155,10 @@
             "goldenSql": "CREATE TABLE rippling_reach_shadow LIKE rippling_reach",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "91b36252c98b": {
@@ -2181,10 +2181,10 @@
             "goldenSql": "ALTER TABLE rippling_reach_shadow ADD COLUMN outer_bound GEOMETRY NOT NULL SRID {{expr}}, ADD COLUMN inner_bound GEOMETRY SRID {{expr}} NULL, ADD SPATIAL INDEX rippling_reach_outer (outer_bound)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "51a9e91f5fd1": {
@@ -2207,10 +2207,10 @@
             "goldenSql": "ALTER TABLE rippling_reach_shadow ADD CONSTRAINT rippling_reach_shadow_msgid_foreign FOREIGN KEY (msgid) REFERENCES messages (id) ON DELETE CASCADE",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "83aec2aa9cd7": {
@@ -2316,10 +2316,10 @@
             "goldenSql": "RENAME TABLE rippling_reach TO rippling_reach_old, rippling_reach_shadow TO rippling_reach",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "ae68a80c3ae5": {
@@ -2538,10 +2538,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "c3aaf2a3f586": {
@@ -4099,10 +4099,10 @@
             "goldenSql": "DROP TEMPORARY TABLE IF EXISTS pc",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "47d0935f58bc": {
@@ -4130,10 +4130,10 @@
             "goldenSql": "CREATE TEMPORARY TABLE pc AS ( SELECT locationid FROM authorities INNER JOIN locations_spatial ON authorities.id IN ({{expr}}) AND ST_Contains(authorities.polygon, locations_spatial.geometry) )",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "74f17e346591": {
@@ -4280,10 +4280,10 @@
             "goldenSql": "DROP TEMPORARY TABLE IF EXISTS pc",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "ae7de9f5bae2": {
@@ -9214,10 +9214,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "6b8dcb20450d": {
@@ -10132,10 +10132,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "c7b7c2c28369": {
@@ -10373,10 +10373,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "e6ce26f212e0": {
@@ -10917,10 +10917,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "012cc0395321": {
@@ -11265,10 +11265,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "759af3d2f4c5": {
@@ -13005,10 +13005,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "0f7dad1e0276": {
@@ -13031,10 +13031,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "6e02c15be538": {
@@ -13239,10 +13239,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "1b444d2cef9e": {
@@ -13265,10 +13265,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "f628ea21a419": {
@@ -13319,10 +13319,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "ecf37f08374e": {
@@ -13345,10 +13345,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "1f4a3371f727": {
@@ -13765,10 +13765,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "02417b69537b": {
@@ -13791,10 +13791,10 @@
             "goldenSql": "{{built at runtime: ?}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "8e7a0bceb501": {
@@ -17242,10 +17242,10 @@
             "goldenSql": "DROP TABLE IF EXISTS jobs_new",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "d83d0ce96b36": {
@@ -17326,10 +17326,10 @@
             "goldenSql": "DROP TABLE IF EXISTS jobs_new",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "ae6b8be479d0": {
@@ -17352,10 +17352,10 @@
             "goldenSql": "CREATE TABLE jobs_new LIKE jobs",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "cd3f21359d36": {
@@ -17406,10 +17406,10 @@
             "goldenSql": "{{built at runtime: $sql}}",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "The statement text does not exist in the source: it is composed at runtime from variables the extractor cannot resolve, so the manifest records only a placeholder. These cannot be converted as they stand and cannot be proven either - a golden test needs a fixed statement to compare against. Each one has to be understood and restructured before it can be triaged honestly, which is a per-site design job rather than a mechanical conversion, and doing it blind would be the worst of both: a rewrite with no golden to hold it to. Recorded here so they are counted and visible rather than sitting in the raw bucket looking like ordinary pending work.",
+            "porting": "PostgreSQL: unknowable until each is resolved into a concrete statement - that resolution is the prerequisite for any porting estimate, not a consequence of it. Treat these as the highest-uncertainty items in any Phase 4 sizing.",
+            "category": "SQL assembled at runtime",
             "approvedDiff": ""
         },
         "070fcd677982": {
@@ -17432,10 +17432,10 @@
             "goldenSql": "DROP TABLE IF EXISTS jobs_old",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "61ae4d6fb5fa": {
@@ -17458,10 +17458,10 @@
             "goldenSql": "RENAME TABLE jobs TO jobs_old, jobs_new TO jobs",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "7af23c2fb7e8": {
@@ -17484,10 +17484,10 @@
             "goldenSql": "DROP TABLE IF EXISTS jobs_old",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "05af6812abd7": {
@@ -17595,10 +17595,10 @@
             "goldenSql": "TRUNCATE TABLE jobs_keywords",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "DDL issued from a console command or service rather than a migration: temporary tables built to stage a bulk computation (UpdateAIImageUsageCounts, WhatJobs, AuthorityStats) and the online-schema steps in MigrateReachBoundsSchemaCommand. Laravel's Schema builder covers permanent schema, not CREATE TEMPORARY TABLE with an explicit column/collation spec, and not ALTER carrying MySQL's ALGORITHM/LOCK hints - which is exactly why these were written as statements. Converting them would mean Schema::connection(...)->statement(...), which is the same raw SQL with more ceremony. The temporary tables in particular are part of an algorithm, not a schema: they exist for the length of one command run.",
+            "porting": "PostgreSQL: CREATE TEMPORARY TABLE exists with the same semantics but different type and collation syntax; ALTER's ALGORITHM/LOCK hints have no equivalent and are simply dropped (Postgres DDL locking differs and the hints were MySQL-specific tuning). Each statement needs reading, but none needs redesigning.",
+            "category": "Schema operation in application code",
             "approvedDiff": ""
         },
         "808ef0c86a20": {
