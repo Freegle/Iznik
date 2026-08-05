@@ -118,6 +118,36 @@ func TestUnsubscribeAll(t *testing.T) {
 	assert.Equal(t, int64(0), live)
 }
 
+// TestUnsubscribeAllExceptReplies: stops the bulk mail but leaves chat on, so someone who
+// offers a sofa still hears when a neighbour replies.
+func TestUnsubscribeAllExceptReplies(t *testing.T) {
+	userID, key := unsubscribeFixture(t, uniquePrefix("unsubexcept"))
+	db := database.DBConn
+
+	resp, _ := getApp().Test(httptest.NewRequest("POST",
+		fmt.Sprintf("/api/user/unsubscribe?u=%v&k=%s&t=%s", userID, key, user.UnsubAllExceptReplies), nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var relevant, newsletters int
+	var live int64
+	db.Raw("SELECT relevantallowed FROM users WHERE id = ?", userID).Scan(&relevant)
+	db.Raw("SELECT newslettersallowed FROM users WHERE id = ?", userID).Scan(&newsletters)
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND emailfrequency != 0", userID).Scan(&live)
+
+	assert.Equal(t, 0, relevant)
+	assert.Equal(t, 0, newsletters)
+	assert.Equal(t, int64(0), live)
+
+	// The one that must survive.
+	var chat *string
+	db.Raw("SELECT JSON_EXTRACT(settings, '$.notifications.email') FROM users WHERE id = ?", userID).Scan(&chat)
+	assert.Nil(t, chat, "replies to your posts must be left switched on")
+
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
+	assert.Nil(t, deleted, "stopping email must never delete the account")
+}
+
 // TestUnsubscribeUnknownTypeFallsBackToAll: a mangled address must not silently do
 // nothing - the member asked to stop.
 func TestUnsubscribeUnknownTypeFallsBackToAll(t *testing.T) {
@@ -170,7 +200,7 @@ func TestUnsubscribeRouteNotShadowedByUserID(t *testing.T) {
 // PHP one.
 func TestUnsubscribeTypesMatchBatch(t *testing.T) {
 	assert.Equal(t,
-		"digest,events,volunteering,newsletter,relevant,chat,notifications,engagement,all",
+		"digest,events,volunteering,newsletter,relevant,chat,notifications,engagement,all,allexceptreplies",
 		strings.Join(user.UnsubscribeTypes, ","))
 
 	for _, one := range user.UnsubscribeTypes {

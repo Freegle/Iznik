@@ -77,22 +77,41 @@ class UnsubscribedNotice extends MjmlMailable
     }
 
     /**
-     * One tap to stop everything.
+     * One tap to stop the bulk mail while still hearing when someone replies to your posts.
      *
      * Someone who turned off one kind of email and finds they still get others should not
-     * have to go and hunt through Settings - that is the frustration behind most "I
-     * unsubscribed and you're still emailing me" reports. Points at the same
-     * key-authenticated apiv2 endpoint the header uses, so it needs no login: a GET applies
-     * the opt-out and renders a confirmation.
+     * have to hunt through Settings - that is the frustration behind most "I unsubscribed
+     * and you're still emailing me" reports. Points at the same key-authenticated apiv2
+     * endpoint the header uses, so it needs no login: a GET applies it and renders a
+     * confirmation.
+     *
+     * Deliberately not "stop all email": that reads as "leave Freegle", and it would also
+     * mean someone offers a sofa, a neighbour replies, and they never find out. Leaving is
+     * the separate button below.
      */
-    protected function stopAllUrl(): string
+    protected function stopMostUrl(): string
     {
         $apiV2 = rtrim((string) config('freegle.api.v2_url', 'https://api.ilovefreegle.org/apiv2'), '/');
 
         return $apiV2.'/user/unsubscribe?'.http_build_query([
             'u' => $this->userId,
             'k' => app(LoginLinkService::class)->getOrCreateKey($this->userId),
-            't' => UnsubscribeService::TYPE_ALL,
+            't' => UnsubscribeService::TYPE_ALL_EXCEPT_REPLIES,
+        ]);
+    }
+
+    /**
+     * Leaving Freegle altogether: the unsubscribe page, which handles leaving communities
+     * and deleting the account. Keyed so they arrive recognised rather than being asked to
+     * log in first.
+     */
+    protected function leaveUrl(): string
+    {
+        $userSite = rtrim((string) config('freegle.sites.user'), '/');
+
+        return $userSite.'/unsubscribe?'.http_build_query([
+            'u' => $this->userId,
+            'k' => app(LoginLinkService::class)->getOrCreateKey($this->userId),
         ]);
     }
 
@@ -115,7 +134,11 @@ class UnsubscribedNotice extends MjmlMailable
             'whatTheyAskedFor' => UnsubscribeService::describe($this->type),
             'settingsUrl' => $userSite.'/settings',
             'unsubscribeUrl' => $userSite.'/unsubscribe',
-            'stopAllUrl' => $this->stopAllUrl(),
+            'stopMostUrl' => $this->stopMostUrl(),
+            'leaveUrl' => $this->leaveUrl(),
+            // Only worth offering "stop the rest" when there is a rest to stop, and only
+            // when it would actually change something beyond chat.
+            'canStopMore' => (bool) array_diff($this->stillOn, [UnsubscribeService::TYPE_CHAT]),
             'everythingAlreadyOff' => empty($this->stillOn),
         ];
 

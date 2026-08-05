@@ -29,13 +29,13 @@ function readPhp() {
   const src = readFileSync(phpPath, 'utf8')
 
   const constants = new Map()
-  for (const m of src.matchAll(/public const (TYPE_[A-Z]+) = '([a-z]+)';/g)) {
+  for (const m of src.matchAll(/public const (TYPE_[A-Z_]+) = '([a-z]+)';/g)) {
     constants.set(m[1], m[2])
   }
 
   const typesBlock = src.match(/public const TYPES = \[([\s\S]*?)\];/)
   if (!typesBlock) fail(`could not find TYPES in ${phpPath}`)
-  const types = [...typesBlock[1].matchAll(/self::(TYPE_[A-Z]+),/g)].map((m) => {
+  const types = [...typesBlock[1].matchAll(/self::(TYPE_[A-Z_]+),/g)].map((m) => {
     const value = constants.get(m[1])
     if (!value) fail(`could not resolve ${m[1]} in ${phpPath}`)
     return value
@@ -44,7 +44,7 @@ function readPhp() {
   const descBlock = src.match(/public const DESCRIPTIONS = \[([\s\S]*?)\];/)
   if (!descBlock) fail(`could not find DESCRIPTIONS in ${phpPath}`)
   const descriptions = new Map()
-  for (const m of descBlock[1].matchAll(/self::(TYPE_[A-Z]+) => '(.*?)',/g)) {
+  for (const m of descBlock[1].matchAll(/self::(TYPE_[A-Z_]+) => '(.*?)',/g)) {
     descriptions.set(constants.get(m[1]), m[2].replace(/\\'/g, "'"))
   }
 

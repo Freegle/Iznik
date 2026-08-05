@@ -189,6 +189,48 @@ class UnsubscribeServiceTest extends TestCase
             'notifications',
             'engagement',
             'all',
+            'allexceptreplies',
         ], UnsubscribeService::TYPES);
+    }
+
+    public function test_all_except_replies_stops_the_bulk_but_keeps_chat(): void
+    {
+        // "Stop all Freegle email" reads as "leave Freegle", and taking chat with it means
+        // someone offers a sofa, a neighbour replies, and they never find out.
+        $user = $this->memberWithGroups();
+
+        $changed = $this->service->apply($user, UnsubscribeService::TYPE_ALL_EXCEPT_REPLIES);
+        $user->refresh();
+
+        $this->assertNotContains(UnsubscribeService::TYPE_CHAT, $changed);
+        $this->assertSame(
+            [UnsubscribeService::TYPE_CHAT],
+            $this->service->stillOn($user),
+            'Only replies to your posts should be left on'
+        );
+        $this->assertEquals(0, $user->newslettersallowed);
+        $this->assertEquals(0, $user->relevantallowed);
+        $this->assertNull($user->deleted, 'Stopping email must never delete the account');
+    }
+
+    public function test_all_still_means_all_including_chat(): void
+    {
+        // One-clicking Unsubscribe on a chat notification has to stop chat notifications,
+        // so TYPE_ALL must not quietly start sparing them.
+        $user = $this->memberWithGroups();
+
+        $this->service->apply($user, UnsubscribeService::TYPE_ALL);
+
+        $this->assertSame([], $this->service->stillOn($user->fresh()));
+    }
+
+    public function test_single_categories_excludes_the_combinations(): void
+    {
+        $single = UnsubscribeService::singleCategories();
+
+        $this->assertNotContains(UnsubscribeService::TYPE_ALL, $single);
+        $this->assertNotContains(UnsubscribeService::TYPE_ALL_EXCEPT_REPLIES, $single);
+        $this->assertContains(UnsubscribeService::TYPE_CHAT, $single);
+        $this->assertCount(count(UnsubscribeService::TYPES) - 2, $single);
     }
 }

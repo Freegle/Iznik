@@ -38,8 +38,20 @@ class UnsubscribeService
 
     public const TYPE_ENGAGEMENT = 'engagement';
 
-    /** Turns off every category below. */
+    /** Turns off every category above. */
     public const TYPE_ALL = 'all';
+
+    /**
+     * Everything except chat - i.e. stop the bulk mail but keep hearing when someone
+     * replies to your posts.
+     *
+     * This is what most people mean by "stop emailing me". Turning off chat as well means
+     * someone offers a sofa, a neighbour replies, and they never find out - so it is worth
+     * having as a distinct choice rather than folding it into TYPE_ALL. TYPE_ALL still
+     * means all, because one-clicking Unsubscribe on a chat notification has to stop chat
+     * notifications.
+     */
+    public const TYPE_ALL_EXCEPT_REPLIES = 'allexceptreplies';
 
     public const TYPES = [
         self::TYPE_DIGEST,
@@ -51,6 +63,7 @@ class UnsubscribeService
         self::TYPE_NOTIFICATIONS,
         self::TYPE_ENGAGEMENT,
         self::TYPE_ALL,
+        self::TYPE_ALL_EXCEPT_REPLIES,
     ];
 
     /**
@@ -70,11 +83,23 @@ class UnsubscribeService
         self::TYPE_NOTIFICATIONS => 'emails about replies and notifications',
         self::TYPE_ENGAGEMENT => 'occasional emails asking how we are doing',
         self::TYPE_ALL => 'all our non-essential emails',
+        self::TYPE_ALL_EXCEPT_REPLIES => 'everything except replies to your posts',
     ];
 
     public static function isValidType(?string $type): bool
     {
         return $type !== null && in_array($type, self::TYPES, true);
+    }
+
+    /**
+     * The categories that name one kind of email, i.e. everything except the two
+     * combinations (TYPE_ALL and TYPE_ALL_EXCEPT_REPLIES) that expand into them.
+     *
+     * @return string[]
+     */
+    public static function singleCategories(): array
+    {
+        return array_values(array_diff(self::TYPES, [self::TYPE_ALL, self::TYPE_ALL_EXCEPT_REPLIES]));
     }
 
     /**
@@ -90,9 +115,11 @@ class UnsubscribeService
             throw new \InvalidArgumentException("Unknown unsubscribe type: $type");
         }
 
-        $wanted = $type === self::TYPE_ALL
-            ? array_values(array_diff(self::TYPES, [self::TYPE_ALL]))
-            : [$type];
+        $wanted = match ($type) {
+            self::TYPE_ALL => self::singleCategories(),
+            self::TYPE_ALL_EXCEPT_REPLIES => array_values(array_diff(self::singleCategories(), [self::TYPE_CHAT])),
+            default => [$type],
+        };
 
         $changed = [];
 

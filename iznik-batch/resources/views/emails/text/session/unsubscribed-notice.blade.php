@@ -16,13 +16,18 @@ You may still get these from us:
 @foreach($stillOn as $item)
 - {{ $item }}
 @endforeach
+@if($canStopMore)
 
-Want to stop all of it? One tap, no need to log in:
-{{ $stopAllUrl }}
+Want to stop the rest too? One tap, no need to log in. You'll still hear when someone replies to your posts, so you won't miss anyone:
+{{ $stopMostUrl }}
+@endif
 @endif
 
 You can turn any of these back on, or change them one by one, in your settings:
 {{ $settingsUrl }}
+
+Want to leave Freegle altogether, or leave one of your communities?
+{{ $leaveUrl }}
 
 There's no need to reply to this email - nobody reads that mailbox.
 

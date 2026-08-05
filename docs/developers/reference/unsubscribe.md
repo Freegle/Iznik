@@ -69,6 +69,11 @@ mailable declares its category with `unsubscribeType()`; both arms of the header
 | `notifications` | ChitChat digest, notification chase-ups | `settings.notificationmails = false` |
 | `engagement` | donation asks, gift-aid chase-ups, re-engagement | `settings.engagement = false` |
 | `all` | everything above | all of the above |
+| `allexceptreplies` | everything above **except `chat`** | all of the above bar chat |
+
+`allexceptreplies` is what the acknowledgement's one-tap button uses. `all` still means all,
+because one-clicking Unsubscribe on a chat notification has to stop chat notifications — so
+the two cannot be collapsed.
 
 An unknown or mangled category falls back to `all`, so a truncated address stops mail
 rather than silently doing nothing.
@@ -152,20 +157,30 @@ in `stores/mobile.js` did the same thing on tap and now routes to `/unsubscribe`
 The mailto: arm sends `UnsubscribedNotice`. It says what we turned off, which categories may
 still email them, and gives two ways out:
 
-- **"Stop all Freegle email"** — one tap, keyed to the same apiv2 endpoint with `t=all`, so
-  it needs no login. This is there because per-category unsubscribing has a failure mode:
+- **"Stop these emails too"** — one tap, keyed to the apiv2 endpoint with
+  `t=allexceptreplies`, so it needs no login. Per-category unsubscribing has a failure mode:
   the member who meant "stop emailing me" turns off one kind, keeps getting the rest, and
   concludes unsubscribe is broken. That is half of what Support sees (Discourse #6484), and
-  making them find Settings and log in to finish is how it happens. Hidden when everything
-  is already off, which would otherwise read as a system that hadn't noticed what they did.
-- **"Change your email settings"** — the Settings page, for picking and choosing.
+  making them find Settings and log in to finish is how it happens. Hidden when the only
+  thing left is chat, since the button deliberately keeps that.
+- **"Change your email settings"** — the Settings page, for picking and choosing. The
+  primary button.
+- **"Leave Freegle"** — the `/unsubscribe` page, keyed so they arrive recognised. Styled
+  recessively: leaving is rare and hard to undo, and should not compete with the two email
+  options.
+
+**The wording matters as much as the mechanism.** An earlier draft said "Stop all Freegle
+email", which reads as "leave Freegle" — and conflating the two is the *other* half of what
+Support sees, people deleting accounts they meant to keep. Hence three visibly different
+actions, and hence `allexceptreplies` rather than `all`: someone offers a sofa, a neighbour
+replies, and they should still find out.
 
 If everything in scope was already off it says so rather than claiming to have changed
 something.
 
 Note the trade: an in-body link that acts on GET can be followed by a link scanner. That is
 the same trade `relevantoff` already makes in the matched-posts footer, and the blast radius
-is bounded — all email off, account untouched, reversible from Settings.
+is bounded — bulk email off, replies and the account untouched, reversible from Settings.
 
 The https: one-click arm does not send an acknowledgement. The mail client has already
 told the member it worked, and Gmail treats a one-click as final — emailing someone who

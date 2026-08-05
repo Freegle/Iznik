@@ -27,6 +27,10 @@ const (
 	UnsubNotifications = "notifications"
 	UnsubEngagement    = "engagement"
 	UnsubAll           = "all"
+	// UnsubAllExceptReplies stops the bulk mail but keeps chat, so someone who offers a
+	// sofa still hears when a neighbour replies. UnsubAll still means all, because
+	// one-clicking Unsubscribe on a chat notification has to stop chat notifications.
+	UnsubAllExceptReplies = "allexceptreplies"
 )
 
 // UnsubscribeTypes is the full category list, in the same order as the PHP side.
@@ -40,20 +44,28 @@ var UnsubscribeTypes = []string{
 	UnsubNotifications,
 	UnsubEngagement,
 	UnsubAll,
+	UnsubAllExceptReplies,
+}
+
+// singleUnsubscribeCategories is every category that names one kind of email, i.e. all of
+// them except the two combinations that expand into them.
+func singleUnsubscribeCategories() []string {
+	return UnsubscribeTypes[:len(UnsubscribeTypes)-2]
 }
 
 // unsubDescriptions is what we tell the member each category covers. Kept in step with
 // UnsubscribeService::DESCRIPTIONS so both arms of the header say the same thing.
 var unsubDescriptions = map[string]string{
-	UnsubDigest:        "emails about new posts in your communities",
-	UnsubEvents:        "emails about community events",
-	UnsubVolunteering:  "emails about volunteer opportunities",
-	UnsubNewsletter:    "newsletters and community news",
-	UnsubRelevant:      "emails suggesting posts that match what you are looking for",
-	UnsubChat:          "emails telling you about new chat messages",
-	UnsubNotifications: "emails about replies and notifications",
-	UnsubEngagement:    "occasional emails asking how we are doing",
-	UnsubAll:           "all our non-essential emails",
+	UnsubDigest:           "emails about new posts in your communities",
+	UnsubEvents:           "emails about community events",
+	UnsubVolunteering:     "emails about volunteer opportunities",
+	UnsubNewsletter:       "newsletters and community news",
+	UnsubRelevant:         "emails suggesting posts that match what you are looking for",
+	UnsubChat:             "emails telling you about new chat messages",
+	UnsubNotifications:    "emails about replies and notifications",
+	UnsubEngagement:       "occasional emails asking how we are doing",
+	UnsubAll:              "all our non-essential emails",
+	UnsubAllExceptReplies: "everything except replies to your posts",
 }
 
 // UnsubscribeDescription is what we tell the member a category covers.
@@ -140,8 +152,16 @@ func Unsubscribe(c *fiber.Ctx) error {
 // UnsubscribeService::applyOne().
 func applyUnsubscribe(db *gorm.DB, uid uint64, unsubType string) {
 	wanted := []string{unsubType}
-	if unsubType == UnsubAll {
-		wanted = UnsubscribeTypes[:len(UnsubscribeTypes)-1]
+	switch unsubType {
+	case UnsubAll:
+		wanted = singleUnsubscribeCategories()
+	case UnsubAllExceptReplies:
+		wanted = nil
+		for _, one := range singleUnsubscribeCategories() {
+			if one != UnsubChat {
+				wanted = append(wanted, one)
+			}
+		}
 	}
 
 	for _, one := range wanted {

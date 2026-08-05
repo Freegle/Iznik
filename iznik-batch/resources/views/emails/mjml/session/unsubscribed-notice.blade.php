@@ -90,28 +90,46 @@
       </mj-column>
     </mj-section>
 
-    {{-- One tap to stop the lot, for the member who meant "stop emailing me" rather than
-         "stop this one kind". Needs no login. --}}
+    {{-- One tap to stop the rest, for the member who meant "stop emailing me" rather than
+         "stop this one kind". Needs no login. Keeps replies to their posts, so offering
+         something and never hearing back is not a way this can end. --}}
+    @if($canStopMore)
     <mj-section padding="25px 0 0 0">
       <mj-column>
         <mj-text font-size="14px" line-height="1.5" padding="0 25px 10px 25px">
-          <p>Want to stop all of it? One tap, no need to log in:</p>
+          <p>Want to stop the rest too? One tap, no need to log in. You'll still hear when someone replies to your posts, so you won't miss anyone.</p>
         </mj-text>
-        <mj-button mj-class="btn-dark" href="{{ $stopAllUrl }}" border-radius="3px" font-size="14px" padding="0 25px 10px 25px">
-          Stop all Freegle email
+        <mj-button mj-class="btn-dark" href="{{ $stopMostUrl }}" border-radius="3px" font-size="14px" padding="0 25px 10px 25px">
+          Stop these emails too
         </mj-button>
       </mj-column>
     </mj-section>
     @endif
+    @endif
 
     {{-- Or pick and choose. --}}
-    <mj-section padding="20px 0 10px 0">
+    <mj-section padding="20px 0 0 0">
       <mj-column>
         <mj-text font-size="14px" line-height="1.5" padding="0 25px 10px 25px">
           <p>You can turn any of these back on, or change them one by one, in your settings.</p>
         </mj-text>
         <mj-button mj-class="btn-success" href="{{ $settingsUrl }}" border-radius="3px" font-size="14px" padding="0 25px 10px 25px">
           Change your email settings
+        </mj-button>
+      </mj-column>
+    </mj-section>
+
+    {{-- Leaving is a different thing from not wanting email, and conflating the two is how
+         people delete accounts they meant to keep. Separate button, separate words. --}}
+    <mj-section padding="10px 0 10px 0">
+      <mj-column>
+        <mj-text font-size="14px" line-height="1.5" padding="0 25px 10px 25px">
+          <p>Want to leave Freegle altogether, or leave one of your communities?</p>
+        </mj-text>
+        {{-- Recessive on purpose: leaving is rare and hard to undo, and it should not
+             compete for the eye with the two email options above it. --}}
+        <mj-button background-color="#ffffff" color="#666666" border="1px solid #cccccc" href="{{ $leaveUrl }}" border-radius="3px" font-size="14px" font-weight="normal" padding="0 25px 10px 25px">
+          Leave Freegle
         </mj-button>
       </mj-column>
     </mj-section>
