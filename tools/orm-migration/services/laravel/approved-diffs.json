@@ -92,6 +92,16 @@
       "id": "d73229723d30",
       "sql": "select count(distinct `userid`) as aggregate from `chat_messages` where `refmsgid` = ? and `type` = ?",
       "reason": "Two changes, both already documented classes. The inlined type = 'Interested' is now bound; and ->count('userid') emits its result as `aggregate` where the raw statement said `AS n` - an alias that never leaves the statement, since ->count() reads the value off it and returns an int. COUNT(DISTINCT userid) itself is preserved exactly by ->distinct()->count('userid')."
+    },
+    {
+      "id": "001920a6d03b",
+      "sql": "select `id` from `locations` where `name` = ? and `type` = ? limit 1",
+      "reason": "Inlined constant now bound: type = 'Postcode' renders as type = ? with 'Postcode' as the second bind."
+    },
+    {
+      "id": "9e1132f382e3",
+      "sql": "select `id`, `userid` from `users_stories` where `reviewed` = ? and `public` = ? and `userid` is not null order by `date` desc",
+      "reason": "Inlined constants now bound, from a statement that had NO placeholders at all: reviewed = 1 and public = 1 become two binds. The IS NOT NULL predicate and the ORDER BY are unchanged, so the same rows come back in the same order."
     }
   ]
 }

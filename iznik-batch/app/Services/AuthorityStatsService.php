@@ -459,11 +459,14 @@ class AuthorityStatsService
      */
     public function getStories(int $authorityId, int $limit = 10): array
     {
-        $stories = DB::select(
-            'SELECT id, userid FROM users_stories
-             WHERE reviewed = 1 AND public = 1 AND userid IS NOT NULL
-             ORDER BY date DESC'
-        );
+        $stories = DB::table('users_stories')
+            ->select('id', 'userid')
+            ->where('reviewed', 1)
+            ->where('public', 1)
+            ->whereNotNull('userid')
+            ->orderByDesc('date')
+            ->get()
+            ->all();
         if (!$stories) {
             return [];
         }

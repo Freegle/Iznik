@@ -219,12 +219,14 @@ class DoogalService
         // Link a full postcode (e.g. "AB1 2CD") to its parent district ("AB1").
         $sp = strpos($name, ' ');
         if ($sp !== false) {
-            $parent = DB::selectOne(
-                "SELECT id FROM locations WHERE name = ? AND type = 'Postcode' LIMIT 1",
-                [substr($name, 0, $sp)]
-            );
+            $parent = DB::table('locations')
+                ->select('id')
+                ->where('name', substr($name, 0, $sp))
+                ->where('type', 'Postcode')
+                ->limit(1)
+                ->first();
             if ($parent) {
-                DB::update('UPDATE locations SET postcodeid = ? WHERE id = ?', [$parent->id, $id]);
+                DB::table('locations')->where('id', $id)->update(['postcodeid' => $parent->id]);
             }
         }
 

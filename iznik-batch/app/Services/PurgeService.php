@@ -837,7 +837,7 @@ class PurgeService
             );
 
             foreach ($logs as $log) {
-                DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
+                DB::table('logs')->where('id', $log->id)->delete();
                 $total++;
             }
         } while (count($logs) > 0);
@@ -990,7 +990,7 @@ class PurgeService
             );
 
             foreach ($logs as $log) {
-                DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
+                DB::table('logs')->where('id', $log->id)->delete();
                 $total++;
             }
         } while (count($logs) > 0);

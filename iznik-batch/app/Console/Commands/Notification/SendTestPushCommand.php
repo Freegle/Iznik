@@ -84,10 +84,11 @@ class SendTestPushCommand extends Command
         $modtools = ($app === 'mt');
 
         // Look up push notification subscriptions
-        $subscriptions = DB::select(
-            "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
-            [$userId, $apptype]
-        );
+        $subscriptions = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get()
+            ->all();
 
         if (empty($subscriptions)) {
             $this->error("No push notification subscriptions found for user #$userId with apptype=$apptype");
