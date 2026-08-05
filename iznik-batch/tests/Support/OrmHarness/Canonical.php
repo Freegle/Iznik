@@ -122,9 +122,53 @@ final class Canonical
     {
         $tokens = self::tokenize($sql);
         $tokens = self::classifyKeywords($tokens);
+        $tokens = self::dropRedundantJoinKeywords($tokens);
         $tokens = self::renameAliases($tokens);
 
         return self::joinTokens($tokens);
+    }
+
+    /**
+     * Drops INNER and OUTER before JOIN.
+     *
+     * "JOIN" and "INNER JOIN" are the same operator, as are "LEFT JOIN" and
+     * "LEFT OUTER JOIN" - the words are optional noise in every dialect this
+     * project targets. Laravel always writes the long form; hand-written SQL
+     * in this codebase usually writes the short one. Without this, every single
+     * join conversion would need an approvedDiff saying "the ORM wrote INNER",
+     * which would bury the diffs that record a REAL divergence under dozens
+     * that record a synonym.
+     *
+     * Deliberately narrow: it only removes INNER/OUTER when the next keyword is
+     * JOIN, so it cannot touch LEFT or RIGHT - which do change which rows come
+     * back and must keep failing the comparison when they differ.
+     *
+     * @param  list<array{kind:string,text:string,quoted:bool}>  $tokens
+     * @return list<array{kind:string,text:string,quoted:bool}>
+     */
+    private static function dropRedundantJoinKeywords(array $tokens): array
+    {
+        $out = [];
+        $count = count($tokens);
+        for ($i = 0; $i < $count; $i++) {
+            $t = $tokens[$i];
+            if ($t['kind'] === self::TOKEN_KEYWORD && ! $t['quoted']) {
+                $word = strtolower($t['text']);
+                // tokenize() drops whitespace, so the next token IS the next
+                // word - no scanning needed.
+                $next = $tokens[$i + 1] ?? null;
+                if (($word === 'inner' || $word === 'outer')
+                    && $next !== null
+                    && $next['kind'] === self::TOKEN_KEYWORD
+                    && ! $next['quoted']
+                    && strtolower($next['text']) === 'join') {
+                    continue; // drop this INNER/OUTER
+                }
+            }
+            $out[] = $t;
+        }
+
+        return $out;
     }
 
     /**

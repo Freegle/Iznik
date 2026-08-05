@@ -102,14 +102,14 @@ class GiftAidClaimService
      */
     private function findPostcodeFromSavedAddresses(int $userid, string $homeaddress): ?string
     {
-        $postcodes = DB::select(
-            'SELECT l.name AS postcode
-             FROM users_addresses ua
-             JOIN paf_addresses pa ON ua.pafid = pa.id
-             JOIN locations l ON pa.postcodeid = l.id
-             WHERE ua.userid = ? AND l.type = ?',
-            [$userid, 'Postcode']
-        );
+        $postcodes = DB::table('users_addresses as ua')
+            ->select('l.name as postcode')
+            ->join('paf_addresses as pa', 'ua.pafid', '=', 'pa.id')
+            ->join('locations as l', 'pa.postcodeid', '=', 'l.id')
+            ->where('ua.userid', $userid)
+            ->where('l.type', 'Postcode')
+            ->get()
+            ->all();
 
         foreach ($postcodes as $row) {
             if (stripos($homeaddress, $row->postcode) !== false) {

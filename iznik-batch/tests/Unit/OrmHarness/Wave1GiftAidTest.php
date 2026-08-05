@@ -42,6 +42,12 @@ class Wave1GiftAidTest extends TestCase
     // UPDATE users_donations SET giftaidclaimed = NOW() WHERE id = ?
     private const SITE_MARK_CLAIMED = '029b3600e99d';
 
+    // SELECT l.name AS postcode FROM users_addresses ua
+    //   JOIN paf_addresses pa ON ua.pafid = pa.id
+    //   JOIN locations l ON pa.postcodeid = l.id
+    //   WHERE ua.userid = ? AND l.type = ?
+    private const SITE_SAVED_POSTCODES = '9759f105c180';
+
     public function test_records_needing_postcode(): void
     {
         GoldenSql::assert(self::SITE_RECORDS_NEEDING_POSTCODE, fn () => DB::table('giftaid')
@@ -129,5 +135,21 @@ class Wave1GiftAidTest extends TestCase
             DB::table('users_donations')->where('id', 1),
             ['giftaidclaimed' => DB::raw('NOW()')],
         ]);
+    }
+
+    /**
+     * A three-table join, and the join ORDER is load-bearing: paf_addresses
+     * must be joined before locations, because the second join's ON clause
+     * refers to pa.postcodeid. Laravel emits the joins in call order, so the
+     * golden catches a reordering.
+     */
+    public function test_saved_address_postcodes(): void
+    {
+        GoldenSql::assert(self::SITE_SAVED_POSTCODES, fn () => DB::table('users_addresses as ua')
+            ->select('l.name as postcode')
+            ->join('paf_addresses as pa', 'ua.pafid', '=', 'pa.id')
+            ->join('locations as l', 'pa.postcodeid', '=', 'l.id')
+            ->where('ua.userid', 1)
+            ->where('l.type', 'Postcode'));
     }
 }

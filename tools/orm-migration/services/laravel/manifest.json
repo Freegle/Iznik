@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:03:44Z",
+    "generated": "2026-08-05T17:04:38Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 406,
-        "converted": 76,
-        "raw": 249,
+        "converted": 77,
+        "raw": 248,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -8881,9 +8881,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT l.name AS postcode FROM users_addresses ua JOIN paf_addresses pa ON ua.pafid = pa.id JOIN locations l ON pa.postcodeid = l.id WHERE ua.userid = ? AND l.type = ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -25521,7 +25521,7 @@
         "d5d670b380bb": {
             "id": "d5d670b380bb",
             "file": "iznik-batch/tests/Unit/OrmHarness/Wave1GiftAidTest.php",
-            "line": 130,
+            "line": 136,
             "class": "Wave1GiftAidTest",
             "function": "test_mark_donation_claimed",
             "receiver": "Illuminate\\Support\\Facades\\DB",
