@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:15:08Z",
+    "generated": "2026-08-05T17:16:11Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 85,
-        "raw": 230,
+        "converted": 86,
+        "raw": 229,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -11558,9 +11558,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE userid = ?, timestamp = ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -11569,7 +11569,7 @@
         "2c46166cdaed": {
             "id": "2c46166cdaed",
             "file": "iznik-batch/app/Services/PaypalDownloadService.php",
-            "line": 160,
+            "line": 173,
             "class": "PaypalDownloadService",
             "function": "findUserByEmail",
             "receiver": "DB::table()->where()->whereNotNull()",

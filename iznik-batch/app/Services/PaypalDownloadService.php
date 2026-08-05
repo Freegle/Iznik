@@ -142,10 +142,23 @@ class PaypalDownloadService
             ? date('Y-m-d H:i:s', strtotime($t['timestamp']))
             : now()->format('Y-m-d H:i:s');
 
-        return DB::insert(
-            'INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount) '
-            .'VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE userid = ?, timestamp = ?',
-            [$userid, $t['email'], $t['name'], $timestamp, $t['transactionid'], $t['amount'], $userid, $timestamp]
+        // A MAP for the update columns, not a list: the raw statement wrote
+        // "userid = ?, timestamp = ?" - bound values - rather than
+        // "userid = VALUES(userid)". A list would emit the VALUES() form and
+        // change what a duplicate row gets written. MySQL ignores the uniqueBy
+        // argument (it uses its own unique key, here TransactionID), but
+        // Laravel requires it.
+        return DB::table('users_donations')->upsert(
+            [[
+                'userid' => $userid,
+                'Payer' => $t['email'],
+                'PayerDisplayName' => $t['name'],
+                'timestamp' => $timestamp,
+                'TransactionID' => $t['transactionid'],
+                'GrossAmount' => $t['amount'],
+            ]],
+            ['TransactionID'],
+            ['userid' => $userid, 'timestamp' => $timestamp]
         );
     }
 
