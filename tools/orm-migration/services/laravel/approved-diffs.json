@@ -182,6 +182,11 @@
       "id": "a792f4c8557c",
       "sql": "select distinct `messages`.`id` from `messages_outcomes` inner join `messages` on `messages`.`id` = `messages_outcomes`.`msgid` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `lovejunk` on `lovejunk`.`msgid` = `messages_outcomes`.`msgid` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages_outcomes`.`timestamp` >= ? and `messages`.`type` = ? and `lovejunk`.`success` = ? and `lovejunk`.`deleted` is null and `lovejunk`.`status` LIKE ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc",
       "reason": "Four inlined constants now bound, including the LIKE pattern '{%' - which is worth naming because it is not a wildcard search but a JSON-shape test: lovejunk.status holds a JSON document and this selects rows whose status actually starts with an object brace. Binding it changes nothing about that. DISTINCT, all four joins in order, the IS NULL and the ORDER BY are unchanged."
+    },
+    {
+      "id": "d4d815c33ac9",
+      "sql": "update `messages_attachments` set `primary` = ? where `msgid` = ? order by `id` asc limit 1",
+      "reason": "Inlined constant now bound (SET `primary` = 1) and orderBy writing asc explicitly. Preserved, and both load-bearing: ORDER BY id and LIMIT 1 on an UPDATE are a MySQL extension doing real work here - of a message's attachments, mark the LOWEST-id one primary. Without the ORDER BY an arbitrary attachment is marked; without the LIMIT, all of them are."
     }
   ]
 }

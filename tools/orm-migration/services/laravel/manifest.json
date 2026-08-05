@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:13:16Z",
+    "generated": "2026-08-05T17:15:08Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 83,
-        "raw": 232,
+        "converted": 85,
+        "raw": 230,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -10429,18 +10429,18 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "UPDATE messages_attachments SET `primary` = 1 WHERE msgid = ? ORDER BY id ASC LIMIT 1",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `messages_attachments` set `primary` = ? where `msgid` = ? order by `id` asc limit 1"
         },
         "ed6f86e4e59c": {
             "id": "ed6f86e4e59c",
             "file": "iznik-batch/app/Services/MessageIllustrationsService.php",
-            "line": 76,
+            "line": 77,
             "class": "MessageIllustrationsService",
             "function": "processBatches",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13441,9 +13441,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed FROM messages_groups mg JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ? WHERE mg.msgid = ? ORDER BY mg.arrival ASC LIMIT 1",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -13452,7 +13452,7 @@
         "bfe55685accb": {
             "id": "bfe55685accb",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1326,
+            "line": 1332,
             "class": "ExpandService",
             "function": "addPosterMembershipToRippledGroups",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13512,7 +13512,7 @@
         "28a4f595cd02": {
             "id": "28a4f595cd02",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1443,
+            "line": 1449,
             "class": "ExpandService",
             "function": "maybeSendRippleIntro",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13544,7 +13544,7 @@
         "cf5d1076e522": {
             "id": "cf5d1076e522",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1500,
+            "line": 1506,
             "class": "ExpandService",
             "function": "pullRippledPostsFromLeftGroups",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13574,7 +13574,7 @@
         "fadc818bba4f": {
             "id": "fadc818bba4f",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1571,
+            "line": 1577,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13606,7 +13606,7 @@
         "63989dd3163d": {
             "id": "63989dd3163d",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1589,
+            "line": 1595,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13634,7 +13634,7 @@
         "c3d282d5d0c3": {
             "id": "c3d282d5d0c3",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1605,
+            "line": 1611,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13666,7 +13666,7 @@
         "6be336e702f5": {
             "id": "6be336e702f5",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1623,
+            "line": 1629,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13694,7 +13694,7 @@
         "c04b516c2938": {
             "id": "c04b516c2938",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1694,
+            "line": 1700,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "$q",
@@ -13720,7 +13720,7 @@
         "9b7889b7ab83": {
             "id": "9b7889b7ab83",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1724,
+            "line": 1730,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13748,7 +13748,7 @@
         "18b9c6511cb5": {
             "id": "18b9c6511cb5",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1752,
+            "line": 1758,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13774,7 +13774,7 @@
         "02417b69537b": {
             "id": "02417b69537b",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1758,
+            "line": 1764,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13800,7 +13800,7 @@
         "8e7a0bceb501": {
             "id": "8e7a0bceb501",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1869,
+            "line": 1875,
             "class": "ExpandService",
             "function": "reapplyClips",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13860,7 +13860,7 @@
         "07087e8cc794": {
             "id": "07087e8cc794",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1939,
+            "line": 1945,
             "class": "ExpandService",
             "function": "hasTerminalOutcome",
             "receiver": "Illuminate\\Support\\Facades\\DB",

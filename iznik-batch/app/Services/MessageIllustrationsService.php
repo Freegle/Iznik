@@ -53,10 +53,11 @@ class MessageIllustrationsService
                     ->exists();
 
                 if (! $hasPrimary) {
-                    DB::statement(
-                        'UPDATE messages_attachments SET `primary` = 1 WHERE msgid = ? ORDER BY id ASC LIMIT 1',
-                        [$dup->msgid]
-                    );
+                    DB::table('messages_attachments')
+                        ->where('msgid', $dup->msgid)
+                        ->orderBy('id')
+                        ->limit(1)
+                        ->update(['primary' => 1]);
                 }
             }
             $count++;

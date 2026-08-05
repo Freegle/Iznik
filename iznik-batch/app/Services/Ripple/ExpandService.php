@@ -1546,15 +1546,21 @@ class ExpandService
             // Email settings = the poster's settings on their home group: the earliest-arrival
             // group on this message where they're already a member. Fall back to the same
             // defaults addMembership uses if (unexpectedly) no such membership exists.
-            $home = DB::selectOne(
-                'SELECT m.emailfrequency, m.eventsallowed, m.volunteeringallowed
-                 FROM messages_groups mg
-                 JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?
-                 WHERE mg.msgid = ?
-                 ORDER BY mg.arrival ASC
-                 LIMIT 1',
-                [$posterId, $msgid]
-            );
+            $home = DB::table('messages_groups as mg')
+                ->select('m.emailfrequency', 'm.eventsallowed', 'm.volunteeringallowed')
+                // The userid predicate belongs in the ON clause, not the WHERE:
+                // it scopes the JOIN, so a message_groups row with no matching
+                // membership contributes nothing rather than being filtered out
+                // afterwards. Same rows either way for an inner join, but the
+                // golden compares the clause it sits in.
+                ->join('memberships as m', function ($j) use ($posterId) {
+                    $j->on('m.groupid', '=', 'mg.groupid')
+                      ->where('m.userid', $posterId);
+                })
+                ->where('mg.msgid', $msgid)
+                ->orderBy('mg.arrival')
+                ->limit(1)
+                ->first();
             // Email frequency: preserve the poster's home-group setting, but DOWNGRADE ONLY
             // immediate (-1) to daily (24). A rippled-into group is a lower-priority, unrequested
             // membership, so we never start a flood of immediate emails from it - but we also never
