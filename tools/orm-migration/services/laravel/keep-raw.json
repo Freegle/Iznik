@@ -139,6 +139,13 @@
       "reason": "A statement whose entire select list is NOW() and which reads from no table - MigrateReachBoundsSchemaCommand uses it to stamp the database's clock either side of a long schema step. DB::table() needs a table, and there is none; the builder has no from-less select. Taking the time in PHP instead defeats the purpose, which is specifically to read the DATABASE's clock rather than the application's - the command is comparing timings across a migration that may span replicas.",
       "porting": "PostgreSQL: SELECT NOW() works identically with no FROM clause. No change needed.",
       "category": "From-less clock read"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/^\\s*(INSERT|REPLACE|UPDATE)\\b[\\s\\S]*\\bNOW\\(\\)/i",
+      "reason": "A write that stores the DATABASE's clock - VALUES (..., NOW()) or SET x = NOW(). The builder can express the statement but not the value: ->update(['x' => DB::raw('NOW()')]) keeps a raw site, and ->update(['x' => now()]) binds a timestamp taken from the PHP process instead. That second form is the one that looks like a clean conversion and is not, because it moves the clock from the database to the application - across a batch host whose time can drift from the cluster's, on columns (validatetime, giftaidclaimed, latestmessage) that later get compared against other database-generated timestamps. The individual case that established this is site 029b3600e99d, GiftAidClaimService's claimed-at stamp, declined for the same reason before this rule existed; the rule generalises that decision rather than inventing it.",
+      "porting": "PostgreSQL: NOW() exists with the same transaction-start semantics, so these port unchanged. If a true wall-clock instant is wanted rather than the transaction's, clock_timestamp() is the closer equivalent - a question worth asking per column at porting time, not before.",
+      "category": "Write storing the database clock"
     }
   ]
 }
