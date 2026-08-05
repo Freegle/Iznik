@@ -563,6 +563,22 @@ async function githubBehindBy(baseSha: string, headSha: string): Promise<number>
   return isNaN(n) ? -1 : n
 }
 
+// Which separately-deployed production areas does a change touch? A change
+// touching NONE of them (monitor-fsm, docs, CI, …) has nothing a reporter could
+// retest, so no reporter-facing "please retest" reply may be posted for it.
+// Pure + exported for unit testing.
+export function classifyTouchedAreas(paths: string[]): {
+  frontend: boolean
+  go: boolean
+  php: boolean
+  deployable: boolean
+} {
+  const frontend = paths.some((p) => p.startsWith('iznik-nuxt3/'))
+  const go = paths.some((p) => p.startsWith('iznik-server-go/'))
+  const php = paths.some((p) => p.startsWith('iznik-batch/') || p.startsWith('iznik-server/'))
+  return { frontend, go, php, deployable: frontend || go || php }
+}
+
 async function checkPrDeployed(prNumber: number): Promise<{
   deployed: boolean
   frontendDeployed: boolean | null   // null if PR doesn't touch the frontend
@@ -571,12 +587,13 @@ async function checkPrDeployed(prNumber: number): Promise<{
   productionSha: string | null
   netlifyCommitSha: string | null
   touched: { frontend: boolean; go: boolean; php: boolean }
+  filesKnown: boolean                // false when the PR file list couldn't be fetched
   reason: string
 }> {
   const notDeployed = (reason: string) => ({
     deployed: false, frontendDeployed: null, backendDeployed: false,
     mergeCommitSha: null, productionSha: null, netlifyCommitSha: null,
-    touched: { frontend: false, go: false, php: false }, reason,
+    touched: { frontend: false, go: false, php: false }, filesKnown: false, reason,
   })
 
   // Get PR merge commit SHA.
@@ -593,11 +610,13 @@ async function checkPrDeployed(prNumber: number): Promise<{
   // use one area's commit as a proxy for another's (Laravel and Go don't deploy
   // together, so laravel_commit says nothing about the live Go build).
   let paths: string[] = []
+  let filesKnown = false
   const filesRes = await sh('gh', ['pr', 'view', String(prNumber), '--repo', PROD_REPO, '--json', 'files', '--jq', '[.files[].path]'])
-  if (filesRes.code === 0) { try { paths = JSON.parse(filesRes.stdout) as string[] } catch { /* leave empty */ } }
-  const touchesGo = paths.some(p => p.startsWith('iznik-server-go/'))
-  const touchesPhp = paths.some(p => p.startsWith('iznik-batch/') || p.startsWith('iznik-server/'))
-  const touchesFrontend = paths.some(p => p.startsWith('iznik-nuxt3/'))
+  if (filesRes.code === 0) { try { paths = JSON.parse(filesRes.stdout) as string[]; filesKnown = true } catch { /* leave empty */ } }
+  const areas = classifyTouchedAreas(paths)
+  const touchesGo = areas.go
+  const touchesPhp = areas.php
+  const touchesFrontend = areas.frontend
 
   // --- Live backend commits from /api/version ---
   // commit         = the Go build commit (baked in at build via ldflags)
@@ -688,6 +707,7 @@ async function checkPrDeployed(prNumber: number): Promise<{
     productionSha: null,
     netlifyCommitSha,
     touched: { frontend: touchesFrontend, go: touchesGo, php: touchesPhp },
+    filesKnown,
     reason: parts.join('; '),
   }
 }
@@ -698,12 +718,14 @@ async function checkPrDeployed(prNumber: number): Promise<{
 // laravel_commit, frontend on the Netlify published deploy. Used by
 // reconcile_direct_master_fixes so we only reply once the fix is actually live.
 const MONITOR_REPO_DIR = '/home/edward/FreegleDockerWSL'
-async function checkCommitLive(sha: string): Promise<{ deployed: boolean; touchesFrontend: boolean; reason: string }> {
+async function checkCommitLive(sha: string): Promise<{ deployed: boolean; touchesFrontend: boolean; touchesDeployable: boolean; filesKnown: boolean; reason: string }> {
   const statRes = await sh('git', ['show', sha, '--name-only', '--format='], MONITOR_REPO_DIR)
   const paths = statRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
-  const touchesGo = paths.some((p) => p.startsWith('iznik-server-go/'))
-  const touchesPhp = paths.some((p) => p.startsWith('iznik-batch/') || p.startsWith('iznik-server/'))
-  const touchesFrontend = paths.some((p) => p.startsWith('iznik-nuxt3/'))
+  const filesKnown = statRes.code === 0
+  const areas = classifyTouchedAreas(paths)
+  const touchesGo = areas.go
+  const touchesPhp = areas.php
+  const touchesFrontend = areas.frontend
 
   let goSha: string | null = null
   let laravelSha: string | null = null
@@ -743,7 +765,7 @@ async function checkCommitLive(sha: string): Promise<{ deployed: boolean; touche
   if (touchesFrontend) checks.push(frontendDeployed === true)
   if (checks.length === 0) parts.push('no deployable files touched')
   const deployed = checks.length === 0 ? true : checks.every(Boolean)
-  return { deployed, touchesFrontend, reason: parts.join('; ') }
+  return { deployed, touchesFrontend, touchesDeployable: areas.deployable, filesKnown, reason: parts.join('; ') }
 }
 
 // Match recent master commits to tracked-but-unfixed bugs by EXPLICIT Discourse
@@ -920,6 +942,17 @@ export function extractJsonArrayMarker(combined: string, marker: string): unknow
     searchFrom = at + token.length
   }
   return last
+}
+
+// Seam for unit tests: queue_deployed_reply_drafts reaches its network/file
+// dependencies through this object so tests can substitute fakes (the functions
+// themselves shell out to gh/curl or POST to Discourse). Production behaviour
+// is unchanged — these are the real implementations.
+export const deployedReplyDeps = {
+  checkPrDeployed,
+  postDiscourseReply,
+  fetchReporterQuote,
+  renderAllViews,
 }
 
 export const actions: ActionDefinition[] = [
@@ -1299,7 +1332,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'queue_deployed_reply_drafts',
-    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks via check_pr_deployed whether the fix is LIVE (per-area: Go build commit, Laravel checked-out commit, and Netlify published deploy). Once confirmed live, AUTO-POSTS the verbatim "AI Edward: possible fix applied, please retest and report back" reply to the specific reporting Discourse post (no human review), appending the app-release caveat when the fix touches iznik-nuxt3/. Records each posted reply (dedup: one per reporting post). Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {posted, pendingDeploy, alreadyPosted, postFailed}.',
+    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks via check_pr_deployed whether the fix is LIVE (per-area: Go build commit, Laravel checked-out commit, and Netlify published deploy). Once confirmed live, AUTO-POSTS the verbatim "AI Edward: possible fix applied, please retest and report back" reply to the specific reporting Discourse post (no human review), appending the app-release caveat when the fix touches iznik-nuxt3/. A tooling-only PR (touches no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed WITHOUT a reply: there is nothing the reporter could retest. Records each posted reply (dedup: one per reporting post). Updates pr.deploy_state to "deployed" or "pending_deploy"; a FAILED post resets deploy_state to pending_deploy so the reply is retried next iteration. Returns {posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed}.',
     handler: async () => {
       const db = getDb()
 
@@ -1327,12 +1360,13 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
       const posted: number[] = []
       const pendingDeploy: number[] = []
       const alreadyPosted: number[] = []
+      const skippedToolingOnly: number[] = []
       const postFailed: number[] = []
 
       for (const bug of bugs) {
         // Check deployment (per-area: Go / Laravel / frontend each gated on its
         // own live signal — they deploy separately).
-        const deployCheck = await checkPrDeployed(bug.pr_number)
+        const deployCheck = await deployedReplyDeps.checkPrDeployed(bug.pr_number)
 
         // Always update deploy_state accurately
         if (deployCheck.deployed && bug.deploy_state !== 'deployed') {
@@ -1357,6 +1391,18 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           continue
         }
 
+        // A tooling-only fix (monitor-fsm, docs, CI — no frontend/Go/PHP files)
+        // gives the reporter nothing to retest, and "possible fix applied" reads
+        // as if we patched the product (or Discourse itself). Mark it deployed
+        // but post nothing. Only skip when the file list was actually fetched —
+        // an empty list from a FAILED fetch must not suppress a real reply.
+        const touchedDeployable = deployCheck.touched.frontend || deployCheck.touched.go || deployCheck.touched.php
+        if (deployCheck.filesKnown && !touchedDeployable) {
+          skippedToolingOnly.push(bug.pr_number)
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is tooling-only — nothing for the reporter to retest, no reply posted (bug ${bug.topic}.${bug.post})`)
+          continue
+        }
+
         const prUrl = `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`
         // Verbatim reply (fixed operator wording). Append the app-release caveat
         // when the fix touches iznik-nuxt3/ — the Capacitor apps are built from
@@ -1371,7 +1417,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         // what they wrote, not our paraphrased summary. Fall back to the stored
         // excerpt/title only if the live fetch yields nothing; the posting guard
         // still refuses a context-less reply.
-        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
+        const quote = (await deployedReplyDeps.fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         const username = bug.reporter ?? 'there'
 
         // Auto-post (explicitly approved): post the verbatim reply threaded under
@@ -1380,11 +1426,10 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         // bare `body` was posted unquoted before, identical to the human-draft
         // path (dashboard) which has always quoted.
         const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
-        const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
+        const postRes = await deployedReplyDeps.postDiscourseReply(bug.topic, raw, bug.post)
         if (!postRes.ok) {
           postFailed.push(bug.pr_number)
           outWarn(`queue_deployed_reply_drafts: FAILED to post reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}): ${postRes.error}`)
-          // Leave deploy_state=deployed; we'll retry the post next iteration.
           continue
         }
 
@@ -1402,15 +1447,25 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         posted.push(bug.pr_number)
       }
 
-      if (posted.length > 0) await renderAllViews(db)
+      // Re-arm retries AFTER the loop: the candidate query only selects
+      // pending_deploy PRs, so leaving a failed post's PR at deploy_state=
+      // deployed would orphan its reply forever. Done post-loop because a PR
+      // can carry several bugs and a later sibling's success would otherwise
+      // flip the PR back to deployed, losing the earlier failure. Bugs whose
+      // replies DID post are protected on retry by the discourse_draft dedup.
+      for (const prNumber of new Set(postFailed)) {
+        upsertPr(db, { number: prNumber, deployState: 'pending_deploy' })
+      }
 
-      return { posted, pendingDeploy, alreadyPosted, postFailed }
+      if (posted.length > 0) await deployedReplyDeps.renderAllViews(db)
+
+      return { posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed }
     },
   },
 
   {
     name: 'reconcile_direct_master_fixes',
-    description: 'Called automatically during LOAD_STATE. Closes the blind spot where a fix pushed DIRECT TO MASTER (no PR — CI fixes, small fixes) never marks its Discourse bug fixed, so no "please retest" reply is ever sent (sync_pr_states + queue_deployed_reply_drafts only handle bugs with a pr_number). Scans recent origin/master commits for an EXPLICIT Discourse reference — `topic/post` (or `topic` alone when the topic has exactly one unfixed bug) — i.e. a deliberate human-written link in the commit message, NOT keyword overlap (the bag-of-words checkGitAlreadyFixed heuristic was disabled at ~75% false positive). For each matched open/deferred/investigating bug with NO pr_number whose fixing commit is confirmed LIVE (same per-area deploy gate as PRs), marks it fixed and auto-posts the hedged "AI Edward: possible fix applied, please retest" reply (quoted, deduped, app caveat when frontend-touched). Returns {reconciled, posted, pendingDeploy, skipped}.',
+    description: 'Called automatically during LOAD_STATE. Closes the blind spot where a fix pushed DIRECT TO MASTER (no PR — CI fixes, small fixes) never marks its Discourse bug fixed, so no "please retest" reply is ever sent (sync_pr_states + queue_deployed_reply_drafts only handle bugs with a pr_number). Scans recent origin/master commits for an EXPLICIT Discourse reference — `topic/post` (or `topic` alone when the topic has exactly one unfixed bug) — i.e. a deliberate human-written link in the commit message, NOT keyword overlap (the bag-of-words checkGitAlreadyFixed heuristic was disabled at ~75% false positive). For each matched open/deferred/investigating bug with NO pr_number whose fixing commit is confirmed LIVE (same per-area deploy gate as PRs), marks it fixed and auto-posts the hedged "AI Edward: possible fix applied, please retest" reply (quoted, deduped, app caveat when frontend-touched). A tooling-only commit (no frontend/Go/PHP files) is marked fixed WITHOUT a reply — nothing for the reporter to retest. A failed post leaves the bug unfixed so it is re-matched and retried next iteration. Returns {reconciled, posted, pendingDeploy, skipped}.',
     handler: async () => {
       const db = getDb()
       // Only PR-LESS unfixed bugs: PR-tracked ones flow through sync_pr_states /
@@ -1452,26 +1507,44 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           continue
         }
 
-        db.prepare(`UPDATE discourse_bug SET state='fixed', fixed_at=datetime('now'), deployed_at=datetime('now'), reason=? WHERE topic=? AND post=?`)
-          .run(`direct-master ${match.sha.slice(0, 8)}: ${match.subj}`, bug.topic, bug.post)
-        reconciled.push(tag)
+        // Mark fixed only once the reply outcome is decided: the candidate query
+        // selects open/deferred/investigating bugs, so marking fixed BEFORE a
+        // post that then fails would orphan the reply forever (never re-matched).
+        const markFixed = () => {
+          db.prepare(`UPDATE discourse_bug SET state='fixed', fixed_at=datetime('now'), deployed_at=datetime('now'), reason=? WHERE topic=? AND post=?`)
+            .run(`direct-master ${match.sha.slice(0, 8)}: ${match.subj}`, bug.topic, bug.post)
+          reconciled.push(tag)
+        }
 
         // One reply per reporting post (dedup, same guard as queue_deployed_reply_drafts).
         const existing = db.prepare(`SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`).get(bug.topic, bug.post)
-        if (existing) { skipped.push(`${tag} (reply already exists)`); continue }
+        if (existing) { markFixed(); skipped.push(`${tag} (reply already exists)`); continue }
+
+        // Tooling-only commit (no frontend/Go/PHP files): nothing the reporter
+        // could retest, so mark fixed without a reply. Only when the file list
+        // is actually known — never suppress a reply on missing data.
+        if (live.filesKnown && !live.touchesDeployable) {
+          markFixed()
+          skipped.push(`${tag} (tooling-only — nothing for the reporter to retest, no reply)`)
+          out(`reconcile_direct_master_fixes: ${tag} is tooling-only — marked fixed, no reply posted`)
+          continue
+        }
 
         const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
-        if (!quote) { skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
+        if (!quote) { markFixed(); skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
         const body = 'AI Edward: possible fix applied, please retest and report back'
           + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
         const username = bug.reporter ?? 'there'
         const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
         const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
         if (!postRes.ok) {
-          skipped.push(`${tag} (post failed: ${postRes.error})`)
+          // Bug left unfixed on purpose: next iteration re-matches it and
+          // retries the post.
+          skipped.push(`${tag} (post failed — will retry next iteration: ${postRes.error})`)
           outWarn(`reconcile_direct_master_fixes: post failed for ${tag}: ${postRes.error}`)
           continue
         }
+        markFixed()
         recordPostedReply(db, {
           topic: bug.topic, post: bug.post, username, quote, body,
           prUrl: `https://github.com/${PROD_REPO}/commit/${match.sha}`,

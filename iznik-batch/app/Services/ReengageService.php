@@ -8,6 +8,7 @@ use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
 use App\Support\ExperimentBucket;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -91,8 +92,13 @@ class ReengageService
 
         // The window of account ages that can still be in the sequence: young
         // enough to have started (>= start_day) up to old enough to be finishing
-        // the last tip (or a late first-start capped by max_start_days).
-        $windowDays = $maxStartDays + (self::TIPS - 1) * $gapDays;
+        // the last tip (or a late first-start capped by max_start_days). The
+        // slack days on top matter: a member who misses a day (cron outage, or a
+        // day skipped by the once-per-day guard) finishes the sequence a little
+        // older than the ideal cadence predicts, and without slack they age out
+        // of this query mid-sequence. Seen live 2026-08: the pre-calendar-day
+        // guard slipped everyone to alternate days, so nobody ever got tips 4-5.
+        $windowDays = $maxStartDays + (self::TIPS - 1) * $gapDays + 3;
         $oldest = now()->subDays($windowDays)->toDateTimeString();
         $newest = now()->subDays($startDay)->toDateTimeString();
 
@@ -217,9 +223,16 @@ class ReengageService
             return 'skipped';
         }
 
-        // Never send two tips the same day.
+        // Never send two tips the same CALENDAR day (or within the configured
+        // gap in calendar days). Deliberately not an elapsed-24h check: the cron
+        // fires at a fixed clock time and the sends land seconds after it, so
+        // "a full day since the last send" was a race of seconds against the
+        // member's position in yesterday's queue. That race locked live into a
+        // stable alternate-day cycle (heavy run -> late sends -> next day all
+        // skipped -> light run -> early sends -> day after all pass), doubling
+        // the cadence and pushing tips 4-5 past the candidate window.
         $lastSentAt = $rows->max('sentat');
-        if ($lastSentAt && now()->diffInDays($lastSentAt, false) > -$gapDays) {
+        if ($lastSentAt && Carbon::parse($lastSentAt)->startOfDay()->diffInDays(now()->startOfDay()) < $gapDays) {
             return 'skipped';
         }
 

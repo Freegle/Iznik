@@ -94,7 +94,7 @@ Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `confirmed`.
 
 `check_bug_feedback` (run each `LOAD_STATE`) scans follow-up Discourse posts for reporter confirmations and Edward's "working on it" / "fix applied" / "expected behaviour" replies, updating states automatically.
 
-Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post.
+Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
 
 ### Model assignment
 

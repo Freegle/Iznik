@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 let mockPlatform = 'web'
@@ -6,6 +6,15 @@ vi.mock('@capacitor/core', () => ({
   Capacitor: {
     getPlatform: () => mockPlatform,
     isNativePlatform: () => mockPlatform !== 'web',
+  },
+}))
+
+const mockTextZoomGetPreferred = vi.fn()
+const mockTextZoomSet = vi.fn()
+vi.mock('@capacitor/text-zoom', () => ({
+  TextZoom: {
+    getPreferred: (...args) => mockTextZoomGetPreferred(...args),
+    set: (...args) => mockTextZoomSet(...args),
   },
 }))
 
@@ -173,17 +182,13 @@ describe('mobile store', () => {
 
     it('returns false when no query string', () => {
       const store = useMobileStore()
-      const result = store.extractQueryStringParams(
-        'https://example.com/path'
-      )
+      const result = store.extractQueryStringParams('https://example.com/path')
       expect(result).toBe(false)
     })
 
     it('handles empty query string', () => {
       const store = useMobileStore()
-      const result = store.extractQueryStringParams(
-        'https://example.com?'
-      )
+      const result = store.extractQueryStringParams('https://example.com?')
       expect(result).toEqual({})
     })
 
@@ -311,11 +316,7 @@ describe('mobile store', () => {
 
     it('ignores legacy notifications without channel_id', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      await store.handleNotification(
-        { data: { route: '/chats/1' } },
-        {},
-        {}
-      )
+      await store.handleNotification({ data: { route: '/chats/1' } }, {}, {})
       expect(store.route).toBe(false)
       logSpy.mockRestore()
     })
@@ -372,10 +373,7 @@ describe('mobile store', () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       mockChatSend.mockResolvedValue({})
 
-      await store.handleReplyAction(
-        { data: { chatids: '42' } },
-        'Hello!'
-      )
+      await store.handleReplyAction({ data: { chatids: '42' } }, 'Hello!')
 
       expect(mockChatSend).toHaveBeenCalledWith({
         roomid: 42,
@@ -970,6 +968,68 @@ describe('mobile store', () => {
         currentRoute: { value: { path: '/' } },
       }))
       logSpy.mockRestore()
+    })
+  })
+
+  // The OS accessibility text-size setting is a PERMANENT preference: WKWebView
+  // ignores iOS Dynamic Type for web content, so without applying the preferred
+  // zoom the app renders at a fixed size whatever the member set in Settings.
+  // (Distinct from pinch zoom, which is a transient gesture.)
+  describe('initTextZoom', () => {
+    function fakeApp() {
+      const listeners = {}
+      return {
+        addListener: vi.fn((event, cb) => {
+          listeners[event] = cb
+        }),
+        fire: (event) => listeners[event]?.(),
+      }
+    }
+
+    it('applies the preferred zoom on startup', async () => {
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.3 })
+      const store = useMobileStore()
+
+      await store.initTextZoom(fakeApp())
+
+      expect(mockTextZoomSet).toHaveBeenCalledWith({ value: 1.3 })
+    })
+
+    it('re-applies when the app resumes with a changed setting', async () => {
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.0 })
+      const store = useMobileStore()
+      const app = fakeApp()
+
+      await store.initTextZoom(app)
+      expect(app.addListener).toHaveBeenCalledWith(
+        'resume',
+        expect.any(Function)
+      )
+
+      // Member changes the OS setting while we're backgrounded.
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.5 })
+      await app.fire('resume')
+
+      expect(mockTextZoomSet).toHaveBeenLastCalledWith({ value: 1.5 })
+    })
+
+    it('does not set a zoom when the preferred value is unusable', async () => {
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 0 })
+      const store = useMobileStore()
+
+      await store.initTextZoom(fakeApp())
+
+      expect(mockTextZoomSet).not.toHaveBeenCalled()
+    })
+
+    it('survives the plugin being unavailable', async () => {
+      mockTextZoomGetPreferred.mockRejectedValue(new Error('not implemented'))
+      const store = useMobileStore()
+
+      // Must not throw - an old installed build without the plugin still boots.
+      await store.initTextZoom(fakeApp())
+
+      expect(mockTextZoomSet).not.toHaveBeenCalled()
     })
   })
 })

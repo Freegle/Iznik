@@ -55,6 +55,7 @@
                 Show {{ duplicateCount }} combined posts separately
               </b-dropdown-item>
               <b-dropdown-item
+                v-if="!isApp"
                 :href="'/chitchat/' + newsfeed?.id"
                 target="_blank"
               >
@@ -323,6 +324,7 @@ import {
 import AutoHeightTextarea from './AutoHeightTextarea'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 import NewsReplies from '~/components/NewsReplies'
 import { untwem } from '~/composables/useTwem'
 import {
@@ -387,7 +389,13 @@ const teamStore = useTeamStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
 const { chitChatMod, supportOrAdmin } = useMe()
+
+// In the app there is no browser to open a new window in - target="_blank"
+// bounces through the OS back into the app, which just reopens it. Hide the
+// option there.
+const isApp = computed(() => mobileStore.isApp)
 
 const isMobile = computed(() => {
   return miscStore.breakpoint === 'xs' || miscStore.breakpoint === 'sm'
