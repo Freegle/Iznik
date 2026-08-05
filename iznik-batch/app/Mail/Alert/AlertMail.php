@@ -34,6 +34,14 @@ class AlertMail extends MjmlMailable
         parent::__construct();
     }
 
+    /**
+     * Transactional - a system alert to volunteers - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;

@@ -487,6 +487,12 @@ class GiftAidClaimService
                 continue;
             }
 
+            // Honour the "Encouragement emails" setting, which is also what the
+            // `engagement` unsubscribe category turns off.
+            if (! $user->wantsEngagementMail()) {
+                continue;
+            }
+
             $sentTo[$donation->userid] = true;
             $donationDate = date('d-M-Y', strtotime($donation->timestamp));
 

@@ -20,6 +20,14 @@ class ModNotifMail extends MjmlMailable
 
     private string $modNotifSubject;
 
+    /**
+     * Transactional - a moderator notification - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         string $recipientName,
         string $recipientEmail,

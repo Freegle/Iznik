@@ -11,6 +11,14 @@ class CharitySignupMail extends MjmlMailable
 {
     use LoggableEmail;
 
+    /**
+     * Transactional - a sign-up confirmation for a charity - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public int $charityId,
         public string $orgName,

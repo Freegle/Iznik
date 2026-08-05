@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-20
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -78,6 +78,9 @@ This is a **separate** mail from the daily digest's relevance ranking
   RFC 8058 `List-Unsubscribe` header (one-click) and a visible footer link at it,
   so a member can stop just these emails without unsubscribing the whole account.
   The existing `users.relevantallowed` settings/ModTools toggle still works too.
+  This is now one case of the general scheme every bulk mailable follows —
+  `MatchedPosts` declares the `relevant` category and keeps `relevantoff` as its
+  targeted endpoint. See [./unsubscribe.md](./unsubscribe.md).
 
 ## Preview
 

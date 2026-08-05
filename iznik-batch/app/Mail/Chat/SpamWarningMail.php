@@ -41,6 +41,14 @@ class SpamWarningMail extends MjmlMailable
         $this->siteName = config('freegle.branding.name', 'Freegle');
     }
 
+    /**
+     * Transactional - a warning about the recipient's own account - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->recipient->id ?? null;

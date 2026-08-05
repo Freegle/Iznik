@@ -13,6 +13,7 @@ use App\Services\MatchedPostsService;
 use App\Support\SubjectParser;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
+use App\Services\UnsubscribeService;
 
 /**
  * The matched-posts email: the opposite-type posts near a member that match
@@ -40,6 +41,11 @@ class MatchedPosts extends MjmlMailable
     }
 
     private ?string $cachedOptOutUrl = null;
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_RELEVANT;
+    }
 
     protected function getRecipientUserId(): ?int
     {
