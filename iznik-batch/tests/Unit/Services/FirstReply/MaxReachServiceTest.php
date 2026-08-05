@@ -25,6 +25,9 @@ class MaxReachServiceTest extends TestCase
     {
         parent::setUp();
         MaxReachService::forgetAvailability();
+        // The sizing sweep works on every pending row, so leftovers from another
+        // test would show up in this one's counts.
+        DB::statement('DELETE FROM firstreply_passthroughs');
         DB::statement('DELETE FROM rippling_reach');
     }
 
@@ -152,5 +155,90 @@ class MaxReachServiceTest extends TestCase
         $this->assertTrue($this->service()->isWithinMaxReach(
             (int) $message->id, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
         ));
+    }
+
+    public function test_sizes_a_passthrough_by_the_tick_that_would_have_covered_the_replier(): void
+    {
+        // The whole point of the passthrough is the wait it removes, so that has
+        // to be measurable per reply rather than guessed from a population.
+        $msgid = $this->seedRipplingPost();
+
+        // The replier is outside tick 1 but inside tick 2's polygon, and the
+        // LOWEST covering tick is the one that decides: tick 2 is due at
+        // hazard_hours[0] = 1h after arrival, and the post arrived just now, so
+        // they were spared about an hour.
+        DB::table('firstreply_passthroughs')->insert([
+            'msgid' => $msgid,
+            'source' => 'email',
+            'lat' => self::INSIDE_TICK3_ONLY[0],
+            'lng' => self::INSIDE_TICK3_ONLY[1],
+            'created_at' => now(),
+        ]);
+
+        $stats = $this->service()->computePassthroughSavings();
+
+        $this->assertSame(1, $stats['computed']);
+
+        $waited = DB::table('firstreply_passthroughs')->where('msgid', $msgid)->value('waited_hours');
+        $this->assertNotNull($waited);
+        $this->assertEqualsWithDelta(1.0, (float) $waited, 0.2);
+    }
+
+    public function test_a_replier_already_inside_the_current_tick_is_sized_at_zero(): void
+    {
+        // Not discarded as unknown: dropping the least impressive cases would
+        // quietly flatter the average.
+        $msgid = $this->seedRipplingPost();
+
+        DB::table('firstreply_passthroughs')->insert([
+            'msgid' => $msgid,
+            'source' => 'web',
+            'lat' => self::INSIDE_TICK1[0],
+            'lng' => self::INSIDE_TICK1[1],
+            'created_at' => now(),
+        ]);
+
+        $this->service()->computePassthroughSavings();
+
+        $this->assertSame(
+            0.0,
+            (float) DB::table('firstreply_passthroughs')->where('msgid', $msgid)->value('waited_hours')
+        );
+    }
+
+    public function test_a_replier_no_tick_covers_is_left_unknown_not_zero(): void
+    {
+        $msgid = $this->seedRipplingPost();
+
+        DB::table('firstreply_passthroughs')->insert([
+            'msgid' => $msgid,
+            'source' => 'web',
+            'lat' => self::OUTSIDE_EVERYTHING[0],
+            'lng' => self::OUTSIDE_EVERYTHING[1],
+            'created_at' => now(),
+        ]);
+
+        $stats = $this->service()->computePassthroughSavings();
+
+        $this->assertSame(1, $stats['unknown']);
+
+        $row = DB::table('firstreply_passthroughs')->where('msgid', $msgid)->first();
+        $this->assertNull($row->waited_hours, 'unknown stays unknown rather than counting as no saving');
+        $this->assertNotNull($row->computed_at, 'but it is stamped so it is not rescanned forever');
+    }
+
+    public function test_sizing_is_not_repeated(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        DB::table('firstreply_passthroughs')->insert([
+            'msgid' => $msgid,
+            'source' => 'web',
+            'lat' => self::INSIDE_TICK3_ONLY[0],
+            'lng' => self::INSIDE_TICK3_ONLY[1],
+            'created_at' => now(),
+        ]);
+
+        $this->assertSame(1, $this->service()->computePassthroughSavings()['scanned']);
+        $this->assertSame(0, $this->service()->computePassthroughSavings()['scanned']);
     }
 }

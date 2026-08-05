@@ -738,6 +738,16 @@ func CreateChatMessage(c *fiber.Ctx) error {
 							db.Exec("INSERT INTO firstreply_event_metrics (day, event, count) " +
 								"VALUES (CURDATE(), 'passthrough_web', 1) " +
 								"ON DUPLICATE KEY UPDATE count = count + 1")
+							// Record it individually too, with where the replier was, so the batch
+							// sweep can work out how long THIS reply would otherwise have waited.
+							// The counter says the lever fired; only that says what firing bought.
+							// Deliberately just an INSERT: working out which tick would have covered
+							// them means parsing the reach schedule, and doing that here as well as
+							// in the batch app would be the same geometry in two languages.
+							db.Exec("INSERT INTO firstreply_passthroughs "+
+								"(msgid, userid, source, lat, lng, created_at) "+
+								"VALUES (?, ?, 'web', ?, ?, NOW())",
+								*payload.Refmsgid, myid, reach.lat, reach.lng)
 						}
 					}
 				}

@@ -44,6 +44,20 @@ class MaxReachCommand extends Command
             $stats['skipped']
         ));
 
+        // Same command because it is the same knowledge: this is the only place
+        // that already parses tick schedules, and sizing a passthrough means
+        // asking which tick would have covered the replier.
+        $saved = $service->computePassthroughSavings();
+
+        if ($saved['scanned'] > 0) {
+            $this->info(sprintf(
+                'passthrough sizing: scanned %d, sized %d, unanswerable %d',
+                $saved['scanned'],
+                $saved['computed'],
+                $saved['unknown']
+            ));
+        }
+
         return Command::SUCCESS;
     }
 }

@@ -74,11 +74,21 @@ type PassthroughSummary struct {
 	// Web and Email are first replies delivered instead of held, by door.
 	Web   int64 `json:"web"`
 	Email int64 `json:"email"`
-	// HeldMedianHours is how long a held reply typically waits before release,
-	// across the same window. This is the delay a passthrough avoids, and the
-	// only honest way to size the benefit.
-	HeldMedianHours *float64 `json:"heldmedianhours"`
-	HeldReleased    int64    `json:"heldreleased"`
+	// Sized is how many of those we could work out a saving for, and
+	// AvgHoursEarlier / MaxHoursEarlier are how much earlier the poster heard
+	// than they would have. This is per reply - "for THIS replier, when would
+	// the reach have got to them?" - not the average hold duration across a
+	// different population.
+	Sized           int64    `json:"sized"`
+	AvgHoursEarlier *float64 `json:"avghoursearlier"`
+	MaxHoursEarlier *float64 `json:"maxhoursearlier"`
+	// SameDay is replies that would have waited less than a day anyway. A
+	// passthrough that saves twenty minutes is worth much less than one that
+	// saves three days, and an average alone hides which kind these are.
+	SameDay int64 `json:"sameday"`
+	// HeldReleased is holds that still happened in the window, for context on
+	// how much of the problem the passthrough is actually catching.
+	HeldReleased int64 `json:"heldreleased"`
 }
 
 // @Router /firstreply/metrics [get]
@@ -118,18 +128,32 @@ func Metrics(c *fiber.Ctx) error {
 		"FROM firstreply_event_metrics "+
 		"WHERE day BETWEEN DATE(?) AND DATE(?)", start, end).Scan(&passthrough)
 
-	// The counterfactual: how long holds actually last when they happen.
-	var held struct {
-		Released int64    `gorm:"column:released"`
-		Hours    *float64 `gorm:"column:hours"`
+	// How much earlier the poster actually heard, per reply, from the sweep that
+	// asks which tick would have covered each replier.
+	var sized struct {
+		Sized   int64    `gorm:"column:sized"`
+		AvgHrs  *float64 `gorm:"column:avghrs"`
+		MaxHrs  *float64 `gorm:"column:maxhrs"`
+		SameDay int64    `gorm:"column:sameday"`
 	}
-	db.Raw("SELECT COUNT(*) AS released, "+
-		"AVG(TIMESTAMPDIFF(MINUTE, created_at, releasedat)) / 60 AS hours "+
-		"FROM rippling_held_replies "+
+	db.Raw("SELECT COUNT(waited_hours) AS sized, "+
+		"AVG(waited_hours) AS avghrs, "+
+		"MAX(waited_hours) AS maxhrs, "+
+		"SUM(waited_hours < 24) AS sameday "+
+		"FROM firstreply_passthroughs "+
+		"WHERE created_at BETWEEN ? AND ?", start, end).Scan(&sized)
+	passthrough.Sized = sized.Sized
+	passthrough.AvgHoursEarlier = sized.AvgHrs
+	passthrough.MaxHoursEarlier = sized.MaxHrs
+	passthrough.SameDay = sized.SameDay
+
+	// Holds that still happened, for context on how much of the problem the
+	// passthrough is catching.
+	var heldReleased int64
+	db.Raw("SELECT COUNT(*) FROM rippling_held_replies "+
 		"WHERE status = 'released' AND releasedat IS NOT NULL "+
-		"AND created_at BETWEEN ? AND ?", start, end).Scan(&held)
-	passthrough.HeldReleased = held.Released
-	passthrough.HeldMedianHours = held.Hours
+		"AND created_at BETWEEN ? AND ?", start, end).Scan(&heldReleased)
+	passthrough.HeldReleased = heldReleased
 
 	signals := []ScoutSignal{}
 	db.Raw("SELECT fs.reason AS reason, "+

@@ -28,9 +28,9 @@
       <h3 class="ms-2 mt-2">Passthrough</h3>
       <p class="text-muted small ms-2">
         First replies delivered straight away instead of being held until the
-        ripple reached the replier. The value of each one is the wait it
-        avoided, so it is shown against how long a hold actually lasts when it
-        does happen.
+        ripple reached the replier. The value of each one is the wait it avoided,
+        so that is measured per reply: for that replier, at that location, when
+        <em>would</em> the reach have got to them?
       </p>
       <b-table-simple hover responsive small class="mb-4">
         <b-tbody>
@@ -43,15 +43,35 @@
             <b-td class="fw-bold">{{ stats.passthrough.email }}</b-td>
           </b-tr>
           <b-tr>
+            <b-td>How much earlier the poster heard, on average</b-td>
+            <b-td class="fw-bold">
+              {{ hours(stats.passthrough.avghoursearlier) }}
+            </b-td>
+          </b-tr>
+          <b-tr>
+            <b-td>The biggest single saving</b-td>
+            <b-td>{{ hours(stats.passthrough.maxhoursearlier) }}</b-td>
+          </b-tr>
+          <b-tr>
+            <b-td>
+              Of those, replies that would have arrived within a day anyway
+            </b-td>
+            <b-td>
+              {{ stats.passthrough.sameday }}
+              ({{ rate(stats.passthrough.sameday, stats.passthrough.sized) }})
+            </b-td>
+          </b-tr>
+          <b-tr>
             <b-td>Replies still held, and released later</b-td>
             <b-td>{{ stats.passthrough.heldreleased }}</b-td>
           </b-tr>
-          <b-tr>
-            <b-td>Typical wait when a reply is held</b-td>
-            <b-td>{{ hours(stats.passthrough.heldmedianhours) }}</b-td>
-          </b-tr>
         </b-tbody>
       </b-table-simple>
+      <p v-if="unsizedPassthroughs > 0" class="text-muted small ms-2">
+        {{ unsizedPassthroughs }} let through could not be sized - the post's
+        reach schedule could not say which step would have covered the replier.
+        Those are left out of the averages rather than counted as no saving.
+      </p>
       <NoticeMessage
         v-if="!passthroughUsed"
         variant="info"
@@ -69,7 +89,10 @@
         has replied to. The three signals are shown separately on purpose:
         <strong>wanted</strong> and <strong>search</strong> are things a member
         asked for, <strong>frequent</strong> is only a guess, and if it does not
-        convert it should not be spending mail.
+        convert it should not be spending mail. Each scout is counted under the
+        <em>strongest</em> signal that picked them, so the frequent row means
+        "frequent and nothing else" - which is the right denominator for deciding
+        whether propensity on its own is worth anything.
       </p>
       <b-table-simple hover responsive small class="mb-4">
         <b-thead>
@@ -182,8 +205,16 @@ const stats = ref(null)
 const loading = ref(false)
 const error = ref(null)
 
-const passthroughUsed = computed(
-  () => Boolean(stats.value) && stats.value.passthrough.web + stats.value.passthrough.email > 0
+const passthroughTotal = computed(() =>
+  stats.value ? stats.value.passthrough.web + stats.value.passthrough.email : 0
+)
+
+const passthroughUsed = computed(() => passthroughTotal.value > 0)
+
+// Sized covers both doors, so anything unsized is a passthrough whose saving we
+// could not work out - worth showing rather than quietly averaging over.
+const unsizedPassthroughs = computed(() =>
+  stats.value ? Math.max(0, passthroughTotal.value - stats.value.passthrough.sized) : 0
 )
 
 const SIGNAL_LABELS = {

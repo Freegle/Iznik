@@ -126,6 +126,22 @@ class RippleReplyService
         // in one should not be read as a change in the other.
         app(Metrics::class)->record('passthrough_email');
 
+        // Also record it individually, with where the replier was, so the sweep
+        // can work out how long this particular reply would have waited. The
+        // counter says the lever fired; only this says what firing bought.
+        try {
+            DB::table('firstreply_passthroughs')->insert([
+                'msgid' => $msgid,
+                'source' => 'email',
+                'lat' => $lat,
+                'lng' => $lng,
+                'created_at' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            // Instrumentation must never decide whether a reply gets through.
+            Log::warning("firstreply: could not record passthrough for {$msgid}: {$e->getMessage()}");
+        }
+
         return true;
     }
 

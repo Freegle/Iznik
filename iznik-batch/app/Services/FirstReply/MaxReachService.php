@@ -3,6 +3,7 @@
 namespace App\Services\FirstReply;
 
 use App\Services\Ripple\ReachService;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -203,6 +204,131 @@ class MaxReachService
         }
 
         return $stats;
+    }
+
+    /**
+     * Work out how long each recorded passthrough would have waited, had it been
+     * held.
+     *
+     * This is the only thing that says whether the passthrough is worth having.
+     * The count says the lever fired; this says what firing bought. For each
+     * reply, find the first tick whose polygon covers where the replier was, ask
+     * the hazard schedule when that tick was due, and measure from when they
+     * actually replied.
+     *
+     * A reply already inside the tick the post had reached scores 0 rather than
+     * being discarded - it happens when the reach moved on between the decision
+     * and this sweep, and calling that "unknown" would quietly drop the least
+     * impressive cases and flatter the average.
+     *
+     * @return array{scanned:int, computed:int, unknown:int}
+     */
+    public function computePassthroughSavings(int $limit = 200): array
+    {
+        $stats = ['scanned' => 0, 'computed' => 0, 'unknown' => 0];
+
+        try {
+            $rows = DB::select(
+                'SELECT p.id, p.msgid, p.lat, p.lng, p.created_at,
+                        rr.schedule, rr.arrival, rr.total_ticks
+                 FROM firstreply_passthroughs p
+                 JOIN rippling_reach rr ON rr.msgid = p.msgid
+                 WHERE p.computed_at IS NULL AND p.lat IS NOT NULL AND p.lng IS NOT NULL
+                 ORDER BY p.created_at
+                 LIMIT ?',
+                [$limit]
+            );
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: passthrough saving sweep failed', ['error' => $e->getMessage()]);
+
+            return $stats;
+        }
+
+        $hazard = $this->reach->hazardHours();
+
+        foreach ($rows as $row) {
+            $stats['scanned']++;
+
+            $waited = null;
+
+            try {
+                $ticks = json_decode((string) $row->schedule, true);
+                if (is_array($ticks) && !empty($ticks) && $row->arrival !== null) {
+                    $tick = $this->firstTickCovering($ticks, (float) $row->lat, (float) $row->lng);
+                    if ($tick !== null) {
+                        // Tick 1 is live from arrival; tick k (k>=2) starts at
+                        // hazardHours[k-2], which is the threshold that promotes
+                        // the post INTO that tick.
+                        $dueHours = $tick >= 2 ? ($hazard[$tick - 2] ?? null) : 0;
+                        if ($dueHours !== null) {
+                            $due = Carbon::parse($row->arrival)->addHours((float) $dueHours);
+                            $repliedAt = Carbon::parse($row->created_at);
+                            $waited = max(0.0, $repliedAt->diffInSeconds($due, false) / 3600.0);
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('firstreply: could not size a passthrough', [
+                    'id' => $row->id, 'error' => $e->getMessage(),
+                ]);
+            }
+
+            // computed_at is stamped either way so an unanswerable row is not
+            // rescanned forever; waited_hours stays NULL and the dashboard
+            // averages only the rows it could actually answer.
+            DB::table('firstreply_passthroughs')->where('id', $row->id)->update([
+                'waited_hours' => $waited,
+                'computed_at' => now(),
+            ]);
+
+            if ($waited === null) {
+                $stats['unknown']++;
+            } else {
+                $stats['computed']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * The lowest tick number whose polygon contains (lat,lng), or null when none
+     * of them do (or none carries geometry to test).
+     *
+     * Ticks are sorted rather than assumed ordered, for the same reason finalTick
+     * takes the highest tick number rather than the last element.
+     *
+     * @param array<int,mixed> $ticks
+     */
+    private function firstTickCovering(array $ticks, float $lat, float $lng): ?int
+    {
+        $withGeometry = [];
+        foreach ($ticks as $entry) {
+            if (is_array($entry) && !empty($entry['wkt'])) {
+                $withGeometry[] = $entry;
+            }
+        }
+
+        usort($withGeometry, static fn ($a, $b) => (int) ($a['tick'] ?? 0) <=> (int) ($b['tick'] ?? 0));
+
+        foreach ($withGeometry as $entry) {
+            try {
+                $row = DB::selectOne(
+                    'SELECT ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), '
+                    . 'ST_SRID(POINT(?, ?), ' . self::SRID . ')) AS inside',
+                    [(string) $entry['wkt'], $lng, $lat]
+                );
+                if ((int) ($row->inside ?? 0) === 1) {
+                    return (int) ($entry['tick'] ?? 0);
+                }
+            } catch (\Throwable) {
+                // Invalid stored geometry: skip this tick rather than abandoning
+                // the row, since a later tick may still answer.
+                continue;
+            }
+        }
+
+        return null;
     }
 
     /**

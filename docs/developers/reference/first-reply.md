@@ -221,6 +221,7 @@ them in a quiet channel would mean nobody ever answers them.
 | `chat_prompts` | options and answer for a `Prompt` chat message |
 | `firstreply_scouts` | who was scouted about what, why, and whether they then replied (`replied_at`). Doubles as the fatigue ledger |
 | `firstreply_prompts_sent` | which prompts a post has had. The `(msgid, kind)` unique key is what makes the cadence engine idempotent |
+| `firstreply_passthroughs` | one row per reply let through, plus how long it would otherwise have waited (`waited_hours`, NULL until the sweep runs and when unanswerable) |
 | `firstreply_event_metrics` | daily counters, same shape as `rippling_event_metrics` |
 
 ## Crons
@@ -230,7 +231,7 @@ All three are registered in `iznik-batch/routes/console.php` inside
 
 | Command | Cadence | What |
 |---|---|---|
-| `firstreply:maxreach` | every minute | fills in `max_polygon`. Kept out of `ripple:expand`, which is the hot single-writer loop |
+| `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
 | `firstreply:scout` | every 5 min | attributes replies to earlier scouts, then picks and mails new ones |
 | `firstreply:engage` | every 5 min | sends the next due prompt |
 
@@ -256,9 +257,44 @@ without saying whether it was worth having:
 
 | Lever | Read it as |
 |---|---|
-| Passthrough | first replies let through, against how long a hold actually lasts when one happens. The second number is the wait the first one avoided |
+| Passthrough | first replies let through, and **how much earlier the poster heard because of it** - measured per reply, not guessed from a population |
 | Scouting | reply rate and rehome rate **per signal**, so `wanted` / `search` / `frequent` can be compared directly. A signal that does not convert should be switched off rather than left spending mail |
 | Freegle chat | answer rate per question, and how often the answer actually changed the post. "Collection only" and "no rush" are real answers that leave the post as it was, so they are counted separately from ones that did something |
+
+### Sizing a passthrough
+
+A count of passthroughs says the lever fired. It does not say whether firing was worth
+anything, and the obvious proxy - the average hold duration across all held replies - is a
+different population answering a different question.
+
+The real number is per reply: for **this** replier, at **this** location, when would the
+post's reach have got to them? That is knowable, because the routing server hands over the
+whole tick schedule at t=0. Find the lowest tick whose polygon contains the replier, ask the
+hazard schedule when that tick was due, and measure from when they actually replied.
+
+Recording and sizing are split deliberately. Both the batch app (email/TrashNothing) and the
+Go API (web/app) let replies through, so each does a cheap INSERT into
+`firstreply_passthroughs`; one sweep in `MaxReachService::computePassthroughSavings` (run from
+`firstreply:maxreach`) fills in `waited_hours` afterwards. Putting the tick-schedule geometry
+in both would be the same non-trivial logic in two languages, drifting apart.
+
+Two deliberate choices in that sweep:
+
+- a replier already inside the tick the post had reached is sized at **0**, not discarded.
+  Dropping the least impressive cases would quietly flatter the average.
+- a replier no tick covers is left **NULL**, not 0, and the dashboard averages only the rows
+  it could answer while showing how many it could not. An unknown saving is not a zero saving.
+
+The dashboard also splits out how many of the sized replies would have arrived within a day
+anyway - a passthrough that saves twenty minutes is worth much less than one that saves three
+days, and a single average hides which kind these are.
+
+### Which signal picked a scout
+
+`firstreply_scouts.reason` records only the **strongest** signal that fired, so the `frequent`
+row means "frequent and nothing else". That is the right denominator for deciding whether
+propensity on its own earns its place: a member who also had a matching saved search is
+counted under `search`, where the credit belongs.
 
 Scout replies are attributed by a sweep in `firstreply:scout` rather than a hook on the reply
 path, because replies arrive through four doors (web, app, email, TrashNothing) and none of
