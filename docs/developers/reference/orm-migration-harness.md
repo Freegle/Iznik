@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-01
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - iznik-server-go/ormharness/
@@ -41,6 +41,14 @@ bash tools/orm-migration/ci-ratchet.sh        # Gate 1, as CI runs it
 `go test`, `go vet` and `go build` are blocked on developer machines by
 `.claude/check-test-command.sh` in favour of the status API, which is why the
 extractor carries its own `-selftest` mode.
+
+`.claude/check-raw-sql-commit.sh` is a commit-time warning that says the same
+thing the ratchet does, minutes earlier. It scans the staged diff for the
+method surfaces both extractors recognise and prints what it finds, splitting
+production hits from test fixtures. It never blocks: raw SQL is sometimes
+right, and only the ratchet has the manifest to judge that. Its two method
+lists are copied from `extract.go` and `php-extractor/extract.php`; change
+them there and change them here too.
 
 ## The two gates
 
