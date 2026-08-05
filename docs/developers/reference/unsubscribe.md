@@ -12,6 +12,8 @@ covers:
   - iznik-nuxt3/server/middleware/oneClickUnsubscribe.js
   - iznik-nuxt3/tests/unit/server/oneClickUnsubscribe.spec.js
   - iznik-batch/tests/Unit/Mail/UnsubscribeCategoryCoverageTest.php
+  - iznik-batch/tests/Unit/Mail/UnsubscribedNoticeTest.php
+  - iznik-batch/resources/views/emails/mjml/session/unsubscribed-notice.blade.php
 ---
 
 # Unsubscribing from email
@@ -147,9 +149,23 @@ in `stores/mobile.js` did the same thing on tap and now routes to `/unsubscribe`
 
 ## Acknowledgement
 
-The mailto: arm sends `UnsubscribedNotice`: what we turned off, which categories may still
-email them, and a link to Settings. If everything in scope was already off it says so
-rather than claiming to have changed something.
+The mailto: arm sends `UnsubscribedNotice`. It says what we turned off, which categories may
+still email them, and gives two ways out:
+
+- **"Stop all Freegle email"** — one tap, keyed to the same apiv2 endpoint with `t=all`, so
+  it needs no login. This is there because per-category unsubscribing has a failure mode:
+  the member who meant "stop emailing me" turns off one kind, keeps getting the rest, and
+  concludes unsubscribe is broken. That is half of what Support sees (Discourse #6484), and
+  making them find Settings and log in to finish is how it happens. Hidden when everything
+  is already off, which would otherwise read as a system that hadn't noticed what they did.
+- **"Change your email settings"** — the Settings page, for picking and choosing.
+
+If everything in scope was already off it says so rather than claiming to have changed
+something.
+
+Note the trade: an in-body link that acts on GET can be followed by a link scanner. That is
+the same trade `relevantoff` already makes in the matched-posts footer, and the blast radius
+is bounded — all email off, account untouched, reversible from Settings.
 
 The https: one-click arm does not send an acknowledgement. The mail client has already
 told the member it worked, and Gmail treats a one-click as final — emailing someone who

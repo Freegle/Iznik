@@ -1,27 +1,30 @@
 Hi {{ $recipientName ?? 'there' }},
 
 @if($alreadyOff)
-Thanks - you asked us to stop sending you {{ $whatTheyAskedFor }}. Those were already switched off, so there is nothing more to do.
+Thanks - you asked us to stop sending you {{ $whatTheyAskedFor }}. Those were already switched off, so there was nothing to change.
 @else
-Thanks - we've turned off:
+Thanks. We've turned off:
 @foreach($turnedOff as $item)
 - {{ $item }}
 @endforeach
 @endif
 
-@if(count($stillOn))
-You may still get some other kinds of email from us:
+@if($everythingAlreadyOff)
+That's everything switched off. We'll only email you if you ask us to, or about something essential like resetting your password.
+@else
+You may still get these from us:
 @foreach($stillOn as $item)
 - {{ $item }}
 @endforeach
-@else
-That's everything switched off. We'll only email you if you ask us to, or about something essential like resetting your password.
+
+Want to stop all of it? One tap, no need to log in:
+{{ $stopAllUrl }}
 @endif
 
-You can turn any of these back on, or stop everything, from your settings:
+You can turn any of these back on, or change them one by one, in your settings:
 {{ $settingsUrl }}
 
-You don't need to reply to this email - nobody reads that mailbox.
+There's no need to reply to this email - nobody reads that mailbox.
 
 ------------------------------------
 

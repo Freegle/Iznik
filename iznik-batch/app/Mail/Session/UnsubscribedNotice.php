@@ -4,6 +4,7 @@ namespace App\Mail\Session;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
+use App\Services\LoginLinkService;
 use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
@@ -75,6 +76,26 @@ class UnsubscribedNotice extends MjmlMailable
             : "We've turned off ".UnsubscribeService::describe($this->type);
     }
 
+    /**
+     * One tap to stop everything.
+     *
+     * Someone who turned off one kind of email and finds they still get others should not
+     * have to go and hunt through Settings - that is the frustration behind most "I
+     * unsubscribed and you're still emailing me" reports. Points at the same
+     * key-authenticated apiv2 endpoint the header uses, so it needs no login: a GET applies
+     * the opt-out and renders a confirmation.
+     */
+    protected function stopAllUrl(): string
+    {
+        $apiV2 = rtrim((string) config('freegle.api.v2_url', 'https://api.ilovefreegle.org/apiv2'), '/');
+
+        return $apiV2.'/user/unsubscribe?'.http_build_query([
+            'u' => $this->userId,
+            'k' => app(LoginLinkService::class)->getOrCreateKey($this->userId),
+            't' => UnsubscribeService::TYPE_ALL,
+        ]);
+    }
+
     public function build(): static
     {
         $userSite = rtrim((string) config('freegle.sites.user'), '/');
@@ -94,6 +115,8 @@ class UnsubscribedNotice extends MjmlMailable
             'whatTheyAskedFor' => UnsubscribeService::describe($this->type),
             'settingsUrl' => $userSite.'/settings',
             'unsubscribeUrl' => $userSite.'/unsubscribe',
+            'stopAllUrl' => $this->stopAllUrl(),
+            'everythingAlreadyOff' => empty($this->stillOn),
         ];
 
         return $this->mjmlView('emails.mjml.session.unsubscribed-notice', $data, 'emails.text.session.unsubscribed-notice')
