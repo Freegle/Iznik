@@ -816,7 +816,7 @@ class UnifiedDigestService
             }
             // Distance-preference filter (settings.browseMaxDistance). Deliberately
             // does NOT write rippling_reach_notified on a filtered-out skip (unlike
-            // the "already sent" path below) — see the design doc's "Reach-mail
+            // the "already sent" path below) - see the design doc's "Reach-mail
             // ledger semantics" edge case: leaving the ledger unwritten lets a later
             // tick re-consider this (post, user) pair if the member widens their
             // slider (or their location changes) while the post is still inside the

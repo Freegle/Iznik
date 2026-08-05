@@ -729,7 +729,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
 					//
 					// Unless this is the post's FIRST reply and the replier is inside the reach the
-					// post will eventually have — see firstreply.ShouldPassThrough. Holding that
+					// post will eventually have (see firstreply.ShouldPassThrough). Holding that
 					// reply delays a poster who currently has nothing, to protect an ordering the
 					// replier was going to be allowed to cross anyway.
 					if rc.ReachRows > 0 && rc.InReach == 0 {
