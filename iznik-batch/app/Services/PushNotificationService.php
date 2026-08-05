@@ -134,10 +134,13 @@ class PushNotificationService
     {
         $count = 0;
 
-        $mods = DB::select(
-            "SELECT DISTINCT userid FROM memberships WHERE groupid = ? AND role IN ('Owner', 'Moderator')",
-            [$groupId]
-        );
+        $mods = DB::table('memberships')
+            ->distinct()
+            ->select('userid')
+            ->where('groupid', $groupId)
+            ->whereIn('role', ['Owner', 'Moderator'])
+            ->get()
+            ->all();
 
         foreach ($mods as $mod) {
             // Check per-group notification settings
@@ -166,10 +169,11 @@ class PushNotificationService
         $count = 0;
 
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
-        $notifs = DB::select(
-            "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
-            [$userId, $apptype]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get()
+            ->all();
 
         foreach ($notifs as $notif) {
             if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
@@ -221,10 +225,11 @@ class PushNotificationService
             return $this->messagingUnavailable('notify_user', ['user_id' => $userId]);
         }
 
-        $notifs = DB::select(
-            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
-            [$userId, self::APPTYPE_USER]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', self::APPTYPE_USER)
+            ->get()
+            ->all();
 
         if (empty($notifs)) {
             return 0;
@@ -459,11 +464,13 @@ class PushNotificationService
         $zero = ['pending' => 0, 'spam' => 0, 'volunteering' => 0, 'total' => 0];
 
         // Get all approved mod/owner memberships with settings to determine active/inactive.
-        $memberships = DB::select(
-            "SELECT groupid, settings FROM memberships
-             WHERE userid = ? AND role IN ('Owner', 'Moderator') AND collection = 'Approved'",
-            [$userId]
-        );
+        $memberships = DB::table('memberships')
+            ->select('groupid', 'settings')
+            ->where('userid', $userId)
+            ->whereIn('role', ['Owner', 'Moderator'])
+            ->where('collection', 'Approved')
+            ->get()
+            ->all();
 
         if (empty($memberships)) {
             return $zero;
@@ -679,10 +686,11 @@ class PushNotificationService
         }
 
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
-        $notifs = DB::select(
-            "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
-            [$userId, $apptype]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get()
+            ->all();
 
         $appLabel = $modtools ? 'ModTools' : 'Freegle';
         $realCount = $modtools ? $this->getBadgeCount($userId) : 0;
@@ -912,10 +920,11 @@ class PushNotificationService
      */
     private function getGroupSettings(int $userId, int $groupId): array
     {
-        $membership = DB::selectOne(
-            "SELECT settings FROM memberships WHERE userid = ? AND groupid = ?",
-            [$userId, $groupId]
-        );
+        $membership = DB::table('memberships')
+            ->select('settings')
+            ->where('userid', $userId)
+            ->where('groupid', $groupId)
+            ->first();
 
         if (! $membership || ! $membership->settings) {
             return [];
@@ -969,10 +978,11 @@ class PushNotificationService
         }
 
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
-        $notifs = DB::select(
-            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
-            [$userId, $apptype]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get()
+            ->all();
 
         $count = 0;
         foreach ($notifs as $notif) {
@@ -1104,11 +1114,13 @@ class PushNotificationService
      */
     private function getActiveGroupMods(int $groupId): array
     {
-        $rows = DB::select(
-            "SELECT DISTINCT userid, settings FROM memberships
-             WHERE groupid = ? AND role IN (?, ?)",
-            [$groupId, 'Owner', 'Moderator']
-        );
+        $rows = DB::table('memberships')
+            ->distinct()
+            ->select('userid', 'settings')
+            ->where('groupid', $groupId)
+            ->whereIn('role', ['Owner', 'Moderator'])
+            ->get()
+            ->all();
 
         $active = [];
         foreach ($rows as $row) {
@@ -1280,10 +1292,11 @@ class PushNotificationService
             return 0;
         }
 
-        $notifs = DB::select(
-            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
-            [$userId, self::APPTYPE_USER]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', self::APPTYPE_USER)
+            ->get()
+            ->all();
 
         $count = 0;
         foreach ($notifs as $notif) {

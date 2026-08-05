@@ -89,17 +89,16 @@ class MergeDuplicateChatRoomsCommand extends Command
                 DB::beginTransaction();
 
                 // 1. Move all messages from duplicate to canonical
-                $movedMsgs = DB::update(
-                    'UPDATE chat_messages SET chatid = ? WHERE chatid = ?',
-                    [$canonicalId, $duplicateId]
-                );
+                $movedMsgs = DB::table('chat_messages')
+                    ->where('chatid', $duplicateId)
+                    ->update(['chatid' => $canonicalId]);
                 $this->line("  Moved $movedMsgs messages");
 
                 // 2. Move roster entries (ignore duplicates - user may be in both rosters)
-                $rosterEntries = DB::select(
-                    'SELECT userid, status, lastmsgseen, lastemailed, lastmsgemailed, lastip FROM chat_roster WHERE chatid = ?',
-                    [$duplicateId]
-                );
+                $rosterEntries = DB::table('chat_roster')
+                    ->select('userid', 'status', 'lastmsgseen', 'lastemailed', 'lastmsgemailed', 'lastip')
+                    ->where('chatid', $duplicateId)
+                    ->get();
 
                 foreach ($rosterEntries as $entry) {
                     DB::table('chat_roster')->updateOrInsert(
@@ -116,7 +115,7 @@ class MergeDuplicateChatRoomsCommand extends Command
                 $this->line("  Merged " . count($rosterEntries) . " roster entries");
 
                 // 3. Delete old roster entries for duplicate room
-                DB::delete('DELETE FROM chat_roster WHERE chatid = ?', [$duplicateId]);
+                DB::table('chat_roster')->where('chatid', $duplicateId)->delete();
 
                 // 4. Update latestmessage on canonical room to be the most recent
                 DB::update(
@@ -131,7 +130,7 @@ class MergeDuplicateChatRoomsCommand extends Command
                 ]);
 
                 // 6. Delete the duplicate room
-                DB::delete('DELETE FROM chat_rooms WHERE id = ?', [$duplicateId]);
+                DB::table('chat_rooms')->where('id', $duplicateId)->delete();
 
                 DB::commit();
 
