@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "Reviewer-approved divergences between a site's recorded golden SQL and what the",
+    "query builder actually emits. The Laravel counterpart of",
+    "tools/orm-migration/approved-diffs.json on the Go side, and declarative for the",
+    "same reason: the decision survives manifest regeneration and is reviewed as a diff",
+    "rather than hand-edited into a 1,151-entry JSON file where nobody would find it.",
+    "",
+    "`sql` is the statement the builder emits, compared canonically (keyword case,",
+    "whitespace and identifier quoting do not need to match). Every entry needs a",
+    "reason: an approved diff asserts two statements are equivalent, and that assertion",
+    "has to be justified.",
+    "",
+    "THE COMMON CASE, by a wide margin: the raw statement INLINED a constant and the",
+    "builder BINDS it. `SET replyexpected = 0` becomes `set replyexpected = ?` with 0",
+    "bound; `role IN ('Owner','Moderator')` becomes `role in (?, ?)`. The statement, the",
+    "values and the rows affected are identical - only the split between SQL text and",
+    "bind arguments moves, which is why the harness's placeholder-count guard flags it",
+    "rather than the text comparison. Binding a literal is strictly the better form",
+    "(it is what makes the statement reusable by the prepared-statement cache), so",
+    "these are approved rather than worked around: the alternative is DB::raw or",
+    "->whereRaw to force the literal back inline, and both are raw sites in this",
+    "inventory - converting nothing."
+  ],
+  "diffs": [
+    {
+      "id": "2ed1e85ee303",
+      "sql": "update `chat_messages` set `replyexpected` = ? where `id` = ?",
+      "reason": "Inlined constant now bound: `SET replyexpected = 0` renders as `set replyexpected = ?` with 0 as the first bind. Same statement, same value written."
+    },
+    {
+      "id": "db62be21a27d",
+      "sql": "update `chat_messages` set `replyexpected` = ? where `id` = ?",
+      "reason": "Second call site of the identical statement to 2ed1e85ee303, same reasoning."
+    },
+    {
+      "id": "96489b97d4c7",
+      "sql": "update `chat_messages` set `replyreceived` = ? where `id` = ?",
+      "reason": "Inlined constant now bound: `SET replyreceived = 1` renders as `set replyreceived = ?` with 1 as the first bind."
+    },
+    {
+      "id": "21c764087977",
+      "sql": "select distinct `userid` from `memberships` where `groupid` = ? and `role` in (?, ?)",
+      "reason": "The role list was inlined as IN ('Owner', 'Moderator') and whereIn() binds it as in (?, ?). Same two values, same order, same rows."
+    },
+    {
+      "id": "6bac4dbbcabe",
+      "sql": "select `groupid`, `settings` from `memberships` where `userid` = ? and `role` in (?, ?) and `collection` = ?",
+      "reason": "Two inlined constants now bound: the IN ('Owner', 'Moderator') role list and collection = 'Approved'. Same predicates, same values."
+    },
+    {
+      "id": "2b0a0c6d24d3",
+      "sql": "select max(`date`) as aggregate from `chat_messages` where `chatid` = ? and `id` < ? and `userid` = ?",
+      "reason": "NOT the inlined-constant case - an alias difference. ->max('date') is a first-class aggregate and emits its result as `aggregate`, where the raw statement said `AS max`. The alias never leaves the statement: ->max() reads the value off it and returns a scalar, and the caller was rewritten from $lastOther[0]->max to that scalar. Matching the golden byte-for-byte would need ->selectRaw('MAX(date) AS max'), which is itself a raw site here and would convert nothing."
+    }
+  ]
+}

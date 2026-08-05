@@ -1,5 +1,5 @@
 {
-    "generated": "2026-08-05T15:17:09Z",
+    "generated": "2026-08-05T15:22:14Z",
     "root": "iznik-batch",
     "counts": {
         "raw": 551,
@@ -5084,7 +5084,7 @@
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `chat_messages` set `replyexpected` = ? where `id` = ?"
         },
         "db62be21a27d": {
             "id": "db62be21a27d",
@@ -5112,7 +5112,7 @@
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `chat_messages` set `replyexpected` = ? where `id` = ?"
         },
         "1a2fdf6e9cab": {
             "id": "1a2fdf6e9cab",
@@ -5195,7 +5195,7 @@
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `chat_messages` set `replyreceived` = ? where `id` = ?"
         },
         "e1ab87dfa60e": {
             "id": "e1ab87dfa60e",
@@ -5341,7 +5341,7 @@
             "presentInCode": false,
             "hasParityTest": true,
             "status": "converted",
-            "reason": "Laravel's ->max('date') is a first-class aggregate and emits its result under the alias `aggregate`, where the raw statement used `AS max`. Equivalent, not merely similar: the alias is internal to the statement - ->max() reads the value back off it itself and returns a scalar, so no caller ever sees the name, and the caller here was rewritten from $lastOther[0]->max to a plain scalar. The alternative that would match the golden byte for byte is ->selectRaw('MAX(date) AS max'), which is itself a raw site in this inventory - it would move the site from surface \"statement\" to surface \"expression\" and convert nothing.",
+            "reason": "",
             "porting": "",
             "category": "",
             "approvedDiff": "select max(`date`) as aggregate from `chat_messages` where `chatid` = ? and `id` < ? and `userid` = ?"
@@ -12349,7 +12349,7 @@
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select distinct `userid` from `memberships` where `groupid` = ? and `role` in (?, ?)"
         },
         "7c9db632531a": {
             "id": "7c9db632531a",
@@ -12461,7 +12461,7 @@
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select `groupid`, `settings` from `memberships` where `userid` = ? and `role` in (?, ?) and `collection` = ?"
         },
         "736d589f6852": {
             "id": "736d589f6852",

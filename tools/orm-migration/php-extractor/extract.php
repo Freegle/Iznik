@@ -937,6 +937,51 @@ function parityTestedIds(string $root): array
     return $ids;
 }
 
+/**
+ * Apply reviewer-approved divergences from services/laravel/approved-diffs.json.
+ *
+ * Declarative, like keep-raw.json and like the Go side's approved-diffs.json, so
+ * the decision survives regeneration and is reviewed as a diff rather than
+ * hand-edited into a 1,151-entry manifest where nobody would find it.
+ */
+function applyApprovedDiffs(array &$sites, string $path): int
+{
+    if (!is_file($path)) {
+        return 0;
+    }
+    $decoded = json_decode(file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
+    $diffs = [];
+    foreach ($decoded['diffs'] ?? [] as $i => $d) {
+        if (trim($d['id'] ?? '') === '' || trim($d['sql'] ?? '') === '') {
+            fwrite(STDERR, "extract: {$path}: diff {$i} needs both an id and a sql\n");
+            exit(1);
+        }
+        if (trim($d['reason'] ?? '') === '') {
+            fwrite(STDERR, "extract: {$path}: diff {$i} ({$d['id']}) has no reason; an approved diff asserts two statements are equivalent and that has to be justified\n");
+            exit(1);
+        }
+        $diffs[$d['id']] = $d['sql'];
+    }
+
+    $applied = 0;
+    $seen = [];
+    foreach ($sites as &$s) {
+        if (isset($diffs[$s['id']])) {
+            $s['approvedDiff'] = $diffs[$s['id']];
+            $seen[$s['id']] = true;
+            $applied++;
+        }
+    }
+    unset($s);
+
+    foreach ($diffs as $id => $_) {
+        if (!isset($seen[$id])) {
+            fwrite(STDERR, "warning: approved diff for site {$id} matched no site - it may have been renumbered\n");
+        }
+    }
+    return $applied;
+}
+
 function scan(string $root, string $repo): array
 {
     $parser = (new ParserFactory())->createForNewestSupportedVersion();
@@ -1149,6 +1194,8 @@ $tested = parityTestedIds($root);
 $promoted = applyParityTests($sites, $tested);
 
 $applied = applyKeepRaw($sites, $rulesPath);
+$diffsPath = dirname($out) . '/approved-diffs.json';
+$approvedDiffs = applyApprovedDiffs($sites, $diffsPath);
 
 usort($sites, function ($a, $b) {
     return $a['file'] <=> $b['file'] ?: $a['line'] <=> $b['line'];
@@ -1184,9 +1231,10 @@ file_put_contents(
 );
 
 fwrite(STDERR, sprintf(
-    "%d sites written to %s (%d keep-raw/excluded by rule, %d promoted to converted by a parity test)\n",
+    "%d sites written to %s (%d keep-raw/excluded by rule, %d promoted to converted by a parity test, %d approved diffs)\n",
     count($sites),
     $out,
     $applied,
-    $promoted
+    $promoted,
+    $approvedDiffs
 ));
