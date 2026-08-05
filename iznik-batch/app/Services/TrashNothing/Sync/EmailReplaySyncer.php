@@ -2,9 +2,13 @@
 
 namespace App\Services\TrashNothing\Sync;
 
+use App\Models\Group;
+use App\Models\Membership;
+use App\Models\UserEmail;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -265,6 +269,10 @@ class EmailReplaySyncer
             $envelopeFrom = $record['envelope_from'] ?? ($record['from_address'] ?? '');
             $envelopeTo   = $record['envelope_to'] ?? ($groupId . '@' . config('freegle.mail.group_domain'));
 
+            if (!empty($envelopeFrom)) {
+                $this->ensureUserExists($envelopeFrom, $groupId, $record['from_name'] ?? null);
+            }
+
             $rawMessage = $record['raw_message'] ?? $this->buildRawEmail($record, $envelopeTo);
 
             $parsed = $this->parser->parse($rawMessage, $envelopeFrom, $envelopeTo);
@@ -285,6 +293,76 @@ class EmailReplaySyncer
         }
 
         return [$minDate, $maxDate];
+    }
+
+    /**
+     * Test-harness-only stub user (+ Approved membership) creation, mirroring
+     * GroupPostIngestionService::findOrCreateUser() for the API path.
+     * IncomingMailService itself never does this — production email ingestion
+     * relies on TN's separate partner membership-add webhook to create the
+     * user ahead of any post email, so a real `users_emails` row always
+     * already exists there. This parity-test harness's disposable DB has no
+     * such pre-synced user set, so without a stub, every post against live
+     * TN data drops as "unknown-user"/"non-member" before ever reaching
+     * createGroupPostMessage() — never exercising that code path. Only
+     * creates a stub if no matching `users_emails` row exists; never touches
+     * an existing user.
+     *
+     * Unlike the API path's stub (which uses TN's own numeric fd_user_id, so
+     * repeat runs and the API-side stub converge on the same row), this has
+     * no such ID to key on — the partner CSV only carries an email address —
+     * so it always gets a fresh auto-increment id. That means an overlapping
+     * post's `fromuser` can legitimately differ between the two paths when
+     * both had to stub-create the poster; see the `fromuser` exclusion note
+     * in ParityComparer::diffMessageFields().
+     */
+    private function ensureUserExists(string $email, ?string $groupNameshort, ?string $fromName): void
+    {
+        if (UserEmail::where('email', $email)->exists()) {
+            return;
+        }
+
+        $fullname = $fromName ?: 'TN User';
+
+        $userId = DB::table('users')->insertGetId([
+            'fullname'   => $fullname,
+            'systemrole' => 'User',
+            'added'      => now(),
+            'lastaccess' => now(),
+        ]);
+        // id=... included so ParityComparer::parseStubUserIds() can recognize this
+        // as a freshly-created row this run and exclude the resulting post's
+        // `result` from strict Layer 3 comparison — see that method's docblock.
+        Log::info('TN-SYNC-TRACE [WRITE] table=users op=insert set=id=' . $userId . ',fullname=' . $fullname . ',added=now() (email-replay stub)');
+
+        Log::info('TN-SYNC-TRACE [WRITE] table=users_emails op=insert set=userid=' . $userId . ',email=' . $email . ' (email-replay stub)');
+        UserEmail::create([
+            'userid'    => $userId,
+            'email'     => $email,
+            'preferred' => 1,
+            'added'     => now(),
+            'canon'     => $email,
+        ]);
+
+        if (empty($groupNameshort)) {
+            return;
+        }
+
+        $group = Group::where('nameshort', $groupNameshort)->first();
+        if ($group === null) {
+            return;
+        }
+
+        Log::info('TN-SYNC-TRACE [WRITE] table=memberships op=insert set=userid=' . $userId . ',groupid=' . $group->id . ',collection=Approved (email-replay stub)');
+        Membership::create([
+            'userid'           => $userId,
+            'groupid'          => $group->id,
+            'role'             => Membership::ROLE_MEMBER,
+            'collection'       => Membership::COLLECTION_APPROVED,
+            'emailfrequency'   => Membership::EMAIL_FREQUENCY_IMMEDIATE,
+            'ourPostingStatus' => 'DEFAULT',
+            'added'            => now(),
+        ]);
     }
 
     /**
@@ -319,7 +397,16 @@ class EmailReplaySyncer
         if (!empty($record['message_id'])) {
             $headers['Message-ID'] = '<' . $record['message_id'] . '>';
         }
-        if (!empty($record['secret'])) {
+        // isset(), not !empty(): IncomingMailService::shouldSkipSpamCheck() has its
+        // own fallback for when no secret is configured ("accept any TN email with
+        // a secret header, regardless of value"), but that fallback only fires if
+        // the header is present at all. parseCsvRow() always sets $record['secret']
+        // (to '' when freegle.mail.trashnothing_secret is unconfigured, e.g. in a
+        // dev environment without the real production secret) — using !empty()
+        // here would silently omit the header for an empty-but-set value, defeating
+        // that fallback and routing every TN replay email through the real spam
+        // check instead of skipping it as intended.
+        if (isset($record['secret'])) {
             $headers['X-Trash-Nothing-Secret'] = $record['secret'];
         }
         if (!empty($record['post_id'])) {

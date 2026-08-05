@@ -86,6 +86,8 @@ class ParityComparer
         $emailMessages     = $this->parseMessages($emailLines);
         $apiMessages       = $this->parseMessages($apiLines);
         $emailPostDetails  = $this->parsePostDetails($emailLines);
+        $emailStubUserIds  = $this->parseStubUserIds($emailLines);
+        $apiStubUserIds    = $this->parseStubUserIds($apiLines);
 
         $emailPostIds     = array_keys($emailResults);
         $apiResultPostIds = array_keys($apiResults);
@@ -136,6 +138,8 @@ class ParityComparer
                 $apiMessages[$postId] ?? null,
                 $emailResults[$postId] ?? '?',
                 $apiResults[$postId] ?? '?',
+                $emailStubUserIds,
+                $apiStubUserIds,
                 $layer3Mismatches,
                 $layer4Divergences,
             );
@@ -199,6 +203,8 @@ class ParityComparer
      *
      * @param  array<string, mixed>|null  $emailMsg
      * @param  array<string, mixed>|null  $apiMsg
+     * @param  int[]  $emailStubUserIds
+     * @param  int[]  $apiStubUserIds
      * @param  string[]  $layer3Mismatches
      * @param  string[]  $layer4Divergences
      */
@@ -208,6 +214,8 @@ class ParityComparer
         ?array $apiMsg,
         string $emailResult,
         string $apiResult,
+        array $emailStubUserIds,
+        array $apiStubUserIds,
         array &$layer3Mismatches,
         array &$layer4Divergences,
     ): void {
@@ -245,7 +253,16 @@ class ParityComparer
         // deliberately excluded — synthesized differently by design.
         $fieldDiffs = $this->diffMessageFields($emailMsg, $apiMsg);
 
-        if ($emailResult !== $apiResult) {
+        // `result` depends on the resolved user's membership/mapping state, which
+        // is only comparable when both sides actually resolved to a real,
+        // pre-existing user. If either side had to freshly stub-create the poster
+        // this run (see parseStubUserIds()), the two are independently-created
+        // rows with no shared identity, so a routing difference reflects that
+        // divergence, not a genuine regression — skip the comparison, same
+        // rationale as excluding `fromuser` from diffMessageFields() above.
+        $emailUserIsStub = in_array((int) ($emailMsg['fromuser'] ?? -1), $emailStubUserIds, true);
+        $apiUserIsStub   = in_array((int) ($apiMsg['fromuser'] ?? -1), $apiStubUserIds, true);
+        if ($emailResult !== $apiResult && !$emailUserIsStub && !$apiUserIsStub) {
             $fieldDiffs[] = "result: email={$emailResult} api={$apiResult}";
         }
 
@@ -255,19 +272,50 @@ class ParityComparer
     }
 
     /**
+     * `fromuser` is deliberately excluded from comparison. In production both
+     * paths resolve to the same pre-existing user row (email by address
+     * match, API by TN's fd_user_id), so they coincidentally agree — but
+     * that's not guaranteed by either resolution mechanism itself. It
+     * definitely doesn't hold when testing against live TN data with a
+     * disposable DB: EmailReplaySyncer's stub-user creation (test-harness
+     * only, see its docblock) has no TN numeric ID to key on — only an email
+     * address — so it always gets a fresh auto-increment id, while the API
+     * path's stub uses TN's real fd_user_id. Comparing the two would flag a
+     * "mismatch" on every post where both sides had to stub-create the
+     * poster, which is a test-harness artifact, not a content regression.
+     *
      * @param  array<string, mixed>  $emailMsg
      * @param  array<string, mixed>  $apiMsg
      * @return string[]
      */
+    // lat/lng round-trip through different code paths (email: header parsing;
+    // API: JSON decoding) and can differ in float precision for the same
+    // real-world coordinate — the API commonly returns fewer significant
+    // decimal digits than the email path's parsed value (observed live:
+    // email=51.360871130429 vs api=51.36087; email=51.232574885119 vs
+    // api=51.232574 — both genuinely the same location). Round to 4 decimal
+    // places (~11m) before comparing; 6dp (~11cm) was tried first and still
+    // false-positived on these, since the API's own value had already lost
+    // precision beyond ~6 significant digits before rounding even applies.
+    private const COORDINATE_FIELDS = ['lat', 'lng'];
+    private const COORDINATE_PRECISION = 4;
+
     private function diffMessageFields(array $emailMsg, array $apiMsg): array
     {
-        $fieldsToCompare = ['fromuser', 'type', 'subject', 'lat', 'lng', 'locationid'];
+        $fieldsToCompare = ['type', 'subject', 'lat', 'lng', 'locationid'];
         $fieldDiffs = [];
 
         foreach ($fieldsToCompare as $field) {
             $emailVal = $emailMsg[$field] ?? null;
             $apiVal   = $apiMsg[$field] ?? null;
-            if ((string) $emailVal !== (string) $apiVal) {
+
+            if (in_array($field, self::COORDINATE_FIELDS, true) && is_numeric($emailVal) && is_numeric($apiVal)) {
+                $matches = round((float) $emailVal, self::COORDINATE_PRECISION) === round((float) $apiVal, self::COORDINATE_PRECISION);
+            } else {
+                $matches = (string) $emailVal === (string) $apiVal;
+            }
+
+            if (!$matches) {
                 $fieldDiffs[] = "{$field}: email=" . json_encode($emailVal) . ' api=' . json_encode($apiVal);
             }
         }
@@ -322,6 +370,32 @@ class ParityComparer
             }
         }
         return $skips;
+    }
+
+    /**
+     * Parses `TN-SYNC-TRACE [WRITE] table=users op=insert set=id=X,...` lines
+     * into a set of user ids that were freshly created *this run*, on
+     * whichever side's lines are passed in. Both `GroupPostIngestionService::
+     * findOrCreateUser()` (API path) and `EmailReplaySyncer::ensureUserExists()`
+     * (email path, test-harness only) emit this shape when they have to
+     * stub-create a poster. Used to gate the `result` field comparison in
+     * classifyOverlapPost() — a freshly-created stub has no shared identity
+     * across the two paths (the email path only has an address to go on, no
+     * TN numeric id), so its routing outcome isn't a meaningful signal to
+     * compare, only real regressions on already-resolved users are.
+     *
+     * @param  string[]  $lines
+     * @return int[]
+     */
+    public function parseStubUserIds(array $lines): array
+    {
+        $ids = [];
+        foreach ($lines as $line) {
+            if (preg_match('/TN-SYNC-TRACE \[WRITE\] table=users op=insert set=id=(\d+)/', $line, $m)) {
+                $ids[] = (int) $m[1];
+            }
+        }
+        return $ids;
     }
 
     /**
