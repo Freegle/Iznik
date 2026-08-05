@@ -181,6 +181,13 @@
       "reason": "An INSERT ... SELECT whose select list begins with a BOUND LITERAL rather than a column - 'SELECT ?, groupid, collection, ... FROM messages_groups WHERE msgid = ?', copying one message's group rows onto another message's id. Laravel has insertUsing()/insertOrIgnoreUsing() for insert-from-select, so the shape is supported; what is not is selecting a placeholder. ->select() takes column names, and the only ways to put a bound literal in a select list are selectRaw() or DB::raw(), both raw sites here - so the site would change surface and convert nothing. Restructuring it (read the rows, then insert them) is a different statement and loses the atomicity the INSERT...SELECT gives inside its transaction.",
       "porting": "PostgreSQL: INSERT ... SELECT with a literal in the select list is standard and ports unchanged; the IGNORE modifier becomes ON CONFLICT DO NOTHING. The obstacle here is the query builder, not the database.",
       "category": "INSERT ... SELECT with a bound literal"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\b(DATE_SUB|DATE_ADD|DATEDIFF|TIMESTAMPDIFF|INTERVAL\\s+\\?)\\b/i",
+      "reason": "A statement whose PREDICATE does date arithmetic in SQL - 'cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)'. The builder has no form for it: ->where('latestmessage', '>=', now()->subDays($d)) computes the cutoff in PHP and binds it, which moves the clock from the database to the application. That is not cosmetic on a batch job - the process may start hours before the statement runs, and on a long queue drain the two answers differ. DATEDIFF is worse still, since it counts CALENDAR DAY boundaries rather than 24-hour spans, so no binding of a computed datetime reproduces it. Deliberately scoped to date ARITHMETIC, not to any mention of NOW(): a statement that merely writes NOW() is covered by its own rule, and one that compares against a plain bound datetime converts fine.",
+      "porting": "PostgreSQL: DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'), TIMESTAMPDIFF becomes an age()/extract() pair, and DATEDIFF becomes a date subtraction returning an integer - which preserves the calendar-day semantics. Mechanical per statement, but each needs reading rather than substituting.",
+      "category": "Date arithmetic in a predicate"
     }
   ]
 }
