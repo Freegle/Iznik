@@ -23,19 +23,22 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  # 1.1.373 drops the ORM migration inventory ratchet (Gate 1) and the Go/PHP
-  # toolchain provisioning it needed. The Go migration is done - raw is at 0 -
-  # so the gate was regenerating a 5,974-entry inventory on every build to
-  # answer one question, "did someone add raw SQL back", which
-  # .claude/check-raw-sql.sh now answers at the point it happens.
+  # 1.1.371 = master's 1.1.369 plus this branch's rename of the push-fork
+  # package in the app-build jobs, @freegle/capacitor-push-notifications-cap7
+  # -> -cap8. The rename shipped in 1.1.363, but a later merge of master
+  # raised this pin to a version published from master, which does not carry
+  # it - so the app builds here were running `npm update` against a package
+  # this branch no longer depends on, which is a silent no-op rather than an
+  # error. CircleCI resolves freegle/tests from the registry, not from the
+  # copy in this repo, so the pin is what decides.
   #
-  # Publishing the orb is what makes a step take effect - CircleCI resolves
-  # freegle/tests from the registry, not from the copy in this repo - but the
-  # PIN here decides which published version runs. Leaving master on 1.1.370
-  # would not have broken anything (that step self-guarded on ci-ratchet.sh
-  # existing, so it would exit 0 once this merges) - it would just have kept
-  # provisioning a toolchain for a gate that no longer runs.
-  freegle: freegle/tests@1.1.373
+  # This is behind master's 1.1.373, which drops the ORM migration inventory
+  # ratchet (Gate 1) - that step self-guards on ci-ratchet.sh existing (it's
+  # been deleted), so it will exit 0 rather than fail, just wastefully
+  # provisioning a Go/PHP toolchain first. A follow-up orb publish from a
+  # merged source (ratchet removal + cap8 rename together) can drop that
+  # waste; not required for this rebase to be safe.
+  freegle: freegle/tests@1.1.371
 
 jobs:
   mark-ci-passed:
