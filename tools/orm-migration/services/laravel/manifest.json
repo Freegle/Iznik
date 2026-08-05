@@ -1,15 +1,15 @@
 {
-    "generated": "2026-08-02T22:23:51Z",
+    "generated": "2026-08-05T09:14:38Z",
     "root": "iznik-batch",
     "counts": {
-        "raw": 567,
+        "raw": 570,
         "excluded": 70,
         "keep-raw": 156,
         "test-fixture": 351
     },
     "ratchet": {
-        "baseline": 567,
-        "note": "Explicit from the first commit of this manifest, deliberately - see tools/orm-migration/ci-ratchet.sh's Laravel gate. The Go side's equivalent gate falls back to the committed manifest's own raw+in-progress count when this key is absent, which lets the ceiling silently ratchet upward: a PR that adds raw debt still passes because the fallback re-derives its limit from the thing it is supposed to be limiting. The Laravel gate refuses that fallback outright and fails if this key is ever missing, so lowering the ceiling as sites convert has to stay a deliberate, reviewed edit in the same PR that reduces the count - never automatic, and never silently permissive."
+        "baseline": 570,
+        "note": "Explicit from the first commit of this manifest, deliberately - see tools/orm-migration/ci-ratchet.sh's Laravel gate. The Go side's equivalent gate falls back to the committed manifest's own raw+in-progress count when this key is absent, which lets the ceiling silently ratchet upward: a PR that adds raw debt still passes because the fallback re-derives its limit from the thing it is supposed to be limiting. The Laravel gate refuses that fallback outright and fails if this key is ever missing, so lowering the ceiling as sites convert has to stay a deliberate, reviewed edit in the same PR that reduces the count - never automatic, and never silently permissive. Raised 567 -> 570 when master was merged into this branch on 2026-08-05. The three sites are master's, not this branch's - this branch converts nothing in iznik-batch yet: ListModsService::modGroups (4aed1fbfea77) and BackfillBrowseMaxDistanceCommand::handle (c4573eab864d) are new raw SQL that landed on master, and MicrovolunteeringNotifyService::notifyForMessages (4f242de92f6d) is the same site as the pre-merge 27496bd44361 re-identified because master edited its WHERE clause (messages.heldby -> messages_groups.heldby); the old id stays in the manifest with presentInCode=false. So the real new debt is two sites, and the ceiling has to move to let master in. Lower it again as iznik-batch sites convert."
     },
     "sites": {
         "1debf1b418bc": {
@@ -113,6 +113,32 @@
             "dynamic": false,
             "args": 0,
             "goldenSql": "DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts",
+            "presentInCode": true,
+            "hasParityTest": false,
+            "status": "raw",
+            "reason": "",
+            "porting": "",
+            "category": "",
+            "approvedDiff": ""
+        },
+        "c4573eab864d": {
+            "id": "c4573eab864d",
+            "file": "iznik-batch/app/Console/Commands/Browse/BackfillBrowseMaxDistanceCommand.php",
+            "line": 78,
+            "class": "BackfillBrowseMaxDistanceCommand",
+            "function": "handle",
+            "receiver": "User::query()->whereNull()",
+            "method": "whereRaw",
+            "surface": "fragment",
+            "sqlSource": "literal",
+            "kind": "WHERE-FRAGMENT",
+            "tables": [],
+            "mysqlisms": [],
+            "complexity": "moderate",
+            "wave": 5,
+            "dynamic": false,
+            "args": 0,
+            "goldenSql": "(JSON_EXTRACT(settings, '$.browseMaxMinutes') IS NOT NULL OR JSON_EXTRACT(settings, '$.browseMaxDistance') IS NOT NULL)",
             "presentInCode": true,
             "hasParityTest": false,
             "status": "raw",
@@ -5896,7 +5922,7 @@
         "ab565df0894e": {
             "id": "ab565df0894e",
             "file": "iznik-batch/app/Services/ContentCheckService.php",
-            "line": 1252,
+            "line": 1301,
             "class": "ContentCheckService",
             "function": "checkPerGroupWorryWords",
             "receiver": "DB::table()->where()",
@@ -5922,7 +5948,7 @@
         "4ff3a51d9529": {
             "id": "4ff3a51d9529",
             "file": "iznik-batch/app/Services/ContentCheckService.php",
-            "line": 1306,
+            "line": 1358,
             "class": "ContentCheckService",
             "function": "checkUrls",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -9656,6 +9682,32 @@
             "category": "",
             "approvedDiff": ""
         },
+        "4aed1fbfea77": {
+            "id": "4aed1fbfea77",
+            "file": "iznik-batch/app/Services/ListModsService.php",
+            "line": 105,
+            "class": "ListModsService",
+            "function": "modGroups",
+            "receiver": "Membership::query()->join()->where()->whereIn()",
+            "method": "orderByRaw",
+            "surface": "fragment",
+            "sqlSource": "literal",
+            "kind": "ORDER-FRAGMENT",
+            "tables": [],
+            "mysqlisms": [],
+            "complexity": "moderate",
+            "wave": 5,
+            "dynamic": false,
+            "args": 0,
+            "goldenSql": "LOWER(COALESCE(groups.namefull, groups.nameshort)) ASC",
+            "presentInCode": true,
+            "hasParityTest": false,
+            "status": "raw",
+            "reason": "",
+            "porting": "",
+            "category": "",
+            "approvedDiff": ""
+        },
         "fa64408e3c7d": {
             "id": "fa64408e3c7d",
             "file": "iznik-batch/app/Services/LoveJunkInvoiceService.php",
@@ -9983,7 +10035,7 @@
         "9283fc01af07": {
             "id": "9283fc01af07",
             "file": "iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php",
-            "line": 3657,
+            "line": 3667,
             "class": "IncomingMailService",
             "function": "extractLocationFromSubject",
             "receiver": "DB::table()",
@@ -10009,7 +10061,7 @@
         "3171d4a57399": {
             "id": "3171d4a57399",
             "file": "iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php",
-            "line": 4091,
+            "line": 4101,
             "class": "IncomingMailService",
             "function": "addToSpatialIndex",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10035,7 +10087,7 @@
         "c7b7c2c28369": {
             "id": "c7b7c2c28369",
             "file": "iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php",
-            "line": 4228,
+            "line": 4238,
             "class": "IncomingMailService",
             "function": "recordFailure",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10697,6 +10749,39 @@
             "category": "",
             "approvedDiff": ""
         },
+        "4f242de92f6d": {
+            "id": "4f242de92f6d",
+            "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
+            "line": 69,
+            "class": "MicrovolunteeringNotifyService",
+            "function": "notifyForMessages",
+            "receiver": "Illuminate\\Support\\Facades\\DB",
+            "method": "select",
+            "surface": "statement",
+            "sqlSource": "literal",
+            "kind": "SELECT",
+            "tables": [
+                "groups",
+                "messages",
+                "messages_groups",
+                "users_notifications"
+            ],
+            "mysqlisms": [
+                "backticks"
+            ],
+            "complexity": "moderate",
+            "wave": 4,
+            "dynamic": false,
+            "args": 1,
+            "goldenSql": "SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN `groups` ON messages_groups.groupid = groups.id LEFT JOIN users_notifications ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY) AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id) AND users_notifications.type = ? WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY) AND messages.deleted IS NULL -- A hold is per-group. Every other predicate here is already -- scoped to this messages_groups row (arrival, and groupid via -- the SELECT above); this one wasn't. messages.heldby is a -- legacy message-wide mirror that nothing writes any more, so -- checking it here let a copy held on this row's group still -- be offered up for \"please review\" - the hold only ever -- belonged to the group it was placed on. AND messages_groups.heldby IS NULL AND users_notifications.id IS NULL AND groups.microvolunteering = 1",
+            "presentInCode": true,
+            "hasParityTest": false,
+            "status": "raw",
+            "reason": "",
+            "porting": "",
+            "category": "",
+            "approvedDiff": ""
+        },
         "27496bd44361": {
             "id": "27496bd44361",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
@@ -10722,7 +10807,7 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid INNER JOIN `groups` ON messages_groups.groupid = groups.id LEFT JOIN users_notifications ON users_notifications.timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY) AND users_notifications.url LIKE CONCAT('/microvolunteering/message/', messages.id) AND users_notifications.type = ? WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY) AND messages.deleted IS NULL AND messages.heldby IS NULL AND users_notifications.id IS NULL AND groups.microvolunteering = 1",
-            "presentInCode": true,
+            "presentInCode": false,
             "hasParityTest": false,
             "status": "raw",
             "reason": "",
@@ -10733,7 +10818,7 @@
         "ba4258427173": {
             "id": "ba4258427173",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
-            "line": 114,
+            "line": 121,
             "class": "MicrovolunteeringNotifyService",
             "function": "notifyForMessages",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10761,7 +10846,7 @@
         "1d5b949b552a": {
             "id": "1d5b949b552a",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
-            "line": 262,
+            "line": 269,
             "class": "MicrovolunteeringNotifyService",
             "function": "getActivePoolForGroup",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10787,7 +10872,7 @@
         "012cc0395321": {
             "id": "012cc0395321",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
-            "line": 284,
+            "line": 291,
             "class": "MicrovolunteeringNotifyService",
             "function": "loadReviewedByMessage",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10815,7 +10900,7 @@
         "8d8cb34ed71f": {
             "id": "8d8cb34ed71f",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
-            "line": 309,
+            "line": 316,
             "class": "MicrovolunteeringNotifyService",
             "function": "loadAlreadyNotifiedToday",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10843,7 +10928,7 @@
         "9260fcb47da4": {
             "id": "9260fcb47da4",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
-            "line": 341,
+            "line": 348,
             "class": "MicrovolunteeringNotifyService",
             "function": "markStaleReviewedNotificationsSeen",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -10872,7 +10957,7 @@
         "23e25cdbbf16": {
             "id": "23e25cdbbf16",
             "file": "iznik-batch/app/Services/MicrovolunteeringNotifyService.php",
-            "line": 356,
+            "line": 363,
             "class": "MicrovolunteeringNotifyService",
             "function": "markStaleReviewedNotificationsSeen",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -11135,7 +11220,7 @@
         "759af3d2f4c5": {
             "id": "759af3d2f4c5",
             "file": "iznik-batch/app/Services/ModWelfareService.php",
-            "line": 121,
+            "line": 122,
             "class": "ModWelfareService",
             "function": "checkInactiveMods",
             "receiver": "DB::table()->where()",
@@ -11161,7 +11246,7 @@
         "4c6686575dea": {
             "id": "4c6686575dea",
             "file": "iznik-batch/app/Services/ModWelfareService.php",
-            "line": 236,
+            "line": 237,
             "class": "ModWelfareService",
             "function": "getLastApprovalDays",
             "receiver": "DB::table()->where()->where()",
@@ -12743,7 +12828,7 @@
         "95d190102062": {
             "id": "95d190102062",
             "file": "iznik-batch/app/Services/ReengageService.php",
-            "line": 116,
+            "line": 122,
             "class": "ReengageService",
             "function": "processReengageEmails",
             "receiver": "$q->whereRaw()",
@@ -12769,7 +12854,7 @@
         "99086a4b809a": {
             "id": "99086a4b809a",
             "file": "iznik-batch/app/Services/ReengageService.php",
-            "line": 116,
+            "line": 122,
             "class": "ReengageService",
             "function": "processReengageEmails",
             "receiver": "$q",
@@ -12795,7 +12880,7 @@
         "0e930843997e": {
             "id": "0e930843997e",
             "file": "iznik-batch/app/Services/ReengageService.php",
-            "line": 176,
+            "line": 182,
             "class": "ReengageService",
             "function": "processUser",
             "receiver": "DB::table()->join()->where()->where()->where()",
@@ -21820,7 +21905,7 @@
         "eb7a3c035965": {
             "id": "eb7a3c035965",
             "file": "iznik-batch/tests/Feature/AI/MicrovolunteeringNotifyCommandTest.php",
-            "line": 19,
+            "line": 23,
             "class": "MicrovolunteeringNotifyCommandTest",
             "function": "createGroup",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -22573,7 +22658,7 @@
         "ee77b327aae9": {
             "id": "ee77b327aae9",
             "file": "iznik-batch/tests/Feature/Mail/ReengageEmailsCommandTest.php",
-            "line": 150,
+            "line": 151,
             "class": "ReengageEmailsCommandTest",
             "function": "test_send_persists_the_home_sign_off_resolution",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -22687,7 +22772,7 @@
         "f75fe4780e24": {
             "id": "f75fe4780e24",
             "file": "iznik-batch/tests/Feature/Message/ContentCheckTest.php",
-            "line": 1210,
+            "line": 1304,
             "class": "ContentCheckTest",
             "function": "test_freebiealerts_task_queued_for_approved_offer",
             "receiver": "DB::table()->where()",
@@ -22713,7 +22798,7 @@
         "4a0d009cf162": {
             "id": "4a0d009cf162",
             "file": "iznik-batch/tests/Feature/Message/ContentCheckTest.php",
-            "line": 1248,
+            "line": 1342,
             "class": "ContentCheckTest",
             "function": "test_push_notify_task_queued_for_kept_pending",
             "receiver": "DB::table()->where()",
@@ -22739,7 +22824,7 @@
         "5fac79633797": {
             "id": "5fac79633797",
             "file": "iznik-batch/tests/Feature/Message/ContentCheckTest.php",
-            "line": 2730,
+            "line": 2824,
             "class": "ContentCheckTest",
             "function": "test_new_approved_message_with_reason_notifies_mods_and_stays_live",
             "receiver": "DB::table()->where()",
@@ -22765,7 +22850,7 @@
         "3aecd1806812": {
             "id": "3aecd1806812",
             "file": "iznik-batch/tests/Feature/Message/ContentCheckTest.php",
-            "line": 2816,
+            "line": 2910,
             "class": "ContentCheckTest",
             "function": "test_freebiealerts_task_not_queued_for_bulk_offer",
             "receiver": "DB::table()->where()",
@@ -27463,7 +27548,7 @@
         "25569f0597b5": {
             "id": "25569f0597b5",
             "file": "iznik-batch/tests/Unit/Services/Mail/Incoming/IncomingMailServiceTest.php",
-            "line": 1126,
+            "line": 1127,
             "class": "IncomingMailServiceTest",
             "function": "test_direct_mail_reply_to_post_held_when_replier_outside_reach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -27491,7 +27576,7 @@
         "38ccda82576a": {
             "id": "38ccda82576a",
             "file": "iznik-batch/tests/Unit/Services/Mail/Incoming/IncomingMailServiceTest.php",
-            "line": 1127,
+            "line": 1128,
             "class": "IncomingMailServiceTest",
             "function": "test_direct_mail_reply_to_post_held_when_replier_outside_reach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -27521,7 +27606,7 @@
         "b1ef880b8956": {
             "id": "b1ef880b8956",
             "file": "iznik-batch/tests/Unit/Services/Mail/Incoming/IncomingMailServiceTest.php",
-            "line": 3295,
+            "line": 3401,
             "class": "IncomingMailServiceTest",
             "function": "test_chat_notification_reply_tracks_email_reply",
             "receiver": "DB::table()->where()->where()",
@@ -28481,7 +28566,7 @@
         "984dae6bb331": {
             "id": "984dae6bb331",
             "file": "iznik-batch/tests/Unit/Services/MicrovolunteeringNotifyServiceTest.php",
-            "line": 36,
+            "line": 40,
             "class": "MicrovolunteeringNotifyServiceTest",
             "function": "createGroup",
             "receiver": "Illuminate\\Support\\Facades\\DB",

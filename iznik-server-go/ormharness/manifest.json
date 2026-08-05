@@ -5,7 +5,7 @@
     "converted": 1592,
     "keep-raw": 51,
     "retired": 41,
-    "test-fixture": 4267
+    "test-fixture": 4272
   },
   "ratchet": {
     "baseline": 0,
@@ -2293,7 +2293,7 @@
     "04eaeb226006": {
       "id": "04eaeb226006",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4673,
+      "line": 4710,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -2943,7 +2943,7 @@
     "05d46baf544b": {
       "id": "05d46baf544b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3405,
+      "line": 3442,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -4081,7 +4081,7 @@
     "0804d8f0906b": {
       "id": "0804d8f0906b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4098,
+      "line": 4135,
       "function": "TestGetUserEmailFieldPopulatedForFDEmail",
       "receiver": "db",
       "method": "Exec",
@@ -4549,7 +4549,7 @@
     "08afc6822964": {
       "id": "08afc6822964",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1181,
+      "line": 1218,
       "function": "TestPutMessageUnauthenticatedPersistentSeriesMatchesSession",
       "receiver": "db",
       "method": "Raw",
@@ -5232,7 +5232,7 @@
     "0a22a00179c3": {
       "id": "0a22a00179c3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4723,
+      "line": 4760,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -7014,7 +7014,7 @@
     "0ddefb27ab4c": {
       "id": "0ddefb27ab4c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4619,
+      "line": 4656,
       "function": "TestUserInfo_OfferCountNotInflatedByRipple",
       "receiver": "db",
       "method": "Exec",
@@ -7036,7 +7036,7 @@
     "0dee111c6c33": {
       "id": "0dee111c6c33",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3872,
+      "line": 3909,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -7058,7 +7058,7 @@
     "0dff62634f76": {
       "id": "0dff62634f76",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1515,
+      "line": 1552,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Exec",
@@ -8676,7 +8676,7 @@
     "10e5d21f93f9": {
       "id": "10e5d21f93f9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4617,
+      "line": 4654,
       "function": "TestUserInfo_OfferCountNotInflatedByRipple",
       "receiver": "db",
       "method": "Exec",
@@ -9076,7 +9076,7 @@
     "11c4695daf16": {
       "id": "11c4695daf16",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2271,
+      "line": 2308,
       "function": "TestUserBans",
       "receiver": "db",
       "method": "Exec",
@@ -9592,7 +9592,7 @@
     "130dc802fd1a": {
       "id": "130dc802fd1a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3116,
+      "line": 3153,
       "function": "TestFetchMTModmailsCount",
       "receiver": "db",
       "method": "Exec",
@@ -10172,7 +10172,7 @@
     "140a5199bbc2": {
       "id": "140a5199bbc2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3397,
+      "line": 3434,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Raw",
@@ -11267,7 +11267,7 @@
     "1698b1a45bcf": {
       "id": "1698b1a45bcf",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4069,
+      "line": 4106,
       "function": "TestGetUserEmailsVisibleToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -11399,7 +11399,7 @@
     "16dded1623b5": {
       "id": "16dded1623b5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1433,
+      "line": 1470,
       "function": "TestPatchUserMuteChitchat",
       "receiver": "db",
       "method": "Raw",
@@ -13902,7 +13902,7 @@
     "1b8a39ffb693": {
       "id": "1b8a39ffb693",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 735,
+      "line": 772,
       "function": "TestPostUserAddEmailSupportForOtherUser",
       "receiver": "db",
       "method": "Exec",
@@ -14176,7 +14176,7 @@
     "1c3b4894ce64": {
       "id": "1c3b4894ce64",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1630,
+      "line": 1667,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Raw",
@@ -14869,7 +14869,7 @@
     "1d6c787f74ae": {
       "id": "1d6c787f74ae",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 798,
+      "line": 835,
       "function": "TestPostUserAddEmailAlreadyOnSameUser",
       "receiver": "db",
       "method": "Exec",
@@ -15051,7 +15051,7 @@
     "1db901d8a753": {
       "id": "1db901d8a753",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4652,
+      "line": 4689,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -15095,7 +15095,7 @@
     "1dc0de1f4daf": {
       "id": "1dc0de1f4daf",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3943,
+      "line": 3980,
       "function": "TestPatchUserTrustlevelSelfBasic",
       "receiver": "db",
       "method": "Raw",
@@ -16460,7 +16460,7 @@
     "1faf484477cd": {
       "id": "1faf484477cd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3231,
+      "line": 3268,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Exec",
@@ -17327,7 +17327,7 @@
     "216edd50bc02": {
       "id": "216edd50bc02",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3732,
+      "line": 3769,
       "function": "TestSettingsDefaultsModOnlyFields",
       "receiver": "db",
       "method": "Exec",
@@ -17507,7 +17507,7 @@
     "21b81e602b7c": {
       "id": "21b81e602b7c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3458,
+      "line": 3495,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -17685,7 +17685,7 @@
     "21e9e881aa90": {
       "id": "21e9e881aa90",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3611,
+      "line": 3648,
       "function": "TestGetDeletedUserNameAsNonMod",
       "receiver": "db",
       "method": "Exec",
@@ -18354,7 +18354,7 @@
     "232ff1042cb8": {
       "id": "232ff1042cb8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1538,
+      "line": 1575,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Raw",
@@ -18693,7 +18693,7 @@
     "239fee656058": {
       "id": "239fee656058",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1265,
+      "line": 1302,
       "function": "TestPatchUserSettingsMergesNotReplaces",
       "receiver": "db",
       "method": "Exec",
@@ -19100,7 +19100,7 @@
     "244bb5d76dd2": {
       "id": "244bb5d76dd2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4149,
+      "line": 4186,
       "function": "TestGetUserPartnerGeneratesEmailWhenNoneExists",
       "receiver": "db",
       "method": "Exec",
@@ -19370,7 +19370,7 @@
     "24dc4ecd98fd": {
       "id": "24dc4ecd98fd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2958,
+      "line": 2995,
       "function": "TestGetUserFetchMT_MessageHistoryOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -19863,7 +19863,7 @@
     "2595bbd76a3f": {
       "id": "2595bbd76a3f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4165,
+      "line": 4202,
       "function": "TestGetUserPartnerGeneratesEmailWhenNoneExists",
       "receiver": "db",
       "method": "Raw",
@@ -20672,7 +20672,7 @@
     "273f25f5ff6e": {
       "id": "273f25f5ff6e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1561,
+      "line": 1598,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Exec",
@@ -20841,6 +20841,28 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND collection = 'Pending'",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "279f4bc44e6e": {
+      "id": "279f4bc44e6e",
+      "file": "iznik-server-go/test/user_test.go",
+      "line": 1250,
+      "function": "TestPatchUserDisplayname",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT fullname FROM users WHERE id = ?",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -21409,7 +21431,7 @@
     "28e697bae6c5": {
       "id": "28e697bae6c5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4093,
+      "line": 4130,
       "function": "TestGetUserEmailFieldPopulatedForFDEmail",
       "receiver": "db",
       "method": "Exec",
@@ -21858,7 +21880,7 @@
     "298cb21e8360": {
       "id": "298cb21e8360",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1832,
+      "line": 1869,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Exec",
@@ -22994,7 +23016,7 @@
     "2c15f20e4552": {
       "id": "2c15f20e4552",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3493,
+      "line": 3530,
       "function": "TestUserSearch_DeletedSearchesExcluded",
       "receiver": "db",
       "method": "Exec",
@@ -23171,7 +23193,7 @@
     "2c5c4c40cc8f": {
       "id": "2c5c4c40cc8f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4322,
+      "line": 4359,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Raw",
@@ -24064,7 +24086,7 @@
     "2e56f3cbfde7": {
       "id": "2e56f3cbfde7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1604,
+      "line": 1641,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Exec",
@@ -26389,7 +26411,7 @@
     "3247baee5681": {
       "id": "3247baee5681",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4588,
+      "line": 4625,
       "function": "TestMessageHistory_NoDuplicatesOnRipple",
       "receiver": "db",
       "method": "Exec",
@@ -26523,7 +26545,7 @@
     "328aa087c775": {
       "id": "328aa087c775",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4068,
+      "line": 4105,
       "function": "TestGetUserEmailsVisibleToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -26686,7 +26708,7 @@
     "32ec2269dd89": {
       "id": "32ec2269dd89",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1907,
+      "line": 1944,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -26708,7 +26730,7 @@
     "32ee9168d6b1": {
       "id": "32ee9168d6b1",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1713,
+      "line": 1750,
       "function": "TestLimboUserSelfDelete",
       "receiver": "db",
       "method": "Raw",
@@ -26730,7 +26752,7 @@
     "32f6315f3f0d": {
       "id": "32f6315f3f0d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2854,
+      "line": 2891,
       "function": "TestGetUserFetchMT_WithModtoolsComments",
       "receiver": "db",
       "method": "Exec",
@@ -27202,7 +27224,7 @@
     "33b18b7b3546": {
       "id": "33b18b7b3546",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4675,
+      "line": 4712,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -27292,7 +27314,7 @@
     "33f2e373f35b": {
       "id": "33f2e373f35b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2767,
+      "line": 2804,
       "function": "TestGetUserFetchMT_AdminSeesDonations",
       "receiver": "db",
       "method": "Exec",
@@ -28357,7 +28379,7 @@
     "35cee4642074": {
       "id": "35cee4642074",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4555,
+      "line": 4592,
       "function": "TestMessageHistory_NoDuplicatesOnRepost",
       "receiver": "db",
       "method": "Exec",
@@ -28557,7 +28579,7 @@
     "3649811bddea": {
       "id": "3649811bddea",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3457,
+      "line": 3494,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -28829,7 +28851,7 @@
     "370fec186220": {
       "id": "370fec186220",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1686,
+      "line": 1723,
       "function": "TestLimboUserAdmin",
       "receiver": "db",
       "method": "Raw",
@@ -30380,7 +30402,7 @@
     "3a60b4ef4fa9": {
       "id": "3a60b4ef4fa9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2406,
+      "line": 2443,
       "function": "TestSpammers_FilterByUserid",
       "receiver": "db",
       "method": "Exec",
@@ -30799,7 +30821,7 @@
     "3b0686c5e40e": {
       "id": "3b0686c5e40e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1543,
+      "line": 1580,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Raw",
@@ -31195,7 +31217,7 @@
     "3bea64a9a2b3": {
       "id": "3bea64a9a2b3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4116,
+      "line": 4153,
       "function": "partnerKey",
       "receiver": "db",
       "method": "Exec",
@@ -31667,7 +31689,7 @@
     "3cc2c2cd663a": {
       "id": "3cc2c2cd663a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3057,
+      "line": 3094,
       "function": "TestGetUserMembershipsPostingStatus",
       "receiver": "db",
       "method": "Exec",
@@ -32219,7 +32241,7 @@
     "3e5e8144fa1a": {
       "id": "3e5e8144fa1a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3230,
+      "line": 3267,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -32373,7 +32395,7 @@
     "3ead035b6e63": {
       "id": "3ead035b6e63",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4073,
+      "line": 4110,
       "function": "TestGetUserEmailsVisibleToSupport",
       "receiver": "db",
       "method": "Exec",
@@ -32610,7 +32632,7 @@
     "3efef6d7b4e0": {
       "id": "3efef6d7b4e0",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2208,
+      "line": 2245,
       "function": "TestUserChatrooms_ModCanSee",
       "receiver": "db",
       "method": "Exec",
@@ -32848,7 +32870,7 @@
     "3f5842a7fcec": {
       "id": "3f5842a7fcec",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4317,
+      "line": 4354,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -33869,7 +33891,7 @@
     "4143cf0a5f0f": {
       "id": "4143cf0a5f0f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1691,
+      "line": 1728,
       "function": "TestLimboUserAdmin",
       "receiver": "db",
       "method": "Raw",
@@ -34912,7 +34934,7 @@
     "434f1b73ed5d": {
       "id": "434f1b73ed5d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1219,
+      "line": 1256,
       "function": "TestPatchUserDisplayname",
       "receiver": "db",
       "method": "Raw",
@@ -36089,7 +36111,7 @@
     "4597a8191f84": {
       "id": "4597a8191f84",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1902,
+      "line": 1939,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -37033,7 +37055,7 @@
     "47a2285eb533": {
       "id": "47a2285eb533",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3517,
+      "line": 3554,
       "function": "TestUserSearch_UniqueTermsReturned",
       "receiver": "db",
       "method": "Exec",
@@ -37343,7 +37365,7 @@
     "47f08e863ceb": {
       "id": "47f08e863ceb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3673,
+      "line": 3710,
       "function": "TestGetUserReturnsGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -37878,7 +37900,7 @@
     "491a189bedcb": {
       "id": "491a189bedcb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3836,
+      "line": 3873,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Exec",
@@ -38643,7 +38665,7 @@
     "4a6e4c68de8a": {
       "id": "4a6e4c68de8a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3418,
+      "line": 3455,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -38775,7 +38797,7 @@
     "4a956f7caa7f": {
       "id": "4a956f7caa7f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 755,
+      "line": 792,
       "function": "TestPostUserAddEmailSupportForOtherUser",
       "receiver": "db",
       "method": "Raw",
@@ -39282,7 +39304,7 @@
     "4b6b86de2a8a": {
       "id": "4b6b86de2a8a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3869,
+      "line": 3906,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -40537,7 +40559,7 @@
     "4e03094ae34d": {
       "id": "4e03094ae34d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 629,
+      "line": 666,
       "function": "TestPostUserRemoveEmail",
       "receiver": "db",
       "method": "Raw",
@@ -40959,7 +40981,7 @@
     "4f0096172973": {
       "id": "4f0096172973",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4857,
+      "line": 4894,
       "function": "TestPatchUserSettingsBySharedGroupModPersists",
       "receiver": "db",
       "method": "Exec",
@@ -41813,7 +41835,7 @@
     "513bedff17c4": {
       "id": "513bedff17c4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 543,
+      "line": 580,
       "function": "TestPostUserRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -42168,7 +42190,7 @@
     "51e63f6d2562": {
       "id": "51e63f6d2562",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2119,
+      "line": 2156,
       "function": "TestPostUserMergeByEmail",
       "receiver": "db",
       "method": "Raw",
@@ -42283,7 +42305,7 @@
     "523de4e244bd": {
       "id": "523de4e244bd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3972,
+      "line": 4009,
       "function": "TestPatchUserTrustlevelSelfEmpty",
       "receiver": "db",
       "method": "Raw",
@@ -42596,7 +42618,7 @@
     "52ec3508f186": {
       "id": "52ec3508f186",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3697,
+      "line": 3734,
       "function": "TestSettingsDefaultsApplied",
       "receiver": "db",
       "method": "Exec",
@@ -42750,7 +42772,7 @@
     "531cda60ee16": {
       "id": "531cda60ee16",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1301,
+      "line": 1338,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Raw",
@@ -45174,7 +45196,7 @@
     "57cda8e30715": {
       "id": "57cda8e30715",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4552,
+      "line": 4589,
       "function": "TestMessageHistory_NoDuplicatesOnRepost",
       "receiver": "db",
       "method": "Exec",
@@ -45267,7 +45289,7 @@
     "58060aa7bdc7": {
       "id": "58060aa7bdc7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3832,
+      "line": 3869,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Raw",
@@ -45333,7 +45355,7 @@
     "581c281d1190": {
       "id": "581c281d1190",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4476,
+      "line": 4513,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -45502,7 +45524,7 @@
     "5851bfc807ce": {
       "id": "5851bfc807ce",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1125,
+      "line": 1162,
       "function": "TestPutUserPersistentSeriesMatchesSession",
       "receiver": "db",
       "method": "Raw",
@@ -45839,7 +45861,7 @@
     "58e70578ebc8": {
       "id": "58e70578ebc8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1750,
+      "line": 1787,
       "function": "TestLimboUserAdminCannotDeleteModerator",
       "receiver": "db",
       "method": "Exec",
@@ -46559,7 +46581,7 @@
     "5aad9cd3e6b7": {
       "id": "5aad9cd3e6b7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2800,
+      "line": 2837,
       "function": "TestGetUserFetchMT_NonAdminNoDonations",
       "receiver": "db",
       "method": "Exec",
@@ -46923,7 +46945,7 @@
     "5b02467a64cd": {
       "id": "5b02467a64cd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4776,
+      "line": 4813,
       "function": "TestGetUserInfoOffersNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -47676,7 +47698,7 @@
     "5ca4a7c867ed": {
       "id": "5ca4a7c867ed",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4813,
+      "line": 4850,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Raw",
@@ -48075,7 +48097,7 @@
     "5d6857bafb6d": {
       "id": "5d6857bafb6d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4821,
+      "line": 4858,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -48187,7 +48209,7 @@
     "5db8ffd5db74": {
       "id": "5db8ffd5db74",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2988,
+      "line": 3025,
       "function": "TestGetUserFetchMT_MessageHistoryOutcome",
       "receiver": "db",
       "method": "Exec",
@@ -48653,7 +48675,7 @@
     "5e8ceb487de1": {
       "id": "5e8ceb487de1",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1587,
+      "line": 1624,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -48902,7 +48924,7 @@
     "5f2d0d9e1e5a": {
       "id": "5f2d0d9e1e5a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4325,
+      "line": 4362,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -48970,7 +48992,7 @@
     "5f43e5224a19": {
       "id": "5f43e5224a19",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1930,
+      "line": 1967,
       "function": "TestLimboUserLogsGroupLeft",
       "receiver": "db",
       "method": "Raw",
@@ -49170,7 +49192,7 @@
     "5f934a7d6db1": {
       "id": "5f934a7d6db1",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4719,
+      "line": 4756,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -50085,7 +50107,7 @@
     "61567b8dcc08": {
       "id": "61567b8dcc08",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1588,
+      "line": 1625,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -51627,7 +51649,7 @@
     "6435e4e7cf3c": {
       "id": "6435e4e7cf3c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4490,
+      "line": 4527,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -52132,7 +52154,7 @@
     "650786d44079": {
       "id": "650786d44079",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4586,
+      "line": 4623,
       "function": "TestMessageHistory_NoDuplicatesOnRipple",
       "receiver": "db",
       "method": "Exec",
@@ -52269,7 +52291,7 @@
     "65509fb56944": {
       "id": "65509fb56944",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1326,
+      "line": 1363,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Raw",
@@ -52820,7 +52842,7 @@
     "665753dda825": {
       "id": "665753dda825",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2076,
+      "line": 2113,
       "function": "TestPostUserMergeWithStringIDs",
       "receiver": "db",
       "method": "Raw",
@@ -53496,7 +53518,7 @@
     "679c26d9e0b7": {
       "id": "679c26d9e0b7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1761,
+      "line": 1798,
       "function": "TestLimboUserAdminCannotDeleteModerator",
       "receiver": "db",
       "method": "Exec",
@@ -54095,7 +54117,7 @@
     "689063fbd244": {
       "id": "689063fbd244",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3875,
+      "line": 3912,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -54316,7 +54338,7 @@
     "68f472205846": {
       "id": "68f472205846",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2385,
+      "line": 2422,
       "function": "TestUserFetchMT_ReturnsModFields",
       "receiver": "db",
       "method": "Exec",
@@ -54852,7 +54874,7 @@
     "6a06676f7124": {
       "id": "6a06676f7124",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2487,
+      "line": 2524,
       "function": "TestSearchUsers_ByName",
       "receiver": "db",
       "method": "Exec",
@@ -55588,7 +55610,7 @@
     "6b293fb7d890": {
       "id": "6b293fb7d890",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3406,
+      "line": 3443,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -55678,7 +55700,7 @@
     "6b473f063436": {
       "id": "6b473f063436",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4340,
+      "line": 4377,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -57349,6 +57371,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "6e5e37af78d0": {
+      "id": "6e5e37af78d0",
+      "file": "iznik-server-go/test/image_test.go",
+      "line": 111,
+      "function": "TestCreateImageNoAuthUnlinked",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "messages_attachments"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "SELECT contenttype FROM messages_attachments WHERE id = ?",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "6e68463a6911": {
       "id": "6e68463a6911",
       "file": "iznik-server-go/test/spammers_test.go",
@@ -58880,7 +58924,7 @@
     "70fdb24c3434": {
       "id": "70fdb24c3434",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4720,
+      "line": 4757,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -59107,7 +59151,7 @@
     "7190dfa3d88a": {
       "id": "7190dfa3d88a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2761,
+      "line": 2798,
       "function": "TestGetUserFetchMT_AdminSeesDonations",
       "receiver": "db",
       "method": "Exec",
@@ -59175,7 +59219,7 @@
     "71b08063be7e": {
       "id": "71b08063be7e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4668,
+      "line": 4705,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -59285,7 +59329,7 @@
     "71fa7dbcc25a": {
       "id": "71fa7dbcc25a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1606,
+      "line": 1643,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Exec",
@@ -59532,7 +59576,7 @@
     "72566f9136c6": {
       "id": "72566f9136c6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3494,
+      "line": 3531,
       "function": "TestUserSearch_DeletedSearchesExcluded",
       "receiver": "db",
       "method": "Exec",
@@ -59554,7 +59598,7 @@
     "72648328dbf6": {
       "id": "72648328dbf6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3459,
+      "line": 3496,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -60323,7 +60367,7 @@
     "73ad79ef3a37": {
       "id": "73ad79ef3a37",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3834,
+      "line": 3871,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Exec",
@@ -63521,7 +63565,7 @@
     "78da0b032328": {
       "id": "78da0b032328",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 524,
+      "line": 561,
       "function": "TestPostUserRatingReviewed",
       "receiver": "db",
       "method": "Exec",
@@ -63565,7 +63609,7 @@
     "78ec93729d0c": {
       "id": "78ec93729d0c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3516,
+      "line": 3553,
       "function": "TestUserSearch_UniqueTermsReturned",
       "receiver": "db",
       "method": "Exec",
@@ -63684,7 +63728,7 @@
     "7934c6ceb3f2": {
       "id": "7934c6ceb3f2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4825,
+      "line": 4862,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -63815,7 +63859,7 @@
     "7949bf3bb29a": {
       "id": "7949bf3bb29a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4128,
+      "line": 4165,
       "function": "TestGetUserPartnerSeesExistingInternalEmail",
       "receiver": "db",
       "method": "Exec",
@@ -63947,7 +63991,7 @@
     "798207b61044": {
       "id": "798207b61044",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3061,
+      "line": 3098,
       "function": "TestGetUserMembershipsPostingStatus",
       "receiver": "db",
       "method": "Exec",
@@ -64640,7 +64684,7 @@
     "7ae0227aa1c0": {
       "id": "7ae0227aa1c0",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4332,
+      "line": 4369,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -65284,7 +65328,7 @@
     "7bed3e425bd4": {
       "id": "7bed3e425bd4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1668,
+      "line": 1705,
       "function": "TestLimboUserAdmin",
       "receiver": "db",
       "method": "Exec",
@@ -65484,7 +65528,7 @@
     "7c484bd0ff4c": {
       "id": "7c484bd0ff4c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4716,
+      "line": 4753,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -65603,7 +65647,7 @@
     "7c9a2ee4c493": {
       "id": "7c9a2ee4c493",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2525,
+      "line": 2562,
       "function": "TestSearchUsers_ByEmail",
       "receiver": "db",
       "method": "Exec",
@@ -65807,7 +65851,7 @@
     "7d182c9df469": {
       "id": "7d182c9df469",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1656,
+      "line": 1693,
       "function": "TestLimboUserSelf",
       "receiver": "db",
       "method": "Raw",
@@ -67290,7 +67334,7 @@
     "7fb5467dafe4": {
       "id": "7fb5467dafe4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1253,
+      "line": 1290,
       "function": "TestPatchUserSettings",
       "receiver": "db",
       "method": "Raw",
@@ -67953,7 +67997,7 @@
     "814f854216b4": {
       "id": "814f854216b4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2432,
+      "line": 2469,
       "function": "TestUserFetchMT_HidesModFieldsFromNonMod",
       "receiver": "db",
       "method": "Exec",
@@ -69037,7 +69081,7 @@
     "83613ed1ad64": {
       "id": "83613ed1ad64",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4660,
+      "line": 4697,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -69697,7 +69741,7 @@
     "8473e4b87633": {
       "id": "8473e4b87633",
       "file": "iznik-server-go/test/image_test.go",
-      "line": 313,
+      "line": 326,
       "function": "TestRotateImageWithBooleanFlag",
       "receiver": "db",
       "method": "Raw",
@@ -70795,8 +70839,8 @@
     "86865bcdf341": {
       "id": "86865bcdf341",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1213,
-      "function": "TestPatchUserDisplayname",
+      "line": 360,
+      "function": "TestInventNameRejectsAuthorityEmailLocalPart",
       "receiver": "db",
       "method": "Raw",
       "sqlSource": "literal",
@@ -71365,7 +71409,7 @@
     "87c2d4059051": {
       "id": "87c2d4059051",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1777,
+      "line": 1814,
       "function": "TestPostUserUnbounce",
       "receiver": "db",
       "method": "Exec",
@@ -71475,7 +71519,7 @@
     "87d469ee286a": {
       "id": "87d469ee286a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4423,
+      "line": 4460,
       "function": "TestUserLocationChangesModInfo",
       "receiver": "db",
       "method": "Exec",
@@ -71949,7 +71993,7 @@
     "88f85832a579": {
       "id": "88f85832a579",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2362,
+      "line": 2399,
       "function": "TestUserLogins",
       "receiver": "db",
       "method": "Exec",
@@ -72191,7 +72235,7 @@
     "89bd06e187e9": {
       "id": "89bd06e187e9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3672,
+      "line": 3709,
       "function": "TestGetUserReturnsGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -72705,7 +72749,7 @@
     "8aa080a6a9b2": {
       "id": "8aa080a6a9b2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1957,
+      "line": 1994,
       "function": "TestUnsubscribeLogsGroupLeft",
       "receiver": "db",
       "method": "Raw",
@@ -72841,7 +72885,7 @@
     "8ae48078a611": {
       "id": "8ae48078a611",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1562,
+      "line": 1599,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Exec",
@@ -74615,7 +74659,7 @@
     "8dfe6ce8ee59": {
       "id": "8dfe6ce8ee59",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1580,
+      "line": 1617,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -75458,7 +75502,7 @@
     "8fc19768d8df": {
       "id": "8fc19768d8df",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4481,
+      "line": 4518,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Raw",
@@ -75480,7 +75524,7 @@
     "8ff82b09cd55": {
       "id": "8ff82b09cd55",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3665,
+      "line": 3702,
       "function": "TestGetUserReturnsGiftAid",
       "receiver": "db",
       "method": "Exec",
@@ -75682,7 +75726,7 @@
     "903beb28b71c": {
       "id": "903beb28b71c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4027,
+      "line": 4064,
       "function": "TestPatchUserTrustlevelOtherUserForbidden",
       "receiver": "db",
       "method": "Raw",
@@ -75836,7 +75880,7 @@
     "906eee9102de": {
       "id": "906eee9102de",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4818,
+      "line": 4855,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -75858,7 +75902,7 @@
     "90728c2951b6": {
       "id": "90728c2951b6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4674,
+      "line": 4711,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Exec",
@@ -76406,7 +76450,7 @@
     "9183d6edf00b": {
       "id": "9183d6edf00b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2115,
+      "line": 2152,
       "function": "TestPostUserMergeByEmail",
       "receiver": "db",
       "method": "Raw",
@@ -76876,7 +76920,7 @@
     "926d2ac61974": {
       "id": "926d2ac61974",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4657,
+      "line": 4694,
       "function": "TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary",
       "receiver": "db",
       "method": "Raw",
@@ -77034,7 +77078,7 @@
     "92c50b3faa52": {
       "id": "92c50b3faa52",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2018,
+      "line": 2055,
       "function": "TestPostUserMerge",
       "receiver": "db",
       "method": "Raw",
@@ -77925,7 +77969,7 @@
     "9430e4dc01b3": {
       "id": "9430e4dc01b3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3515,
+      "line": 3552,
       "function": "TestUserSearch_UniqueTermsReturned",
       "receiver": "db",
       "method": "Exec",
@@ -77967,7 +78011,7 @@
     "9457737ca1ce": {
       "id": "9457737ca1ce",
       "file": "iznik-server-go/test/image_test.go",
-      "line": 310,
+      "line": 323,
       "function": "TestRotateImageWithBooleanFlag",
       "receiver": "db",
       "method": "Exec",
@@ -78332,7 +78376,7 @@
     "953a7a782aea": {
       "id": "953a7a782aea",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 527,
+      "line": 564,
       "function": "TestPostUserRatingReviewed",
       "receiver": "db",
       "method": "Raw",
@@ -80396,7 +80440,7 @@
     "9995ff795ebe": {
       "id": "9995ff795ebe",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2015,
+      "line": 2052,
       "function": "TestPostUserMerge",
       "receiver": "db",
       "method": "Raw",
@@ -80709,7 +80753,7 @@
     "9a419c25f967": {
       "id": "9a419c25f967",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1282,
+      "line": 1319,
       "function": "TestPatchUserSettingsMergesNotReplaces",
       "receiver": "db",
       "method": "Raw",
@@ -80819,7 +80863,7 @@
     "9aa98b9c0e9a": {
       "id": "9aa98b9c0e9a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4551,
+      "line": 4588,
       "function": "TestMessageHistory_NoDuplicatesOnRepost",
       "receiver": "db",
       "method": "Exec",
@@ -81962,7 +82006,7 @@
     "9cd5501ddfde": {
       "id": "9cd5501ddfde",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2340,
+      "line": 2377,
       "function": "TestUserMembershipHistory",
       "receiver": "db",
       "method": "Exec",
@@ -82402,7 +82446,7 @@
     "9e0bbcc0d15d": {
       "id": "9e0bbcc0d15d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2317,
+      "line": 2354,
       "function": "TestUserApplied",
       "receiver": "db",
       "method": "Exec",
@@ -82717,7 +82761,7 @@
     "9ee45d83bbd9": {
       "id": "9ee45d83bbd9",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4780,
+      "line": 4817,
       "function": "TestGetUserInfoOffersNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -82739,7 +82783,7 @@
     "9ee734081267": {
       "id": "9ee734081267",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3545,
+      "line": 3582,
       "function": "TestUserSearch_LimitedTo10",
       "receiver": "db",
       "method": "Exec",
@@ -83474,7 +83518,7 @@
     "a01479a9f407": {
       "id": "a01479a9f407",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4491,
+      "line": 4528,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -84309,7 +84353,7 @@
     "a1a5a51ce47a": {
       "id": "a1a5a51ce47a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2023,
+      "line": 2060,
       "function": "TestPostUserMerge",
       "receiver": "db",
       "method": "Raw",
@@ -84637,6 +84681,28 @@
       "hasParityTest": false,
       "status": "test-fixture"
     },
+    "a24993b2b692": {
+      "id": "a24993b2b692",
+      "file": "iznik-server-go/test/user_test.go",
+      "line": 339,
+      "function": "TestInventNameRejectsAuthorityEmailLocalPart",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users_emails"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 1,
+      "goldenSql": "INSERT INTO users_emails (userid, email, preferred) VALUES (?, 'info@example.com', 1)",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "a25ca71cf6cc": {
       "id": "a25ca71cf6cc",
       "file": "iznik-server-go/user/user.go",
@@ -84905,7 +84971,7 @@
     "a2ab9af6f4f4": {
       "id": "a2ab9af6f4f4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3636,
+      "line": 3673,
       "function": "TestGetUserReturnsEngagement",
       "receiver": "db",
       "method": "Exec",
@@ -85415,7 +85481,7 @@
     "a3a79738b0ae": {
       "id": "a3a79738b0ae",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4724,
+      "line": 4761,
       "function": "TestMessageHistory_ArrivalUsesLatestGroupPosting",
       "receiver": "db",
       "method": "Exec",
@@ -85459,7 +85525,7 @@
     "a3b3f0b7e730": {
       "id": "a3b3f0b7e730",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4774,
+      "line": 4811,
       "function": "TestGetUserInfoOffersNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -85594,7 +85660,7 @@
     "a3e68a04ea4f": {
       "id": "a3e68a04ea4f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1513,
+      "line": 1550,
       "function": "TestPatchUserSettingsModOnMember",
       "receiver": "db",
       "method": "Exec",
@@ -85836,7 +85902,7 @@
     "a4377ca54b0e": {
       "id": "a4377ca54b0e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3232,
+      "line": 3269,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Raw",
@@ -86213,7 +86279,7 @@
     "a4d2c1f4222e": {
       "id": "a4d2c1f4222e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3548,
+      "line": 3585,
       "function": "TestUserSearch_LimitedTo10",
       "receiver": "db",
       "method": "Exec",
@@ -86808,7 +86874,7 @@
     "a63fa533848d": {
       "id": "a63fa533848d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3873,
+      "line": 3910,
       "function": "TestGetUserFetchMT_ModSeesEmailsForBannedUser",
       "receiver": "db",
       "method": "Exec",
@@ -86874,7 +86940,7 @@
     "a6503e4ca53d": {
       "id": "a6503e4ca53d",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3958,
+      "line": 3995,
       "function": "TestPatchUserTrustlevelSelfEmpty",
       "receiver": "db",
       "method": "Exec",
@@ -87006,7 +87072,7 @@
     "a69bc153d4e4": {
       "id": "a69bc153d4e4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1387,
+      "line": 1424,
       "function": "TestPatchUserAboutMe",
       "receiver": "db",
       "method": "Raw",
@@ -87028,7 +87094,7 @@
     "a6a1c2c8f806": {
       "id": "a6a1c2c8f806",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 894,
+      "line": 931,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -87226,7 +87292,7 @@
     "a6fc6178a24b": {
       "id": "a6fc6178a24b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 949,
+      "line": 986,
       "function": "TestPutUserDuplicateEmail",
       "receiver": "db",
       "method": "Raw",
@@ -87385,7 +87451,7 @@
     "a72aaf4ddb0c": {
       "id": "a72aaf4ddb0c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 584,
+      "line": 621,
       "function": "TestPostUserAddEmailAlreadyUsed",
       "receiver": "db",
       "method": "Exec",
@@ -88282,7 +88348,7 @@
     "a8c5605e5ef7": {
       "id": "a8c5605e5ef7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 979,
+      "line": 1016,
       "function": "TestPutUserDuplicateEmailAuthenticated",
       "receiver": "db",
       "method": "Raw",
@@ -88529,7 +88595,7 @@
     "a9a5efc5b31f": {
       "id": "a9a5efc5b31f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3584,
+      "line": 3621,
       "function": "TestGetDeletedUserNameAsMod",
       "receiver": "db",
       "method": "Exec",
@@ -88579,7 +88645,7 @@
     "a9acb20bf048": {
       "id": "a9acb20bf048",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3065,
+      "line": 3102,
       "function": "TestGetUserMembershipsPostingStatus",
       "receiver": "db",
       "method": "Exec",
@@ -89396,7 +89462,7 @@
     "aae0f099b963": {
       "id": "aae0f099b963",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1069,
+      "line": 1106,
       "function": "TestPutUserWithGroup",
       "receiver": "db",
       "method": "Raw",
@@ -90373,7 +90439,7 @@
     "acf4c5a7c899": {
       "id": "acf4c5a7c899",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3918,
+      "line": 3955,
       "function": "TestPatchUserTrustlevelSelfDeclined",
       "receiver": "db",
       "method": "Raw",
@@ -91785,7 +91851,7 @@
     "afc78c728df4": {
       "id": "afc78c728df4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 571,
+      "line": 608,
       "function": "TestPostUserAddEmail",
       "receiver": "db",
       "method": "Raw",
@@ -92153,7 +92219,7 @@
     "b076a3868f3b": {
       "id": "b076a3868f3b",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 890,
+      "line": 927,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -92666,7 +92732,7 @@
     "b197b3c50db7": {
       "id": "b197b3c50db7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3233,
+      "line": 3270,
       "function": "TestGetUserReplies",
       "receiver": "db",
       "method": "Exec",
@@ -93895,7 +93961,7 @@
     "b41e1fdc7f83": {
       "id": "b41e1fdc7f83",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1855,
+      "line": 1892,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Raw",
@@ -94692,7 +94758,7 @@
     "b55029466bb4": {
       "id": "b55029466bb4",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3756,
+      "line": 3793,
       "function": "TestSettingsDefaultsModOnlyFields",
       "receiver": "db",
       "method": "Exec",
@@ -95141,7 +95207,7 @@
     "b661226c0e79": {
       "id": "b661226c0e79",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4177,
+      "line": 4214,
       "function": "TestGetUserPartnerFixesWrongUserIDInEmail",
       "receiver": "db",
       "method": "Exec",
@@ -95163,7 +95229,7 @@
     "b6617e072713": {
       "id": "b6617e072713",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2072,
+      "line": 2109,
       "function": "TestPostUserMergeWithStringIDs",
       "receiver": "db",
       "method": "Raw",
@@ -96010,7 +96076,7 @@
     "b854b9d2aed8": {
       "id": "b854b9d2aed8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4199,
+      "line": 4236,
       "function": "TestGetUserModSeesTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -96280,7 +96346,7 @@
     "b8da745e0e42": {
       "id": "b8da745e0e42",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 903,
+      "line": 940,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -97877,7 +97943,7 @@
     "bbf4d149b8c2": {
       "id": "bbf4d149b8c2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4346,
+      "line": 4383,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -98289,7 +98355,7 @@
     "bc90798e8eb6": {
       "id": "bc90798e8eb6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3903,
+      "line": 3940,
       "function": "TestPatchUserTrustlevelSelfDeclined",
       "receiver": "db",
       "method": "Raw",
@@ -98971,7 +99037,7 @@
     "be3c01c20794": {
       "id": "be3c01c20794",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1299,
+      "line": 1336,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Exec",
@@ -99103,7 +99169,7 @@
     "be77e097e6eb": {
       "id": "be77e097e6eb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2294,
+      "line": 2331,
       "function": "TestUserNewsfeed",
       "receiver": "db",
       "method": "Exec",
@@ -99960,7 +100026,7 @@
     "c043dccafb53": {
       "id": "c043dccafb53",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1703,
+      "line": 1740,
       "function": "TestLimboUserSelfDelete",
       "receiver": "db",
       "method": "Exec",
@@ -100024,7 +100090,7 @@
     "c04e7d769eda": {
       "id": "c04e7d769eda",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4421,
+      "line": 4458,
       "function": "TestUserLocationChangesModInfo",
       "receiver": "db",
       "method": "Exec",
@@ -100332,7 +100398,7 @@
     "c1068aea0a24": {
       "id": "c1068aea0a24",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1851,
+      "line": 1888,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Raw",
@@ -101440,6 +101506,28 @@
       "hasParityTest": true,
       "status": "converted"
     },
+    "c2cea2c96bd0": {
+      "id": "c2cea2c96bd0",
+      "file": "iznik-server-go/test/user_test.go",
+      "line": 336,
+      "function": "TestInventNameRejectsAuthorityEmailLocalPart",
+      "receiver": "db",
+      "method": "Raw",
+      "sqlSource": "literal",
+      "kind": "SELECT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 1,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "SELECT id FROM users ORDER BY id DESC LIMIT 1",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
     "c2d4b40c8da4": {
       "id": "c2d4b40c8da4",
       "file": "iznik-server-go/test/message_test.go",
@@ -101531,7 +101619,7 @@
     "c2ebc2532301": {
       "id": "c2ebc2532301",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4232,
+      "line": 4269,
       "function": "TestGetUserPartnerSeesTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -101976,7 +102064,7 @@
     "c4077939b1f3": {
       "id": "c4077939b1f3",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1896,
+      "line": 1933,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -105516,7 +105604,7 @@
     "cac44e797c6f": {
       "id": "cac44e797c6f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4347,
+      "line": 4384,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Exec",
@@ -105632,7 +105720,7 @@
     "cb000fd5c0fa": {
       "id": "cb000fd5c0fa",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3456,
+      "line": 3493,
       "function": "TestUserSearch_OwnSearches",
       "receiver": "db",
       "method": "Exec",
@@ -105786,7 +105874,7 @@
     "cb3b3531b32e": {
       "id": "cb3b3531b32e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1796,
+      "line": 1833,
       "function": "TestPostUserUnbounce",
       "receiver": "db",
       "method": "Raw",
@@ -107153,7 +107241,7 @@
     "ce3ab3d9fe38": {
       "id": "ce3ab3d9fe38",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3144,
+      "line": 3181,
       "function": "TestFetchMTModmailsGroupFilter",
       "receiver": "db",
       "method": "Exec",
@@ -107825,7 +107913,7 @@
     "cf35b3767bb2": {
       "id": "cf35b3767bb2",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2248,
+      "line": 2285,
       "function": "TestUserEmailHistory",
       "receiver": "db",
       "method": "Exec",
@@ -107849,7 +107937,7 @@
     "cf4f01d4ce8e": {
       "id": "cf4f01d4ce8e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4279,
+      "line": 4316,
       "function": "TestGetUserInvalidPartnerSeesNoEmail",
       "receiver": "db",
       "method": "Exec",
@@ -108206,7 +108294,7 @@
     "d00e479bcbac": {
       "id": "d00e479bcbac",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4258,
+      "line": 4295,
       "function": "TestGetUserInvalidPartnerSeesNoTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -110803,7 +110891,7 @@
     "d4cceaf6419f": {
       "id": "d4cceaf6419f",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3778,
+      "line": 3815,
       "function": "TestSettingsNotVisibleToOtherUsers",
       "receiver": "db",
       "method": "Exec",
@@ -112395,7 +112483,7 @@
     "d7e38e8a502a": {
       "id": "d7e38e8a502a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4337,
+      "line": 4374,
       "function": "TestRecentWanted_GoAPI_ExcludesNonApproved",
       "receiver": "db",
       "method": "Raw",
@@ -112461,7 +112549,7 @@
     "d80918759047": {
       "id": "d80918759047",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2157,
+      "line": 2194,
       "function": "TestPostUserMergeByModerator",
       "receiver": "db",
       "method": "Raw",
@@ -112730,7 +112818,7 @@
     "d88fb227a188": {
       "id": "d88fb227a188",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4826,
+      "line": 4863,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -113087,7 +113175,7 @@
     "d923689e83fb": {
       "id": "d923689e83fb",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1443,
+      "line": 1480,
       "function": "TestPatchUserPasswordBySupportUser",
       "receiver": "db",
       "method": "Exec",
@@ -113891,7 +113979,7 @@
     "daf10bce6a66": {
       "id": "daf10bce6a66",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1359,
+      "line": 1396,
       "function": "TestPatchUserOnHoliday",
       "receiver": "db",
       "method": "Raw",
@@ -114161,7 +114249,7 @@
     "db77dab683de": {
       "id": "db77dab683de",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4810,
+      "line": 4847,
       "function": "TestGetUserInfoWantedsNotInflatedByRippling",
       "receiver": "db",
       "method": "Exec",
@@ -114183,7 +114271,7 @@
     "db7f7588f6e6": {
       "id": "db7f7588f6e6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1218,
+      "line": 1255,
       "function": "TestPatchUserDisplayname",
       "receiver": "db",
       "method": "Raw",
@@ -114316,7 +114404,7 @@
     "dbbc8ec8cc14": {
       "id": "dbbc8ec8cc14",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 898,
+      "line": 935,
       "function": "TestPutUser",
       "receiver": "db",
       "method": "Raw",
@@ -114470,6 +114558,28 @@
       "dynamic": false,
       "args": 2,
       "goldenSql": "INSERT INTO chat_rooms (user1, user2, chattype) VALUES (?, ?, 'User2User')",
+      "presentInCode": true,
+      "hasParityTest": false,
+      "status": "test-fixture"
+    },
+    "dc1564955fc4": {
+      "id": "dc1564955fc4",
+      "file": "iznik-server-go/test/user_test.go",
+      "line": 334,
+      "function": "TestInventNameRejectsAuthorityEmailLocalPart",
+      "receiver": "db",
+      "method": "Exec",
+      "sqlSource": "literal",
+      "kind": "INSERT",
+      "tables": [
+        "users"
+      ],
+      "mysqlisms": null,
+      "complexity": "simple",
+      "wave": 2,
+      "dynamic": false,
+      "args": 0,
+      "goldenSql": "INSERT INTO users (fullname, systemrole) VALUES ('A freegler', 'User')",
       "presentInCode": true,
       "hasParityTest": false,
       "status": "test-fixture"
@@ -115307,7 +115417,7 @@
     "ddc9310cf597": {
       "id": "ddc9310cf597",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2161,
+      "line": 2198,
       "function": "TestPostUserMergeByModerator",
       "receiver": "db",
       "method": "Raw",
@@ -115395,7 +115505,7 @@
     "de0a400ef89e": {
       "id": "de0a400ef89e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 813,
+      "line": 850,
       "function": "TestPostUserAddEmailAlreadyOnSameUser",
       "receiver": "db",
       "method": "Raw",
@@ -115885,7 +115995,7 @@
     "df250b71784c": {
       "id": "df250b71784c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4907,
+      "line": 4944,
       "function": "TestPrivateLocationName_FallsBackToClosestPostcode",
       "receiver": "db",
       "method": "Raw",
@@ -116875,7 +116985,7 @@
     "e0f734b15a19": {
       "id": "e0f734b15a19",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1625,
+      "line": 1662,
       "function": "TestPatchUserSettingsNonModCannotUpdateOther",
       "receiver": "db",
       "method": "Raw",
@@ -117007,7 +117117,7 @@
     "e11258545cce": {
       "id": "e11258545cce",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1305,
+      "line": 1342,
       "function": "TestPatchUserSettingsPostcodeChange",
       "receiver": "db",
       "method": "Exec",
@@ -117188,7 +117298,7 @@
     "e16cd7a04db8": {
       "id": "e16cd7a04db8",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1581,
+      "line": 1618,
       "function": "TestPatchUserSettingsModOnMemberRelevantAllowed",
       "receiver": "db",
       "method": "Raw",
@@ -118877,7 +118987,7 @@
     "e4a79ed03656": {
       "id": "e4a79ed03656",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4873,
+      "line": 4910,
       "function": "TestPatchUserSettingsBySharedGroupModPersists",
       "receiver": "db",
       "method": "Raw",
@@ -119233,7 +119343,7 @@
     "e57e655a3497": {
       "id": "e57e655a3497",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3394,
+      "line": 3431,
       "function": "TestPublicLocation_MostRecentMembership",
       "receiver": "db",
       "method": "Exec",
@@ -120558,7 +120668,7 @@
     "e810ac70cc7c": {
       "id": "e810ac70cc7c",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 786,
+      "line": 823,
       "function": "TestPostUserAddEmailOrphanedRow",
       "receiver": "db",
       "method": "Raw",
@@ -121370,7 +121480,7 @@
     "e980c5928981": {
       "id": "e980c5928981",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4205,
+      "line": 4242,
       "function": "TestGetUserModSeesTnuserid",
       "receiver": "db",
       "method": "Exec",
@@ -121856,7 +121966,7 @@
     "ea434b904bd5": {
       "id": "ea434b904bd5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4484,
+      "line": 4521,
       "function": "TestGetUserMessageHistory_IncludesPending",
       "receiver": "db",
       "method": "Exec",
@@ -122122,7 +122232,7 @@
     "eab0f67ec731": {
       "id": "eab0f67ec731",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 449,
+      "line": 486,
       "function": "TestPostUserRateUp",
       "receiver": "db",
       "method": "Raw",
@@ -122190,7 +122300,7 @@
     "ead545149f3e": {
       "id": "ead545149f3e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 610,
+      "line": 647,
       "function": "TestPostUserRemoveEmail",
       "receiver": "db",
       "method": "Exec",
@@ -122818,7 +122928,7 @@
     "ec168455a698": {
       "id": "ec168455a698",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 2740,
+      "line": 2777,
       "function": "TestGetUserFetchMT_AdminSeesEmails",
       "receiver": "db",
       "method": "Exec",
@@ -122865,7 +122975,7 @@
     "ec1ae5d13430": {
       "id": "ec1ae5d13430",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3999,
+      "line": 4036,
       "function": "TestPatchUserTrustlevelSelfForbiddenElevated",
       "receiver": "db",
       "method": "Raw",
@@ -122956,7 +123066,7 @@
     "ec36d168102f": {
       "id": "ec36d168102f",
       "file": "iznik-server-go/test/image_test.go",
-      "line": 149,
+      "line": 162,
       "function": "TestCreateUserAvatarOwnedByRequester",
       "receiver": "db",
       "method": "Raw",
@@ -123449,7 +123559,7 @@
     "ed769c3eb9f6": {
       "id": "ed769c3eb9f6",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1717,
+      "line": 1754,
       "function": "TestLimboUserSelfDelete",
       "receiver": "db",
       "method": "Raw",
@@ -123869,7 +123979,7 @@
     "ee5fa4e7e00e": {
       "id": "ee5fa4e7e00e",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 480,
+      "line": 517,
       "function": "TestPostUserRateDown",
       "receiver": "db",
       "method": "Raw",
@@ -124913,7 +125023,7 @@
     "f057722c8e88": {
       "id": "f057722c8e88",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4094,
+      "line": 4131,
       "function": "TestGetUserEmailFieldPopulatedForFDEmail",
       "receiver": "db",
       "method": "Exec",
@@ -126152,7 +126262,7 @@
     "f2f0cca3eb4a": {
       "id": "f2f0cca3eb4a",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1831,
+      "line": 1868,
       "function": "TestPostUserUnbounceSelf",
       "receiver": "db",
       "method": "Exec",
@@ -127435,7 +127545,7 @@
     "f51240d98389": {
       "id": "f51240d98389",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4052,
+      "line": 4089,
       "function": "TestPatchUserTrustlevelModOnOther",
       "receiver": "db",
       "method": "Raw",
@@ -127569,7 +127679,7 @@
     "f56902dc18f5": {
       "id": "f56902dc18f5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3492,
+      "line": 3529,
       "function": "TestUserSearch_DeletedSearchesExcluded",
       "receiver": "db",
       "method": "Exec",
@@ -129477,7 +129587,7 @@
     "f8b946f7d635": {
       "id": "f8b946f7d635",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4903,
+      "line": 4940,
       "function": "TestPrivateLocationName_FallsBackToClosestPostcode",
       "receiver": "db",
       "method": "Exec",
@@ -131046,7 +131156,7 @@
     "fb70ae1b33a5": {
       "id": "fb70ae1b33a5",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 767,
+      "line": 804,
       "function": "TestPostUserAddEmailOrphanedRow",
       "receiver": "db",
       "method": "Exec",
@@ -131909,7 +132019,7 @@
     "fd66376845d7": {
       "id": "fd66376845d7",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 1875,
+      "line": 1912,
       "function": "TestPostUserUnsubscribeBySupportRemovesMembership",
       "receiver": "db",
       "method": "Raw",
@@ -132753,7 +132863,7 @@
     "fe85d9a196cd": {
       "id": "fe85d9a196cd",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 3828,
+      "line": 3865,
       "function": "TestGetUserReturnsBounceReason",
       "receiver": "db",
       "method": "Exec",
@@ -133367,7 +133477,7 @@
     "ffa8bdf92b08": {
       "id": "ffa8bdf92b08",
       "file": "iznik-server-go/test/user_test.go",
-      "line": 4418,
+      "line": 4455,
       "function": "TestUserLocationChangesModInfo",
       "receiver": "db",
       "method": "Exec",
