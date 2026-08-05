@@ -90,14 +90,20 @@ class EmbeddingService
                 ? $this->packVector($vectors["b:$id"])
                 : null;
 
-            DB::statement(
-                'INSERT INTO messages_embeddings (msgid, subject_embedding, body_embedding, model_version)
-                 VALUES (?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                   subject_embedding = VALUES(subject_embedding),
-                   body_embedding    = VALUES(body_embedding),
-                   model_version     = VALUES(model_version)',
-                [$id, $subjectBlob, $bodyBlob, self::MODEL_VERSION]
+            // upsert() with the update columns given as a plain LIST renders
+            // exactly "col = values(col)" for each - which is what this
+            // statement wrote by hand. Passing them as a key => value map
+            // instead would emit "col = ?" and bind, quietly changing an
+            // update-from-the-incoming-row into an update-to-a-fixed-value.
+            DB::table('messages_embeddings')->upsert(
+                [[
+                    'msgid' => $id,
+                    'subject_embedding' => $subjectBlob,
+                    'body_embedding' => $bodyBlob,
+                    'model_version' => self::MODEL_VERSION,
+                ]],
+                ['msgid'],
+                ['subject_embedding', 'body_embedding', 'model_version']
             );
             $count++;
         }

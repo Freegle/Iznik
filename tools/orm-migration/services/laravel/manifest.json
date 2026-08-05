@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:12:15Z",
+    "generated": "2026-08-05T17:13:16Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 82,
-        "raw": 233,
+        "converted": 83,
+        "raw": 232,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -8607,9 +8607,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "INSERT INTO messages_embeddings (msgid, subject_embedding, body_embedding, model_version) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE subject_embedding = VALUES(subject_embedding), body_embedding = VALUES(body_embedding), model_version = VALUES(model_version)",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
