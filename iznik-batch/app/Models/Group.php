@@ -171,9 +171,15 @@ class Group extends Model implements Auditable
     public function scopeNotClosed(Builder $query): Builder
     {
         return $query->where(function ($q) {
+            // keep-raw: the integer arm only. Laravel renders ->where('settings->closed', 0)
+            // as json_unquote(json_extract(...)) = 0, and json_unquote turns JSON true into
+            // the string 'true', false into 'false' and JSON null into 'null' - each of which
+            // MySQL casts to 0 when compared against a number. That arm would therefore match
+            // true, false and null as well, i.e. report every closed group as open. The two
+            // arms above have exact builder equivalents and no longer need raw SQL.
             $q->whereNull('settings')
-                ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') IS NULL")
-                ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = false")
+                ->orWhereJsonDoesntContainKey('settings->closed')
+                ->orWhere('settings->closed', false)
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = 0");
         });
     }
@@ -189,10 +195,13 @@ class Group extends Model implements Auditable
     public function scopeCommunityNewsEnabled(Builder $query): Builder
     {
         return $query->where(function ($q) {
+            // Same builder equivalents as scopeNotClosed: whereJsonDoesntContainKey for the
+            // IS NULL (key-absence) arm, whereJsonContains for the type-exact integer arm, and
+            // the boolean special case Laravel emits unwrapped.
             $q->whereNull('settings')
-                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') IS NULL")
-                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') = 1")
-                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') = true");
+                ->orWhereJsonDoesntContainKey('settings->communitynews')
+                ->orWhereJsonContains('settings->communitynews', 1)
+                ->orWhere('settings->communitynews', true);
         });
     }
 
