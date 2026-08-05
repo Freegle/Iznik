@@ -1,9 +1,11 @@
 ---
-last_reviewed: 2026-07-21
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
   - iznik-nuxt3/modtools/components/ModMessage*.vue
+  - iznik-nuxt3/modtools/components/ModStdMessageModal.vue
+  - iznik-nuxt3/modtools/utils/stdMessageDirectives.js
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-modtools-pending-messages.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-edits.spec.js
@@ -80,6 +82,27 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
   between "autosend" and "edit first" for a session.
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
+
+### Fill-in boxes and optional bits
+
+A standard message can mark parts of its wording with `<editthis>...</editthis>` (something
+you must write yourself each time) or `<optional>...</optional>` (something that only
+applies sometimes). You add those tags when you write the message under Settings.
+
+When a message uses either of them, sending it opens the message laid out in order rather
+than as one block of text:
+
+- An **`<editthis>`** part is a highlighted box. Fill it in before you send.
+- An **`<optional>`** part comes with **Keep** and **Remove**. You must choose one, and you
+  can change your mind afterwards either way. The wording itself stays editable, so you can
+  reword it as well as take it or leave it.
+- The rest of the wording is editable too.
+- Between the parts you will see whether there is a **blank line between these paragraphs**,
+  with a click to add or remove one. That is what controls the spacing the member sees, so
+  if a message arrives with its paragraphs run together, this is where you fix it.
+
+If something is still outstanding, sending is refused: nothing goes to the member, the
+outstanding boxes are outlined in red, and the message tells you what is left to do.
 
 ## The edit queue
 
