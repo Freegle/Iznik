@@ -224,7 +224,6 @@ func GetUserByEmail(c *fiber.Ctx) error {
 	var userId uint64
 
 	// Join with users table to ensure the user exists and isn't deleted
-	// ORM migration site eebe799ec26b (wave 4).
 	err := db.Table("users").
 		Select("users.id").
 		Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
@@ -386,7 +385,6 @@ func GetExpectedReplies(id uint64) []uint64 {
 	db := database.DBConn
 
 	start := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-	// ORM migration site ba4ff665bb3c (wave 5).
 	db.Table("users_expected").
 		Select("DISTINCT(chatid)").
 		Joins("INNER JOIN users ON users.id = users_expected.expectee").
@@ -402,7 +400,6 @@ func GetMemberships(id uint64) []Membership {
 	db := database.DBConn
 
 	var memberships []Membership
-	// ORM migration site b06cd1b62344 (wave 5).
 	db.Table("memberships").
 		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
@@ -449,7 +446,6 @@ func usableInventedName(name string) bool {
 func InventName(db *gorm.DB, id uint64) string {
 	// Try the email local part first (V1 parity: use real email when it's clean).
 	var email string
-	// ORM migration site 55990571c6db (wave 1).
 	db.Table("users_emails").Select("email").Where("userid = ?", id).Order("preferred DESC, id ASC").Limit(1).Scan(&email)
 
 	var name string
@@ -475,7 +471,6 @@ func InventName(db *gorm.DB, id uint64) string {
 
 	// Store so subsequent reads return the correct name.
 	// Also overwrites legacy bad names: "A freegler", FBUser*, and 32-char Yahoo hex strings.
-	// ORM migration site 2f3126db180a (wave 2).
 	db.Table("users").Where("id = ? AND (fullname IS NULL OR fullname = '' OR fullname = 'A freegler' OR fullname LIKE 'FBUser%' OR (CHAR_LENGTH(fullname) = 32 AND fullname REGEXP '[A-Za-z].*[0-9]|[0-9].*[A-Za-z]'))", id).
 		Updates(map[string]interface{}{"fullname": name, "inventedname": gorm.Expr("1")})
 
@@ -485,7 +480,6 @@ func InventName(db *gorm.DB, id uint64) string {
 func GetActiveModGroupIDs(userid uint64) []uint64 {
 	db := database.DBConn
 	var groupIDs []uint64
-	// ORM migration site 4a82fa03a4f8 (wave 1).
 	result := db.Table("memberships").
 		Where("userid = ? AND role IN (?, ?) AND collection = ? "+
 			"AND (settings IS NULL OR JSON_EXTRACT(settings, '$.active') IS NULL OR JSON_EXTRACT(settings, '$.active') != 0)",
@@ -507,7 +501,6 @@ func HasWiderReview(userid uint64) bool {
 		return false
 	}
 	var count int64
-	// ORM migration site 889877ad8183 (wave 1).
 	db.Table("groups").Where("id IN ? AND JSON_EXTRACT(settings, '$.widerchatreview') = 1",
 		activeGroupIDs).Count(&count)
 	return count > 0
@@ -523,7 +516,6 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	// rows, causing duplicated entries in the posting-history modal when a message
 	// has been reposted (Discourse #9672).  The subquery filters by groupid so
 	// postings for one group never contaminate the arrival date of another group.
-	// ORM migration site d7c9963bd974 (wave 5).
 	db.Table("messages m").
 		Select("m.id, m.subject, m.type, "+
 			"COALESCE("+
@@ -666,7 +658,7 @@ func GetUserById(id uint64, myid uint64) User {
 		// Settings are needed for modtools toggles (notificationmails etc.).
 		// Return for self, or for mods viewing other users.
 		//
-		// ORM migration site e0558c2c039d (Tier 3 keep-raw review). Whether
+		// Whether
 		// "settings, " is included is the only toggle - 2 possible rendered
 		// forms, both declared in ormharness/shapes.json and proven by
 		// TestTier3Shapes_e0558c2c039d (iznik-server-go/test).
@@ -725,7 +717,6 @@ func GetUserById(id uint64, myid uint64) User {
 				// (Discourse #9587). Stored fullname is untouched.
 				isGroupMod := false
 				var modCount int64
-				// ORM migration site 4302277d901e (wave 1).
 				db.Table("memberships").Where("userid = ? AND role IN (?, ?)",
 					id, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Count(&modCount)
 				if modCount > 0 {
@@ -770,7 +761,6 @@ func GetUserById(id uint64, myid uint64) User {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// ORM migration site abc4c428b605 (wave 1).
 		db.Table("users_aboutme").Where("userid = ?", id).Order("timestamp DESC").Limit(1).Scan(&aboutme)
 	}()
 
@@ -787,7 +777,6 @@ func GetUserById(id uint64, myid uint64) User {
 		defer wg.Done()
 		start := time.Now().AddDate(0, 0, -utils.SUPPORTER_PERIOD).Format("2006-01-02")
 
-		// ORM migration site 286f80414bd5 (wave 5).
 		db.Table("users").
 			Select("(CASE WHEN "+
 				"((users.systemrole != ? OR "+
@@ -813,7 +802,6 @@ func GetUserById(id uint64, myid uint64) User {
 	go func() {
 		defer wg.Done()
 		var rows []spamRow
-		// ORM migration site 52fc732564c3 (wave 1).
 		db.Table("spam_users").Select("id, userid, byuserid, collection, reason, added").
 			Where("userid = ?", id).Order("id ASC").Limit(1).Scan(&rows)
 		if len(rows) > 0 {
@@ -883,7 +871,6 @@ func GetUserById(id uint64, myid uint64) User {
 			Date   string `gorm:"column:date"`
 		}
 		var bi BounceInfo
-		// ORM migration site 13b31d721901 (wave 4).
 		db.Table("bounces_emails be").
 			Select("be.reason, be.date").
 			Joins("INNER JOIN users_emails ue ON ue.id = be.emailid").
@@ -956,7 +943,6 @@ func GetProfileRecord(id uint64) UserProfileRecord {
 	db := database.DBConn
 	var profile UserProfileRecord
 
-	// ORM migration site 540382023ce6 (wave 4).
 	db.Table("users_images ui").
 		Select("ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, CASE WHEN JSON_EXTRACT(settings, '$.useprofile') IS NULL THEN 1 ELSE JSON_EXTRACT(settings, '$.useprofile') END AS useprofile").
 		Joins("INNER JOIN users ON users.id = ui.userid").
@@ -995,7 +981,6 @@ func GetLatLng(id uint64) utils.LatLng {
 	// Tests show that the first query is fast to fetch, whereas the others are less so.  The first will handle
 	// a user with a known location, so it's a good mainline case to keep fast.
 	// If it doesn't give us what we need them , then fetch the others in parallel.
-	// ORM migration site 783eedfa7e23 (wave 4).
 	db.Table("users").
 		Select("users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
 			"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
@@ -1019,7 +1004,6 @@ func GetLatLng(id uint64) utils.LatLng {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// ORM migration site 1a851f316859 (wave 4).
 			db.Table("locations").
 				Select("messages.fromuser AS id, locations.lat AS lastlat, locations.lng AS lastlng").
 				Joins("INNER JOIN messages ON messages.locationid = locations.id").
@@ -1032,7 +1016,6 @@ func GetLatLng(id uint64) utils.LatLng {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// ORM migration site 532b0ba4ba45 (wave 4).
 			db.Table("`groups`").
 				Select("groups.id, groups.lat AS lastlat, groups.lng AS lastlng").
 				Joins("INNER JOIN memberships ON groups.id = memberships.groupid").
@@ -1070,7 +1053,7 @@ func GetSearchesForUser(c *fiber.Ctx) error {
 			var searches []Search
 
 			// Show the last few.  Slightly hacky search to make sure we show the most recent searches.
-			// ORM migration site 06d02e94fa4a (wave 5). The derived table goes
+			// The derived table goes
 			// through .Table(expr, args...): Table() takes the raw-expression
 			// path whenever the name contains a space or backtick (chainable_api.go),
 			// so a parenthesised subquery with its own bind renders verbatim rather
@@ -1128,7 +1111,6 @@ func DeleteUserSearch(c *fiber.Ctx) error {
 
 	// Check ownership.
 	var search Search
-	// ORM migration site 495e8285da0a (wave 1).
 	if err := db.Table("users_searches").Where("id = ?", id).Scan(&search).Error; err != nil || search.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
@@ -1141,7 +1123,6 @@ func DeleteUserSearch(c *fiber.Ctx) error {
 	}
 
 	// Soft-delete: mark all searches with the same userid and term as deleted.
-	// ORM migration site aaa43b677e1f (wave 2).
 	db.Table("users_searches").Where("userid = ? AND term = ?", search.Userid, search.Term).Update("deleted", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1225,7 +1206,6 @@ func SearchUsers(c *fiber.Ctx) error {
 	// If query is purely numeric, do a fast direct ID lookup first.
 	if numericID > 0 {
 		var exists uint64
-		// ORM migration site c6a69a9f0597 (wave 1).
 		db.Table("users").Select("id").Where("id = ?", numericID).Scan(&exists)
 		if exists > 0 {
 			// Found by ID — skip the slow LIKE searches.
@@ -1242,7 +1222,7 @@ func SearchUsers(c *fiber.Ctx) error {
 	backwardsTerm := reversed + "%"
 
 	var userIDs []uint64
-	// ORM migration site 0c9e859752d0 (wave 5). Same .Table(expr, args...)
+	// Same .Table(expr, args...)
 	// derived-table mechanism as GetSearchesForUser (06d02e94fa4a): the whole
 	// parenthesised UNION is the "table", so it renders verbatim rather than
 	// being quoted as an identifier.
@@ -1360,7 +1340,7 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			defer wg.Done()
 			modGroupIDs := GetActiveModGroupIDs(myid)
 			if len(modGroupIDs) > 0 {
-				// ORM migration site a25ca71cf6cc (wave 1). modmails is uint64
+				// modmails is uint64
 				// (not int64), so this stays Select+Scan rather than Count,
 				// which only accepts *int64.
 				db.Table("users_modmails").Select("COUNT(*)").
@@ -1375,7 +1355,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		go func() {
 			defer wg.Done()
 			var lastpushStr *string
-			// ORM migration site 1bd00b213b09 (wave 1).
 			db.Table("users_push_notifications").Select("MAX(lastsent)").Where("userid = ?", id).Scan(&lastpushStr)
 			if lastpushStr != nil {
 				if parsed, err := time.Parse("2006-01-02 15:04:05", *lastpushStr); err == nil && !parsed.IsZero() {
@@ -1404,7 +1383,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 				Lng float64
 			}
 			var locs []groupLatLng
-			// ORM migration site cc0b627a2955 (wave 4).
 			db.Table("memberships_history mh").
 				Select("DISTINCT g.lat, g.lng").
 				Joins("INNER JOIN `groups` g ON mh.groupid = g.id").
@@ -1446,7 +1424,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		go func() {
 			defer wg.Done()
 			var n int
-			// ORM migration site 9c488a43fc54 (wave 1).
 			db.Table("logs").Select("COUNT(DISTINCT text)").
 				Where("user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 90 DAY",
 					id, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&n)
@@ -1488,7 +1465,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	if modtools {
 		if privatePos.Lat != 0 || privatePos.Lng != 0 {
 			var locNamePtr *string
-			// ORM migration site 192b411b543b (wave 1).
 			db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.name'))").
 				Where("id = ? AND settings IS NOT NULL", id).Scan(&locNamePtr)
 
@@ -1500,7 +1476,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			if locName == "" {
 				locName = ""
 				if u.Lastlocation != nil && *u.Lastlocation > 0 {
-					// ORM migration site 8c4b9a825e10 (wave 1).
 					db.Table("locations").Select("name").Where("id = ?", *u.Lastlocation).Scan(&locName)
 				}
 			}
@@ -1557,7 +1532,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 		if auth.HasPermission(myid, auth.PERM_GIFTAID) {
 			var donations []UserDonation
-			// ORM migration site 76ca6fde32ec (wave 1).
 			db.Table("users_donations").Select("id, userid, timestamp, GrossAmount, source, TransactionType, giftaidconsent").
 				Where("userid = ?", id).Order("timestamp DESC").Scan(&donations)
 			if len(donations) > 0 {
@@ -1565,7 +1539,6 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			}
 
 			var giftaid UserGiftAid
-			// ORM migration site 756ee9a859a6 (wave 1).
 			result := db.Table("giftaid").Select("id, userid, timestamp, period").
 				Where("userid = ? AND deleted IS NULL", id).Limit(1).Scan(&giftaid)
 			if result.RowsAffected > 0 {
@@ -1580,11 +1553,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			canImpersonate := isAdmin || !auth.IsSystemMod(id)
 			if canImpersonate {
 				var key string
-				// ORM migration site 252dfa1bc658 (wave 1).
 				db.Table("users_logins").Select("credentials").Where("userid = ? AND type = 'Link'", id).Limit(1).Scan(&key)
 				if key == "" {
 					key = generateRandomKey(32)
-					// ORM migration site f619bcea08df (wave 2).
 					db.Table("users_logins").Create(map[string]interface{}{
 						"userid":      id,
 						"type":        gorm.Expr("'Link'"),
@@ -1622,7 +1593,6 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// ORM migration site 93d100d45d54 (wave 1).
 		// Note: the chained Limit(1) on the pre-conversion db.Raw(...) call was a
 		// no-op — GORM's query builder only applies clauses when Statement.SQL is
 		// still empty, and Raw() sets it immediately, so the real query never
@@ -1760,13 +1730,10 @@ func PostUser(c *fiber.Ctx) error {
 func handleEngaged(c *fiber.Ctx, db *gorm.DB, engageid uint64) error {
 	// Record engagement success.
 	var mailid uint64
-	// ORM migration site e3fbf45b1fee (wave 1).
 	db.Table("engage").Select("mailid").Where("id = ?", engageid).Scan(&mailid)
 
 	if mailid > 0 {
-		// ORM migration site 10216b47378d (wave 2).
 		db.Table("engage").Where("id = ?", engageid).Update("succeeded", gorm.Expr("NOW()"))
-		// ORM migration site f78aeb6435bd (wave 2).
 		db.Table("engage_mails").Where("id = ?", mailid).
 			Updates(map[string]interface{}{"action": gorm.Expr("action + 1"), "rate": gorm.Expr("COALESCE(100 * action / shown, 0)")})
 	}
@@ -1795,7 +1762,6 @@ func handleRate(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest) err
 		reviewRequired = true
 	}
 
-	// ORM migration site 33201edc2a80 (tier4).
 	db.Table("ratings").Clauses(clause.Insert{Modifier: "REPLACE"}).
 		Create(map[string]interface{}{
 			"rater": myid, "ratee": req.Ratee, "rating": req.Rating, "reason": req.Reason,
@@ -1803,7 +1769,6 @@ func handleRate(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest) err
 		})
 
 	// Update lastupdated for both users.
-	// ORM migration site b4968f94d154 (wave 2).
 	db.Table("users").Where("id IN (?, ?)", myid, req.Ratee).Update("lastupdated", gorm.Expr("NOW()"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1817,7 +1782,6 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 	// Verify the caller is admin/support or a mod of a group the ratee belongs to.
 	if !auth.IsAdminOrSupport(myid) {
 		var count int64
-		// ORM migration site 3ff417c41f7c (wave 4).
 		db.Table("ratings r").
 			Select("COUNT(*)").
 			Joins("JOIN memberships m1 ON m1.userid = r.ratee").
@@ -1829,7 +1793,6 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 		}
 	}
 
-	// ORM migration site dbaf7d925bf5 (wave 2).
 	db.Table("ratings").Where("id = ?", req.Ratingid).Update("reviewrequired", gorm.Expr("0"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1856,7 +1819,6 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	// Check if email already exists in the table.
 	var existingUID *uint64
 	var existingID uint64
-	// ORM migration site 9fcec938f21c (wave 1).
 	row := db.Table("users_emails").Select("id, userid").Where("email = ?", email).Limit(1).Row()
 	if row != nil {
 		row.Scan(&existingID, &existingUID)
@@ -1876,9 +1838,7 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		if existingUID != nil && *existingUID == targetID {
 			// Already on this user — update preferred if needed.
 			if isPrimary {
-				// ORM migration site c25d3f0cbd14 (wave 2).
 				db.Table("users_emails").Where("id = ?", existingID).Update("preferred", primaryVal)
-				// ORM migration site 1eb5dd8ca162 (wave 2).
 				db.Table("users_emails").Where("userid = ? AND id != ?", targetID, existingID).Update("preferred", gorm.Expr("0"))
 			}
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
@@ -1892,7 +1852,7 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		}
 
 		// Orphaned row (userid IS NULL) or admin reassigning: update the existing row.
-		// ORM migration site 07c4bef29c2f (wave 2). None of these five
+		// None of these five
 		// assignments reference another assigned column, so the SET order is
 		// not load-bearing and GORM's alphabetical Updates(map) order is safe;
 		// see check-set-order.sh / setOrderIsLoadBearing.
@@ -1905,7 +1865,6 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		})
 
 		if isPrimary {
-			// ORM migration site a80f1b38c186 (wave 2).
 			db.Table("users_emails").Where("userid = ? AND id != ?", targetID, existingID).Update("preferred", gorm.Expr("0"))
 		}
 
@@ -1917,7 +1876,7 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	// the map key "@id" (see test/orm_insertid_test.go) - the write
 	// connection, same as ExecInsertGetID, so still immune to the read/write
 	// split's Discourse-9832-class staleness.
-	// ORM migration site 1c763aa6ec12 (insertid-conv). Named newRow, not row:
+	// Named newRow, not row:
 	// "row" is already declared above (line ~1809) as the *sql.Row from the
 	// existing-email lookup, and this map has an incompatible type - reusing
 	// the name here made := illegal (no new variable on the left) and, worse,
@@ -1937,7 +1896,6 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 	emailID := uint64(emailIDInt)
 
 	if isPrimary {
-		// ORM migration site 265058d37c74 (wave 2).
 		db.Table("users_emails").Where("userid = ? AND email != ?", targetID, email).Update("preferred", gorm.Expr("0"))
 	}
 
@@ -1963,14 +1921,12 @@ func handleRemoveEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostReque
 
 	// Verify email belongs to this user.
 	var emailUserid uint64
-	// ORM migration site d0b3ffa72211 (wave 1).
 	db.Table("users_emails").Select("userid").Where("email = ? AND userid = ?", req.Email, targetID).Scan(&emailUserid)
 
 	if emailUserid == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 3, "status": "Not on same user"})
 	}
 
-	// ORM migration site e7c6bfbc5607 (wave 2).
 	db.Table("users_emails").Where("email = ? AND userid = ?", req.Email, targetID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -2046,7 +2002,6 @@ func PutUser(c *fiber.Ctx) error {
 
 	// Check if email already exists.
 	var existingUID uint64
-	// ORM migration site c4e9446f37d9 (wave 1).
 	db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&existingUID)
 
 	if existingUID > 0 {
@@ -2106,7 +2061,6 @@ func PutUser(c *fiber.Ctx) error {
 	// under the map key "@id" - no separate connection-scoped
 	// SELECT LAST_INSERT_ID() query, so no connection-pool race. See
 	// test/orm_insertid_test.go, which proves this against the real database.
-	// ORM migration site 24704432f4d4 (insertid-conv).
 	row := map[string]interface{}{
 		"fullname":  fullname,
 		"firstname": firstname,
@@ -2125,7 +2079,6 @@ func PutUser(c *fiber.Ctx) error {
 
 	// Add email.
 	canon := CanonicalizeEmail(email)
-	// ORM migration site c5b11d58ae60 (wave 2).
 	db.Table("users_emails").Create(map[string]interface{}{
 		"userid":    newUserID,
 		"email":     email,
@@ -2150,7 +2103,6 @@ func PutUser(c *fiber.Ctx) error {
 	h := sha1.New()
 	h.Write([]byte(password + salt))
 	hashed := hex.EncodeToString(h.Sum(nil))
-	// ORM migration site 9c4b09b388ef (wave 2).
 	db.Table("users_logins").Create(map[string]interface{}{
 		"userid":      newUserID,
 		"type":        utils.LOGIN_TYPE_NATIVE,
@@ -2161,7 +2113,6 @@ func PutUser(c *fiber.Ctx) error {
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
-		// ORM migration site fec927e74aaa (wave 2).
 		result := db.Table("memberships").Create(map[string]interface{}{
 			"userid":     newUserID,
 			"groupid":    req.GroupID,
@@ -2169,7 +2120,6 @@ func PutUser(c *fiber.Ctx) error {
 			"collection": utils.COLLECTION_APPROVED,
 		})
 		if result.RowsAffected > 0 {
-			// ORM migration site 2f4ae0de2f36 (wave 2).
 			db.Table("logs").Create(map[string]interface{}{
 				"timestamp": gorm.Expr("NOW()"),
 				"type":      log2.LOG_TYPE_GROUP,
@@ -2185,7 +2135,6 @@ func PutUser(c *fiber.Ctx) error {
 			// treats this as a brand-new joiner. AddMembership() writes this row, but
 			// the website-signup path inserts the membership inline and never calls it,
 			// so without this the new member bypasses new-joiner scrutiny.
-			// ORM migration site e7a34e3dea3b (wave 2).
 			db.Table("memberships_history").Create(map[string]interface{}{
 				"userid":             newUserID,
 				"groupid":            req.GroupID,
@@ -2206,7 +2155,6 @@ func PutUser(c *fiber.Ctx) error {
 	// split routes to a replica that can return the user's PREVIOUS session under
 	// Galera's cross-node apply window - putting the wrong session id in the JWT.
 	var sessionID uint64
-	// ORM migration site c9c7922e5379 (insertid-conv).
 	sessionRow := map[string]interface{}{
 		"userid":     newUserID,
 		"series":     series,
@@ -2300,7 +2248,6 @@ func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
 	}
 
 	var distinct int
-	// ORM migration site 7bd383b9cd2d (wave 1).
 	db.Table("logs").Select("COUNT(DISTINCT text)").
 		Where("user = ? AND type = ? AND subtype = ? AND timestamp >= NOW() - INTERVAL 24 HOUR",
 			myid, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_POSTCODECHANGE).Scan(&distinct)
@@ -2311,7 +2258,6 @@ func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
 
 	// Never flag moderators/owners.
 	var modCount int64
-	// ORM migration site 5262aa3b4dc8 (wave 1).
 	db.Table("memberships").Where("userid = ? AND role IN (?, ?)",
 		myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 	if modCount > 0 {
@@ -2322,7 +2268,7 @@ func CheckLocationChangeVelocity(db *gorm.DB, myid uint64) {
 
 	// Flag the user's memberships for review, but don't re-flag rows already pending (only a fresh
 	// request, or one whose previous request has already been actioned).
-	// ORM migration site 80bda541244b (wave 2). Neither assignment references
+	// Neither assignment references
 	// the other assigned column, so the SET order is not load-bearing.
 	db.Table("memberships").Where("userid = ? "+
 		"AND (reviewrequestedat IS NULL OR (reviewedat IS NOT NULL AND reviewedat >= reviewrequestedat))", myid).
@@ -2357,14 +2303,12 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 		newSettings.Mylocation.ID != nil {
 
 		var oldLastlocation *uint64
-		// ORM migration site bf72f4509ca5 (wave 1).
 		db.Table("users").Select("lastlocation").Where("id = ?", myid).Scan(&oldLastlocation)
 
 		newLocID := *newSettings.Mylocation.ID
 		if oldLastlocation == nil || *oldLastlocation != newLocID {
 			*setClauses = append(*setClauses, "lastlocation = ?")
 			*setArgs = append(*setArgs, newLocID)
-			// ORM migration site fbea0c27cf49 (wave 2).
 			db.Table("isochrones_users").Where("userid = ?", myid).Delete(nil)
 
 			var textPtr *string
@@ -2427,7 +2371,7 @@ func PatchUser(c *fiber.Ctx) error {
 		if !auth.IsAdminOrSupport(myid) {
 			// Check if they share a group where the caller is a mod.
 			var sharedModGroup int64
-			// ORM migration site 4ccf389828b7 (wave 4). Converted together with its
+			// Converted together with its
 			// identical twin below (18a18b50e638): a half-converted pair renumbers
 			// the survivor's site ID, so gate (h) refuses the split state.
 			db.Table("memberships m1").
@@ -2441,7 +2385,6 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 		}
 
-		// ORM migration site 846ce190fcf8 (wave 2).
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -2455,7 +2398,7 @@ func PatchUser(c *fiber.Ctx) error {
 			targetID = req.ID
 		} else {
 			var sharedModGroup int64
-			// ORM migration site 18a18b50e638 (wave 4). Twin of 4ccf389828b7 above.
+			// Twin of 4ccf389828b7 above.
 			db.Table("memberships m1").
 				Select("COUNT(*)").
 				Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
@@ -2477,7 +2420,7 @@ func PatchUser(c *fiber.Ctx) error {
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
-		// ORM migration site 29d38c03b5c7 (wave 2). None of these three
+		// None of these three
 		// assignments reference another assigned column.
 		db.Table("users").Where("id = ?", myid).Updates(map[string]interface{}{
 			"fullname":  *req.Displayname,
@@ -2491,7 +2434,6 @@ func PatchUser(c *fiber.Ctx) error {
 			var setClauses []string
 			var setArgs []interface{}
 			settingsJSON = ProcessSettingsUpdate(settingsJSON, targetID, &setClauses, &setArgs)
-			// ORM migration site 941509171a6e (Tier 1 batch review).
 			// ProcessSettingsUpdate appends at most ONE extra clause
 			// ("lastlocation = ?", on a postcode change) - a genuine 2-shape
 			// site, not the N-independent-fields kind PatchModConfig/
@@ -2524,27 +2466,22 @@ func PatchUser(c *fiber.Ctx) error {
 
 	if req.Onholidaytill != nil {
 		if *req.Onholidaytill == "" {
-			// ORM migration site 2d1aadd1887d (wave 2).
 			db.Table("users").Where("id = ?", myid).Update("onholidaytill", gorm.Expr("NULL"))
 		} else {
-			// ORM migration site 863ce73a0abc (wave 2).
 			db.Table("users").Where("id = ?", myid).Update("onholidaytill", *req.Onholidaytill)
 		}
 	}
 
 	if req.Relevantallowed != nil {
-		// ORM migration site a0e311646f19 (wave 2).
 		db.Table("users").Where("id = ?", targetID).Update("relevantallowed", int(*req.Relevantallowed))
 	}
 
 	if req.Newslettersallowed != nil {
-		// ORM migration site 3df9a32dc731 (wave 2).
 		db.Table("users").Where("id = ?", targetID).Update("newslettersallowed", int(*req.Newslettersallowed))
 	}
 
 	if req.Aboutme != nil {
 		// Insert a new aboutme entry. The most recent is fetched via ORDER BY timestamp DESC LIMIT 1.
-		// ORM migration site 896940a53068 (wave 2).
 		db.Table("users_aboutme").Create(map[string]interface{}{
 			"userid":    myid,
 			"text":      *req.Aboutme,
@@ -2554,7 +2491,6 @@ func PatchUser(c *fiber.Ctx) error {
 
 	if req.Newsfeedmodstatus != nil {
 		// Self-update (no req.ID or req.ID == myid).
-		// ORM migration site 70eeb41b22a3 (wave 2).
 		db.Table("users").Where("id = ?", myid).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 	}
 
@@ -2571,7 +2507,6 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	if req.Source != nil {
-		// ORM migration site 7b1efa32121d (wave 2).
 		db.Table("users").Where("id = ?", myid).Update("source", *req.Source)
 	}
 
@@ -2588,7 +2523,6 @@ func PatchUser(c *fiber.Ctx) error {
 		salt := auth.GetPasswordSalt()
 		hashed := auth.HashPassword(*req.Password, salt)
 		uid := strconv.FormatUint(targetID, 10)
-		// ORM migration site 51fa5d2c1016 (wave 3).
 		db.Table("users_logins").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"credentials": hashed,
@@ -2619,7 +2553,6 @@ func PatchUser(c *fiber.Ctx) error {
 		isMod := auth.IsAdminOrSupport(myid)
 		if !isMod {
 			var systemrole string
-			// ORM migration site 8c8162284405 (wave 1).
 			db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 			if systemrole == utils.SYSTEMROLE_MODERATOR {
 				isMod = true
@@ -2628,10 +2561,8 @@ func PatchUser(c *fiber.Ctx) error {
 
 		if isMod {
 			if *req.Trustlevel == "" {
-				// ORM migration site 1dc8cf0d9098 (wave 2).
 				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", gorm.Expr("NULL"))
 			} else {
-				// ORM migration site a716e0a18fb3 (wave 2).
 				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", *req.Trustlevel)
 			}
 		} else {
@@ -2641,10 +2572,8 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 			tl := *req.Trustlevel
 			if tl == "" {
-				// ORM migration site 4cc44cc47cbe (wave 2).
 				db.Table("users").Where("id = ?", myid).Update("trustlevel", gorm.Expr("NULL"))
 			} else if tl == "Basic" || tl == "Declined" {
-				// ORM migration site 8798aebadf32 (wave 2).
 				db.Table("users").Where("id = ?", myid).Update("trustlevel", tl)
 			} else {
 				return fiber.NewError(fiber.StatusForbidden, "Only moderators can set elevated trust levels")
@@ -2699,7 +2628,6 @@ func LimboUser(c *fiber.Ctx) error {
 
 		// Cannot delete moderators/owners — they must demote themselves first.
 		var targetModRole string
-		// ORM migration site 120f5981fbeb (wave 1).
 		db.Table("memberships").Select("role").Where("userid = ? AND role IN (?, ?)", targetID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Limit(1).Scan(&targetModRole)
 
 		if targetModRole != "" {
@@ -2721,7 +2649,6 @@ func LimboUser(c *fiber.Ctx) error {
 	// Self-delete: put the user into limbo so they can recover within ~14 days.
 	// A background job (users:cleanup) will call forgetUser() after the grace period.
 	var modRole string
-	// ORM migration site 571cbd577434 (wave 1).
 	db.Table("memberships").Select("role").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Limit(1).Scan(&modRole)
 
 	if modRole != "" {
@@ -2732,7 +2659,6 @@ func LimboUser(c *fiber.Ctx) error {
 	}
 
 	var spammerCount int64
-	// ORM migration site a17cb4d40d9c (wave 1).
 	db.Table("spam_users").Where("userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_SPAMMER, utils.SPAM_COLLECTION_PENDING_ADD).Count(&spammerCount)
 
 	if spammerCount > 0 {
@@ -2767,9 +2693,7 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// timestamps, matching the canonical reset (UnbounceDomainCommand). Leaving
 	// users_emails.bounced set would let processBouncedEmails re-mark the address
 	// invalid and re-flag the user as bouncing.
-	// ORM migration site 9c39bf7d978a (wave 2).
 	db.Table("users").Where("id = ?", req.ID).Update("bouncing", gorm.Expr("0"))
-	// ORM migration site c62fbb94a8ff (wave 2).
 	db.Table("users_emails").Where("userid = ?", req.ID).Update("bounced", gorm.Expr("NULL"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -2788,12 +2712,10 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 // acting Freegle user).
 func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uint64) {
 	var groupids []uint64
-	// ORM migration site 3fe8736f1d10 (wave 1).
 	db.Table("memberships").Select("groupid").Where("userid = ? AND collection = ?",
 		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
 	for _, groupid := range groupids {
 		if byUser == 0 {
-			// ORM migration site 564e5329c133 (wave 2).
 			db.Table("logs").Create(map[string]interface{}{
 				"timestamp": gorm.Expr("NOW()"),
 				"type":      log2.LOG_TYPE_GROUP,
@@ -2803,7 +2725,6 @@ func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uin
 				"groupid":   groupid,
 			})
 		} else {
-			// ORM migration site cfcd2f885279 (wave 2).
 			db.Table("logs").Create(map[string]interface{}{
 				"timestamp": gorm.Expr("NOW()"),
 				"type":      log2.LOG_TYPE_GROUP,
@@ -2827,11 +2748,8 @@ func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
 	// V1 parity: record a per-group (Group, Left) audit log before the eager bulk
 	// delete drops the memberships (see LogGroupLeftForApprovedMemberships).
 	LogGroupLeftForApprovedMemberships(db, targetID, byUser)
-	// ORM migration site 79f72a928ca3 (wave 2).
 	db.Table("memberships").Where("userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED).Delete(nil)
-	// ORM migration site b561dab1c2bd (wave 2).
 	db.Table("users").Where("id = ?", targetID).Update("deleted", gorm.Expr("NOW()"))
-	// ORM migration site 8bb010b9529b (wave 2).
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log2.LOG_TYPE_USER,
@@ -2879,7 +2797,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// If email addresses were provided instead of user IDs, resolve them first.
 	// Join to users to exclude deleted accounts (same pattern as GetUserByEmail).
 	if req.ID1 == 0 && req.Email1 != "" {
-		// ORM migration site cfcce3676000 (wave 4). Converted together with its
+		// Converted together with its
 		// identical twin below (15c4586ac31e): a half-converted pair renumbers
 		// the survivor's site ID, so gate (h) refuses the split state.
 		result := db.Table("users").
@@ -2896,7 +2814,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 	}
 	if req.ID2 == 0 && req.Email2 != "" {
-		// ORM migration site 15c4586ac31e (wave 4). Twin of cfcce3676000 above.
+		// Twin of cfcce3676000 above.
 		result := db.Table("users").
 			Select("users.id").
 			Joins("INNER JOIN users_emails ON users_emails.userid = users.id").
@@ -2943,15 +2861,12 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Email merge: move id1's emails to id2.
 	// If id2 already has a preferred email, demote id1's preferred before moving.
 	var id2HasPreferred int64
-	// ORM migration site 872f93ca55c3 (wave 1).
 	tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID2).Count(&id2HasPreferred)
 	if id2HasPreferred > 0 {
-		// ORM migration site d02deddf93b1 (wave 2).
 		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID1).Update("preferred", gorm.Expr("0")).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
 		}
 	}
-	// ORM migration site c0bdaf91d946 (wave 2).
 	if err := tx.Table("users_emails").Where("userid = ?", req.ID1).Update("userid", req.ID2).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge emails")
 	}
@@ -2970,19 +2885,16 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	var id1Membs []MembershipRow
-	// ORM migration site f20fcf2bf293 (wave 1).
 	tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
 		Where("userid = ?", req.ID1).Scan(&id1Membs)
 
 	for _, m1 := range id1Membs {
 		var id2Memb MembershipRow
-		// ORM migration site 8ce3d260bb10 (wave 1).
 		tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
 			Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Scan(&id2Memb)
 
 		if id2Memb.ID == 0 {
 			// id2 not in this group — just reassign.
-			// ORM migration site d0f1c6abfca1 (wave 2).
 			if err := tx.Table("memberships").Where("id = ?", m1.ID).Update("userid", req.ID2).Error; err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to transfer membership")
 			}
@@ -2992,10 +2904,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			if roleWeight[m1.Role] > roleWeight[id2Memb.Role] {
 				newRole = m1.Role
 			}
-			// ORM migration site 1ca61377ab9d (wave 2).
 			tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Update("role", newRole)
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
-			// ORM migration site a79f147726d0 (Tier 2 keep-raw review).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
 			// explicit clause.Set, same mechanism as session/merge.go's
 			// mergeChatRooms conversion. Proven in
@@ -3009,45 +2919,35 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 				Updates(map[string]interface{}{})
 			// Take non-null attrs from id1 if id2 doesn't have them.
 			if m1.Configid != nil {
-				// ORM migration site 69e208d229bf (wave 2).
 				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
 					Update("configid", gorm.Expr("COALESCE(configid, ?)", *m1.Configid))
 			}
 			if m1.Settings != nil {
-				// ORM migration site 93e40a364c53 (wave 2).
 				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
 					Update("settings", gorm.Expr("COALESCE(settings, ?)", *m1.Settings))
 			}
 			if m1.Heldby != nil {
-				// ORM migration site 7d3ed9c6a8df (wave 2).
 				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
 					Update("heldby", gorm.Expr("COALESCE(heldby, ?)", *m1.Heldby))
 			}
 			// Delete the now-redundant id1 row.
-			// ORM migration site 0b0cfc4af179 (wave 2).
 			tx.Table("memberships").Where("id = ?", m1.ID).Delete(nil)
 		}
 	}
 	// Clean up any remaining id1 memberships.
-	// ORM migration site 4c001e1eeba2 (wave 2).
 	tx.Table("memberships").Where("userid = ?", req.ID1).Delete(nil)
 
 	// ── SECTION B: messages, history, chat, sessions, logins ────────────────────
 
 	// Messages.
-	// ORM migration site cd3e53cfadea (wave 2).
 	if err := tx.Table("messages").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge messages")
 	}
 	// History tables.
-	// ORM migration site d45d5de0c8c3 (wave 2).
 	tx.Table("messages_history").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
-	// ORM migration site 9f0c252974c7 (wave 2).
 	tx.Table("memberships_history").Where("userid = ?", req.ID1).Update("userid", req.ID2)
 	// Log references.
-	// ORM migration site 4718b42d0c88 (wave 2).
 	tx.Table("logs").Where("user = ?", req.ID1).Update("user", req.ID2)
-	// ORM migration site 8d21c566d0ae (wave 2).
 	tx.Table("logs").Where("byuser = ?", req.ID1).Update("byuser", req.ID2)
 
 	// Chat room merge with deduplication (V1 parity).
@@ -3060,13 +2960,11 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Latestmessage *string
 	}
 	var id1Rooms []ChatRoomRow
-	// ORM migration site cd441c119872 (wave 1).
 	tx.Table("chat_rooms").Select("id, chattype, user1, user2, groupid, latestmessage").
 		Where("(user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", req.ID1, req.ID1).Scan(&id1Rooms)
 	for _, room := range id1Rooms {
 		var existingID uint64
 		if room.Chattype == "User2Mod" {
-			// ORM migration site 49504f08b237 (wave 1).
 			tx.Table("chat_rooms").Select("id").
 				Where("user1 = ? AND groupid = ? AND chattype = 'User2Mod'", req.ID2, room.Groupid).Scan(&existingID)
 		} else {
@@ -3079,7 +2977,6 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 				otherUserID = room.User1
 			}
 			if otherUserID > 0 {
-				// ORM migration site 3e09ec1599a1 (wave 1).
 				tx.Table("chat_rooms").Select("id").
 					Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
 						req.ID2, otherUserID, otherUserID, req.ID2).Scan(&existingID)
@@ -3087,36 +2984,26 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 		if existingID > 0 {
 			// Duplicate room — move messages into surviving room and delete duplicate.
-			// ORM migration site 94b0be1107e0 (wave 2).
 			tx.Table("chat_messages").Where("chatid = ?", room.ID).Update("chatid", existingID)
 			if room.Latestmessage != nil {
-				// ORM migration site b986dc546bdb (wave 2).
 				tx.Table("chat_rooms").Where("id = ?", existingID).
 					Update("latestmessage", gorm.Expr("GREATEST(latestmessage, ?)", *room.Latestmessage))
 			}
-			// ORM migration site b54105bda6de (wave 2).
 			tx.Table("chat_rooms").Where("id = ?", room.ID).Delete(nil)
 		} else {
 			if room.User1 == uint64(req.ID1) {
-				// ORM migration site c76f7046abbd (wave 2).
 				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user1", req.ID2)
 			} else {
-				// ORM migration site 9bddeb538459 (wave 2).
 				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user2", req.ID2)
 			}
 		}
 	}
-	// ORM migration site 8dc9211fdcbe (wave 2).
 	tx.Table("chat_messages").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	// ORM migration site 47daaacbf97d (wave 2).
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("chat_roster").Where("userid = ?", req.ID1).Update("userid", req.ID2)
 
 	// Sessions and logins.
-	// ORM migration site 3c462363aa82 (wave 2).
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("sessions").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	// ORM migration site d19e540cf33b (wave 2).
 	tx.Table("users_logins").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	// ORM migration site e0386c3b3a9c (wave 2).
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_logins").Where("userid = ? AND type = 'Native'", req.ID2).Update("uid", req.ID2)
 
 	// ── SECTION C: user attributes, simple tables, bans, giftaid, log entries ───
@@ -3132,10 +3019,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Tnuserid   *uint64
 	}
 	var u1Attrs, u2Attrs UserAttrs
-	// ORM migration site f60915fd693a (wave 1).
 	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
 		Where("id = ?", req.ID1).Scan(&u1Attrs)
-	// ORM migration site 7fe526e2a805 (wave 1).
 	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
 		Where("id = ?", req.ID2).Scan(&u2Attrs)
 
@@ -3144,34 +3029,29 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		fn := *u1Attrs.Fullname
 		isBad := strings.HasPrefix(strings.ToLower(fn), "fbuser") || strings.HasSuffix(fn, "-owner")
 		if !isBad {
-			// ORM migration site a54abf2c60c7 (wave 2).
 			tx.Table("users").Where("id = ?", req.ID2).Update("fullname", fn)
 		}
 	}
 	// firstname, lastname, yahooid: take id1's if id2 is NULL.
 	if u1Attrs.Firstname != nil && u2Attrs.Firstname == nil {
-		// ORM migration site fa6c771b3c3a (wave 2).
 		tx.Table("users").Where("id = ?", req.ID2).Update("firstname", *u1Attrs.Firstname)
 	}
 	if u1Attrs.Lastname != nil && u2Attrs.Lastname == nil {
-		// ORM migration site 247abd84a59e (wave 2).
 		tx.Table("users").Where("id = ?", req.ID2).Update("lastname", *u1Attrs.Lastname)
 	}
 	if u1Attrs.Yahooid != nil && u2Attrs.Yahooid == nil {
-		// ORM migration site c26ff21a50e2 (wave 2).
 		tx.Table("users").Where("id = ?", req.ID2).Update("yahooid", *u1Attrs.Yahooid)
 	}
 
 	// systemrole: take the max (User < Moderator < Support < Admin).
 	sysRoleOrder := map[string]int{"User": 0, "Moderator": 1, "Support": 2, "Admin": 3}
 	if sysRoleOrder[u1Attrs.Systemrole] > sysRoleOrder[u2Attrs.Systemrole] {
-		// ORM migration site 93b72dfa783e (wave 2).
 		tx.Table("users").Where("id = ?", req.ID2).Update("systemrole", u1Attrs.Systemrole)
 	}
 
 	// added: take the older date — read id1's added timestamp and pass it directly.
 	// Use SQL DATE comparison within MySQL to avoid driver string-format issues.
-	// ORM migration site 5b72a0acad8e (Tier 2 keep-raw review). Same
+	// Same
 	// mechanism as the memberships LEAST() conversion above; proven in
 	// ormharness/updatejoin_replace_test.go
 	// (TestUpdateJoin_SelfJoinWithLeastExpr).
@@ -3183,14 +3063,11 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Updates(map[string]interface{}{})
 
 	// lastupdated.
-	// ORM migration site c04d965dfd0e (wave 2).
 	tx.Table("users").Where("id = ?", req.ID2).Update("lastupdated", gorm.Expr("NOW()"))
 
 	// tnuserid: transfer if id2 doesn't have one.
 	if u1Attrs.Tnuserid != nil && u2Attrs.Tnuserid == nil {
-		// ORM migration site 313bbe346bf7 (wave 2).
 		tx.Table("users").Where("id = ?", req.ID1).Update("tnuserid", gorm.Expr("NULL"))
-		// ORM migration site a2ad9104af21 (wave 2).
 		tx.Table("users").Where("id = ?", req.ID2).Update("tnuserid", *u1Attrs.Tnuserid)
 	}
 
@@ -3200,7 +3077,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Without this rewrite, merging id1 leaves their volunteering opportunities pointing
 	// at a userid that vanishes when id1 is deleted at the end of the merge.
 	//
-	// ORM migration site d5ecca066b1b (Tier 2 keep-raw review). This was
+	// This was
 	// never actually runtime-varying: every one of these 41 statements runs
 	// unconditionally on every call (nothing here is caller-selected), so
 	// there was no dynamic SQL to begin with - only a Go slice+loop shape the
@@ -3253,17 +3130,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	tx.Table("communityevents").Where("heldby = ?", req.ID1).Update("heldby", req.ID2)
 
 	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
-	// ORM migration site af0ff5e0f4de (wave 2).
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	// ORM migration site f4a8db8dd183 (wave 2).
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", req.ID1).Update("byuser", req.ID2)
 
 	type MergeBanRow struct{ Groupid uint64 }
 	var mergeBans []MergeBanRow
-	// ORM migration site 4bb399eac601 (wave 1).
 	tx.Table("users_banned").Select("groupid").Where("userid = ?", req.ID2).Scan(&mergeBans)
 	for _, ban := range mergeBans {
-		// ORM migration site ac3cfe1aa429 (wave 2).
 		tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, ban.Groupid).Delete(nil)
 	}
 
@@ -3280,7 +3153,6 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Period string
 	}
 	var giftaids []MergeGiftaidRow
-	// ORM migration site 8c44fcd5dae1 (wave 1).
 	tx.Table("giftaid").Select("id, period").Where("userid IN (?, ?)", req.ID1, req.ID2).Scan(&giftaids)
 	if len(giftaids) > 0 {
 		best := giftaids[0]
@@ -3299,17 +3171,14 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 		for _, g := range giftaids {
 			if g.ID != best.ID {
-				// ORM migration site 0c8e0836a74b (wave 2).
 				tx.Table("giftaid").Where("id = ?", g.ID).Delete(nil)
 			}
 		}
-		// ORM migration site fbbd963966cb (wave 2).
 		tx.Table("giftaid").Where("id = ?", best.ID).Update("userid", req.ID2)
 	}
 
 	// Merge log entries (two entries, one per user — V1 parity).
 	logText := fmt.Sprintf("Merged %d into %d", uint64(req.ID1), uint64(req.ID2))
-	// ORM migration site 8278f05f07af (wave 2).
 	tx.Table("logs").Create(map[string]interface{}{
 		"user":      uint64(req.ID1),
 		"byuser":    myid,
@@ -3318,7 +3187,6 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		"text":      logText,
 		"timestamp": gorm.Expr("NOW()"),
 	})
-	// ORM migration site 6f9705358ae3 (wave 2).
 	tx.Table("logs").Create(map[string]interface{}{
 		"user":      uint64(req.ID2),
 		"byuser":    myid,
@@ -3335,7 +3203,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	committed = true
 
 	// Hard-delete id1 AFTER commit (V1 parity: DELETE FROM users WHERE id = ?).
-	// ORM migration site 55a57788c875 (wave 2). Table()+Delete(nil) carries no
+	// Table()+Delete(nil) carries no
 	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
 	// turn this into a soft-delete UPDATE.
 	db.Table("users").Where("id = ?", req.ID1).Delete(nil)
@@ -3385,7 +3253,6 @@ func GetUserChatrooms(c *fiber.Ctx) error {
 	}
 
 	var rooms []ChatroomRow
-	// ORM migration site d0d274882c8a (wave 1).
 	db.Table("chat_rooms").Select("id, chattype, user1, user2, COALESCE(groupid, 0) AS groupid, latestmessage AS lastdate").
 		Where("(user1 = ? OR user2 = ?)", targetid, targetid).Order("latestmessage DESC").Scan(&rooms)
 
@@ -3420,7 +3287,6 @@ func GetUserEmailHistory(c *fiber.Ctx) error {
 	}
 
 	var emails []EmailHistoryRow
-	// ORM migration site 3099aa977394 (wave 1).
 	db.Table("logs_emails").Select("id, timestamp, eximid, `from`, `to`, subject, status").
 		Where("userid = ?", targetid).Order("id DESC").Limit(100).Scan(&emails)
 
@@ -3453,7 +3319,6 @@ func GetUserBans(c *fiber.Ctx) error {
 	}
 
 	var bans []BanRow
-	// ORM migration site 6a225df4a259 (wave 5).
 	db.Table("users_banned ub").
 		Select("ub.groupid, "+
 			"COALESCE(g.namefull, g.nameshort) AS `group`, "+
@@ -3495,7 +3360,6 @@ func GetUserNewsfeed(c *fiber.Ctx) error {
 	}
 
 	var posts []NewsfeedRow
-	// ORM migration site 056be9212962 (wave 1).
 	db.Table("newsfeed").Select("id, timestamp, message, hidden, hiddenby, deleted, deletedby").
 		Where("userid = ?", targetid).Order("id DESC").Scan(&posts)
 
@@ -3528,7 +3392,6 @@ func GetUserApplied(c *fiber.Ctx) error {
 	}
 
 	var applied []AppliedRow
-	// ORM migration site 96b1fd8dbd45 (wave 4).
 	db.Table("memberships_history mh").
 		Select("mh.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, mh.added").
 		Joins("INNER JOIN `groups` g ON g.id = mh.groupid").
@@ -3567,7 +3430,7 @@ func GetUserReplies(c *fiber.Ctx) error {
 		Outcome *string `json:"outcome"`
 	}
 
-	// ORM migration site 395499023142 (Tier 3 keep-raw review). msgtype!="" is
+	// msgtype!="" is
 	// the only toggle - 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_395499023142
 	// (iznik-server-go/test).
@@ -3619,7 +3482,6 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 	}
 
 	var history []MembershipHistoryRow
-	// ORM migration site 0c7fcde60aa8 (wave 4).
 	db.Table("logs l").
 		Select("l.timestamp, l.subtype AS type, l.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, COALESCE(l.text,'') AS text").
 		Joins("INNER JOIN `groups` g ON g.id = l.groupid").
@@ -3656,7 +3518,6 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	var logins []LoginRow
-	// ORM migration site 4cd946036f5f (wave 1).
 	db.Table("users_logins").Select("id, userid, type, added, lastaccess").
 		Where("userid = ?", targetid).Order("lastaccess DESC").Limit(50).Scan(&logins)
 

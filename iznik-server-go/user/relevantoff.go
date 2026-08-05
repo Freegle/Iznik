@@ -41,14 +41,12 @@ func RelevantOff(c *fiber.Ctx) error {
 
 	// Validate the Link key (constant-ish: single indexed read then compare).
 	var storedKey string
-	// ORM migration site 74e53dad60bf (wave 1).
 	db.Table("users_logins").Select("credentials").Where("userid = ? AND type = ?",
 		uid, utils.LOGIN_TYPE_LINK).Limit(1).Scan(&storedKey)
 	if storedKey == "" || storedKey != key {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid key")
 	}
 
-	// ORM migration site 1cd19cb774b2 (wave 2).
 	db.Table("users").Where("id = ?", uid).Update("relevantallowed", gorm.Expr("0"))
 
 	// One-click (POST from a mail client) wants a 200; a browser click (GET)

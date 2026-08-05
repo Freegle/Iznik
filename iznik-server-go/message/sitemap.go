@@ -34,7 +34,7 @@ func Sitemap(c *fiber.Ctx) error {
 
 	entries := []SitemapEntry{}
 
-	// ORM migration site fd13a45cf36f (wave 1). modified tracks edits; arrival is
+	// modified tracks edits; arrival is
 	// when it landed. Either is a fair lastmod, so take whichever is later, and
 	// fall back to arrival when modified is null.
 	db.Table("messages_spatial").

@@ -150,7 +150,6 @@ func Similar(c *fiber.Ctx) error {
 			Lat              float64 `gorm:"column:lat"`
 			Lng              float64 `gorm:"column:lng"`
 		}
-		// ORM migration site 00ea2c253192 (wave 4).
 		db.Table("messages_embeddings me").
 			Select("me.subject_embedding, m.fromuser, m.type, m.lat, m.lng").
 			Joins("INNER JOIN messages m ON m.id = me.msgid").

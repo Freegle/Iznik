@@ -24,7 +24,6 @@ func GetGroupMessages(c *fiber.Ctx) error {
 	// freegled) but not withdrawn messages.  We also add in our own posts that are still pending, so a member
 	// can't tell their post is awaiting moderation - but NOT our own rejected posts: a rejected post has been
 	// removed and must not leak back into the poster's browse feed.
-	// ORM migration site 860c3fb17af3 (wave 4).
 	db.Table("messages_groups").
 		Select("messages_groups.msgid").
 		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid").
@@ -74,7 +73,6 @@ func GetGroupMessageSummaries(c *fiber.Ctx) error {
 	now := time.Now()
 	then := now.AddDate(0, 0, -31)
 
-	// ORM migration site e5a3017e0a69 (wave 4).
 	db.Table("messages_groups").
 		Select("messages.id, messages.subject, messages_groups.arrival").
 		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_groups.msgid").

@@ -55,7 +55,6 @@ func ListIsochrones(c *fiber.Ctx) error {
 
 	isochrones := []Isochrones{}
 
-	// ORM migration sites 701348841f78 / bff19d769e26 (Tier 1 spatial review).
 	db.Table("isochrones_users").
 		Select("isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon").
 		Joins("INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id").
@@ -70,7 +69,6 @@ func ListIsochrones(c *fiber.Ctx) error {
 		// Auto-create a default isochrone using the user's last known location
 		// when none exist.
 		var locationid uint64
-		// ORM migration site cedb6ee252fe (wave 1).
 		db.Table("users").Select("lastlocation").Where("id = ? AND lastlocation IS NOT NULL", myid).Scan(&locationid)
 
 		if locationid > 0 {
@@ -78,7 +76,6 @@ func ListIsochrones(c *fiber.Ctx) error {
 
 			if isoID > 0 {
 				// Link user to isochrone.
-				// ORM migration site 56093182f920 (wave 3).
 				result := db.Table("isochrones_users").Clauses(clause.OnConflict{
 					DoUpdates: clause.Set{
 						{Column: clause.Column{Name: "isochroneid"}, Value: clause.Column{Table: "excluded", Name: "isochroneid"}},
@@ -89,7 +86,6 @@ func ListIsochrones(c *fiber.Ctx) error {
 				}
 
 				// Re-fetch the isochrones.
-				// ORM migration sites 701348841f78 / bff19d769e26 (Tier 1 spatial review).
 				db.Table("isochrones_users").
 					Select("isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon").
 					Joins("INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id").
@@ -109,7 +105,6 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 
 	// Check for existing isochrone with a real polygon (not a POINT).
 	var isoID uint64
-	// ORM migration site 34e1f2e54b22 (Tier 1 spatial review).
 	db.Table("isochrones").
 		Select("id").
 		Where("locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) != 'POINT'", locationid, transport, minutes).
@@ -126,7 +121,6 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		Lat float64
 		Lng float64
 	}
-	// ORM migration site d646a78aab13 (wave 1).
 	db.Table("locations").Select("lat, lng").Where("id = ?", locationid).Scan(&loc)
 
 	if loc.Lat == 0 && loc.Lng == 0 {
@@ -146,7 +140,6 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		// Check if there's an existing POINT isochrone with the same key — update it
 		// rather than INSERT IGNORE (which would silently skip due to unique key).
 		var existingPointID uint64
-		// ORM migration site 5eea52bb68f7 (Tier 1 spatial review).
 		db.Table("isochrones").
 			Select("id").
 			Where("locationid = ? AND transport = ? AND minutes = ? AND ST_GeometryType(polygon) = 'POINT'", locationid, transport, minutes).
@@ -156,7 +149,7 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 
 		if existingPointID > 0 {
 			// Update the existing broken POINT isochrone with the real polygon.
-			// ORM migration site e0e7375e71aa (Tier 1 spatial review). Precedent:
+			// Precedent:
 			// the sibling INSERT a few lines below (site d91a1a5d6b27) already
 			// puts the identical CASE/ST_SIMPLIFY/ST_GeomFromText expression
 			// into a gorm.Expr with the SRID as a plain bind - this is the same
@@ -178,7 +171,7 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 
 		// No existing row — insert fresh. Take the new id from the write result; the SELECT
 		// fallback below only runs if INSERT IGNORE skipped a pre-existing row (9832 class).
-		// ORM migration site d91a1a5d6b27 (insertid-conv). Table()+map Create
+		// Table()+map Create
 		// reads the id back from the same sql.Result the INSERT returned,
 		// under the map key "@id" (see test/orm_insertid_test.go) - same as
 		// ExecInsertGetID it's a no-op (0) precisely when INSERT IGNORE
@@ -232,7 +225,6 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 	if isoID == 0 {
 		// INSERT IGNORE skipped a pre-existing row (the checks above missed it, e.g. under
 		// read-split lag); read that existing row's id.
-		// ORM migration site b405451d2644 (wave 1).
 		db.Table("isochrones").Select("id").Where("locationid = ? AND transport = ? AND minutes = ?", locationid, transport, minutes).
 			Order("id DESC").Limit(1).Scan(&isoID)
 	}
@@ -257,7 +249,6 @@ func HealPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Is
 				needsRefetch = true
 				if newIsoID != iso.Isochroneid {
 					// Point user to the new proper isochrone.
-					// ORM migration site efe4a0639f44 (wave 2).
 					db.Table("isochrones_users").Where("id = ?", iso.ID).Update("isochroneid", newIsoID)
 				}
 			}
@@ -266,7 +257,6 @@ func HealPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Is
 
 	if needsRefetch {
 		var refreshed []Isochrones
-		// ORM migration site 583d5d5394ad (Tier 1 spatial review).
 		db.Table("isochrones_users").
 			Select("isochrones_users.id, isochroneid, userid, timestamp, nickname, locationid, transport, minutes, ST_AsText(polygon) AS polygon").
 			Joins("INNER JOIN isochrones ON isochrones_users.isochroneid = isochrones.id").
@@ -348,7 +338,6 @@ func CreateIsochrone(c *fiber.Ctx) error {
 
 	// Validate location exists.
 	var locCount int64
-	// ORM migration site 0ea54cb9b6d9 (wave 1).
 	db.Table("locations").Where("id = ?", req.Locationid).Count(&locCount)
 	if locCount == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Location not found")
@@ -363,7 +352,7 @@ func CreateIsochrone(c *fiber.Ctx) error {
 	// Link user to isochrone (upsert). ON DUPLICATE KEY UPDATE ... id=LAST_INSERT_ID(id) makes the
 	// write report the id for both new and existing rows; take it from the result, not a
 	// read-split-routable SELECT (9832 class).
-	// ORM migration site 79e591242114 (insertid-conv). GORM's own "@id" map
+	// GORM's own "@id" map
 	// writeback is skipped when RowsAffected is 0, which MySQL reports on
 	// EVERY re-link of an already-linked isochrone (the common case here,
 	// since a user re-opening the same isochrone hits the duplicate-key
@@ -460,7 +449,6 @@ func EditIsochrone(c *fiber.Ctx) error {
 		Userid     uint64
 		Transport  string
 	}
-	// ORM migration site 96a263f84449 (wave 4).
 	db.Table("isochrones_users").
 		Select("isochrones.locationid, isochrones_users.userid, isochrones.transport").
 		Joins("INNER JOIN isochrones ON isochrones.id = isochrones_users.isochroneid").
@@ -490,12 +478,10 @@ func EditIsochrone(c *fiber.Ctx) error {
 	}
 
 	// Update the link to point to the new isochrone.
-	// ORM migration site ba1bbcbc0b5d (wave 2).
 	result := db.Table("isochrones_users").Where("id = ?", req.ID).Update("isochroneid", isoID)
 	if result.Error != nil {
 		// Handle duplicate entry (timing window).
 		log.Printf("Failed to update isochrone link %d, deleting duplicate: %v", req.ID, result.Error)
-		// ORM migration site 53769722a855 (wave 2).
 		db.Table("isochrones_users").Where("id = ?", req.ID).Delete(nil)
 	}
 
@@ -540,13 +526,11 @@ func DeleteIsochrone(c *fiber.Ctx) error {
 
 	// Verify ownership: the isochrones_users record must belong to the current user.
 	var count int64
-	// ORM migration site 781fa9ba9257 (wave 1).
 	db.Table("isochrones_users").Where("id = ? AND userid = ?", id, myid).Count(&count)
 	if count == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Access denied"})
 	}
 
-	// ORM migration site eddf7acf7d4d (wave 2).
 	db.Table("isochrones_users").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

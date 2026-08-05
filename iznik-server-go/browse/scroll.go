@@ -73,7 +73,6 @@ func RecordScrollDepth(c *fiber.Ctx) error {
 		// Upsert keyed on the unique session id: keep the furthest position the
 		// session reached. Idempotent across the debounced client's repeat sends
 		// and any re-entry, so a session is counted exactly once.
-		// ORM migration site b39f76d2f182 (wave 3).
 		db.Table("browse_scroll_depth").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"max_position":    gorm.Expr("GREATEST(max_position, VALUES(max_position))"),
@@ -89,7 +88,6 @@ func RecordScrollDepth(c *fiber.Ctx) error {
 		})
 	} else {
 		// Legacy clients without a session id: a single fire-and-forget insert.
-		// ORM migration site b90542fe5559 (wave 2).
 		db.Table("browse_scroll_depth").Create(map[string]interface{}{
 			"userid":          userid,
 			"max_position":    req.MaxPosition,
@@ -143,7 +141,6 @@ func ScrollDepthCurve(c *fiber.Ctx) error {
 		MaxPosition int   `gorm:"column:max_position"`
 		Cnt         int64 `gorm:"column:cnt"`
 	}
-	// ORM migration site 44d646441e3f (wave 1).
 	db.Table("browse_scroll_depth").
 		Select("max_position, COUNT(*) AS cnt").
 		Where("created_at BETWEEN ? AND ?", startDate, endDateTime).

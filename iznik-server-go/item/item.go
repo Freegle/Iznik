@@ -12,7 +12,6 @@ func FetchForMessage(msgid uint64) *Item {
 
 	db := database.DBConn
 
-	// ORM migration site 977e85ee18fd (wave 4).
 	db.Table("items").
 		Select("items.id, items.name").
 		Joins("INNER JOIN messages_items ON items.id = messages_items.itemid").

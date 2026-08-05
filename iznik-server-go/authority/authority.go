@@ -106,7 +106,6 @@ func Single(c *fiber.Ctx) error {
 		Lng      float64 `gorm:"column:lng"`
 	}
 
-	// ORM migration site 92416198b77d (Tier 1 spatial review).
 	result := db.Table("authorities").
 		Select("id, name, area_code, ST_AsText(COALESCE(simplified, polygon)) AS polygon, "+
 			"ST_Y(ST_CENTROID(polygon)) AS lat, ST_X(ST_CENTROID(polygon)) AS lng").
@@ -137,7 +136,6 @@ func Single(c *fiber.Ctx) error {
 		Overlap2  float64  `gorm:"column:overlap2"`
 	}
 
-	// ORM migration site 3048dd76eab0 (Tier 1 spatial review).
 	db.Table("groups").
 		Select("groups.id, nameshort, namefull, lat, lng, "+
 			"CASE WHEN poly IS NOT NULL THEN poly ELSE polyofficial END AS poly, "+
@@ -252,7 +250,6 @@ func Search(c *fiber.Ctx) error {
 		AreaCode *string `gorm:"column:area_code"`
 	}
 
-	// ORM migration site c097d3e46f7f (wave 1).
 	db.Table("authorities").Select("id, name, area_code").Where("name LIKE ?", searchTerm).Limit(limit).Scan(&results)
 
 	// Map area codes to friendly names.

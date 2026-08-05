@@ -70,7 +70,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 			Msgtype string
 		}
 		var counts []replyCount
-		// ORM migration site 48b377098859 (wave 4).
 		db.Table("chat_messages cm").
 			Select("COUNT(DISTINCT cm.refmsgid) AS count, m.type AS msgtype").
 			Joins("INNER JOIN messages m ON m.id = cm.refmsgid").
@@ -93,7 +92,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// ORM migration site 9088f1449d32 (wave 1).
 		res := db.Table("messages_reneged").Select("COUNT(DISTINCT(messages_reneged.msgid)) AS reneged").Where("userid = ? AND timestamp > ?", id, start)
 		var info2 UserInfo
 		res.Scan(&info2)
@@ -105,7 +103,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// ORM migration site fe953b2b8ed1 (wave 4).
 		res := db.Table("messages_by").
 			Select("COUNT(DISTINCT messages_by.msgid) AS collected").
 			Joins("INNER JOIN messages ON messages.id = messages_by.msgid").
@@ -132,7 +129,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 		// post reaching N groups inflated the Offers/Wanteds (and Openoffers/Openwanteds)
 		// counts by a factor of N. Same rippling pattern as the dashboard Popular Posts
 		// and mygroups counts (0e639acdf, 9fda94a29).
-		// ORM migration site ae4e50c81157 (wave 4).
 		rows, _ := db.Table("messages").
 			Select("COUNT(DISTINCT messages.id) AS count, messages.type, messages_outcomes.outcome").
 			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
@@ -181,7 +177,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	go func() {
 		defer wg.Done()
 		// No need to check on the chat room type as we can only get messages of type Interested in a User2User chat.
-		// ORM migration site 7c2a4a892c17 (wave 1).
 		res := db.Table("users_replytime").Select("replytime").Where("userid = ?", id)
 		var info2 UserInfo
 		res.Scan(&info2)
@@ -196,7 +191,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 		// No need to check on the chat room type as we can only get messages of type Interested in a User2User chat.
 		start := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 
-		// ORM migration site cd31abc88595 (wave 5).
 		res := db.Table("users_expected").
 			Select("COUNT(*) AS expectedreply").
 			Joins("INNER JOIN users ON users.id = users_expected.expectee").
@@ -224,7 +218,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 		var counts []Count
 
 		start := time.Now().AddDate(0, 0, -utils.RATINGS_PERIOD).Format("2006-01-02")
-		// ORM migration site 7069b88d6489 (wave 1).
 		res := db.Table("ratings").Select("COUNT(*) AS count, rating").
 			Where("ratee = ? AND timestamp >= ? AND (tn_rating_id IS NOT NULL OR rater = ? OR visible = 1)", id, start, myid).
 			Group("rating")
@@ -256,7 +249,6 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 			var counts []Count
 
 			start := time.Now().AddDate(0, 0, -utils.RATINGS_PERIOD).Format("2006-01-02")
-			// ORM migration site 3c5d23f03c54 (wave 1).
 			res := db.Table("ratings").Select("rating").Where("rater = ? AND ratee = ? AND timestamp >= ?", myid, id, start)
 			res.Scan(&counts)
 
@@ -281,7 +273,6 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 
 	// Use settings.mylocation.area.name first for the public location display.
 	var areaName *string
-	// ORM migration site f66d831e859e (wave 1).
 	db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name'))").
 		Where("id = ? AND settings IS NOT NULL", userid).Scan(&areaName)
 
@@ -294,7 +285,6 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 
 	// Fall back to lastlocation area name (find the parent area of the postcode).
 	var locName string
-	// ORM migration site 60fa78a45347 (wave 4).
 	db.Table("users u").
 		Select("l2.name").
 		Joins("INNER JOIN locations l1 ON l1.id = u.lastlocation").
@@ -315,7 +305,6 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 		Groupid   uint64
 		Groupname string
 	}
-	// ORM migration site 1056062f1f8f (wave 4).
 	db.Table("memberships m").
 		Select("m.groupid, COALESCE(g.namefull, g.nameshort) AS groupname").
 		Joins("INNER JOIN `groups` g ON g.id = m.groupid").

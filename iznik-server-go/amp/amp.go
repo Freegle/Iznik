@@ -78,10 +78,8 @@ func recordAmpReplyTracking(db *gorm.DB, emailTrackingID *uint64, linkURL, linkP
 	if emailTrackingID == nil {
 		return
 	}
-	// ORM migration site 44deaf6c0e25 (wave 2).
 	db.Table("email_tracking").Where("id = ?", *emailTrackingID).
 		Updates(map[string]interface{}{"replied_at": gorm.Expr("NOW()"), "replied_via": gorm.Expr("'amp'")})
-	// ORM migration site 83bf328b1b50 (wave 2).
 	db.Table("email_tracking_clicks").Create(map[string]interface{}{
 		"email_tracking_id": *emailTrackingID,
 		"link_url":          linkURL,
@@ -138,7 +136,7 @@ func ValidateToken(c *fiber.Ctx) (uint64, uint64, error) {
 	// Verify user still exists
 	db := database.DBConn
 	var exists bool
-	// ORM migration site 8ec21db34aa4 (Tier 2 keep-raw review). BuildClauses
+	// BuildClauses
 	// override: GORM's builder always adds a FROM clause once .Table() is
 	// called, but Statement.Build only renders the clause NAMES actually
 	// passed to it - restricting BuildClauses to {"SELECT"} renders the
@@ -234,7 +232,6 @@ func getUserInfo(userID uint64) userInfo {
 
 	// Query user info with image and preferred email for Gravatar fallback.
 	// Email is in users_emails table, not users table.
-	// ORM migration site f98509337e6d (wave 4).
 	db.Table("users u").
 		Select("u.id, u.fullname, u.firstname, u.lastname, ui.id AS imageid, ui.url AS imageurl, ue.email AS email").
 		Joins("LEFT JOIN users_images ui ON ui.userid = u.id").
@@ -337,13 +334,11 @@ func GetChatMessages(c *fiber.Ctx) error {
 		if tid, err := strconv.ParseUint(tidStr, 10, 64); err == nil {
 			// Record AMP render - always upgrade to 'amp' since it's a stronger
 			// signal than pixel tracking (proves AMP content was rendered)
-			// ORM migration site 7c20a8b4293a (wave 2).
 			db.Table("email_tracking").Where("id = ?", tid).Updates(map[string]interface{}{
 				"opened_at":  gorm.Expr("COALESCE(opened_at, NOW())"),
 				"opened_via": gorm.Expr("'amp'"),
 			})
 			// Also record in clicks table for analytics (won't duplicate due to unique tracking)
-			// ORM migration site a1ba47046192 (wave 3).
 			db.Table("email_tracking_clicks").Clauses(clause.Insert{Modifier: "IGNORE"}).
 				Create(map[string]interface{}{
 					"email_tracking_id": tid,
@@ -356,7 +351,6 @@ func GetChatMessages(c *fiber.Ctx) error {
 
 	// Verify user is member of this chat
 	var memberUserID uint64
-	// ORM migration site 0e6418b09480 (wave 1).
 	db.Table("chat_roster").Select("userid").Where("chatid = ? AND userid = ?", chatID, userID).Scan(&memberUserID)
 
 	if memberUserID == 0 {
@@ -455,7 +449,6 @@ func PostChatReply(c *fiber.Ctx) error {
 
 	// Verify user is still member of chat
 	var memberUserID uint64
-	// ORM migration site f726d20766fe (wave 1).
 	db.Table("chat_roster").Select("userid").Where("chatid = ? AND userid = ?", chatID, userID).Scan(&memberUserID)
 
 	if memberUserID == 0 {
@@ -466,7 +459,7 @@ func PostChatReply(c *fiber.Ctx) error {
 	}
 
 	// Insert the message.
-	// ORM migration site 58cb0a225ebe (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
 		"chatid":               chatID,
@@ -487,7 +480,6 @@ func PostChatReply(c *fiber.Ctx) error {
 	messageID := uint64(messageIDInt)
 
 	// Update chat room latest message time
-	// ORM migration site 0a874cdbfabf (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://reply", "amp_reply_form")
@@ -636,7 +628,7 @@ func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 
 	db := database.DBConn
 	var exists bool
-	// ORM migration site faf666d9cb13 (Tier 2 keep-raw review). Same
+	// Same
 	// BuildClauses override as ValidateToken above; see the comment there and
 	// ormharness/bareexists_test.go.
 	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
@@ -719,7 +711,6 @@ func processDigestReply(c *fiber.Ctx, userID, messageID uint64, rawMessage strin
 
 	// ChatRoom struct doesn't model the latestmessage column (it's not
 	// returned in normal reads), so touch it with a small write.
-	// ORM migration site 6e0285470b75 (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://digest-reply", "amp_digest_reply_form")

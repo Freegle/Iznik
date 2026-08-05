@@ -52,7 +52,6 @@ func GetComments(userids []uint64, myid uint64) map[uint64][]Comment {
 	db := database.DBConn
 
 	var comments []Comment
-	// ORM migration site bccf664d6580 (wave 1).
 	db.Table("users_comments").Where("userid IN ?", userids).Order("date DESC").Scan(&comments)
 
 	if len(comments) == 0 {
@@ -79,7 +78,6 @@ func GetComments(userids []uint64, myid uint64) map[uint64][]Comment {
 			Fullname string `json:"fullname"`
 		}
 		var names []nameRow
-		// ORM migration site 6155d59a26ec (wave 1).
 		db.Table("users").Select("id, fullname").Where("id IN ?", ids).Scan(&names)
 
 		for _, n := range names {

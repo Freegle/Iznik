@@ -24,7 +24,6 @@ func GetDomain(c *fiber.Ctx) error {
 
 	// Check if domain exists.
 	var id uint64
-	// ORM migration site 403e1cd2de43 (wave 1).
 	db.Table("domains_common").Select("id").Where("domain LIKE ?", domainName).Scan(&id)
 
 	if id > 0 {
@@ -37,7 +36,6 @@ func GetDomain(c *fiber.Ctx) error {
 
 	// Domain not found - suggest similar domains using damlevlim().
 	var suggestions []string
-	// ORM migration site b8fd8e1ebb61 (wave 1).
 	db.Table("domains_common").
 		Select("domain").
 		Where("damlevlim(domain, ?, LENGTH(?)) < 3", domainName, domainName).

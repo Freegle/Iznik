@@ -81,7 +81,7 @@ func Get(c *fiber.Ctx) error {
 
 	// Build query using keyset pagination on id (never null, unique).
 	//
-	// ORM migration site f1e9e49a9c89 (Tier 3 keep-raw review). Three
+	// Three
 	// independent toggles - groupid>0, contextID>0, isAdmin - give 2x2x2 = 8
 	// possible rendered forms, all declared in ormharness/shapes.json and
 	// proven by TestTier3Shapes_f1e9e49a9c89 (iznik-server-go/test). The
@@ -159,10 +159,8 @@ func getSingle(c *fiber.Ctx, myid uint64, id uint64) error {
 	var row CommentItem
 
 	if isAdmin {
-		// ORM migration site 55738aa5637a (wave 1).
 		db.Table("users_comments").Where("id = ?", id).Scan(&row)
 	} else if len(modGroupIDs) > 0 {
-		// ORM migration site fb45e5ba61ec (wave 1).
 		db.Table("users_comments").Where("id = ? AND groupid IN ?", id, modGroupIDs).Scan(&row)
 	}
 
@@ -220,7 +218,6 @@ func canModerate(myid uint64, groupid *uint64) bool {
 
 	db := database.DBConn
 	var role string
-	// ORM migration site 6d0d83bfc10d (wave 1).
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?", myid, *groupid, utils.COLLECTION_APPROVED).Scan(&role)
 
 	return role == utils.ROLE_MODERATOR || role == utils.ROLE_OWNER
@@ -231,7 +228,6 @@ func canModerateComment(myid uint64, commentID uint64) bool {
 	db := database.DBConn
 
 	var groupid *uint64
-	// ORM migration site 255c7f92cc07 (wave 1).
 	db.Table("users_comments").Select("groupid").Where("id = ?", commentID).Scan(&groupid)
 
 	return canModerate(myid, groupid)
@@ -243,14 +239,12 @@ func flagOthers(userid uint64, groupid uint64) {
 	db := database.DBConn
 
 	var otherGroupIDs []uint64
-	// ORM migration site 2bc13e60bc01 (wave 1).
 	db.Table("memberships").Where("userid = ? AND groupid != ?", userid, groupid).Pluck("groupid", &otherGroupIDs)
 
 	now := time.Now().Format("2006-01-02 15:04")
 	reason := "Note flagged to other groups"
 
 	for _, gid := range otherGroupIDs {
-		// ORM migration site eda36bc0f75a (wave 2).
 		db.Table("memberships").Where("groupid = ? AND userid = ?", gid, userid).
 			Updates(map[string]interface{}{"reviewreason": reason, "reviewrequestedat": now})
 	}
@@ -283,7 +277,7 @@ func Create(c *fiber.Ctx) error {
 		flag = 1
 	}
 
-	// ORM migration site 40de8b0d3f98 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
 		"userid":   req.Userid,
@@ -340,7 +334,6 @@ func Edit(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 408704240109 (wave 2).
 	db.Table("users_comments").Where("id = ?", req.ID).Updates(map[string]interface{}{
 		"user1":    req.User1,
 		"user2":    req.User2,
@@ -362,7 +355,6 @@ func Edit(c *fiber.Ctx) error {
 	if req.Flag != nil && *req.Flag {
 		var commentUserid uint64
 		var commentGroupid uint64
-		// ORM migration site 9c9df615ba74 (wave 1).
 		db.Table("users_comments").Select("userid, groupid").Where("id = ?", req.ID).Row().Scan(&commentUserid, &commentGroupid)
 		if commentUserid > 0 && commentGroupid > 0 {
 			flagOthers(commentUserid, commentGroupid)
@@ -391,7 +383,6 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site c7d4d6e14e0d (wave 2).
 	db.Table("users_comments").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{

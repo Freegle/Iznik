@@ -66,7 +66,6 @@ func ClosestPostcode(lat float32, lng float32) Location {
 
 	id := results[0].ID
 	var loc Location
-	// ORM migration site c7c4b8699bcc (wave 4).
 	database.DBConn.Table("locations l1").
 		Select("l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname").
 		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
@@ -125,7 +124,6 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	// group centre distance (HAVING hav < currradius), so a containing group whose centre is
 	// far away would otherwise be dropped entirely.
 	containing := []ClosestGroup{}
-	// ORM migration site 3736547cd88a (Tier 1 spatial review, round 2).
 	db.Table("groups").
 		Select("id, nameshort, namefull, ontn, settings, 0 AS dist, "+
 			"haversine(lat, lng, ?, ?) AS hav, "+
@@ -178,7 +176,6 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 			swlat = sw.Lat()
 			swlng = sw.Lng()
 
-			// ORM migration site 961c4c5a214a (Tier 1 spatial review, round 2).
 			// No .Group() call: clause/group_by.go's GroupBy.Build() writes
 			// nothing for an empty Columns list and Clause.Build() skips the
 			// "GROUP BY " name prefix when MergeClause left it "" (which it
@@ -258,7 +255,6 @@ func FetchSingle(id uint64) *Location {
 
 	var location Location
 
-	// ORM migration site 3acefabd6672 (wave 4).
 	db.Table("locations l1").
 		Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname").
 		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
@@ -330,7 +326,6 @@ func Resolve(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var loc Location
-	// ORM migration site 845387e20e9b (wave 1).
 	db.Table("locations").
 		Select("id, name, type, lat, lng, areaid").
 		Where("name = ?", name).
@@ -414,7 +409,7 @@ func SearchLocations(c *fiber.Ctx) error {
 			AreaLng float32 `json:"-" gorm:"column:arealng"`
 		}
 
-		// ORM migration site b262bf75df3c (Tier 3 keep-raw review). pcq is only
+		// pcq is only
 		// appended when pconly is set, so this statement has exactly 2
 		// possible rendered forms, both declared in ormharness/shapes.json and
 		// proven by TestTier3Shapes_b262bf75df3c (iznik-server-go/test).
@@ -477,7 +472,6 @@ func SearchLocations(c *fiber.Ctx) error {
 			// vanish (Discourse #9770). The write side already stores full detail; the editor needs to
 			// read it back at full detail too. Edited areas are small neighbourhood polygons, so the
 			// payload cost of dropping simplification here is negligible.
-			// ORM migration site dc731a47a66a (Tier 1 spatial review, round 2).
 			// .Table() accepts args when the name has embedded "?"s (same
 			// mechanism as a plain literal table name), so the derived-table
 			// subquery and its own bind travel together in the FROM clause -
@@ -520,7 +514,6 @@ func SearchLocations(c *fiber.Ctx) error {
 		if dodgyFlag {
 			db := database.DBConn
 			var dodgyLocs []DodgyLocation
-			// ORM migration site fdebc3317226 (wave 4).
 			db.Table("locations_dodgy ld").
 				Select("ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, "+
 					"l0.name AS name, l1.name AS oldname, l2.name AS newname").
@@ -567,7 +560,7 @@ func Typeahead(c *fiber.Ctx) error {
 			AreaLng float32 `json:"-" gorm:"column:arealng"`
 		}
 
-		// ORM migration site 71f1772f4a99 (Tier 3 keep-raw review). Shares
+		// Shares
 		// SearchLocations's pattern: pcq is only appended when pconly is set,
 		// so this statement has exactly 2 possible rendered forms, both
 		// declared in ormharness/shapes.json and proven by
@@ -640,7 +633,6 @@ func GetLocationAddresses(c *fiber.Ctx) error {
 			var addresses []Address
 			db := database.DBConn
 
-			// ORM migration site 8344ba8f9aa5 (wave 4).
 			db.Table("paf_addresses").
 				Select("paf_addresses.id,"+
 					"locations.name as postcode, "+
@@ -725,7 +717,7 @@ func CreateLocation(c *fiber.Ctx) error {
 	canon := strings.ToLower(req.Name)
 
 	db := database.DBConn
-	// ORM migration site 47417e0f74d7 (Tier 1 batch review). GORM's map-Create
+	// GORM's map-Create
 	// reads the id back from the same sql.Result the INSERT returned (under
 	// the map key "@id"), the same write-connection guarantee the old
 	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
@@ -749,7 +741,7 @@ func CreateLocation(c *fiber.Ctx) error {
 
 	if id > 0 {
 		// Sync to the spatial index table (required by PostcodeRemapService).
-		// ORM migration site 25b7b92e33fd (tier4). utils.SRID is spliced as a
+		// utils.SRID is spliced as a
 		// literal into the gorm.Expr SQL text, matching exactly what the
 		// original fmt.Sprintf produced, rather than bound as "?" - the
 		// recorded golden is the literal-spliced form (manifest.json's
@@ -762,7 +754,6 @@ func CreateLocation(c *fiber.Ctx) error {
 
 		// Cache centroid and max dimension, as UpdateLocation does. Without this a
 		// created area has NULL lat/lng, unlike every edited one.
-		// ORM migration site 13cbb1ba0653 (wave 5).
 		db.Table("locations").Where("id = ?", id).Updates(map[string]interface{}{
 			"maxdimension": gorm.Expr("GetMaxDimension(geometry)"),
 			"lat":          gorm.Expr("ST_Y(ST_Centroid(geometry))"),
@@ -816,7 +807,6 @@ func UpdateLocation(c *fiber.Ctx) error {
 	if req.Polygon != nil && *req.Polygon != "" {
 		// Validate geometry first.
 		var valid bool
-		// ORM migration site 745c0a9ca82e (Tier 1 spatial review, round 3).
 		// Same bare-scalar-SELECT technique as group.go's validateGeometry
 		// (site 6d0982e798b5): Statement.BuildClauses={"SELECT"} suppresses
 		// GORM's automatic FROM. SRID is folded into the Select() string via
@@ -848,7 +838,7 @@ func UpdateLocation(c *fiber.Ctx) error {
 			Unioned     *string
 		}
 		var oldGeom OldGeom
-		// ORM migration site 42f88b0d5032 (Tier 1 batch review). Not a SQL
+		// Not a SQL
 		// UNION - ST_UNION() is a geometry function inside one ordinary SELECT
 		// - so this needed no BuildClauses override, just the same
 		// fmt.Sprintf-folded-SRID technique as this function's other two
@@ -868,7 +858,7 @@ func UpdateLocation(c *fiber.Ctx) error {
 			Scan(&oldGeom)
 
 		// Update ourgeometry (the human-edited override), not geometry (which is from OSM).
-		// ORM migration site aa63c688e6b1 (Tier 1 spatial review, round 3). An
+		// An
 		// explicit clause.Set (not Updates(map)) keeps type before ourgeometry
 		// as the original SET list had it. `type` = 'Polygon' is a literal in
 		// the original (not a bind), so its Value is gorm.Expr("'Polygon'"),
@@ -888,7 +878,7 @@ func UpdateLocation(c *fiber.Ctx) error {
 		}
 
 		// Update the spatial index table.
-		// ORM migration site 6f1d6543e5c0 (tier4). See CreateLocation's
+		// See CreateLocation's
 		// 25b7b92e33fd for why SRID is spliced into the gorm.Expr text
 		// rather than bound.
 		db.Table("locations_spatial").Clauses(clause.Insert{Modifier: "REPLACE"}).
@@ -898,7 +888,6 @@ func UpdateLocation(c *fiber.Ctx) error {
 			})
 
 		// Update cached centroid and max dimensions.
-		// ORM migration site 7d5f2f96661e (wave 5).
 		db.Table("locations").Where("id = ?", req.ID).Updates(map[string]interface{}{
 			"maxdimension": gorm.Expr("GetMaxDimension(ourgeometry)"),
 			"lat":          gorm.Expr("ST_Y(ST_Centroid(ourgeometry))"),
@@ -908,7 +897,6 @@ func UpdateLocation(c *fiber.Ctx) error {
 		// Refresh the spatial KNN index before the remap below runs, so it remaps
 		// against the new shape rather than the one from the last delta sync.
 		var locName string
-		// ORM migration site 72908ace6717 (wave 1).
 		db.Table("locations").Select("name").Where("id = ?", req.ID).Scan(&locName)
 		if err := spatial.UpsertLocation(req.ID, *req.Polygon, locName, "Polygon"); err != nil {
 			log.Printf("UpdateLocation: spatial upsert of %d failed, postcodes may not remap until the next delta sync: %v", req.ID, err)
@@ -939,7 +927,6 @@ func UpdateLocation(c *fiber.Ctx) error {
 
 	if req.Name != nil && *req.Name != "" {
 		canon := strings.ToLower(*req.Name)
-		// ORM migration site cf7be3980e03 (wave 2).
 		db.Table("locations").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"name": *req.Name, "canon": canon})
 	}
@@ -982,7 +969,7 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Exclude the specified location.
-	// ORM migration site 666504e10980 (wave 3). Converted together with its
+	// Converted together with its
 	// identical twin below (59411a155371): a half-converted pair renumbers
 	// the survivor's site ID, so gate (h) refuses the split state.
 	db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
@@ -993,14 +980,12 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	// If byname, also exclude all locations with the same name.
 	if req.Byname {
 		var name string
-		// ORM migration site f987324c1334 (wave 1).
 		db.Table("locations").Select("name").Where("id = ?", req.ID).Scan(&name)
 		if name != "" {
 			var otherIDs []uint64
-			// ORM migration site 2f3a9cd57a29 (wave 1).
 			db.Table("locations").Where("name = ? AND id != ?", name, req.ID).Pluck("id", &otherIDs)
 			for _, otherID := range otherIDs {
-				// ORM migration site 59411a155371 (wave 3). Twin of
+				// Twin of
 				// 666504e10980 above.
 				db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
 					Create(map[string]interface{}{"locationid": otherID, "groupid": req.GroupID, "userid": myid})
@@ -1014,7 +999,6 @@ func ExcludeLocation(c *fiber.Ctx) error {
 
 func queueExcludeRemap(locationID uint64) {
 	var wkt string
-	// ORM migration site 5e7eab0bd83d (wave 5).
 	database.DBConn.Table("locations").
 		Select("ST_AsText(COALESCE(ourgeometry, geometry))").
 		Where("id = ?", locationID).

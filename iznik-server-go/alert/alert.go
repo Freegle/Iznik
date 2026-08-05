@@ -78,7 +78,6 @@ func GetAlert(c *fiber.Ctx) error {
 	}
 
 	var a Alert
-	// ORM migration site 1b28d8692d77 (wave 1).
 	db.Table("alerts").
 		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
 		Where("id = ?", id).
@@ -100,7 +99,6 @@ func GetAlert(c *fiber.Ctx) error {
 
 		// Get response counts.
 		var responseCounts []AlertResponseStat
-		// ORM migration site 69fd80c0297d (wave 1).
 		db.Table("alerts_tracking").
 			Select("response, COUNT(*) AS count").
 			Where("alertid = ? AND response IS NOT NULL", id).
@@ -112,7 +110,6 @@ func GetAlert(c *fiber.Ctx) error {
 		stats.Responses = responseCounts
 
 		// Get reached (total tracking entries).
-		// ORM migration site 40675ee7a91d (wave 1).
 		db.Table("alerts_tracking").Where("alertid = ?", id).Count(&stats.Reached)
 
 		// Merge stats into the alert map in the response.
@@ -160,7 +157,6 @@ func ListAlerts(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var alerts []Alert
-	// ORM migration site 28fbc7fe399f (wave 1).
 	db.Table("alerts").
 		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
 		Order("created DESC").
@@ -248,7 +244,7 @@ func CreateAlert(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 54e869591bc4 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback. "from"/"to" are
 	// MySQL reserved words, but the MySQL dialect's QuoteTo backtick-quotes every
 	// identifier unconditionally, so no special-casing is needed here.
@@ -297,7 +293,6 @@ func RecordAlert(c *fiber.Ctx) error {
 
 	if req.Action == "clicked" && req.Trackid > 0 {
 		db := database.DBConn
-		// ORM migration site 053433aae0e7 (wave 2).
 		db.Table("alerts_tracking").Where("id = ?", req.Trackid).
 			Updates(map[string]interface{}{"responded": gorm.Expr("NOW()"), "response": gorm.Expr("'Clicked'")})
 	}

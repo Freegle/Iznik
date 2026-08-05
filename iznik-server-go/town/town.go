@@ -154,7 +154,6 @@ func Near(c *fiber.Ctx) error {
 		Lng  float64
 	}
 	var rows []row
-	// ORM migration site ed5b9c0716a2 (wave 1).
 	db.Table("towns").
 		Select("id, name, lat, lng").
 		Where("lat IS NOT NULL AND lng IS NOT NULL AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
@@ -211,7 +210,7 @@ func Near(c *fiber.Ctx) error {
 	// Nothing within reach: return the single nearest town so the UI can say "Closer than: X"
 	// instead of showing nothing - useful for rural users whose nearest town is beyond the reach.
 	var closer string
-	// ORM migration site 23ee2bc0640f (Tier 1 spatial review). Order() itself
+	// Order() itself
 	// takes no bind args, so the two ST_Distance_Sphere binds go through
 	// clause.OrderBy{Expression: gorm.Expr(...)} instead - same technique as
 	// message/message.go's ResolveOnBehalfPosting (site ecaf3f90bee2).

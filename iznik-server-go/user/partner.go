@@ -21,7 +21,6 @@ func ValidatePartnerKey(db *gorm.DB, key string) (uint64, string, string, error)
 		Domain  string `gorm:"column:domain"`
 	}
 
-	// ORM migration site c3ce5cbe967b (wave 1).
 	err := db.Table("partners_keys").Select("id, partner, `domain`").Where("`key` = ?", key).Scan(&result).Error
 	if err != nil {
 		return 0, "", "", err
@@ -40,7 +39,6 @@ func FindByTNIdOrEmail(db *gorm.DB, tnuserid uint64, email string) uint64 {
 	var userid uint64
 
 	if tnuserid > 0 {
-		// ORM migration site 20d8eda3a578 (wave 1).
 		db.Table("users").Select("id").Where("tnuserid = ?", tnuserid).Scan(&userid)
 		if userid > 0 {
 			return userid
@@ -48,7 +46,6 @@ func FindByTNIdOrEmail(db *gorm.DB, tnuserid uint64, email string) uint64 {
 	}
 
 	if email != "" {
-		// ORM migration site d8f691613a70 (wave 1).
 		db.Table("users_emails").Select("userid").Where("email = ?", email).Scan(&userid)
 	}
 
@@ -70,7 +67,6 @@ func FindPartnerOwnerForMessage(db *gorm.DB, domain string, msgID uint64) uint64
 		Fromuser uint64 `gorm:"column:fromuser"`
 		Fromaddr string `gorm:"column:fromaddr"`
 	}
-	// ORM migration site 63574fcf7b8a (wave 1).
 	db.Table("messages").Select("fromuser, fromaddr").Where("id = ?", msgID).Scan(&result)
 	if result.Fromuser == 0 || result.Fromaddr == "" {
 		return 0
@@ -110,7 +106,7 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.Title(name) //nolint:staticcheck
 
-	// ORM migration site c1fca2fe89a0 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback (proven in
 	// test/orm_insertid_test.go, same pattern shipped for over a dozen sibling
 	// sites - the "undocumented and untested" concern this site's keep-raw rule
@@ -129,14 +125,14 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	userid := uint64(lastIDInt)
 
 	// Set tnuserid.
-	// ORM migration site 3c0db7c93a36 (tier1). Plain single-table UPDATE, no id
+	// Plain single-table UPDATE, no id
 	// readback involved.
 	if tnuserid > 0 {
 		db.Table("users").Where("id = ?", userid).Update("tnuserid", tnuserid)
 	}
 
 	// Add email.
-	// ORM migration site 52c033e59a9d (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; no id readback needed here.
 	canon := CanonicalizeEmail(email)
 	db.Table("users_emails").Create(map[string]interface{}{
@@ -156,7 +152,6 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 func FindPartnerByName(name string) uint64 {
 	db := database.DBConn
 	var partnerID uint64
-	// ORM migration site 45d0fd83ed8a (wave 1).
 	db.Table("partners_keys").Select("id").Where("partner LIKE ?", "%"+name+"%").Limit(1).Scan(&partnerID)
 	return partnerID
 }

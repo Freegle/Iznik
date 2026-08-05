@@ -36,7 +36,7 @@ func redactColFor(table string) func(col string) bool {
 // existingTables returns the lowercased set of tables in the current database,
 // so specs for tables absent from this schema are skipped quietly.
 //
-// ORM migration site f0543b22c8e8 (userdump keep-raw review, revisited). The
+// The
 // prior reason ("consistent with the sqlite.go entries") was wrong: this
 // queries the Percona cluster, not the SQLite export file - gdb is the same
 // *gorm.DB every other converted site uses, not a separate connection.
@@ -86,7 +86,6 @@ func inClause(ids []interface{}) (string, []interface{}) {
 
 // runDBSpec executes one spec and copies the rows into the dump.
 //
-// ORM migration site 1722b492f85b (userdump keep-raw review, revisited).
 // spec.table and spec.where are never user input - they come from the fixed
 // literal list buildDBSpecs assembles (61 hardcoded table/where pairs) - so
 // .Table(spec.table) and .Where(spec.where, spec.args...) are the same

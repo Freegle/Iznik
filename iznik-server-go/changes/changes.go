@@ -68,7 +68,6 @@ func GetChanges(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var partnerID uint64
-	// ORM migration site baf96c48b316 (wave 1).
 	db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 	if partnerID == 0 {
@@ -105,7 +104,7 @@ func GetChanges(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		// ORM migration site 19b190d43a85 (Tier 2 keep-raw review). Top-level
+		// Top-level
 		// UNION, nothing wrapping it: BuildClauses={"SELECT"} suppresses the
 		// FROM GORM would otherwise inject once .Table() is called, so the
 		// whole "SELECT ... UNION SELECT ..." text can be given to .Select()
@@ -128,13 +127,11 @@ func GetChanges(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		// ORM migration site 9e34a0df6578 (wave 1).
 		db.Table("users").Select("id, lastupdated").Where("lastupdated IS NOT NULL AND lastupdated >= ?", mysqlTime).Scan(&users)
 	}()
 
 	go func() {
 		defer wg.Done()
-		// ORM migration site 82b4c19c846e (wave 1).
 		db.Table("ratings").
 			Select("id, rater, ratee, rating, timestamp, visible, tn_rating_id, text, reason").
 			Where("timestamp >= ? AND visible = 1", mysqlTime).

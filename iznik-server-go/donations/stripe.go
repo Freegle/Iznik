@@ -146,12 +146,10 @@ func CreateSubscription(c *fiber.Ctx) error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		// ORM migration site 4e1a7726a577 (wave 1).
 		db.Table("users_emails").Select("email").Where("userid = ?", myid).Order("preferred DESC").Limit(1).Scan(&email)
 	}()
 	go func() {
 		defer wg.Done()
-		// ORM migration site 0d395b814481 (wave 1).
 		db.Table("users").Select("fullname").Where("id = ?", myid).Scan(&fullname)
 	}()
 	wg.Wait()

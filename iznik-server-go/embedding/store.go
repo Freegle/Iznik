@@ -76,7 +76,7 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 		return nil, fmt.Errorf("database not initialized")
 	}
 
-	// ORM migration site 15d5998c44f2 (Tier 3 keep-raw review). extraWhere has
+	// extraWhere has
 	// exactly two callers: Load passes "" and Refresh passes
 	// " AND me.msgid IN (?)" - 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_15d5998c44f2
@@ -155,7 +155,6 @@ func (s *Store) Refresh() error {
 	}
 
 	var openIds []uint64
-	// ORM migration site 80d6f1951971 (wave 4).
 	if err := db.Table("messages_embeddings me").
 		Joins("INNER JOIN messages_spatial ms ON ms.msgid = me.msgid").
 		Where("ms.successful = 0 AND ms.promised = 0").

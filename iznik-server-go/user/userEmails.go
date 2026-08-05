@@ -26,7 +26,6 @@ func getEmails(id uint64) []UserEmail {
 
 	var emails []UserEmail
 
-	// ORM migration site f3bad72ed518 (wave 1).
 	db.Table("users_emails").Select("id, added, bounced, preferred, email").
 		Where("userid = ?", id).Order("preferred DESC, email ASC").Scan(&emails)
 
@@ -47,7 +46,6 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 	// Look for an existing internal email that encodes this specific user ID
 	// (format: {local}-{id}@users.ilovefreegle.org).
 	var email string
-	// ORM migration site b4656108f05f (wave 1).
 	db.Table("users_emails").Select("email").Where("userid = ? AND email LIKE ?",
 		id, fmt.Sprintf("%%-%d@%s", id, domain)).Order("preferred DESC").Limit(1).Scan(&email)
 
@@ -59,7 +57,6 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 
 	// None found with the correct ID — generate and persist one.
 	var displayname string
-	// ORM migration site 3698e5590b2a (wave 1).
 	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", id).Scan(&displayname)
 
 	local := SanitiseEmailLocal(displayname)
@@ -68,7 +65,6 @@ func GetOrCreateInternalEmail(db *gorm.DB, id uint64) string {
 	}
 	email = fmt.Sprintf("%s-%d@%s", local, id, domain)
 
-	// ORM migration site ba1bd193532a (wave 3).
 	db.Table("users_emails").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 		"userid":       id,
 		"email":        email,

@@ -16,7 +16,6 @@ func Messages(c *fiber.Ctx) error {
 
 	msgs := []message.MessageSummary{}
 
-	// ORM migration site 1cbaddb2ed2a (Tier 1 spatial review).
 	db.Table("messages_spatial").
 		Select("ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, "+
 			"messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, "+

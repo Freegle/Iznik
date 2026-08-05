@@ -38,7 +38,6 @@ func Count(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
 	var count []int64
-	// ORM migration site 6fc15cf6168f (wave 4).
 	db.Table("users_notifications").
 		Select("COUNT(*) AS count").
 		Joins("LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?)",
@@ -76,14 +75,12 @@ func List(c *fiber.Ctx) error {
 	// users_active (userid, timestamp) with timestamp truncated to the hour. This is used by
 	// Stats.php for active-users-per-group counts and the moderator activity leaderboard.
 	hourTimestamp := time.Now().UTC().Truncate(time.Hour).Format("2006-01-02 15:04:05")
-	// ORM migration site b0bc94eb01e8 (wave 3).
 	db.Table("users_active").Clauses(clause.Insert{Modifier: "IGNORE"}).
 		Create(map[string]interface{}{"userid": myid, "timestamp": hourTimestamp})
 
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
 	var notifications []Notification
-	// ORM migration site 56662fe97c21 (wave 4).
 	db.Table("users_notifications").
 		Select("*").
 		Joins("LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?)",
@@ -134,7 +131,6 @@ func Seen(c *fiber.Ctx) error {
 	}
 
 	// Mark specific notification as seen for this user
-	// ORM migration site 44a7f7cc40fc (wave 2).
 	result := db.Table("users_notifications").Where("touser = ? AND id = ?", myid, req.ID).
 		Update("seen", gorm.Expr("1"))
 
@@ -169,7 +165,6 @@ func AllSeen(c *fiber.Ctx) error {
 	}
 
 	// Mark all notifications as seen for this user
-	// ORM migration site be340be71e2b (wave 2).
 	result := db.Table("users_notifications").Where("touser = ?", myid).Update("seen", gorm.Expr("1"))
 
 	if result.Error != nil {

@@ -67,7 +67,6 @@ func List(c *fiber.Ctx) error {
 
 		if len(modGroupIDs) > 0 {
 			start := time.Now().Format("2006-01-02")
-			// ORM migration site 3ce758530901 (wave 4).
 			db.Table("communityevents").
 				Select("DISTINCT communityevents.id").
 				Joins("INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
@@ -79,7 +78,6 @@ func List(c *fiber.Ctx) error {
 	} else if len(groupids) > 0 {
 		start := time.Now().Format("2006-01-02")
 
-		// ORM migration site 29edc144f5c9 (wave 4).
 		db.Table("communityevents").
 			Select("DISTINCT communityevents.id").
 			Joins("INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
@@ -111,7 +109,6 @@ func ListGroup(c *fiber.Ctx) error {
 
 	start := time.Now().Format("2006-01-02")
 
-	// ORM migration site a0cd1607e066 (wave 4).
 	db.Table("communityevents").
 		Select("DISTINCT communityevents.id").
 		Joins("LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
@@ -161,7 +158,6 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			// ORM migration site b91b1dace445 (wave 1).
 			db.Table("communityevents_images").Select("id, archived, externaluid, externalmods").
 				Where("eventid = ?", id).Order("id DESC").Limit(1).Scan(&image)
 
@@ -186,7 +182,6 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			// ORM migration site 03a8e9d4e6f9 (wave 1).
 			db.Table("communityevents_groups").Where("eventid = ?", id).Pluck("groupid", &groups)
 		}()
 
@@ -195,7 +190,6 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			// ORM migration site d0fb8ea8e991 (wave 1).
 			db.Table("communityevents_dates").Where("eventid = ?", id).Scan(&dates)
 		}()
 
@@ -232,7 +226,6 @@ func canModify(myid uint64, eventID uint64) bool {
 	db := database.DBConn
 
 	var ownerID *uint64
-	// ORM migration site fb639d4f1343 (wave 1).
 	db.Table("communityevents").Select("userid").Where("id = ?", eventID).Scan(&ownerID)
 
 	if ownerID != nil && *ownerID == myid {
@@ -250,7 +243,6 @@ func isModerator(myid uint64, eventID uint64) bool {
 	// Single query to check if user is moderator/owner of any linked group.
 	db := database.DBConn
 	var count int64
-	// ORM migration site f8e861bf3fa6 (wave 4).
 	db.Table("memberships m").
 		Joins("INNER JOIN communityevents_groups ceg ON ceg.groupid = m.groupid").
 		Where("ceg.eventid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
@@ -264,7 +256,6 @@ func isModerator(myid uint64, eventID uint64) bool {
 func isMemberOfGroup(myid uint64, groupid uint64) bool {
 	db := database.DBConn
 	var count int64
-	// ORM migration site c722e5c178bc (wave 1).
 	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Count(&count)
 	return count > 0
 }
@@ -312,7 +303,7 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 45b8b0bc2060 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT (the "1" for pending is a fixed literal); id read back via GORM's
 	// map-Create "@id" writeback.
 	row := map[string]interface{}{
@@ -333,7 +324,6 @@ func Create(c *fiber.Ctx) error {
 	id := uint64(idInt)
 
 	if id > 0 && req.GroupID > 0 {
-		// ORM migration site 74c3a59d2291 (wave 3).
 		db.Table("communityevents_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"eventid": id,
 			"groupid": req.GroupID,
@@ -373,13 +363,11 @@ type PatchRequest struct {
 // event, or 0 if it is free to act on.
 func eventHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
 	var holder uint64
-	// ORM migration site 960df0d64e88 (wave 1).
 	db.Table("communityevents").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
 	if holder == 0 || holder == myid {
 		return 0, ""
 	}
 	var name string
-	// ORM migration site 20615e06821f (wave 1).
 	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
 	return holder, name
 }
@@ -412,7 +400,6 @@ func Update(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	// ORM migration site 374932713da4 (wave 1).
 	db.Table("communityevents").Select("id").Where("id = ?", req.ID).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Community event not found")
@@ -433,43 +420,34 @@ func Update(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Title != nil {
-		// ORM migration site 8e45bcb23b19 (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Location != nil {
-		// ORM migration site df65cbf75e01 (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Pending != nil {
 		// Approving out of moderation is terminal, so clear the hold with it rather
 		// than leaving the event pinned as "Held" forever.
 		if *req.Pending {
-			// ORM migration site 2f79186b42bf (wave 2).
 			db.Table("communityevents").Where("id = ?", req.ID).Update("pending", *req.Pending)
 		} else {
-			// ORM migration site e150408f2d3e (wave 2).
 			db.Table("communityevents").Where("id = ?", req.ID).
 				Updates(map[string]interface{}{"pending": *req.Pending, "heldby": gorm.Expr("NULL")})
 		}
 	}
 	if req.Contactname != nil {
-		// ORM migration site f719a23dedc3 (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("contactname", *req.Contactname)
 	}
 	if req.Contactphone != nil {
-		// ORM migration site b554bdcafe03 (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("contactphone", *req.Contactphone)
 	}
 	if req.Contactemail != nil {
-		// ORM migration site 1af3dbf05d6b (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("contactemail", *req.Contactemail)
 	}
 	if req.Contacturl != nil {
-		// ORM migration site 2a3bc76d4017 (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("contacturl", *req.Contacturl)
 	}
 	if req.Description != nil {
-		// ORM migration site 0c2736a9cf30 (wave 2).
 		db.Table("communityevents").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 
@@ -482,7 +460,6 @@ func Update(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not a member of the specified group")
 			}
 
-			// ORM migration site 154548bd2551 (wave 3).
 			db.Table("communityevents_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 				"eventid": req.ID,
 				"groupid": req.GroupID,
@@ -491,7 +468,6 @@ func Update(c *fiber.Ctx) error {
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this community event.
 			var ownerID *uint64
-			// ORM migration site f47f012d1d3f (wave 1).
 			db.Table("communityevents").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 			if ownerID != nil && *ownerID > 0 {
 				eventID := req.ID
@@ -507,11 +483,9 @@ func Update(c *fiber.Ctx) error {
 		}
 	case "RemoveGroup":
 		if req.GroupID > 0 {
-			// ORM migration site 2951a7ffab4d (wave 2).
 			db.Table("communityevents_groups").Where("eventid = ? AND groupid = ?", req.ID, req.GroupID).Delete(nil)
 		}
 	case "AddDate":
-		// ORM migration site 7e814fd678a7 (wave 2).
 		db.Table("communityevents_dates").Create(map[string]interface{}{
 			"eventid": req.ID,
 			"start":   utils.NilIfEmpty(req.Start),
@@ -519,12 +493,10 @@ func Update(c *fiber.Ctx) error {
 		})
 	case "RemoveDate":
 		if req.DateID > 0 {
-			// ORM migration site 1a34f23b47dc (wave 2).
 			db.Table("communityevents_dates").Where("id = ?", req.DateID).Delete(nil)
 		}
 	case "SetPhoto":
 		if req.PhotoID > 0 {
-			// ORM migration site 68bba2319103 (wave 2).
 			db.Table("communityevents_images").Where("id = ?", req.PhotoID).Update("eventid", req.ID)
 		}
 	case "Hold":
@@ -533,12 +505,10 @@ func Update(c *fiber.Ctx) error {
 			if holder, name := eventHeldByAnother(db, req.ID, myid); holder != 0 {
 				return heldByAnotherResponse(c, holder, name)
 			}
-			// ORM migration site ef582e5c1fb3 (wave 2).
 			db.Table("communityevents").Where("id = ?", req.ID).Update("heldby", myid)
 		}
 	case "Release":
 		if isModerator(myid, req.ID) {
-			// ORM migration site d2ab18538fec (wave 2).
 			db.Table("communityevents").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		}
 	}
@@ -567,7 +537,6 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	// ORM migration site 376e4b3a5941 (wave 1).
 	db.Table("communityevents").Select("id").Where("id = ?", id).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Community event not found")
@@ -578,7 +547,6 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete.
-	// ORM migration site 1a05317673e7 (wave 2).
 	db.Table("communityevents").Where("id = ?", id).Update("deleted", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"success": true})

@@ -140,7 +140,6 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	}
 
 	var sessions []SessionRow
-	// ORM migration site f1f646ab3b9a (wave 4).
 	db.Table("sessions").
 		Select("sessions.userid").
 		Joins("INNER JOIN users ON sessions.userid = users.id").
@@ -156,7 +155,6 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Check they are a mod on a Freegle group.
 	var freegleGroupCount int64
-	// ORM migration site cc828e26aabf (wave 4).
 	db.Table("memberships").
 		Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
 		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
@@ -168,20 +166,16 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Get user details.
 	var fullname string
-	// ORM migration site 2edbbcc133b4 (wave 1).
 	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", userID).Scan(&fullname)
 
 	var email string
-	// ORM migration site 0e811eecaa3a (wave 1).
 	db.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&email)
 
 	var profileURL string
-	// ORM migration site 5ad089d40930 (wave 1).
 	db.Table("users_images").Select("url").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
 
 	var isAdmin bool
 	var systemrole string
-	// ORM migration site fc671dfc8f18 (wave 1).
 	db.Table("users").Select("systemrole").Where("id = ?", userID).Scan(&systemrole)
 	isAdmin = systemrole == "Admin"
 
@@ -208,7 +202,6 @@ func getModGroupList(userID uint64) string {
 	}
 
 	var groups []GroupName
-	// ORM migration site a9deba91c9c5 (wave 4).
 	db.Table("`groups`").
 		Select("COALESCE(namefull, nameshort) AS namedisplay").
 		Joins("INNER JOIN memberships ON memberships.groupid = `groups`.id").

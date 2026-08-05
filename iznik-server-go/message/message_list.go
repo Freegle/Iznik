@@ -130,7 +130,6 @@ func ListMessages(c *fiber.Ctx) error {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			// ORM migration site 7a97721b36a2 (wave 4).
 			db.Table("messages_groups mg").
 				Select("DISTINCT mg.msgid").
 				Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -142,7 +141,6 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			// ORM migration site ab19aed302c7 (wave 4).
 			db.Table("messages_groups mg").
 				Select("DISTINCT mg.msgid").
 				Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -156,7 +154,6 @@ func ListMessages(c *fiber.Ctx) error {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			// ORM migration site b2c399283fd5 (wave 4).
 			db.Table("messages_groups mg").
 				Select("DISTINCT mg.msgid").
 				Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -168,7 +165,6 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			// ORM migration site f22d282e4e7e (wave 4).
 			db.Table("messages_groups mg").
 				Select("DISTINCT mg.msgid").
 				Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -183,7 +179,7 @@ func ListMessages(c *fiber.Ctx) error {
 	} else {
 		// Standard listing with optional pagination and fromuser filter.
 		//
-		// ORM migration site bfe25b4914e8 (Tier 3 keep-raw review). fromuser>0
+		// fromuser>0
 		// and ctx pagination give 2x2 = 4 possible rendered forms, all declared
 		// in ormharness/shapes.json and proven by TestTier3Shapes_bfe25b4914e8
 		// (iznik-server-go/test).
@@ -247,7 +243,6 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				// ORM migration site 8e02578d3e34 (wave 1).
 				db.Table("messages m").
 					Select("m.id, m.subject, m.type, m.fromuser, m.arrival, m.lat, m.lng, m.availablenow, m.availableinitially, m.tnpostid").
 					Where("m.id = ?", msgID).Scan(&msg)
@@ -255,7 +250,6 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				// ORM migration site 74340fd8d8f1 (wave 1).
 				db.Table("messages_groups").Select("groupid, collection, arrival, heldby, rippled_in").
 					Where("msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
@@ -263,14 +257,12 @@ func ListMessages(c *fiber.Ctx) error {
 			go func() {
 				defer wg.Done()
 				// Fetch first image only for thumbnail.
-				// ORM migration site 005a06f7ad40 (wave 1).
 				db.Table("messages_attachments").Select("id, msgid, archived, externaluid, externalmods").
 					Where("msgid = ?", msgID).Order("`primary` DESC, id ASC").Limit(1).Scan(&attachments)
 			}()
 
 			go func() {
 				defer wg.Done()
-				// ORM migration site c77acb905614 (wave 1).
 				db.Table("chat_messages").
 					Where("refmsgid = ? AND type = ? AND reviewrequired = 0 AND reviewrejected = 0", msgID, utils.MESSAGE_INTERESTED).
 					Count(&replycount)
@@ -491,7 +483,6 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// rippled-in post surfaces in every receiving group's Edit queue (and to active mods
 		// there via the all-groups path), but an edit belongs to the post's origin group(s)
 		// only. Same bug class as the IP-abuse fix (WHERE rippled_in=0).
-		// ORM migration site 8a73414000b6 (wave 4).
 		db.Table("messages_edits me").
 			Select("DISTINCT me.msgid").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
@@ -612,7 +603,6 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// message the next page's arrival boundary lands at the wrong time and can
 		// drop messages that sort between the two values.
 		var lastArrival time.Time
-		// ORM migration site 1aa7cdd2a963 (wave 1).
 		db.Table("messages_groups").Select("MAX(arrival)").
 			Where("msgid = ? AND groupid IN ? AND deleted = 0", msgIDs[len(msgIDs)-1], groupIDs).
 			Scan(&lastArrival)

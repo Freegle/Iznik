@@ -263,7 +263,6 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 		Chattype string `gorm:"column:chattype"`
 	}
 	var room roomBasic
-	// ORM migration site 52dd73c2cd60 (wave 1).
 	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
 
 	if room.ID == 0 {
@@ -395,7 +394,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 		// Find or create a chat between the target user and the group's mods.
 		var existingID uint64
-		// ORM migration site 753fbc262f6b (wave 1).
 		db.Table("chat_rooms").Select("id").Where("user1 = ? AND chattype = ? AND groupid = ?",
 			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Limit(1).Scan(&existingID)
 
@@ -404,7 +402,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 		}
 
 		// Create new User2Mod chat.
-		// ORM migration site 65574169749a (tier4).
 		res := gorm.WithResult()
 		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
 			DoUpdates: clause.Set{
@@ -428,7 +425,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 		chatID := uint64(lastID)
 
 		// Create roster entry for the chat owner.
-		// ORM migration site afaa0e49a541 (wave 3). Converted together with its
+		// Converted together with its
 		// two identical twins below (e611588b2309, 60aa69c60334): a
 		// half-converted group renumbers the survivors' site IDs, so gate (h)
 		// refuses the split state.
@@ -442,11 +439,9 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 		// add ALL group moderators to the roster so they get notifications.
 		var modIDs []uint64
-		// ORM migration site 0cc375ba3154 (wave 1).
 		db.Table("memberships").Where("groupid = ? AND role IN (?, ?) AND collection = ?",
 			req.Groupid, utils.ROLE_OWNER, utils.ROLE_MODERATOR, utils.COLLECTION_APPROVED).Pluck("userid", &modIDs)
 		for _, modID := range modIDs {
-			// ORM migration site 21c0c56448e8 (wave 3).
 			db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 				"chatid": chatID, "userid": modID, "status": utils.CHAT_STATUS_ONLINE, "date": now,
 			})
@@ -459,13 +454,12 @@ func PutChatRoom(c *fiber.Ctx) error {
 
 	// Check for existing chat first (covers both user orderings).
 	var existingID uint64
-	// ORM migration site 8b3ccb082a00 (wave 1).
 	db.Table("chat_rooms").Select("id").Where("((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ?",
 		myid, req.Userid, req.Userid, myid, utils.CHAT_TYPE_USER2USER).Limit(1).Scan(&existingID)
 
 	if existingID > 0 {
 		if req.UpdateRoster != nil && *req.UpdateRoster {
-			// ORM migration site c3c151b4b7a5 (wave 2). Converted together with
+			// Converted together with
 			// its identical twin below (a29c37823e28): a half-converted pair
 			// renumbers the survivor's site ID, so gate (h) refuses the split
 			// state.
@@ -482,7 +476,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
 	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
 	// parallel load (GORM's connection pool may assign a different connection).
-	// ORM migration site 659e00792d43 (tier4).
 	var chatID uint64
 	res := gorm.WithResult()
 	tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
@@ -507,7 +500,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 	}
 
 	// Create roster entries for both users.
-	// ORM migration site e611588b2309 (wave 3). Twin of afaa0e49a541 above.
+	// Twin of afaa0e49a541 above.
 	db.Table("chat_roster").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "date"}, Value: clause.Column{Table: "excluded", Name: "date"}},
@@ -515,7 +508,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 	}).Create(map[string]interface{}{
 		"chatid": chatID, "userid": myid, "status": utils.CHAT_STATUS_ONLINE, "date": now,
 	})
-	// ORM migration site 60aa69c60334 (wave 3). Twin of afaa0e49a541 above.
+	// Twin of afaa0e49a541 above.
 	db.Table("chat_roster").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "date"}, Value: clause.Column{Table: "excluded", Name: "date"}},
@@ -527,7 +520,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 	// If updateRoster is true, unblock the chat for the current user after creation
 	// (opening a chat unblocks it).
 	if req.UpdateRoster != nil && *req.UpdateRoster {
-		// ORM migration site a29c37823e28 (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin above (c3c151b4b7a5).
 		db.Table("chat_roster").Where("chatid = ? AND userid = ?", chatID, myid).
 			Update("status", utils.CHAT_STATUS_ONLINE)
@@ -595,7 +588,7 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 
 	// Ensure the user and group mods are in the roster so that
 	// chat notifications reach everyone.
-	// ORM migration site 1c2cfaaab39b (Tier 1 batch review). Outside the
+	// Outside the
 	// row-locked tx above (this runs on the plain db handle after tx.Commit/
 	// Rollback) and its result is discarded - no id to read back, so the
 	// row-lock entanglement above does not apply to this statement.
@@ -605,10 +598,9 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": userID})
 
 	var modUserIDs []uint64
-	// ORM migration site 8df448e1a244 (wave 1).
 	db.Table("memberships").Select("userid").Where("groupid = ? AND role IN (?, ?)", groupID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modUserIDs)
 	for _, modUID := range modUserIDs {
-		// ORM migration site 57f83af68a60 (Tier 1 batch review). Same as
+		// Same as
 		// 1c2cfaaab39b above, once per mod; also outside the row-locked tx.
 		db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": modUID})
 	}
@@ -630,14 +622,12 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 	// Check for existing chat first to avoid an INSERT roundtrip in the
 	// hot path where the chat already exists.
 	var chatID uint64
-	// ORM migration site f114a9d3efaf (wave 1).
 	db.Table("chat_rooms").Select("id").
 		Where("((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) AND chattype = ?",
 			userA, userB, userB, userA, utils.CHAT_TYPE_USER2USER).
 		Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
-		// ORM migration site 3efeb225c001 (tier4).
 		now := time.Now()
 		res := gorm.WithResult()
 		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
@@ -662,12 +652,12 @@ func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) 
 	}
 
 	// Seed roster entries for both participants so notifications fire.
-	// ORM migration site e71799673a73 (wave 3). Converted together with its
+	// Converted together with its
 	// identical twin below (a70cf3624bdb).
 	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 		"chatid": chatID, "userid": userA, "status": utils.CHAT_STATUS_ONLINE, "date": gorm.Expr("NOW()"),
 	})
-	// ORM migration site a70cf3624bdb (wave 3). Twin of e71799673a73 above.
+	// Twin of e71799673a73 above.
 	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 		"chatid": chatID, "userid": userB, "status": utils.CHAT_STATUS_ONLINE, "date": gorm.Expr("NOW()"),
 	})
@@ -703,7 +693,6 @@ func GetCommonGroups(c *fiber.Ctx) error {
 		User1 uint64
 		User2 uint64
 	}
-	// ORM migration site 0ca3c490a3f4 (wave 1).
 	db.Table("chat_rooms").Select("id, user1, user2").Where("id = ?", id).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
@@ -713,7 +702,6 @@ func GetCommonGroups(c *fiber.Ctx) error {
 	}
 
 	groups := []CommonGroup{}
-	// ORM migration site 22b6e811aaa9 (wave 4).
 	db.Table("`groups` g").
 		Select("g.id, COALESCE(NULLIF(g.namefull, ''), g.nameshort) AS namedisplay").
 		Joins("INNER JOIN memberships m1 ON m1.groupid = g.id AND m1.userid = ?", room.User1).
@@ -1256,7 +1244,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				}
 				var supporters []supporterStatus
 
-				// ORM migration site 366c64b4d972 (tier9). ids is bound
+				// ids is bound
 				// directly as a []uint64 slice rather than formatted as
 				// decimal text and joined into the SQL string.
 				db.Table("users").
@@ -1443,7 +1431,6 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 	// Verify user is a member of this chat
 	var room ChatRoom
-	// ORM migration site 60cc02526265 (wave 1).
 	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", chatid).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
@@ -1458,13 +1445,11 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 		Userid uint64
 	}
 	var last lastMsg
-	// ORM migration site f467930b5852 (wave 1).
 	db.Table("chat_messages").Select("type, userid").Where("chatid = ?", chatid).Order("id DESC").Limit(1).Scan(&last)
 
 	if last.Type == utils.CHAT_MESSAGE_NUDGE && last.Userid == myid {
 		// Already nudged - return the existing nudge ID
 		var existingId uint64
-		// ORM migration site d6af2e7ded90 (wave 1).
 		db.Table("chat_messages").Select("id").Where("chatid = ? AND type = ? AND userid = ?",
 			chatid, utils.CHAT_MESSAGE_NUDGE, myid).Order("id DESC").Limit(1).Scan(&existingId)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingId})
@@ -1472,7 +1457,7 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 	// Create nudge message
 	now := time.Now()
-	// ORM migration site 1f5798e8214d (insertid-conv). Table()+map Create
+	// Table()+map Create
 	// reads the generated id back from the same sql.Result the INSERT
 	// returned, under the map key "@id" - see test/orm_insertid_test.go.
 	row := map[string]interface{}{
@@ -1495,14 +1480,13 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	newId := uint64(newIdInt)
 
 	// Update latestmessage on chat room
-	// ORM migration site 8a247fbd07a3 (wave 2). Identical SQL also appears in
+	// Identical SQL also appears in
 	// GetOrCreateUser2ModChat, which is left entirely raw (transaction/FOR
 	// UPDATE, keep-raw); that occurrence precedes this one in the file, so
 	// converting only this later occurrence leaves its site ID unrenumbered.
 	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 
 	// Record nudge for analytics
-	// ORM migration site 05c1cd917f86 (wave 2).
 	db.Table("users_nudges").Create(map[string]interface{}{
 		"fromuser": myid,
 		"touser":   getOtherUser(room, myid),
@@ -1518,7 +1502,6 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 	// Verify the chat room exists.
 	var roomID uint64
-	// ORM migration site 9cbfea9abfb4 (wave 1).
 	db.Table("chat_rooms").Select("id").Where("id = ?", chatid).Scan(&roomID)
 	if roomID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
@@ -1527,14 +1510,12 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	// Bump date on recent unmailed messages to delay email batching.
 	// This batches multiple chat messages into a single email when user is actively typing.
 	// Uses a 30-second delay window.
-	// ORM migration site d6518a523f9c (wave 5).
 	result := db.Table("chat_messages").
 		Where("chatid = ? AND TIMESTAMPDIFF(SECOND, chat_messages.date, NOW()) < 30 AND mailedtoall = 0", chatid).
 		Update("date", gorm.Expr("NOW()"))
 	count := result.RowsAffected
 
 	// Record the last typing time in roster.
-	// ORM migration site 16ab70b058c0 (wave 2).
 	db.Table("chat_roster").Where("chatid = ? AND userid = ?", chatid, myid).
 		Update("lasttype", gorm.Expr("NOW()"))
 
@@ -1544,7 +1525,6 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
 	// Verify user can see this chat and is a legitimate member
 	var room ChatRoom
-	// ORM migration site e9c62ddd84f5 (wave 1).
 	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})
@@ -1577,7 +1557,7 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 
 	// Insert or update roster entry
 	if status == utils.CHAT_STATUS_BLOCKED {
-		// ORM migration site 7db50195bb3c (wave 3). Converted together with its
+		// Converted together with its
 		// identical twin below (9c86a991eb7c): a half-converted pair renumbers
 		// the survivor's site ID, so gate (h) refuses the split state.
 		db.Table("chat_roster").Clauses(clause.OnConflict{
@@ -1589,7 +1569,6 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		})
 	} else if status == utils.CHAT_STATUS_CLOSED {
 		// Don't overwrite BLOCKED with CLOSED
-		// ORM migration site e6d3316c800c (wave 3).
 		db.Table("chat_roster").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"status": gorm.Expr("IF(status = ?, status, ?)", utils.CHAT_STATUS_BLOCKED, status),
@@ -1599,7 +1578,7 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
 		})
 	} else {
-		// ORM migration site 9c86a991eb7c (wave 3). Twin of 7db50195bb3c above.
+		// Twin of 7db50195bb3c above.
 		db.Table("chat_roster").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
@@ -1612,19 +1591,16 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	// Update lastmsgseen if provided
 	if req.Lastmsgseen > 0 {
 		if req.Allowback {
-			// ORM migration site 645c3f56baac (wave 2).
 			db.Table("chat_roster").Where("chatid = ? AND userid = ?", req.ID, myid).
 				Update("lastmsgseen", req.Lastmsgseen)
 		} else {
 			// Only update forward (don't go backwards)
-			// ORM migration site 54cdf0e1dfa0 (wave 2).
 			db.Table("chat_roster").
 				Where("chatid = ? AND userid = ? AND (lastmsgseen IS NULL OR lastmsgseen < ?)", req.ID, myid, req.Lastmsgseen).
 				Update("lastmsgseen", req.Lastmsgseen)
 		}
 
 		// Check if message has been seen by all roster members
-		// ORM migration site 36b33902c122 (wave 5).
 		db.Table("chat_messages").
 			Where("chatid = ? AND id <= ? AND seenbyall = 0 AND NOT EXISTS ( "+
 				"SELECT 1 FROM chat_roster "+
@@ -1636,13 +1612,11 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 
 	// Get updated roster
 	var roster []RosterEntry
-	// ORM migration site 727229e201ff (wave 1).
 	db.Table("chat_roster").Select("userid, status").Where("chatid = ?", req.ID).Scan(&roster)
 
 	// Get unseen count — only count messages from the last CHAT_ACTIVE_LIMIT days (V1 parity: ACTIVELIM).
 	activeSince := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 	var unseen int64
-	// ORM migration site 2984f464c081 (wave 5).
 	db.Table("chat_messages").
 		Where("chatid = ? AND userid != ? "+
 			"AND id > COALESCE((SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?), 0) "+
@@ -1672,7 +1646,6 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 
 	// Verify user is a member of this chat.
 	var room ChatRoom
-	// ORM migration site e6897171f8cc (wave 1).
 	db.Table("chat_rooms").Select("id, chattype, user1, user2, groupid").Where("id = ?", chatid).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
@@ -1682,7 +1655,6 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64)
 	}
 
 	// Queue sending a support referral email.
-	// ORM migration site 747de3c4a649 (wave 2).
 	db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "refer_to_support",
 		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
@@ -1704,7 +1676,6 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	}
 
 	var room ChatRoom
-	// ORM migration site ef385ae58c6f (wave 1).
 	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
@@ -1716,7 +1687,6 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	// Re-check that there really is no group in common; if there is, the client
 	// should have used the normal group-routed report flow.
 	var common int64
-	// ORM migration site 8f117eb67b75 (wave 4).
 	db.Table("memberships m1").
 		Select("COUNT(*)").
 		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
@@ -1726,7 +1696,6 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 		return fiber.NewError(fiber.StatusBadRequest, "Groups in common exist; use the normal report flow")
 	}
 
-	// ORM migration site bc1ca64ed7ec (wave 2).
 	db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "email_chat_spam_report",
 		"data": gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?, 'reason', ?, 'comment', ?)",
@@ -1749,7 +1718,7 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 		// none, so the MT badge is guaranteed to clear.
 		modChatIDs := getModeratorChatIDs(db, myid, []string{utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "", 0)
 		if len(modChatIDs) > 0 {
-			// ORM migration site 3519e352775b (tier9). modChatIDs is bound
+			// modChatIDs is bound
 			// directly as a []uint64 slice - GORM expands "IN ?" the same way
 			// as any other IN-list conversion in this codebase - rather than
 			// spliced as literal decimal text via joinIDs, which had no fixed
@@ -1758,7 +1727,7 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 				Where("userid = ? AND chatid IN ?", myid, modChatIDs).
 				Update("lastmsgseen", gorm.Expr("(SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid)"))
 
-			// ORM migration site 1d98111ea90d (tier4). The sibling UPDATE above
+			// The sibling UPDATE above
 			// keeps its literal idlist text unchanged, but this INSERT ... SELECT
 			// binds modChatIDs directly as a slice - GORM expands "IN (?)" from a
 			// slice bind the same way it does for any other IN-list conversion in
@@ -1777,7 +1746,6 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 		// FD: chats the user participates in - User2User, plus User2Mod chats they
 		// opened. Mod-side roster rows (Mod2Mod, or User2Mod where the user is the
 		// moderator rather than user1) are left alone.
-		// ORM migration site 491a9ebdf3f8 (wave 5).
 		db.Table("chat_roster").
 			Where("userid = ? AND chatid IN (SELECT id FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN (?, ?))",
 				myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
@@ -1785,7 +1753,6 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 
 		// V1 parity: chats with no roster row yet (e.g. a brand-new conversation the
 		// user has never opened) also count as unread, so give them a seen pointer.
-		// ORM migration site 4f9d823a53a7 (tier4).
 		database.InsertSelect(db, "chat_roster",
 			"(chatid, userid, lastmsgseen, date) "+
 				"SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW() "+
@@ -1816,7 +1783,7 @@ func countUnseenMT(c *fiber.Ctx, myid uint64, chattypes []string) error {
 
 	activeSince := time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
 
-	// ORM migration site fdeb2007824a (tier9). chatIDs is bound directly as
+	// chatIDs is bound directly as
 	// a []uint64 slice rather than spliced as literal decimal text via
 	// joinIDs.
 	var count int64
@@ -1863,7 +1830,7 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 
 		switch ct {
 		case utils.CHAT_TYPE_MOD2MOD:
-			// ORM migration site 35023816be21 (Tier 3 keep-raw review). activeq
+			// activeq
 			// is only appended when search=="", so this statement has exactly 2
 			// possible rendered forms, both declared in ormharness/shapes.json
 			// and proven by TestTier3Shapes_35023816be21 (iznik-server-go/test).
@@ -1891,7 +1858,7 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 		case utils.CHAT_TYPE_USER2MOD:
 			// User2Mod chats on modtools are not subject to the count query filter.
 			//
-			// ORM migration site e99680f74b2e (Tier 3 keep-raw review). Same
+			// Same
 			// activeq toggle as the MOD2MOD branch above - 2 possible rendered
 			// forms, both declared in ormharness/shapes.json and proven by
 			// TestTier3Shapes_e99680f74b2e (iznik-server-go/test). The WHERE is
@@ -1921,7 +1888,7 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 
 	// Apply search filter if provided.
 	if search != "" && len(allIDs) > 0 {
-		// ORM migration site d44b753b35c8 (tier9). allIDs is bound directly
+		// allIDs is bound directly
 		// as a []uint64 slice rather than spliced as literal decimal text
 		// via joinIDs.
 		searchLike := "%" + search + "%"
@@ -1956,7 +1923,6 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 		if user1 == myid {
 			if groupid > 0 {
 				var nameshort string
-				// ORM migration site ad4461c2eb9b (wave 1).
 				db.Table("groups").Select("COALESCE(namefull, nameshort)").Where("id = ?", groupid).Scan(&nameshort)
 				if nameshort != "" {
 					return nameshort + " Volunteers"
@@ -1964,12 +1930,10 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 			}
 		} else if user1 > 0 {
 			var fullname string
-			// ORM migration site e531967a2538 (wave 1).
 			db.Table("users").Select("fullname").Where("id = ?", user1).Scan(&fullname)
 			if fullname != "" {
 				if groupid > 0 {
 					var groupname string
-					// ORM migration site c033fc5fdc76 (wave 1).
 					db.Table("groups").Select("COALESCE(namefull, nameshort)").Where("id = ?", groupid).Scan(&groupname)
 					if groupname != "" {
 						return fullname + " on " + groupname
@@ -1981,7 +1945,6 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 	case utils.CHAT_TYPE_MOD2MOD:
 		if groupid > 0 {
 			var nameshort string
-			// ORM migration site aad80eae279a (wave 1).
 			db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&nameshort)
 			if nameshort != "" {
 				return nameshort + " Mods"
@@ -1994,7 +1957,6 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 		}
 		if otheruid > 0 {
 			var fullname string
-			// ORM migration site 843ffd0c4450 (wave 1).
 			db.Table("users").Select("fullname").Where("id = ?", otheruid).Scan(&fullname)
 			if fullname != "" {
 				return fullname

@@ -343,7 +343,7 @@ func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) [
 	// Sample post ids first (ORDER BY RAND over the windowed rippled set), then expand to
 	// replier points. Bounded to posts that actually have an Interested reply.
 	//
-	// ORM migration site f382f9bfe80b (Tier 3 keep-raw review). stratumSQL is
+	// stratumSQL is
 	// one of StratumFilter's 4 fixed strings (all/rural/suburban/dense) - 4
 	// possible rendered forms, all declared in ormharness/shapes.json and
 	// proven by TestTier3Shapes_f382f9bfe80b (iznik-server-go/test). Uses the
@@ -475,7 +475,7 @@ func Analytics(c *fiber.Ctx) error {
 	// eventually - the total.
 	go func() {
 		defer wg.Done()
-		// ORM migration site 2def63211a50 (Tier 3 keep-raw review). stratumSQL
+		// stratumSQL
 		// is one of StratumFilter's 4 fixed strings - 4 possible rendered
 		// forms, all declared in ormharness/shapes.json and proven by
 		// TestTier3Shapes_2def63211a50 (iznik-server-go/test). ReplyHorizonHours
@@ -500,7 +500,7 @@ func Analytics(c *fiber.Ctx) error {
 	// Reply friction: held replies over the window on rippled-out offers, as a share of all
 	// replies. rippling_held_replies has msgid + created_at so it scopes by post + stratum.
 	//
-	// ORM migration site 62cea0b491c9 (Tier 3 keep-raw review). Same
+	// Same
 	// stratumSQL toggle as 2def63211a50 above - 4 possible rendered forms,
 	// all declared in ormharness/shapes.json and proven by
 	// TestTier3Shapes_62cea0b491c9 (iznik-server-go/test).
@@ -714,7 +714,7 @@ type TrendRow struct {
 // trendSeries returns per-day KPI points (ascending) over the window + stratum. Pure SQL plus
 // the maturity flags, which depend on the wall clock, not the data.
 func trendSeries(db *gorm.DB, start, end, stratumSQL string) []TrendRow {
-	// ORM migration site 1dee90c3c378 (Tier 3 keep-raw review). stratumSQL is
+	// stratumSQL is
 	// one of StratumFilter's 4 fixed strings - 4 possible rendered forms, all
 	// declared in ormharness/shapes.json and proven by
 	// TestTier3Shapes_1dee90c3c378 (iznik-server-go/test). ReplyHorizonHours/

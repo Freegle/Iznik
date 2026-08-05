@@ -77,7 +77,6 @@ func List(c *fiber.Ctx) error {
 
 		if len(modGroupIDs) > 0 {
 			var groupIds []uint64
-			// ORM migration site ae3b224706e7 (wave 4).
 			db.Table("volunteering").
 				Select("DISTINCT volunteering.id").
 				Joins("INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
@@ -97,7 +96,6 @@ func List(c *fiber.Ctx) error {
 		// row, i.e. groupid IS NULL) in addition to their per-group ones.
 		if auth.HasPermission(myid, auth.PERM_NATIONAL_VOLUNTEERS) {
 			var nationalIds []uint64
-			// ORM migration site b8a2b5386625 (wave 4).
 			db.Table("volunteering").
 				Select("volunteering.id").
 				Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
@@ -121,7 +119,6 @@ func List(c *fiber.Ctx) error {
 		// whoever is looking, whereas ordering everything by id DESC would bury them under
 		// whatever local ops happen to be newer.
 		var nationalIds []uint64
-		// ORM migration site d0bfb252647d (wave 4).
 		db.Table("volunteering").
 			Select("DISTINCT volunteering.id").
 			Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
@@ -142,7 +139,6 @@ func List(c *fiber.Ctx) error {
 
 		if len(groupids) > 0 && len(ids) < listLimit {
 			var groupOpIds []uint64
-			// ORM migration site 2b14fe1be4fe (wave 4).
 			db.Table("volunteering").
 				Select("DISTINCT volunteering.id").
 				Joins("INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
@@ -186,7 +182,6 @@ func ListGroup(c *fiber.Ctx) error {
 
 	start := time.Now().Format("2006-01-02")
 
-	// ORM migration site 3890b30e46d9 (wave 4).
 	db.Table("volunteering").
 		Select("DISTINCT volunteering.id").
 		Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
@@ -235,7 +230,6 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			// ORM migration site fff128f61679 (wave 1).
 			db.Table("volunteering_images").Select("id, archived, externaluid, externalmods").
 				Where("opportunityid = ?", id).Order("id DESC").Limit(1).Scan(&image)
 
@@ -260,7 +254,6 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			// ORM migration site e0cd4a54dacc (wave 1).
 			db.Table("volunteering_groups").Where("volunteeringid = ?", id).Pluck("groupid", &groups)
 		}()
 
@@ -269,7 +262,6 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			// ORM migration site b0844c29851e (wave 1).
 			db.Table("volunteering_dates").Where("volunteeringid = ?", id).Scan(&dates)
 		}()
 
@@ -317,7 +309,6 @@ func canModify(myid uint64, volunteeringID uint64) bool {
 	db := database.DBConn
 
 	var ownerID *uint64
-	// ORM migration site e12bc9781fda (wave 1).
 	db.Table("volunteering").Select("userid").Where("id = ?", volunteeringID).Scan(&ownerID)
 
 	if ownerID != nil && *ownerID == myid {
@@ -336,7 +327,6 @@ func isModerator(myid uint64, volunteeringID uint64) bool {
 	// Single query to check if user is moderator/owner of any linked group.
 	db := database.DBConn
 	var count int64
-	// ORM migration site f02d5f03bfc1 (wave 4).
 	db.Table("memberships m").
 		Select("COUNT(*)").
 		Joins("INNER JOIN volunteering_groups vg ON vg.groupid = m.groupid").
@@ -351,7 +341,6 @@ func isModerator(myid uint64, volunteeringID uint64) bool {
 func isMemberOfGroup(myid uint64, groupid uint64) bool {
 	db := database.DBConn
 	var count int64
-	// ORM migration site f4ea5e89a6aa (wave 1).
 	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Count(&count)
 	return count > 0
 }
@@ -401,7 +390,7 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 0adadbabde5b (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT (the "1" for pending is a fixed literal, not a bind); id read back via
 	// GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
@@ -424,7 +413,7 @@ func Create(c *fiber.Ctx) error {
 	id := uint64(idInt)
 
 	if id > 0 && req.GroupID > 0 {
-		// ORM migration site c77cdc1a1f5f (wave 3). Converted together with its
+		// Converted together with its
 		// identical twin below (316bb6807874): a half-converted pair renumbers
 		// the survivor's site ID, so gate (h) refuses the split state.
 		db.Table("volunteering_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).
@@ -467,13 +456,11 @@ type PatchRequest struct {
 // this opportunity, or 0 if it is free to act on.
 func volunteeringHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
 	var holder uint64
-	// ORM migration site fe225e945349 (wave 1).
 	db.Table("volunteering").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
 	if holder == 0 || holder == myid {
 		return 0, ""
 	}
 	var name string
-	// ORM migration site eb24d79c1868 (wave 1).
 	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
 	return holder, name
 }
@@ -507,7 +494,6 @@ func Update(c *fiber.Ctx) error {
 	// Check the volunteering exists
 	db := database.DBConn
 	var exists uint64
-	// ORM migration site 757206d64631 (wave 1).
 	db.Table("volunteering").Select("id").Where("id = ?", req.ID).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Volunteering not found")
@@ -528,51 +514,40 @@ func Update(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Title != nil {
-		// ORM migration site fecdb8962d43 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Location != nil {
-		// ORM migration site 50c0868c92b5 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Online != nil {
-		// ORM migration site 07c0237d777f (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("online", *req.Online)
 	}
 	if req.Pending != nil {
 		// Approving out of moderation is terminal, so clear the hold with it rather
 		// than leaving the opportunity pinned as "Held" forever.
 		if *req.Pending {
-			// ORM migration site ed8f1877c12d (wave 2).
 			db.Table("volunteering").Where("id = ?", req.ID).Update("pending", *req.Pending)
 		} else {
-			// ORM migration site 4266b747f8a4 (wave 2).
 			db.Table("volunteering").Where("id = ?", req.ID).
 				Updates(map[string]interface{}{"pending": *req.Pending, "heldby": gorm.Expr("NULL")})
 		}
 	}
 	if req.Contactname != nil {
-		// ORM migration site 4c66c27b96e8 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("contactname", *req.Contactname)
 	}
 	if req.Contactphone != nil {
-		// ORM migration site d9f1684bf3f5 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("contactphone", *req.Contactphone)
 	}
 	if req.Contactemail != nil {
-		// ORM migration site 867f9cdc3507 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("contactemail", *req.Contactemail)
 	}
 	if req.Contacturl != nil {
-		// ORM migration site 0843893a3fbd (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("contacturl", *req.Contacturl)
 	}
 	if req.Description != nil {
-		// ORM migration site bf8ac50709c6 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Timecommitment != nil {
-		// ORM migration site 64fac395f93e (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("timecommitment", *req.Timecommitment)
 	}
 
@@ -585,14 +560,13 @@ func Update(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not a member of the specified group")
 			}
 
-			// ORM migration site 316bb6807874 (wave 3). Twin of c77cdc1a1f5f above.
+			// Twin of c77cdc1a1f5f above.
 			db.Table("volunteering_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).
 				Create(map[string]interface{}{"volunteeringid": req.ID, "groupid": req.GroupID})
 
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this volunteering opportunity.
 			var ownerID *uint64
-			// ORM migration site 51ccb0455fec (wave 1).
 			db.Table("volunteering").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 			if ownerID != nil && *ownerID > 0 {
 				volID := req.ID
@@ -608,11 +582,9 @@ func Update(c *fiber.Ctx) error {
 		}
 	case "RemoveGroup":
 		if req.GroupID > 0 {
-			// ORM migration site 5eaf662c8a88 (wave 2).
 			db.Table("volunteering_groups").Where("volunteeringid = ? AND groupid = ?", req.ID, req.GroupID).Delete(nil)
 		}
 	case "AddDate":
-		// ORM migration site 2c08313624b0 (wave 2).
 		db.Table("volunteering_dates").Create(map[string]interface{}{
 			"volunteeringid": req.ID,
 			"start":          utils.NilIfEmpty(req.Start),
@@ -621,20 +593,16 @@ func Update(c *fiber.Ctx) error {
 		})
 	case "RemoveDate":
 		if req.DateID > 0 {
-			// ORM migration site efa4579b0ab9 (wave 2).
 			db.Table("volunteering_dates").Where("id = ?", req.DateID).Delete(nil)
 		}
 	case "SetPhoto":
 		if req.PhotoID > 0 {
-			// ORM migration site 61789e80dec9 (wave 2).
 			db.Table("volunteering_images").Where("id = ?", req.PhotoID).Update("opportunityid", req.ID)
 		}
 	case "Renew":
-		// ORM migration site 31c33cd10585 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"renewed": gorm.Expr("NOW()"), "expired": gorm.Expr("0")})
 	case "Expire":
-		// ORM migration site ed33579ad786 (wave 2).
 		db.Table("volunteering").Where("id = ?", req.ID).Update("expired", gorm.Expr("1"))
 	case "Hold":
 		if isModerator(myid, req.ID) {
@@ -642,12 +610,10 @@ func Update(c *fiber.Ctx) error {
 			if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
 				return heldByAnotherResponse(c, holder, name)
 			}
-			// ORM migration site d453c74c2969 (wave 2).
 			db.Table("volunteering").Where("id = ?", req.ID).Update("heldby", myid)
 		}
 	case "Release":
 		if isModerator(myid, req.ID) {
-			// ORM migration site 00a14dc95872 (wave 2).
 			db.Table("volunteering").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		}
 	}
@@ -676,7 +642,6 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	// ORM migration site c9633d8edcc8 (wave 1).
 	db.Table("volunteering").Select("id").Where("id = ?", id).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Volunteering not found")
@@ -687,7 +652,6 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete.
-	// ORM migration site 15b7dd2cc0aa (wave 2).
 	db.Table("volunteering").Where("id = ?", id).
 		Updates(map[string]interface{}{"deleted": gorm.Expr("1"), "deletedby": myid})
 

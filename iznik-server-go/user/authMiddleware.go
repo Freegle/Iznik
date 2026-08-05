@@ -109,7 +109,6 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {
 			db := database.DBConn
-			// ORM migration site 4319778ec12f (wave 2).
 			db.Table("users").Where("id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id).
 				Update("lastaccess", gorm.Expr("NOW()"))
 		}
@@ -120,7 +119,6 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// active sessions 31 days after login regardless of recent use.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 {
 			db := database.DBConn
-			// ORM migration site 397a8f863bd8 (wave 2).
 			db.Table("sessions").Where("id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT).
 				Update("lastactive", gorm.Expr("NOW()"))
 		}

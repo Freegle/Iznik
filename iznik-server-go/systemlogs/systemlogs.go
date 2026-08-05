@@ -98,7 +98,6 @@ func RequireModeratorMiddleware() fiber.Handler {
 			Systemrole string `json:"systemrole"`
 		}
 
-		// ORM migration site 35c00d19d797 (wave 4).
 		db.Table("sessions").
 			Select("users.id, users.systemrole").
 			Joins("INNER JOIN users ON users.id = sessions.userid").
@@ -119,7 +118,6 @@ func RequireModeratorMiddleware() fiber.Handler {
 
 		// Check if user is a moderator of any group.
 		var modCount int64
-		// ORM migration site 85edeab31954 (wave 1).
 		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", userID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 
 		if modCount == 0 {
@@ -833,7 +831,6 @@ func canViewUserLogs(currentUserID, targetUserID uint64, systemRole string) bool
 
 	// Check if current user moderates any group that target user is a member of.
 	var count int64
-	// ORM migration site 843fab2e56c1 (wave 4).
 	db.Table("memberships m1").
 		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
 		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid = ?",
@@ -853,7 +850,6 @@ func canViewGroupLogs(currentUserID, targetGroupID uint64, systemRole string) bo
 
 	// Check if current user moderates the target group.
 	var count int64
-	// ORM migration site 70ea6178db24 (wave 1).
 	db.Table("memberships").
 		Where("userid = ? AND groupid = ? AND role IN (?, ?)", currentUserID, targetGroupID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Count(&count)

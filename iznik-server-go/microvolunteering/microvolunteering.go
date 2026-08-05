@@ -166,7 +166,6 @@ func GetChallenge(c *fiber.Ctx) error {
 
 	// Get user's trust level
 	var trustLevel string
-	// ORM migration site 2d399fd44a2c (wave 1).
 	err := db.Table("users").Select("COALESCE(trustlevel, ?)", TrustBasic).
 		Where("id = ?", userID).Scan(&trustLevel).Error
 
@@ -187,7 +186,6 @@ func GetChallenge(c *fiber.Ctx) error {
 		groupIDs = []uint64{uint64(groupID)}
 	} else {
 		// Get all user's Freegle groups
-		// ORM migration site 41b78139b026 (wave 4).
 		db.Table("memberships").
 			Select("groupid").
 			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
@@ -262,7 +260,7 @@ func GetChallenge(c *fiber.Ctx) error {
 	if contains(challengeTypes, ChallengeSearchTerm) {
 		// Check if user is in a group with word matching enabled.
 		//
-		// ORM migration site 80c36f2da91e (Tier 3 keep-raw review). groupID>0
+		// groupID>0
 		// is the only toggle - 2 possible rendered forms, both declared in
 		// ormharness/shapes.json and proven by TestTier3Shapes_80c36f2da91e
 		// (iznik-server-go/test).
@@ -295,7 +293,7 @@ func GetChallenge(c *fiber.Ctx) error {
 			}
 			var terms []ItemTerm
 
-			// ORM migration site 39233a746ed4 (wave 5). Derived-table trick: GORM's
+			// Derived-table trick: GORM's
 			// Table() passes its name argument through verbatim (no quoting) once it
 			// contains a space, so a parenthesized subquery can be given as the
 			// "table name".
@@ -340,14 +338,12 @@ func contains(slice []string, str string) bool {
 func getInviteChallenge(db *gorm.DB, userID uint64) *Challenge {
 	// Check if we've asked in the last 31 days
 	var count int64
-	// ORM migration site fa53f46653e6 (wave 1).
 	db.Table("microactions").
 		Where("userid = ? AND actiontype = ? AND DATEDIFF(NOW(), timestamp) < 31", userID, ChallengeInvite).
 		Count(&count)
 
 	if count == 0 {
 		// Record a placeholder to ensure we don't ask too often
-		// ORM migration site d4ce9c3f1fc1 (wave 2).
 		db.Table("microactions").Create(map[string]interface{}{
 			"actiontype":     ChallengeInvite,
 			"userid":         userID,
@@ -375,7 +371,7 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	}
 	var msg MessageResult
 
-	// ORM migration site 309561e40e15 (Tier 3 keep-raw review). groupIDsStr
+	// groupIDsStr
 	// was a hand-built comma-joined literal-int list; GORM's native "IN (?)"
 	// slice-bind is the direct replacement (proven pattern, see plan 7.5) and
 	// gives this exactly one rendered form, declared in
@@ -420,7 +416,7 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 
 	resultApprove := "Approve"
 
-	// ORM migration site bde82a974f05 (Tier 3 keep-raw review). Same
+	// Same
 	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
 	// exactly one rendered form, declared in ormharness/shapes.json and
 	// proven by TestTier3Shapes_bde82a974f05 (iznik-server-go/test).
@@ -469,7 +465,7 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Cha
 
 	today := time.Now().Format("2006-01-02")
 
-	// ORM migration site ff5193d35cf8 (Tier 3 keep-raw review). Same
+	// Same
 	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
 	// exactly one rendered form, declared in ormharness/shapes.json and
 	// proven by TestTier3Shapes_ff5193d35cf8 (iznik-server-go/test).
@@ -528,7 +524,6 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	var img AIImageResult
 
-	// ORM migration site 8c2181ff22ae (wave 5).
 	err := db.Table("ai_images ai").
 		Select("ai.id, ai.name, ai.externaluid, ai.usage_count").
 		Joins("LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?", userID, ChallengeAIImageReview).
@@ -581,7 +576,6 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	var att AttachmentResult
 
-	// ORM migration site 9f06198e9799 (wave 5).
 	err := db.Table("eee_classified_attachments ec").
 		Select("ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject").
 		Joins("INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid").
@@ -684,7 +678,6 @@ func PostResponse(c *fiber.Ctx) error {
 			// (a platform-wide content-takedown). Mirrors GetChallenge's own
 			// group-membership scoping on the read side.
 			var eligible int64
-			// ORM migration site f272e5ec73c0 (wave 4).
 			db.Table("messages_groups").
 				Select("COUNT(*)").
 				Joins("INNER JOIN memberships ON memberships.groupid = messages_groups.groupid AND memberships.userid = ?", myid).
@@ -696,7 +689,6 @@ func PostResponse(c *fiber.Ctx) error {
 			}
 
 			// Mark any notifications regarding this message as read
-			// ORM migration site 0e09727e66aa (wave 2).
 			db.Table("users_notifications").
 				Where("touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'", myid, req.Msgid).
 				Update("seen", gorm.Expr("1"))
@@ -712,7 +704,6 @@ func PostResponse(c *fiber.Ctx) error {
 				comments = *req.Comments
 			}
 
-			// ORM migration site e78fcf444c47 (wave 3).
 			db.Table("microactions").Clauses(clause.OnConflict{
 				DoUpdates: clause.Assignments(map[string]interface{}{
 					"result": response, "comments": comments, "version": Version, "msgcategory": msgcategory,
@@ -731,7 +722,6 @@ func PostResponse(c *fiber.Ctx) error {
 			// If rejection, check if we have quorum to send for review
 			if response == "Reject" {
 				var rejectCount int64
-				// ORM migration site 5a4706a34749 (wave 1).
 				db.Table("microactions").
 					Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", req.Msgid).
 					Count(&rejectCount)
@@ -753,7 +743,6 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to a SearchTerm challenge.
 		// The result column is enum('Approve','Reject') NOT NULL with no default.
 		// Set to 'Approve' since search term responses don't map to approve/reject.
-		// ORM migration site 4bc6d0615816 (wave 3).
 		db.Table("microactions").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"userid": gorm.Expr("userid"), "version": Version,
@@ -783,7 +772,6 @@ func PostResponse(c *fiber.Ctx) error {
 		// CheckMessage there is deliberately no author exclusion: getPhotoRotateChallenge
 		// can legitimately serve a user their own freshly-posted photo to review.
 		var eligible int64
-		// ORM migration site ec2405eade43 (wave 4).
 		db.Table("messages_attachments").
 			Select("COUNT(*)").
 			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_attachments.msgid AND messages_groups.deleted = 0").
@@ -795,7 +783,6 @@ func PostResponse(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this photo")
 		}
 
-		// ORM migration site f82ee651d4b9 (wave 3).
 		db.Table("microactions").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"actiontype":     ChallengePhotoRotate,
 			"userid":         myid,
@@ -809,7 +796,6 @@ func PostResponse(c *fiber.Ctx) error {
 		rotated := false
 		if req.Response != nil && *req.Response == "Reject" {
 			var voteCount int64
-			// ORM migration site c94e3bfae9b3 (wave 1).
 			db.Table("microactions").Where("rotatedimage = ? AND result = 'Reject'", req.Photoid).Count(&voteCount)
 
 			if voteCount >= int64(ApprovalQuorum) {
@@ -834,7 +820,6 @@ func PostResponse(c *fiber.Ctx) error {
 				}
 			}
 
-			// ORM migration site 6dadb189bddc (wave 3).
 			db.Table("microactions").Clauses(clause.OnConflict{
 				DoUpdates: clause.Assignments(map[string]interface{}{
 					"result": response, "containspeople": containsPeople, "version": Version,
@@ -868,7 +853,6 @@ func PostResponse(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid EEE label values")
 		}
 
-		// ORM migration site 9b0560d85c4d (wave 3).
 		db.Table("microactions").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"eee_condition": *req.EEECondition, "eee_weight": *req.EEEWeight, "eee_size": *req.EEESize, "version": Version,
@@ -891,7 +875,6 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to an Invite challenge.
 		// The result column is enum('Approve','Reject') NOT NULL. Set to 'Approve' as
 		// the default value since invite responses don't map to approve/reject.
-		// ORM migration site 6602f9905a74 (wave 3).
 		db.Table("microactions").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"actiontype": ChallengeInvite,
 			"userid":     myid,
@@ -952,7 +935,6 @@ func ModFeedback(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Update the microaction with mod feedback and scores.
-	// ORM migration site c5c083c3dc6e (wave 2).
 	db.Table("microactions").Where("id = ?", req.ID).Updates(map[string]interface{}{
 		"modfeedback":    req.Feedback,
 		"score_positive": req.ScorePositive,
@@ -971,7 +953,6 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string) {
 	if msgid == 0 {
 		return
 	}
-	// ORM migration site 5092091807c2 (wave 2).
 	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 }
@@ -988,14 +969,12 @@ func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 		return
 	}
 	var approvedOrigin int64
-	// ORM migration site 85e57d30b7c7 (wave 1).
 	db.Table("messages_groups").
 		Where("msgid = ? AND rippled_in = 0 AND deleted = 0 AND collection = ?", msgid, utils.COLLECTION_APPROVED).
 		Count(&approvedOrigin)
 	if approvedOrigin > 0 {
 		return
 	}
-	// ORM migration site 328303c750b3 (wave 2).
 	db.Table("rippling_reach").Where("msgid = ? AND status <> 'held'", msgid).
 		Updates(map[string]interface{}{"status": gorm.Expr("'held'"), "next_expansion_at": gorm.Expr("NULL")})
 }
@@ -1010,7 +989,6 @@ func reporterIsModOf(db *gorm.DB, reporterID uint64, groupid uint64) bool {
 		return false
 	}
 	var c int64
-	// ORM migration site 2b059ba266dc (wave 1).
 	db.Table("memberships").
 		Where("userid = ? AND groupid = ? AND role IN (?, ?)", reporterID, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Count(&c)
@@ -1037,7 +1015,6 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	// A poster reporting their own post must not count toward the quorum.
 	var fromuser uint64
-	// ORM migration site 1514d35d670c (wave 1).
 	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
 	if fromuser == reporterID {
 		return
@@ -1049,7 +1026,6 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 	if comments == "" {
 		comments = "Reported via the website"
 	}
-	// ORM migration site 062b91c70acc (wave 3).
 	db.Table("microactions").Clauses(clause.OnConflict{
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"result": gorm.Expr("'Reject'"), "msgcategory": gorm.Expr("'ShouldntBeHere'"), "comments": comments, "version": Version,
@@ -1074,7 +1050,6 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
 		var rejectCount int64
-		// ORM migration site bc4e3f39c868 (wave 1).
 		db.Table("microactions").
 			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
 			Count(&rejectCount)
@@ -1130,7 +1105,7 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		Modfeedback   *string   `json:"modfeedback"`
 	}
 
-	// ORM migration site 3762cb36efcf (Tier 3 keep-raw review). context>0 is
+	// context>0 is
 	// the only toggle - 2 possible rendered forms, both declared in
 	// ormharness/shapes.json and proven by TestTier3Shapes_3762cb36efcf
 	// (iznik-server-go/test).
@@ -1174,7 +1149,7 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 // (poster or moderator) deletes an AI-generated attachment from a message. This signals
 // that the AI illustration was inappropriate for the item.
 func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
-	// ORM migration site c2b7425e88e0 (wave 3). Converted together with its
+	// Converted together with its
 	// identical twin in ForceRejectAIImage (98a9897d62e5): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
@@ -1198,9 +1173,8 @@ func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
 // is bad for any post of that item (not just irrelevant to the current post).
 // Records an audit microaction so the rejection is traceable.
 func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
-	// ORM migration site 92faccbe5a21 (wave 2).
 	db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
-	// ORM migration site 98a9897d62e5 (wave 3). Twin of c2b7425e88e0 above.
+	// Twin of c2b7425e88e0 above.
 	db.Table("microactions").Clauses(clause.OnConflict{
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"result": gorm.Expr("'Reject'"), "version": Version,
@@ -1220,15 +1194,12 @@ func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
 // so the image is hidden from end users and surfaced for admin regeneration.
 func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 	var totalVotes, rejectVotes int64
-	// ORM migration site 253bc6651f22 (wave 1).
 	db.Table("microactions").Where("aiimageid = ? AND actiontype = ?", aiImageID, ChallengeAIImageReview).Count(&totalVotes)
-	// ORM migration site 4a4e6ef7b504 (wave 1).
 	db.Table("microactions").
 		Where("aiimageid = ? AND actiontype = ? AND result = 'Reject'", aiImageID, ChallengeAIImageReview).
 		Count(&rejectVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
-		// ORM migration site c1b4117a14d4 (wave 2).
 		db.Table("ai_images").Where("id = ? AND status = 'active'", aiImageID).Update("status", gorm.Expr("'rejected'"))
 	}
 }
@@ -1240,15 +1211,12 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 // Regenerate refuses. Suppress overrides a prior 'rejected' state.
 func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
 	var totalVotes, suppressVotes int64
-	// ORM migration site bb15df86ae5f (wave 1).
 	db.Table("microactions").Where("aiimageid = ? AND actiontype = ?", aiImageID, ChallengeAIImageReview).Count(&totalVotes)
-	// ORM migration site c011457f1962 (wave 1).
 	db.Table("microactions").
 		Where("aiimageid = ? AND actiontype = ? AND result = 'Suppress'", aiImageID, ChallengeAIImageReview).
 		Count(&suppressVotes)
 
 	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
-		// ORM migration site d62b9f1b747c (wave 2).
 		db.Table("ai_images").Where("id = ? AND status IN ('active','rejected')", aiImageID).
 			Update("status", gorm.Expr("'suppressed'"))
 	}
