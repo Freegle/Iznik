@@ -27,24 +27,19 @@ export default defineNuxtPlugin((nuxtApp) => {
   // Set auth store for user_id tracking in logs.
   clientLog.setAuthStore(useAuthStore())
 
-  // Start client logging immediately, with synchronous fallback.
-  // Augment with mobile device info asynchronously so plugin init does not
-  // block first paint waiting on the dynamic import.
+  // Start client logging immediately, so a session is recorded even if the app
+  // never finishes starting up.
+  //
+  // In the app this first event cannot carry the native app version or the
+  // Capacitor device info: neither exists yet this early. This used to try to
+  // fill them in here from the mobile store, but that ran at plugin-init time
+  // when the store had not been initialised, so isApp/deviceinfo were still
+  // false/null and the augmenting log NEVER fired - every app session_start in
+  // production had app_version:null. The mobile store now emits that second,
+  // richer event itself once App.getInfo() and Device.getInfo() have returned
+  // (see stores/mobile.js initApp), which is the only place the values are
+  // known to exist.
   clientLog.sessionStart()
-  ;(async () => {
-    try {
-      const { useMobileStore } = await import('~/stores/mobile')
-      const mobileStore = useMobileStore()
-      if (mobileStore.isApp && mobileStore.deviceinfo) {
-        clientLog.sessionStart(
-          { app_version: mobileStore.mobileVersion },
-          mobileStore.deviceinfo
-        )
-      }
-    } catch {
-      // Not in app context or store not available.
-    }
-  })()
 
   // Log page views on route changes.
   // This creates "user" parent nodes for subsequent API calls.

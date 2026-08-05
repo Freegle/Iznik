@@ -224,7 +224,7 @@ app.post('/api/log-analysis', async (req, res) => {
 // gated and audited.
 // ---------------------------------------------------------------------------
 const { lokiQuery, audit } = require('./tools')
-const { parseSessionStart, buildDeviceSummary } = require('./device-summary')
+const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
 
 // The deployed web/app version to compare a member's loaded version against, so
 // we can flag "needs a refresh". Read from the cloned frontend config (kept
@@ -262,15 +262,10 @@ app.get('/api/device-summary', async (req, res) => {
       limit: 500,
     })
 
-    const seen = new Set()
-    const records = []
-    for (const r of rows) {
-      const d = parseSessionStart(r.line)
-      if (!d) continue
-      if (d.sessionId && seen.has(d.sessionId)) continue
-      if (d.sessionId) seen.add(d.sessionId)
-      records.push(d)
-    }
+    // The app logs session_start twice per session (the second one carries the
+    // native app version and Capacitor device info), so merge duplicates rather
+    // than keeping whichever Loki happened to return first.
+    const records = dedupeSessions(rows.map((r) => parseSessionStart(r.line)))
     const currentVersion = currentMobileVersion()
     const devices = buildDeviceSummary(records, currentVersion)
 

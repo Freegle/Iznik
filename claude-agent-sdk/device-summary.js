@@ -50,6 +50,56 @@ function parseSessionStart(line) {
   }
 }
 
+// Fields that one session_start may carry and another (for the same session)
+// may not. Merged by dedupeSessions below.
+const MERGEABLE_FIELDS = [
+  'appVersion',
+  'buildDate',
+  'userAgent',
+  'platform',
+  'screen',
+  'viewport',
+  'dpr',
+  'orientation',
+  'language',
+]
+
+// Collapse the session_start records of a single browsing session into one.
+//
+// The app logs session_start TWICE: once the moment the client logger starts
+// (before Capacitor has told us anything, so no app version), and again from
+// the mobile store once App.getInfo()/Device.getInfo() have returned. Both
+// carry the same session_id. Dropping whichever arrives second would make the
+// app version depend on Loki's return order, and counting both would double
+// every app member's session count — so merge them: keep the first record and
+// fill in whatever it is missing from its duplicates, tracking the latest
+// timestamp. Records with no session id are passed through untouched.
+function dedupeSessions(records) {
+  const byId = new Map()
+  const out = []
+  for (const d of records) {
+    if (!d) continue
+    if (!d.sessionId) {
+      out.push(d)
+      continue
+    }
+    const prev = byId.get(d.sessionId)
+    if (!prev) {
+      const copy = { ...d }
+      byId.set(d.sessionId, copy)
+      out.push(copy)
+      continue
+    }
+    for (const k of MERGEABLE_FIELDS) {
+      if ((prev[k] === null || prev[k] === undefined || prev[k] === '') && d[k]) {
+        prev[k] = d[k]
+      }
+    }
+    if (d.ts && (!prev.ts || d.ts > prev.ts)) prev.ts = d.ts
+  }
+  return out
+}
+
 // Compare dotted numeric versions (e.g. "3.2.28"). Returns -1, 0, 1, or null
 // if either side is unparseable.
 function compareVersion(a, b) {
@@ -265,12 +315,16 @@ function buildDeviceSummary(records, currentVersion = null, nowMs = Date.now()) 
       String(b.lastSeen || '').localeCompare(String(a.lastSeen || ''))
     )
     delete dev._windows
-    // Web up-to-date is a build-date question. For the app we only have the
-    // member's native version, not the current released one to compare against
-    // (currentVersion is the WEB build constant), so we surface the version but
-    // don't assert freshness. currentVersion kept for a future native-version ref.
+    // Two different questions. For the WEB, "up to date" is a build-date age:
+    // an old bundle means a refresh will fix them. For the APP it is a version
+    // comparison against the current release — config.js MOBILE_VERSION is
+    // hand-bumped in step with the app release ("Bump to 3.2.28", and
+    // android/app/build.gradle's versionName default tracks it), so it is the
+    // right reference for "are they on the current app?". Either way a missing
+    // value yields 'unknown', so sessions logged before the app reported its
+    // version simply show no badge rather than a wrong one.
     dev.freshness = dev.isApp
-      ? 'unknown'
+      ? versionFreshness(dev.appVersion, currentVersion)
       : webBuildFreshness(dev.buildDate, nowMs)
   }
   return list.sort((a, b) =>
@@ -280,6 +334,7 @@ function buildDeviceSummary(records, currentVersion = null, nowMs = Date.now()) 
 
 module.exports = {
   parseSessionStart,
+  dedupeSessions,
   classifyDevice,
   deviceKey,
   buildDeviceSummary,

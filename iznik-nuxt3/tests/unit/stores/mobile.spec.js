@@ -67,6 +67,13 @@ vi.mock('~/stores/notification', () => ({
   }),
 }))
 
+const mockSessionStart = vi.fn()
+const mockSetAppVersion = vi.fn()
+vi.mock('~/composables/useClientLog', () => ({
+  setAppVersion: (...args) => mockSetAppVersion(...args),
+  useClientLog: () => ({ sessionStart: (...args) => mockSessionStart(...args) }),
+}))
+
 vi.mock('~/stores/debug', () => ({
   useDebugStore: () => ({
     info: vi.fn(),
@@ -1080,6 +1087,47 @@ describe('mobile store', () => {
       await store.initTextZoom(fakeApp())
 
       expect(mockTextZoomSet).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('logAppSession', () => {
+    // Support reads the app version a member is running from the session_start
+    // client log. It can only be logged once Capacitor has answered, which is
+    // long after the logging plugin starts - see the comment on logAppSession.
+    it('logs a session_start carrying the Capacitor device info', () => {
+      const store = useMobileStore()
+      store.deviceinfo = { model: 'SM-S928B', platform: 'android' }
+
+      store.logAppSession()
+
+      expect(mockSessionStart).toHaveBeenCalledTimes(1)
+      expect(mockSessionStart).toHaveBeenCalledWith(
+        {},
+        { model: 'SM-S928B', platform: 'android' }
+      )
+    })
+
+    it('passes no app_version override, so the real native version wins', () => {
+      // The previous attempt at this passed MOBILE_VERSION - a hand-bumped web
+      // build constant, not the version installed on the device - which
+      // overrode the real one.
+      const store = useMobileStore()
+      store.mobileVersion = '9.9.9'
+      store.deviceinfo = { platform: 'ios' }
+
+      store.logAppSession()
+
+      const [context] = mockSessionStart.mock.calls[0]
+      expect(context).not.toHaveProperty('app_version')
+    })
+
+    it('never breaks app startup if logging throws', () => {
+      mockSessionStart.mockImplementationOnce(() => {
+        throw new Error('logging blew up')
+      })
+      const store = useMobileStore()
+
+      expect(() => store.logAppSession()).not.toThrow()
     })
   })
 })
