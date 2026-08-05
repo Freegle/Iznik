@@ -102,6 +102,31 @@
       "id": "9e1132f382e3",
       "sql": "select `id`, `userid` from `users_stories` where `reviewed` = ? and `public` = ? and `userid` is not null order by `date` desc",
       "reason": "Inlined constants now bound, from a statement that had NO placeholders at all: reviewed = 1 and public = 1 become two binds. The IS NOT NULL predicate and the ORDER BY are unchanged, so the same rows come back in the same order."
+    },
+    {
+      "id": "30a2059ffce8",
+      "sql": "select * from `background_tasks` where `processed_at` is null and `failed_at` is null and `attempts` < ? order by `created_at` asc limit 10",
+      "reason": "Two grammar differences, no semantic one. The MAX_ATTEMPTS constant is bound as before; and Laravel's compileLimit INLINES the limit rather than binding it, so the golden's second placeholder becomes a literal. The literal here is the test's representative value (10) because the approvedDiff is compared after bindings are substituted - the production call still passes $limit through. ORDER BY also gains an explicit asc, the SQL default."
+    },
+    {
+      "id": "44c4c74bbb4e",
+      "sql": "select `id`, `nameshort`, `poly` from `groups` where `type` = ? and `publish` = ? and `onmap` = ?",
+      "reason": "Inlined constants now bound: type = 'Freegle', publish = 1 and onmap = 1 were all literal, so a golden with no placeholders renders with three."
+    },
+    {
+      "id": "0089fe542c58",
+      "sql": "update `chat_messages` set `reviewrejected` = ?, `reviewrequired` = ? where `id` = ?",
+      "reason": "Inlined constants now bound: the two assigned literals become binds. Column order and the WHERE are unchanged."
+    },
+    {
+      "id": "3d1dc34753bd",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?",
+      "reason": "Inlined constants now bound: SET giftaidconsent = 1 and the giftaidconsent = 0 guard. The userid and timestamp binds are unchanged, so the same rows are matched and the same value written."
+    },
+    {
+      "id": "54bddc06f05c",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?",
+      "reason": "Second consent variant, identical statement to 3d1dc34753bd - same reasoning. The two differ only in the date the caller passes."
     }
   ]
 }

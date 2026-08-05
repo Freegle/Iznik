@@ -216,16 +216,16 @@ class GiftAidClaimService
                 };
             } else {
                 $rows = match ($giftaid->period) {
-                    'Past4YearsAndFuture' => DB::update(
-                        'UPDATE users_donations SET giftaidconsent = 1
-                         WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?',
-                        [$giftaid->userid, now()->subYears(4)->format('Y-m-d')]
-                    ),
-                    'Since' => DB::update(
-                        'UPDATE users_donations SET giftaidconsent = 1
-                         WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?',
-                        [$giftaid->userid, self::GIFT_AID_EARLIEST_DATE]
-                    ),
+                    'Past4YearsAndFuture' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)
+                        ->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', now()->subYears(4)->format('Y-m-d'))
+                        ->update(['giftaidconsent' => 1]),
+                    'Since' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)
+                        ->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
+                        ->update(['giftaidconsent' => 1]),
                     'This' => DB::update(
                         'UPDATE users_donations SET giftaidconsent = 1
                          WHERE userid = ? AND giftaidconsent = 0

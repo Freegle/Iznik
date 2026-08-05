@@ -183,10 +183,9 @@ class SpamCleanupService
         // moves rows out of the filter behind the cursor, so lazyById is safe here.
         $updated = 0;
         foreach ($idsQuery->lazyById(1000) as $row) {
-            $updated += DB::update(
-                'UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?',
-                [$row->id],
-            );
+            $updated += DB::table('chat_messages')
+                ->where('id', $row->id)
+                ->update(['reviewrejected' => 1, 'reviewrequired' => 0]);
         }
 
         return $updated;

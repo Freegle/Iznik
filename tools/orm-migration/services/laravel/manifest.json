@@ -1,9 +1,9 @@
 {
-    "generated": "2026-08-05T16:36:44Z",
+    "generated": "2026-08-05T16:39:55Z",
     "root": "iznik-batch",
     "counts": {
-        "raw": 520,
-        "converted": 49,
+        "raw": 514,
+        "converted": 55,
         "excluded": 70,
         "keep-raw": 162,
         "retired": 1,
@@ -1878,18 +1878,18 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT * FROM background_tasks WHERE processed_at IS NULL AND failed_at IS NULL AND attempts < ? ORDER BY created_at ASC LIMIT ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select * from `background_tasks` where `processed_at` is null and `failed_at` is null and `attempts` < ? order by `created_at` asc limit 10"
         },
         "faccb71426e7": {
             "id": "faccb71426e7",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 827,
+            "line": 831,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleMessageOutcome",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -1919,7 +1919,7 @@
         "02ac3e3e41fa": {
             "id": "02ac3e3e41fa",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 862,
+            "line": 866,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleMessageOutcome",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -1947,7 +1947,7 @@
         "170ea1678dfd": {
             "id": "170ea1678dfd",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 963,
+            "line": 967,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleEmailVerify",
             "receiver": "DB::table()->where()",
@@ -1973,7 +1973,7 @@
         "4641002d9fce": {
             "id": "4641002d9fce",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 975,
+            "line": 979,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleEmailVerify",
             "receiver": "DB::table()->where()",
@@ -1999,7 +1999,7 @@
         "ec6adbe8b770": {
             "id": "ec6adbe8b770",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 980,
+            "line": 984,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleEmailVerify",
             "receiver": "DB::table()->where()",
@@ -2025,7 +2025,7 @@
         "4fc5ec8e010e": {
             "id": "4fc5ec8e010e",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 993,
+            "line": 997,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleEmailVerify",
             "receiver": "DB::table()->where()",
@@ -2053,7 +2053,7 @@
         "55cf330ff372": {
             "id": "55cf330ff372",
             "file": "iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php",
-            "line": 1006,
+            "line": 1010,
             "class": "ProcessBackgroundTasksCommand",
             "function": "handleEmailVerify",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -9102,13 +9102,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "UPDATE users_donations SET giftaidconsent = 1 WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?"
         },
         "54bddc06f05c": {
             "id": "54bddc06f05c",
@@ -9130,13 +9130,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "UPDATE users_donations SET giftaidconsent = 1 WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?"
         },
         "a61080618cba": {
             "id": "a61080618cba",
@@ -9356,18 +9356,18 @@
             "dynamic": false,
             "args": 0,
             "goldenSql": "SELECT id, nameshort, poly FROM `groups` WHERE type = 'Freegle' AND publish = 1 AND onmap = 1",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select `id`, `nameshort`, `poly` from `groups` where `type` = ? and `publish` = ? and `onmap` = ?"
         },
         "f0a97c85baff": {
             "id": "f0a97c85baff",
             "file": "iznik-batch/app/Services/GroupBoundaryService.php",
-            "line": 30,
+            "line": 34,
             "class": "GroupBoundaryService",
             "function": "checkBoundaries",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -9399,7 +9399,7 @@
         "a6794f950624": {
             "id": "a6794f950624",
             "file": "iznik-batch/app/Services/GroupBoundaryService.php",
-            "line": 39,
+            "line": 43,
             "class": "GroupBoundaryService",
             "function": "checkBoundaries",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -11694,9 +11694,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "UPDATE locations SET areaid = ? WHERE id = ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -11705,7 +11705,7 @@
         "ff6e10c4a967": {
             "id": "ff6e10c4a967",
             "file": "iznik-batch/app/Services/PostcodeRemapService.php",
-            "line": 117,
+            "line": 116,
             "class": "PostcodeRemapService",
             "function": "seedArea",
             "receiver": "DB::table()->where()",
@@ -14404,18 +14404,18 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "update `chat_messages` set `reviewrejected` = ?, `reviewrequired` = ? where `id` = ?"
         },
         "0dff831da965": {
             "id": "0dff831da965",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 207,
+            "line": 206,
             "class": "SpamCleanupService",
             "function": "deleteSpamNewsfeedItems",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -14444,7 +14444,7 @@
         "a1058358a274": {
             "id": "a1058358a274",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 226,
+            "line": 225,
             "class": "SpamCleanupService",
             "function": "deleteSpamNotifications",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -14473,7 +14473,7 @@
         "82d31a13ca56": {
             "id": "82d31a13ca56",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 245,
+            "line": 244,
             "class": "SpamCleanupService",
             "function": "deleteSpamExpectedRecords",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -14502,7 +14502,7 @@
         "d8432452343e": {
             "id": "d8432452343e",
             "file": "iznik-batch/app/Services/SpamCleanupService.php",
-            "line": 265,
+            "line": 264,
             "class": "SpamCleanupService",
             "function": "deleteSpamSessions",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25233,7 +25233,7 @@
         "537ff550f1bd": {
             "id": "537ff550f1bd",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 51,
+            "line": 65,
             "class": "ProvenSitesTest",
             "function": "test_layer1_aggregate_select_site",
             "receiver": "DB::table()->select()->whereNotNull()->groupBy()",
@@ -25259,7 +25259,7 @@
         "649d16256f9b": {
             "id": "649d16256f9b",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 52,
+            "line": 66,
             "class": "ProvenSitesTest",
             "function": "test_layer1_aggregate_select_site",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25285,7 +25285,7 @@
         "bd82e22d6eb6": {
             "id": "bd82e22d6eb6",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 52,
+            "line": 66,
             "class": "ProvenSitesTest",
             "function": "test_layer1_aggregate_select_site",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25311,7 +25311,7 @@
         "43b3b72e8bfa": {
             "id": "43b3b72e8bfa",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 82,
+            "line": 96,
             "class": "ProvenSitesTest",
             "function": "test_layer1_update_site",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25337,7 +25337,7 @@
         "366019eeea4e": {
             "id": "366019eeea4e",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 138,
+            "line": 152,
             "class": "ProvenSitesTest",
             "function": "test_layer2_aggregate_select_site",
             "receiver": "DB::table()->select()->whereNotNull()->groupBy()",
@@ -25363,7 +25363,7 @@
         "21951a2f38d2": {
             "id": "21951a2f38d2",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 139,
+            "line": 153,
             "class": "ProvenSitesTest",
             "function": "test_layer2_aggregate_select_site",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25389,7 +25389,7 @@
         "2eee9129daf1": {
             "id": "2eee9129daf1",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 139,
+            "line": 153,
             "class": "ProvenSitesTest",
             "function": "test_layer2_aggregate_select_site",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25415,7 +25415,7 @@
         "587b1aed61ab": {
             "id": "587b1aed61ab",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 167,
+            "line": 181,
             "class": "ProvenSitesTest",
             "function": "test_layer2_update_site_via_verification_select",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25443,7 +25443,7 @@
         "75e928d9cd4a": {
             "id": "75e928d9cd4a",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 168,
+            "line": 182,
             "class": "ProvenSitesTest",
             "function": "test_layer2_update_site_via_verification_select",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -25469,7 +25469,7 @@
         "a64ef9a3f24e": {
             "id": "a64ef9a3f24e",
             "file": "iznik-batch/tests/Unit/OrmHarness/ProvenSitesTest.php",
-            "line": 177,
+            "line": 191,
             "class": "ProvenSitesTest",
             "function": "test_layer2_update_site_via_verification_select",
             "receiver": "Illuminate\\Support\\Facades\\DB",

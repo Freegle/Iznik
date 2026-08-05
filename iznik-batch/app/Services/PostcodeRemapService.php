@@ -86,10 +86,9 @@ class PostcodeRemapService
                 $newAreaId = $this->findNearestArea($pc->lng, $pc->lat);
 
                 if ($newAreaId && $newAreaId != $pc->areaid) {
-                    DB::update('UPDATE locations SET areaid = ? WHERE id = ?', [
-                        $newAreaId,
-                        $pc->locationid,
-                    ]);
+                    DB::table('locations')
+                        ->where('id', $pc->locationid)
+                        ->update(['areaid' => $newAreaId]);
                     $updated++;
                 }
 

@@ -148,10 +148,14 @@ class ProcessBackgroundTasksCommand extends Command
         EmailSpoolerService $spooler,
         bool $shouldSpool
     ): int {
-        $tasks = DB::select(
-            'SELECT * FROM background_tasks WHERE processed_at IS NULL AND failed_at IS NULL AND attempts < ? ORDER BY created_at ASC LIMIT ?',
-            [self::MAX_ATTEMPTS, $limit]
-        );
+        $tasks = DB::table('background_tasks')
+            ->whereNull('processed_at')
+            ->whereNull('failed_at')
+            ->where('attempts', '<', self::MAX_ATTEMPTS)
+            ->orderBy('created_at')
+            ->limit($limit)
+            ->get()
+            ->all();
 
         $processed = 0;
 

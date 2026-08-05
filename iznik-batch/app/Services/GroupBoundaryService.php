@@ -13,9 +13,13 @@ class GroupBoundaryService
     {
         $srid = config('freegle.srid', 3857);
 
-        $groups = DB::select(
-            "SELECT id, nameshort, poly FROM `groups` WHERE type = 'Freegle' AND publish = 1 AND onmap = 1"
-        );
+        $groups = DB::table('groups')
+            ->select('id', 'nameshort', 'poly')
+            ->where('type', 'Freegle')
+            ->where('publish', 1)
+            ->where('onmap', 1)
+            ->get()
+            ->all();
 
         $total = count($groups);
         $errors = 0;
