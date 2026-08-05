@@ -167,6 +167,13 @@
       "reason": "An UPDATE that assigns a column to ITSELF - 'SET inner_bound = NULL, updated_at = updated_at'. That looks like dead code and is the opposite: rippling_reach.updated_at carries ON UPDATE CURRENT_TIMESTAMP, so any UPDATE touching the row would normally bump it. Naming the column in the SET list with its own value suppresses that, letting the bounds be cleared WITHOUT making the row look freshly updated - which the delta/shadow copier keys off. The builder cannot express a self-assignment: ->update(['updated_at' => 'updated_at']) binds the string, and DB::raw('updated_at') is itself a raw site here, so the site would change surface and convert nothing. Worth more than a count: anyone 'tidying' this away would silently change what the copier picks up.",
       "porting": "PostgreSQL: there is no ON UPDATE CURRENT_TIMESTAMP - the behaviour is implemented with a trigger, so the suppression trick does not carry over at all. On port, the column stops auto-updating and the self-assignment becomes genuinely redundant; whether the trigger should then EXCLUDE this update path is the real question, and it must be answered deliberately rather than inherited.",
       "category": "Self-assignment suppressing an auto-update column"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/\\bIN\\s*\\(\\s*\\w+\\.\\w+\\s*,\\s*\\w+\\.\\w+\\s*\\)/i",
+      "reason": "An IN whose list is COLUMNS rather than values - 'messages_by.userid IN (chat_rooms.user1, chat_rooms.user2)', meaning 'this user is either side of the chat'. whereIn() binds its array, so passing the column names would compare the userid against the literal strings 'chat_rooms.user1' and 'chat_rooms.user2' - which MySQL evaluates rather than rejects, so the query would run, match nothing, and look correct. whereColumn handles one column pair, not membership of a list of them, and there is no whereColumnIn. The only route is whereRaw, itself a raw site here.",
+      "porting": "PostgreSQL: 'x IN (a, b)' over columns is standard SQL and ports unchanged; it can also be written 'x = ANY(ARRAY[a, b])' if that reads better. No dialect work needed - the obstacle here is the query builder, not the database.",
+      "category": "IN over a column list"
     }
   ]
 }

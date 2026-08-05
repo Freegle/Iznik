@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:26:19Z",
+    "generated": "2026-08-05T17:27:26Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 425,
+        "keep-raw": 426,
         "converted": 95,
-        "raw": 211,
+        "raw": 210,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -1910,10 +1910,10 @@
             "goldenSql": "SELECT DISTINCT chatid FROM chat_messages INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid AND chat_rooms.chattype = 'User2User' LEFT JOIN messages_by ON messages_by.msgid = chat_messages.refmsgid AND messages_by.userid IN (chat_rooms.user1, chat_rooms.user2) WHERE refmsgid = ? AND chat_messages.type = 'Interested' AND reviewrejected = 0 AND messages_by.id IS NULL",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "An IN whose list is COLUMNS rather than values - 'messages_by.userid IN (chat_rooms.user1, chat_rooms.user2)', meaning 'this user is either side of the chat'. whereIn() binds its array, so passing the column names would compare the userid against the literal strings 'chat_rooms.user1' and 'chat_rooms.user2' - which MySQL evaluates rather than rejects, so the query would run, match nothing, and look correct. whereColumn handles one column pair, not membership of a list of them, and there is no whereColumnIn. The only route is whereRaw, itself a raw site here.",
+            "porting": "PostgreSQL: 'x IN (a, b)' over columns is standard SQL and ports unchanged; it can also be written 'x = ANY(ARRAY[a, b])' if that reads better. No dialect work needed - the obstacle here is the query builder, not the database.",
+            "category": "IN over a column list",
             "approvedDiff": ""
         },
         "02ac3e3e41fa": {
