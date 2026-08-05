@@ -99,6 +99,29 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for an INSERT IGNORE site, i.e. one converted with
+     * ->insertOrIgnore(). Same contract as assertInsert(): $build returns
+     * [query, row].
+     *
+     * Separate from assertInsert because the modifier is not cosmetic - it is
+     * the difference between skipping a unique-key collision and aborting the
+     * statement - so it must be rendered and compared, not assumed.
+     *
+     * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
+     */
+    public static function assertInsertOrIgnore(string $siteId, callable $build): void
+    {
+        [$built, $values] = $build();
+        $query = self::normaliseBuiltQuery($siteId, $built);
+        $grammar = $query->getGrammar();
+
+        $sql = $grammar->compileInsertOrIgnore($query, [$values]);
+        $bindings = $query->cleanBindings(array_values($values));
+
+        self::compareAndAssert($siteId, $sql, $bindings);
+    }
+
+    /**
      * Layer 1 for an UPDATE-shaped site. $build returns [query, values]:
      * the query builder carrying the table and WHERE (built but, same
      * discipline as assert(), never executed - do not call ->update() on

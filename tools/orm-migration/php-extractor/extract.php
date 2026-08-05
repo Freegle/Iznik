@@ -771,6 +771,7 @@ final class SiteCollectorVisitor extends NodeVisitorAbstract
 const PARITY_ASSERTIONS = [
     'GoldenSql::assert',
     'GoldenSql::assertInsert',
+    'GoldenSql::assertInsertOrIgnore',
     'GoldenSql::assertUpdate',
     'GoldenSql::assertDelete',
     'ResultParity::assertForSite',

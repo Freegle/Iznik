@@ -58,7 +58,7 @@ class RepairRosterCommand extends Command
             }
 
             // Insert member into roster.
-            DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$row->chatid, $row->user1]);
+            DB::table('chat_roster')->insertOrIgnore(['chatid' => $row->chatid, 'userid' => $row->user1]);
 
             // For older chats, mark all messages as already emailed so the
             // notification system doesn't send stale emails.
@@ -76,7 +76,7 @@ class RepairRosterCommand extends Command
                 ->pluck('userid');
 
             foreach ($modIds as $modId) {
-                DB::statement('INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)', [$row->chatid, $modId]);
+                DB::table('chat_roster')->insertOrIgnore(['chatid' => $row->chatid, 'userid' => $modId]);
             }
 
             $isRecent ? $repairedNotify++ : $repairedSilent++;
