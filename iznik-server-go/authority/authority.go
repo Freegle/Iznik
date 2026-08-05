@@ -106,13 +106,12 @@ func Single(c *fiber.Ctx) error {
 		Lng      float64 `gorm:"column:lng"`
 	}
 
-	result := db.Raw(`
-		SELECT id, name, area_code,
-		       ST_AsText(COALESCE(simplified, polygon)) AS polygon,
-		       ST_Y(ST_CENTROID(polygon)) AS lat,
-		       ST_X(ST_CENTROID(polygon)) AS lng
-		FROM authorities
-		WHERE id = ?`, id).Scan(&authRow)
+	// ORM migration site 92416198b77d (Tier 1 spatial review).
+	result := db.Table("authorities").
+		Select("id, name, area_code, ST_AsText(COALESCE(simplified, polygon)) AS polygon, "+
+			"ST_Y(ST_CENTROID(polygon)) AS lat, ST_X(ST_CENTROID(polygon)) AS lng").
+		Where("id = ?", id).
+		Scan(&authRow)
 
 	if result.Error != nil || result.RowsAffected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Authority not found")
@@ -138,27 +137,25 @@ func Single(c *fiber.Ctx) error {
 		Overlap2  float64  `gorm:"column:overlap2"`
 	}
 
-	db.Raw(`
-		SELECT groups.id, nameshort, namefull, lat, lng,
-		       CASE WHEN poly IS NOT NULL THEN poly ELSE polyofficial END AS poly,
-		       CASE WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN
-		           CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1
-		           ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(polyindex)
-		           END
-		       ELSE 0
-		       END AS overlap,
-		       CASE WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN
-		           CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1
-		           ELSE St_area(polyindex) / St_area(St_intersection(polyindex, Coalesce(simplified, polygon)))
-		           END
-		       ELSE 0
-		       END AS overlap2
-		FROM `+"`groups`"+`
-		INNER JOIN authorities ON ( polyindex = Coalesce(simplified, polygon) OR St_intersects(polyindex, Coalesce(simplified, polygon)) )
-		WHERE type = ?
-		AND publish = 1
-		AND onmap = 1
-		AND authorities.id = ?`, utils.GROUP_TYPE_FREEGLE, id).Scan(&groups)
+	// ORM migration site 3048dd76eab0 (Tier 1 spatial review).
+	db.Table("groups").
+		Select("groups.id, nameshort, namefull, lat, lng, "+
+			"CASE WHEN poly IS NOT NULL THEN poly ELSE polyofficial END AS poly, "+
+			"CASE WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
+			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
+			"ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(polyindex) "+
+			"END "+
+			"ELSE 0 "+
+			"END AS overlap, "+
+			"CASE WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
+			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
+			"ELSE St_area(polyindex) / St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) "+
+			"END "+
+			"ELSE 0 "+
+			"END AS overlap2").
+		Joins("INNER JOIN authorities ON ( polyindex = Coalesce(simplified, polygon) OR St_intersects(polyindex, Coalesce(simplified, polygon)) )").
+		Where("type = ? AND publish = 1 AND onmap = 1 AND authorities.id = ?", utils.GROUP_TYPE_FREEGLE, id).
+		Scan(&groups)
 
 	// Build response groups, filtering by overlap threshold.
 	var responseGroups []Group
@@ -255,7 +252,8 @@ func Search(c *fiber.Ctx) error {
 		AreaCode *string `gorm:"column:area_code"`
 	}
 
-	db.Raw("SELECT id, name, area_code FROM authorities WHERE name LIKE ? LIMIT ?", searchTerm, limit).Scan(&results)
+	// ORM migration site c097d3e46f7f (wave 1).
+	db.Table("authorities").Select("id, name, area_code").Where("name LIKE ?", searchTerm).Limit(limit).Scan(&results)
 
 	// Map area codes to friendly names.
 	var searchResults []SearchResult

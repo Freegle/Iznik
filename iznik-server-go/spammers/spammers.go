@@ -9,6 +9,8 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GetSpammers handles GET /spammers with search and pagination.
@@ -29,7 +31,8 @@ func GetSpammers(c *fiber.Ctx) error {
 	if partner != "" {
 		db := database.DBConn
 		var partnerID uint64
-		db.Raw("SELECT id FROM partners_keys WHERE `key` = ?", partner).Scan(&partnerID)
+		// ORM migration site 4d467f8ef688 (wave 1).
+		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
@@ -57,38 +60,6 @@ func GetSpammers(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
-	where := []string{"1=1"}
-	args := []interface{}{}
-
-	if collection != "" {
-		where = append(where, "spam_users.collection = ?")
-		args = append(args, collection)
-	}
-
-	if contextID > 0 {
-		where = append(where, "spam_users.id < ?")
-		args = append(args, contextID)
-	}
-
-	useridFilter, _ := strconv.ParseUint(c.Query("userid", "0"), 10, 64)
-	if useridFilter > 0 {
-		where = append(where, "spam_users.userid = ?")
-		args = append(args, useridFilter)
-	}
-
-	query := "SELECT DISTINCT spam_users.* FROM spam_users " +
-		"INNER JOIN users ON spam_users.userid = users.id "
-
-	if search != "" {
-		query += "LEFT JOIN users_emails ON users_emails.userid = spam_users.userid "
-		searchLike := "%" + search + "%"
-		where = append(where, "(users_emails.email LIKE ? OR users.fullname LIKE ?)")
-		args = append(args, searchLike, searchLike)
-	}
-
-	query += "WHERE " + strings.Join(where, " AND ") +
-		" ORDER BY spam_users.id DESC LIMIT 10"
-
 	type SpamRow struct {
 		ID         uint64  `json:"id"`
 		Userid     uint64  `json:"userid"`
@@ -100,8 +71,47 @@ func GetSpammers(c *fiber.Ctx) error {
 		Heldat     *string `json:"heldat"`
 	}
 
+	// ORM migration site d64650fb9560 (Tier 3 keep-raw review). Four
+	// independent toggles - collection!="", contextID>0, userid>0, search!="" -
+	// give 2x2x2x2 = 16 possible rendered forms, all declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_d64650fb9560
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	tx := db.Table("spam_users").
+		Select("DISTINCT spam_users.*").
+		Joins("INNER JOIN users ON spam_users.userid = users.id")
+
+	whereSQL := "1=1"
+	var whereArgs []interface{}
+
+	if collection != "" {
+		whereSQL += " AND spam_users.collection = ?"
+		whereArgs = append(whereArgs, collection)
+	}
+
+	if contextID > 0 {
+		whereSQL += " AND spam_users.id < ?"
+		whereArgs = append(whereArgs, contextID)
+	}
+
+	useridFilter, _ := strconv.ParseUint(c.Query("userid", "0"), 10, 64)
+	if useridFilter > 0 {
+		whereSQL += " AND spam_users.userid = ?"
+		whereArgs = append(whereArgs, useridFilter)
+	}
+
+	if search != "" {
+		tx = tx.Joins("LEFT JOIN users_emails ON users_emails.userid = spam_users.userid")
+		searchLike := "%" + search + "%"
+		whereSQL += " AND (users_emails.email LIKE ? OR users.fullname LIKE ?)"
+		whereArgs = append(whereArgs, searchLike, searchLike)
+	}
+
 	var rows []SpamRow
-	db.Raw(query, args...).Scan(&rows)
+	tx.Where(whereSQL, whereArgs...).Order("spam_users.id DESC").Limit(10).Scan(&rows)
 
 	if len(rows) == 0 {
 		rows = make([]SpamRow, 0)
@@ -174,38 +184,46 @@ func PostSpammer(c *fiber.Ctx) error {
 	// This is the fix for Discourse #9589 (wrong-attribution bug).
 	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
 		var existingCount int64
-		db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ?", req.Userid).Scan(&existingCount)
+		// ORM migration site 3a1a2fda0491 (wave 1).
+		db.Table("spam_users").Where("userid = ?", req.Userid).Count(&existingCount)
 		if existingCount > 0 {
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": 0})
 		}
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 20dfce4d2228 (Tier 1 batch review). GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT/REPLACE returned
+	// (under the map key "@id"), which is the same write-connection guarantee
+	// the old sqlDB.Exec()+LastInsertId() call had - REPLACE always inserts a
+	// fresh row (never a no-op like ON DUPLICATE KEY UPDATE can be), so there
+	// is no "0 on a no-op hit" trap here. clause.Insert{Modifier: "REPLACE"}
+	// needs database.RegisterCustomClauseBuilders's ClauseBuilders["INSERT"]
+	// override (wired into database.DBConn at startup; see
+	// database/clausebuilders.go) - without it this would render "INSERT
+	// REPLACE INTO", not "REPLACE INTO".
+	row := map[string]interface{}{
+		"userid":     req.Userid,
+		"collection": req.Collection,
+		"reason":     req.Reason,
+		"byuserid":   myid,
+		"heldby":     gorm.Expr("NULL"),
+		"heldat":     gorm.Expr("NULL"),
 	}
-	sqlResult, err := sqlDB.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid, heldby, heldat) "+
-		"VALUES (?, ?, ?, ?, NULL, NULL)",
-		req.Userid, req.Collection, req.Reason, myid)
-
-	if err != nil {
+	if err := db.Table("spam_users").Clauses(clause.Insert{Modifier: "REPLACE"}).Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to add spammer")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		newID = uint64(idInt64)
 	}
 
 	// V1 parity: reporting a SYSTEMROLE_USER as PendingAdd suppresses their ChitChat/newsfeed
 	// posts by setting users.newsfeedmodstatus = 'Suppressed' while pending review.
 	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
-		db.Exec("UPDATE users SET newsfeedmodstatus = ? WHERE id = ? AND systemrole = ?",
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED, req.Userid, utils.SYSTEMROLE_USER)
+		// ORM migration site 284c8dddea5c (wave 2).
+		db.Table("users").Where("id = ? AND systemrole = ?", req.Userid, utils.SYSTEMROLE_USER).
+			Update("newsfeedmodstatus", utils.NEWSFEED_MODSTATUS_SUPPRESSED)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
@@ -255,7 +273,8 @@ func PatchSpammer(c *fiber.Ctx) error {
 		Byuserid   *uint64
 		Heldby     *uint64
 	}
-	db.Raw("SELECT collection, reason, byuserid, heldby FROM spam_users WHERE id = ?", req.ID).Scan(&current)
+	// ORM migration site b35f73621756 (wave 1).
+	db.Table("spam_users").Select("collection, reason, byuserid, heldby").Where("id = ?", req.ID).Scan(&current)
 
 	if current.Collection == "" {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -271,7 +290,8 @@ func PatchSpammer(c *fiber.Ctx) error {
 		takingHold := req.Heldby != nil
 		if changingCollection || takingHold {
 			var holderName string
-			db.Raw("SELECT fullname FROM users WHERE id = ?", *current.Heldby).Scan(&holderName)
+			// ORM migration site 4e48616b5b66 (wave 1).
+			db.Table("users").Select("fullname").Where("id = ?", *current.Heldby).Scan(&holderName)
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"ret":        1,
 				"status":     "Held by another moderator",
@@ -319,10 +339,23 @@ func PatchSpammer(c *fiber.Ctx) error {
 			heldby = &myid
 		}
 
-		db.Exec("UPDATE spam_users SET collection = ?, reason = ?, byuserid = ?, "+
-			"heldby = ?, heldat = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END "+
-			"WHERE id = ?",
-			req.Collection, reason, byuserid, heldby, heldby, req.ID)
+		// ORM migration site 2c2dda80b557 (wave 2).
+		//
+		// The SET order here is not load-bearing, though an earlier version of
+		// check-set-order.sh said it was. The "?" inside the heldat CASE is a
+		// bind fed from a Go variable that happens to be called heldby; it is
+		// not a reference to the heldby column, and the SQL names no assigned
+		// column at all. The checker was scanning gorm.Expr's bind arguments
+		// alongside its SQL, so a Go identifier sharing a column name read as a
+		// cross-reference. It now scans only the SQL literal.
+		db.Table("spam_users").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{
+				"collection": req.Collection,
+				"reason":     reason,
+				"byuserid":   byuserid,
+				"heldby":     heldby,
+				"heldat":     gorm.Expr("CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END", heldby),
+			})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -344,7 +377,8 @@ func ExportSpammers(c *fiber.Ctx) error {
 	if partner != "" {
 		db := database.DBConn
 		var partnerID uint64
-		db.Raw("SELECT id FROM partners_keys WHERE `key` = ?", partner).Scan(&partnerID)
+		// ORM migration site 9f33a7d0a5b1 (wave 1).
+		db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 		if partnerID == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
@@ -369,9 +403,12 @@ func ExportSpammers(c *fiber.Ctx) error {
 	}
 
 	var rows []ExportRow
-	db.Raw("SELECT spam_users.id, spam_users.added, reason, email FROM spam_users "+
-		"INNER JOIN users_emails ON spam_users.userid = users_emails.userid "+
-		"WHERE collection = ?", utils.SPAM_COLLECTION_SPAMMER).Scan(&rows)
+	// ORM migration site b524187a3675 (wave 4).
+	db.Table("spam_users").
+		Select("spam_users.id, spam_users.added, reason, email").
+		Joins("INNER JOIN users_emails ON spam_users.userid = users_emails.userid").
+		Where("collection = ?", utils.SPAM_COLLECTION_SPAMMER).
+		Scan(&rows)
 
 	if rows == nil {
 		rows = make([]ExportRow, 0)
@@ -419,7 +456,8 @@ func DeleteSpammer(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM spam_users WHERE id = ?", req.ID)
+	// ORM migration site cd86450dea5a (wave 2).
+	db.Table("spam_users").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

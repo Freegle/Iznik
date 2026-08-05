@@ -19,6 +19,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // routingEvalURL / routingClient reach the routing server's /v1/ripple-eval (real drive times).
@@ -152,11 +154,13 @@ func Near(c *fiber.Ctx) error {
 		Lng  float64
 	}
 	var rows []row
-	db.Raw(`SELECT id, name, lat, lng FROM towns
-		WHERE lat IS NOT NULL AND lng IS NOT NULL
-		  AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
-		ORDER BY id`,
-		lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).Scan(&rows)
+	// ORM migration site ed5b9c0716a2 (wave 1).
+	db.Table("towns").
+		Select("id, name, lat, lng").
+		Where("lat IS NOT NULL AND lng IS NOT NULL AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+			lat-latDeg, lat+latDeg, lng-lngDeg, lng+lngDeg).
+		Order("id").
+		Scan(&rows)
 	if len(rows) == 0 {
 		return c.JSON(empty)
 	}
@@ -207,8 +211,16 @@ func Near(c *fiber.Ctx) error {
 	// Nothing within reach: return the single nearest town so the UI can say "Closer than: X"
 	// instead of showing nothing - useful for rural users whose nearest town is beyond the reach.
 	var closer string
-	db.Raw(`SELECT name FROM towns WHERE lat IS NOT NULL AND lng IS NOT NULL
-		ORDER BY ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?)) LIMIT 1`, lng, lat).Scan(&closer)
+	// ORM migration site 23ee2bc0640f (Tier 1 spatial review). Order() itself
+	// takes no bind args, so the two ST_Distance_Sphere binds go through
+	// clause.OrderBy{Expression: gorm.Expr(...)} instead - same technique as
+	// message/message.go's ResolveOnBehalfPosting (site ecaf3f90bee2).
+	db.Table("towns").
+		Select("name").
+		Where("lat IS NOT NULL AND lng IS NOT NULL").
+		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?))", lng, lat)}).
+		Limit(1).
+		Scan(&closer)
 	out["towns"] = []string{}
 	out["closer_than"] = closer
 	return c.JSON(out)

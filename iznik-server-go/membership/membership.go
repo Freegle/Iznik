@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // logMembershipAction inserts a mod log entry for membership actions.
@@ -41,7 +42,8 @@ func getRoleForGroup(myid uint64, groupid uint64) string {
 	}
 	db := database.DBConn
 	var role string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+	// ORM migration site b93b47daeb87 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?",
 		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
 	return role
 }
@@ -63,7 +65,8 @@ func isModOfGroup(myid uint64, groupid uint64) bool {
 	}
 
 	var role string
-	result := db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+	// ORM migration site 57cbae19bf26 (wave 1).
+	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?",
 		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
@@ -132,11 +135,13 @@ func PostMemberships(c *fiber.Ctx) error {
 	switch req.Action {
 	case "Approve", "Reject", "Delete Approved Member", "Ban", "Hold", "ReviewHold", "ReviewIgnore":
 		var holder uint64
-		db.Raw("SELECT COALESCE(heldby, 0) FROM memberships WHERE userid = ? AND groupid = ?",
+		// ORM migration site e472a5457ade (wave 1).
+		db.Table("memberships").Select("COALESCE(heldby, 0)").Where("userid = ? AND groupid = ?",
 			req.Userid, req.Groupid).Scan(&holder)
 		if holder != 0 && holder != myid {
 			var holderName string
-			db.Raw("SELECT fullname FROM users WHERE id = ?", holder).Scan(&holderName)
+			// ORM migration site 8c02651afe8b (wave 1).
+			db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&holderName)
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"ret":        1,
 				"status":     "Held by another moderator",
@@ -148,16 +153,18 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Hold":
-		if result := db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
-			myid, req.Userid, req.Groupid); result.Error != nil {
+		// ORM migration site 7301cba96a50 (wave 2).
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", myid); result.Error != nil {
 			stdlog.Printf("Failed to hold membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_HOLD, req.Groupid, req.Userid, myid, "")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Release":
-		db.Exec("UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ORM migration site 19356cdf20b2 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", gorm.Expr("NULL"))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_RELEASE, req.Groupid, req.Userid, myid, "")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -176,14 +183,23 @@ func PostMemberships(c *fiber.Ctx) error {
 		if req.Stdmsgid != nil {
 			stdmsgid = *req.Stdmsgid
 		}
-		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-			"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member")
+		// ORM migration site 3b43ce5f3f6c (wave 2). normaliseColumnOrder handles
+		// the map-Create column reorder (data, task_type) against a JSON_OBJECT
+		// value; see ormharness/normalise_test.go TestNormaliseColumnOrder_InsertWithNestedFunctionArgs.
+		db.Table("background_tasks").Create(map[string]interface{}{
+			"task_type": "email_mod_stdmsg",
+			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+				req.Userid, req.Groupid, myid, subject, body, stdmsgid, "Leave Approved Member"),
+		})
 		// V1 parity: Leave Approved Member only calls $u->mail(), no log entry.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Approve":
-		if result := db.Exec("UPDATE memberships SET collection = ?, heldby = NULL WHERE userid = ? AND groupid = ?",
-			utils.COLLECTION_APPROVED, req.Userid, req.Groupid); result.Error != nil {
+		// ORM migration site eeb78024d807 (wave 2). Map keys "collection" and
+		// "heldby" already sort alphabetically in that order, so Updates(map)
+		// emits the same SET order as the golden without needing an approved diff.
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Updates(map[string]interface{}{"collection": utils.COLLECTION_APPROVED, "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			stdlog.Printf("Failed to approve membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
 
@@ -197,15 +213,20 @@ func PostMemberships(c *fiber.Ctx) error {
 			body = *req.Body
 		}
 		if subject != "" || body != "" {
-			db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-				"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member")
+			// ORM migration site a7dec15999b7 (wave 2).
+			db.Table("background_tasks").Create(map[string]interface{}{
+				"task_type": "email_mod_stdmsg",
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+					req.Userid, req.Groupid, myid, subject, body, 0, "Approve Member"),
+			})
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Reject", "Delete Approved Member":
-		if result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection IN (?, ?)",
-			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED); result.Error != nil {
+		// ORM migration site dd9f2b939bce (wave 2).
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection IN (?, ?)",
+			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED).Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to reject membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
 
@@ -223,8 +244,12 @@ func PostMemberships(c *fiber.Ctx) error {
 			stdmsgid = *req.Stdmsgid
 		}
 		if subject != "" || body != "" {
-			db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-				"email_mod_stdmsg", req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action)
+			// ORM migration site 8d3cfe20b403 (wave 2).
+			db.Table("background_tasks").Create(map[string]interface{}{
+				"task_type": "email_mod_stdmsg",
+				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+					req.Userid, req.Groupid, myid, subject, body, stdmsgid, req.Action),
+			})
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -232,33 +257,48 @@ func PostMemberships(c *fiber.Ctx) error {
 	case "Ban":
 		// V1 parity: removeMembership($ban=true) deletes the memberships row entirely, then
 		// writes to users_banned. There is no memberships.collection='Banned' row in V1.
-		if result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid); result.Error != nil {
+		// ORM migration site 98ee705a8a74 (wave 2). Converted together with its
+		// identical twin in DeleteMemberships (d60d7b2e0f2a): a half-converted
+		// pair renumbers the survivor's site ID, so gate (h) refuses the split state.
+		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to delete membership for ban user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
-		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
-			req.Userid, req.Groupid, myid)
+		// ORM migration site dfc985e8ea67 (wave 3). Converted together with its
+		// identical twin in DeleteMemberships (d788d299a578): a half-converted
+		// pair renumbers the survivor's site ID, so gate (h) refuses the split
+		// state.
+		db.Table("users_banned").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "byuser"}, Value: clause.Column{Table: "excluded", Name: "byuser"}},
+				{Column: clause.Column{Name: "date"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"userid": req.Userid, "groupid": req.Groupid, "byuser": myid,
+		})
 		// V1 parity: removeMembership($ban=true) logs type=Group/subtype=Left/text="via ban"
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, req.Userid, myid, "via ban")
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Unban":
 		// V1 parity: unban() deletes from users_banned only — there is no memberships row to delete.
-		db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ORM migration site 3747c49ac43e (wave 2).
+		db.Table("users_banned").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).Delete(nil)
 		// V1 parity: unban() does not log.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewHold":
 		// ReviewHold is used in the chat review context - sets heldby on the membership.
-		db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
-			myid, req.Userid, req.Groupid)
+		// ORM migration site 39aa0175d3ce (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", myid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewRelease":
 		// ReviewRelease clears the heldby on the membership (chat review context).
-		db.Exec("UPDATE memberships SET heldby = NULL WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ORM migration site 8190a1ccc42c (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
@@ -267,9 +307,18 @@ func PostMemberships(c *fiber.Ctx) error {
 		// otherwise the row keeps a heldby that nothing clears, and the member shows as
 		// held again the next time they are flagged. Only this group's row is touched,
 		// so a hold on an adjacent community is left alone.
-		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
-			"WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		//
+		// ORM migration site 93875f6e74f0 (wave 2). Updates(map) emits the SET
+		// list alphabetically, which is not the golden's order; the harness
+		// normalises column order on both sides, moving each column with its
+		// value, so the pairing is still proved.
+		db.Table("memberships").
+			Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
+			Updates(map[string]interface{}{
+				"reviewedat":        gorm.Expr("NOW()"),
+				"reviewrequestedat": gorm.Expr("NULL"),
+				"heldby":            gorm.Expr("NULL"),
+			})
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "HappinessReviewed":
@@ -280,7 +329,8 @@ func PostMemberships(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "happiness must be a valid ID")
 		}
-		db.Exec("UPDATE messages_outcomes SET reviewed = 1 WHERE id = ?", happinessID)
+		// ORM migration site f15eacecdc43 (wave 2).
+		db.Table("messages_outcomes").Where("id = ?", happinessID).Update("reviewed", gorm.Expr("1"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	default:
@@ -374,26 +424,24 @@ func GetMemberships(c *fiber.Ctx) error {
 	// V1's getBanned() queries users_banned directly and synthesises 'Banned' as the collection.
 	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
 	if filter == 5 {
+		// ORM migration site 2c3b155f346b (Tier 3 keep-raw review). contextID>0
+		// is the only toggle - 2 possible rendered forms, both declared in
+		// ormharness/shapes.json and proven by TestTier3Shapes_2c3b155f346b
+		// (iznik-server-go/test).
 		var members []GetMembershipsMember
-		contextWhere := ""
-		bannedArgs := []interface{}{groupid}
+		bannedTx := db.Table("users_banned b").
+			Select("b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
+				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
+				"u.fullname, u.firstname, u.lastname, u.engagement, "+
+				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
+				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
+				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason").
+			Joins("JOIN users u ON u.id = b.userid").
+			Where("b.groupid = ?", groupid)
 		if contextID > 0 {
-			contextWhere = " AND b.userid < ?"
-			bannedArgs = append(bannedArgs, contextID)
+			bannedTx = bannedTx.Where("b.userid < ?", contextID)
 		}
-		bannedArgs = append(bannedArgs, limit)
-
-		db.Raw("SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
-			"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
-			"u.fullname, u.firstname, u.lastname, u.engagement, "+
-			"b.userid AS id, NULL AS heldby, NULL AS settings, "+
-			"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
-			"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason "+
-			"FROM users_banned b "+
-			"JOIN users u ON u.id = b.userid "+
-			"WHERE b.groupid = ?"+contextWhere+
-			" ORDER BY b.userid DESC LIMIT ?",
-			bannedArgs...).Scan(&members)
+		bannedTx.Order("b.userid DESC").Limit(limit).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
@@ -414,23 +462,25 @@ func GetMemberships(c *fiber.Ctx) error {
 		// users:update-modmails cron, so an INNER JOIN on it silently drops members whose
 		// only modmails are older than ~30 days.  The logs table is not pruned and is the
 		// authoritative source; criteria match the modmailsonly filter in logs/logs.go.
-		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
-			"u.fullname, u.firstname, u.lastname, m.settings, "+
-			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
-			"b.date AS bandate, b.byuser AS bannedby, "+
-			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
-			"MAX(l.timestamp) AS lastmodmail "+
-			"FROM memberships m "+
-			"JOIN users u ON u.id = m.userid "+
-			"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid "+
-			"INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
-			"AND ((l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Replied')) "+
-			"OR (l.type = 'User' AND l.subtype IN ('Mailed', 'Rejected', 'Deleted'))) "+
-			"AND l.byuser != l.user "+
-			"WHERE m.groupid = ? AND m.collection = ? "+
-			"GROUP BY m.userid "+
-			"ORDER BY m.added DESC LIMIT ?",
-			groupid, collection, limit).Scan(&members)
+		// ORM migration site 4a525e0d44db (wave 4).
+		db.Table("memberships m").
+			Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
+				"u.fullname, u.firstname, u.lastname, m.settings, "+
+				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+				"b.date AS bandate, b.byuser AS bannedby, "+
+				"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
+				"MAX(l.timestamp) AS lastmodmail").
+			Joins("JOIN users u ON u.id = m.userid").
+			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
+			Joins("INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
+				"AND ((l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Replied')) "+
+				"OR (l.type = 'User' AND l.subtype IN ('Mailed', 'Rejected', 'Deleted'))) "+
+				"AND l.byuser != l.user").
+			Where("m.groupid = ? AND m.collection = ?", groupid, collection).
+			Group("m.userid").
+			Order("m.added DESC").
+			Limit(limit).
+			Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
@@ -445,84 +495,97 @@ func GetMemberships(c *fiber.Ctx) error {
 		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
 		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
-	fromClause := "FROM memberships m " +
-		"JOIN users u ON u.id = m.userid " +
-		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
 
-	// Build filter-specific clauses.
-	filterJoin := ""
-	filterWhere := ""
-	switch filter {
-	case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
-		filterWhere = " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
-	case 2: // Moderation team
-		filterWhere = " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
-	case 3: // Bouncing
-		filterWhere = " AND u.bouncing = 1"
+	// filterWhereSQL returns the filter-specific WHERE fragment (with
+	// comments/notes, moderation team, bouncing, or none) - one of 4 fixed
+	// shapes - as a string with no args of its own (the moderation-team
+	// role names are baked into the literal text, same as the original raw
+	// SQL did).
+	filterWhereSQL := func() string {
+		switch filter {
+		case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
+			return " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
+		case 2: // Moderation team
+			return " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
+		case 3: // Bouncing
+			return " AND u.bouncing = 1"
+		}
+		return ""
 	}
 
-	if search != "" {
-		// Build group filter: specific group or all of mod's groups.
-		groupFilter := "m.groupid = ?"
-		var groupArg interface{} = groupid
+	// groupFilterSQL returns the group-scope WHERE fragment - a specific
+	// group, or every group the caller moderates when groupid==0 - the
+	// other fixed toggle, plus its own arg (if any).
+	groupFilterSQL := func() (string, []interface{}) {
 		if groupid == 0 {
-			// Search across all of the mod's active groups.
-			groupFilter = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
-			groupArg = myid
+			return "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" +
+				utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')", []interface{}{myid}
 		}
+		return "m.groupid = ?", []interface{}{groupid}
+	}
+
+	baseTx := func() *gorm.DB {
+		return db.Table("memberships m").
+			Select(selectCols).
+			Joins("JOIN users u ON u.id = m.userid").
+			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid")
+	}
+
+	// The WHERE for each branch below is built as a single string and
+	// passed to ONE Where() call: GORM's clause.Where wraps any fragment
+	// containing "AND"/"OR" in an extra paren pair once there is more than
+	// one Where expression to combine (clause/where.go buildExprs), which
+	// would diverge from the golden.
+	if search != "" {
+		groupWhere, groupArgs := groupFilterSQL()
 
 		// If search is a pure number, match on userid directly (fast indexed lookup).
 		// Otherwise do LIKE search on name/email.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT "+selectCols+" "+
-				fromClause+filterJoin+" "+
-				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
-				" AND m.userid = ? "+
-				"ORDER BY m.added DESC LIMIT ?",
-				groupArg, collection, searchID, limit).Scan(&members)
+			// ORM migration site 836dc8807739 (Tier 3 keep-raw review). groupid==0
+			// and the filter (0-3) give 2x4 = 8 possible rendered forms, all
+			// declared in ormharness/shapes.json and proven by
+			// TestTier3Shapes_836dc8807739 (iznik-server-go/test).
+			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
+			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
+			baseTx().Where(whereSQL, whereArgs...).
+				Order("m.added DESC").Limit(limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
 			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
 			// users, created with fullname=NULL) have their name only in firstname/lastname,
 			// so a fullname-only LIKE silently excludes them from name search even though
 			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
-			db.Raw("SELECT "+selectCols+" "+
-				fromClause+filterJoin+
-				" LEFT JOIN users_emails ue ON ue.userid = m.userid "+
-				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
-				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) "+
-				"GROUP BY m.id "+
-				"ORDER BY m.added DESC LIMIT ?",
-				groupArg, collection, searchPattern, searchPattern, searchPattern, searchPattern, limit).Scan(&members)
+			//
+			// ORM migration site 5f742c0fcf1f (Tier 3 keep-raw review). Same
+			// groupid==0 x filter toggles as 836dc8807739 above - 8 possible
+			// rendered forms, all declared in ormharness/shapes.json and proven
+			// by TestTier3Shapes_5f742c0fcf1f (iznik-server-go/test).
+			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
+			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
+				searchPattern, searchPattern, searchPattern, searchPattern)
+			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
+				Where(whereSQL, whereArgs...).
+				Group("m.id").Order("m.added DESC").Limit(limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
 		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
-		contextWhere := ""
-		var groupCondition string
-		var queryArgs []interface{}
-
-		if groupid == 0 {
-			// All my communities: fan out to every group this mod moderates.
-			groupCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
-			queryArgs = []interface{}{myid, collection}
-		} else {
-			groupCondition = "m.groupid = ?"
-			queryArgs = []interface{}{groupid, collection}
-		}
-
+		//
+		// ORM migration site bbc55cf96110 (Tier 3 keep-raw review). groupid==0,
+		// the filter (0-3), and contextID>0 give 2x4x2 = 16 possible rendered
+		// forms, all declared in ormharness/shapes.json and proven by
+		// TestTier3Shapes_bbc55cf96110 (iznik-server-go/test).
+		groupWhere, groupArgs := groupFilterSQL()
+		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
+		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
 		if contextID > 0 {
-			contextWhere = " AND m.id < ?"
-			queryArgs = append(queryArgs, contextID)
+			whereSQL += " AND m.id < ?"
+			whereArgs = append(whereArgs, contextID)
 		}
-		queryArgs = append(queryArgs, limit)
-
-		result := db.Raw("SELECT "+selectCols+" "+
-			fromClause+filterJoin+" "+
-			"WHERE "+groupCondition+" AND m.collection = ?"+filterWhere+contextWhere+
-			" ORDER BY m.id DESC LIMIT ?",
-			queryArgs...).Scan(&members)
+		result := baseTx().Where(whereSQL, whereArgs...).Order("m.id DESC").Limit(limit).Scan(&members)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query memberships group %d collection %s: %v", groupid, collection, result.Error)
 		}
@@ -541,22 +604,21 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	// When a filter is active, include the total matching count so the UI can display it.
+	//
+	// ORM migration site 5f6ca1b9022f (Tier 3 keep-raw review). groupid==0 and
+	// the filter (0-3, though this block only ever runs for filter>0) give
+	// 2x4 = 8 possible rendered forms, all declared in ormharness/shapes.json
+	// and proven by TestTier3Shapes_5f6ca1b9022f (iznik-server-go/test).
 	if filter > 0 {
 		var filterCount int64
 
-		countFrom := "FROM memberships m JOIN users u ON u.id = m.userid"
-		var countCondition string
-		var countArgs []interface{}
-		if groupid == 0 {
-			countCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
-			countArgs = []interface{}{myid, collection}
-		} else {
-			countCondition = "m.groupid = ?"
-			countArgs = []interface{}{groupid, collection}
-		}
-		db.Raw("SELECT COUNT(DISTINCT m.userid) "+countFrom+filterJoin+
-			" WHERE "+countCondition+" AND m.collection = ?"+filterWhere,
-			countArgs...).Scan(&filterCount)
+		groupWhere, groupArgs := groupFilterSQL()
+		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
+		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
+		db.Table("memberships m").
+			Select("COUNT(DISTINCT m.userid)").
+			Joins("JOIN users u ON u.id = m.userid").
+			Where(whereSQL, whereArgs...).Scan(&filterCount)
 
 		return c.JSON(fiber.Map{
 			"members":     members,
@@ -631,27 +693,28 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	}
 
 	// Return flagged memberships on groups the mod moderates.
-	var members []GetMembershipsMember
-
-	selectCols := "m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, " +
-		"u.fullname, u.firstname, u.lastname, m.settings, " +
-		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
-		"b.date AS bandate, b.byuser AS bannedby, " +
-		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
-	fromClause := "FROM memberships m " +
-		"JOIN users u ON u.id = m.userid " +
-		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
-
+	//
 	// Show members where reviewrequestedat is set AND either never reviewed or the flag
 	// is more recent than the last review. This matches the frontend needsReview logic
 	// exactly, preventing "no buttons" where the backend returns a member but the
 	// frontend considers them already reviewed.
-	result := db.Raw("SELECT "+selectCols+" "+
-		fromClause+" "+
-		"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
-		"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
-		"ORDER BY m.userid DESC LIMIT ?",
-		modGroupIDs, limit).Scan(&members)
+	//
+	// ORM migration site fdd14a1656c7 (Tier 3 keep-raw review). GORM's native
+	// "IN ?" slice-bind already normalizes the group-id list regardless of
+	// length, so this has exactly one rendered form, declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_fdd14a1656c7
+	// (iznik-server-go/test).
+	var members []GetMembershipsMember
+	result := db.Table("memberships m").
+		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
+			"u.fullname, u.firstname, u.lastname, m.settings, "+
+			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
+			"b.date AS bandate, b.byuser AS bannedby, "+
+			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing").
+		Joins("JOIN users u ON u.id = m.userid").
+		Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
+		Where("m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat)", modGroupIDs).
+		Order("m.userid DESC").Limit(limit).Scan(&members)
 	if result.Error != nil {
 		stdlog.Printf("Failed to query spam members for user %d: %v", myid, result.Error)
 	}
@@ -694,8 +757,11 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	}
 
 	var rows []relatedRow
-	db.Raw("SELECT DISTINCT id, user1, user2 FROM ("+
-		"SELECT users_related.id, user1, user2 FROM users_related "+
+	// ORM migration site 70059ac9a4bb (wave 5). Derived-table trick: GORM's
+	// Table() passes its name argument through verbatim (no quoting) once it
+	// contains a space, so a parenthesized UNION subquery can be given as the
+	// "table name" with its own bind args in Table()'s variadic args.
+	db.Table("(SELECT users_related.id, user1, user2 FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
@@ -705,8 +771,12 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
-		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
-		") t ORDER BY id DESC LIMIT ?", modGroupIDs, modGroupIDs, limit).Scan(&rows)
+		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ?) t",
+		modGroupIDs, modGroupIDs).
+		Select("DISTINCT id, user1, user2").
+		Order("id DESC").
+		Limit(limit).
+		Scan(&rows)
 
 	if len(rows) == 0 {
 		return c.JSON(make([]fiber.Map, 0))
@@ -730,7 +800,9 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		Count  int    `gorm:"column:count"`
 	}
 	var loginCounts []loginCount
-	db.Raw("SELECT userid, COUNT(*) as count FROM users_logins WHERE userid IN ? GROUP BY userid", uidList).Scan(&loginCounts)
+	// ORM migration site 193930b7821a (wave 1).
+	db.Table("users_logins").Select("userid, COUNT(*) as count").Where("userid IN ?", uidList).
+		Group("userid").Scan(&loginCounts)
 	hasLogins := make(map[uint64]bool)
 	for _, lc := range loginCounts {
 		if lc.Count > 0 {
@@ -742,7 +814,8 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	for _, r := range rows {
 		if !hasLogins[r.User1] || !hasLogins[r.User2] {
 			// Auto-mark as notified since these are not actionable.
-			db.Exec("UPDATE users_related SET notified = 1 WHERE id = ?", r.ID)
+			// ORM migration site 0477a681ffd6 (wave 2).
+			db.Table("users_related").Where("id = ?", r.ID).Update("notified", gorm.Expr("1"))
 			continue
 		}
 
@@ -869,68 +942,46 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 
 	filter := c.Query("filter", "")
 
-	// Build filter clause for happiness level.
-	filterClause := ""
-	switch filter {
-	case "Happy":
-		filterClause = " AND mo.happiness = 'Happy'"
-	case "Unhappy":
-		filterClause = " AND mo.happiness = 'Unhappy'"
-	case "Fine":
-		filterClause = " AND (mo.happiness IS NULL OR mo.happiness = 'Fine')"
-	}
-
 	// Only show recent outcomes (last 31 days).
 	start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
 
-	// Build the comments filter to exclude auto-generated messages.
-	commentsFilter := " AND mo.comments IS NOT NULL"
-	for i := range happinessFilterComments {
-		if i == 0 {
-			commentsFilter += " AND mo.comments NOT IN (?"
-		} else {
-			commentsFilter += ", ?"
-		}
-	}
-	commentsFilter += ")"
+	// ORM migration site 3119115f3abe (Tier 3 keep-raw review). filter
+	// (none/Happy/Unhappy/Fine) gives 4 possible rendered forms, all declared
+	// in ormharness/shapes.json and proven by TestTier3Shapes_3119115f3abe
+	// (iznik-server-go/test).
+	//
+	// rippled_in = 0: only Feedback for posts that ORIGINATED on the
+	// group, not copies that rippled in from elsewhere (the badge count
+	// queries in groupWork.go / session.go apply the same filter, and it
+	// mirrors the Edit badge). Discourse 9808/633.
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	happinessWhereSQL := "mo.timestamp > ? AND mo.comments IS NOT NULL AND mo.comments NOT IN (?)"
+	happinessWhereArgs := []interface{}{start, happinessFilterComments}
 
-	// Build group ID placeholders.
-	groupPlaceholders := make([]string, len(groupIDs))
-	groupArgs := make([]interface{}, len(groupIDs))
-	for i, gid := range groupIDs {
-		groupPlaceholders[i] = "?"
-		groupArgs[i] = gid
+	switch filter {
+	case "Happy":
+		happinessWhereSQL += " AND mo.happiness = 'Happy'"
+	case "Unhappy":
+		happinessWhereSQL += " AND mo.happiness = 'Unhappy'"
+	case "Fine":
+		happinessWhereSQL += " AND (mo.happiness IS NULL OR mo.happiness = 'Fine')"
 	}
-	groupIn := strings.Join(groupPlaceholders, ",")
 
-	// Build query args in order.
-	args := make([]interface{}, 0, len(groupIDs)+len(happinessFilterComments)+2)
-	args = append(args, groupArgs...)
-	args = append(args, start)
-	for _, comment := range happinessFilterComments {
-		args = append(args, comment)
-	}
-	args = append(args, start)
-	args = append(args, limit)
-
-	sql := fmt.Sprintf(
-		"SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
-			"m.fromuser, mg.groupid, m.subject "+
-			"FROM messages_outcomes mo "+
-			// rippled_in = 0: only Feedback for posts that ORIGINATED on the
-			// group, not copies that rippled in from elsewhere (the badge count
-			// queries in groupWork.go / session.go apply the same filter, and it
-			// mirrors the Edit badge). Discourse 9808/633.
-			"INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (%s) AND mg.rippled_in = 0 "+
-			"INNER JOIN messages m ON m.id = mo.msgid "+
-			"WHERE mo.timestamp > ?"+
-			"%s%s"+
-			" AND mg.arrival > ?"+
-			" ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?",
-		groupIn, commentsFilter+filterClause, "")
+	happinessWhereSQL += " AND mg.arrival > ?"
+	happinessWhereArgs = append(happinessWhereArgs, start)
 
 	var rows []happinessRow
-	db.Raw(sql, args...).Scan(&rows)
+	db.Table("messages_outcomes mo").
+		Select("mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, "+
+			"m.fromuser, mg.groupid, m.subject").
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (?) AND mg.rippled_in = 0", groupIDs).
+		Joins("INNER JOIN messages m ON m.id = mo.msgid").
+		Where(happinessWhereSQL, happinessWhereArgs...).
+		Order("mo.reviewed ASC, mo.timestamp DESC, mo.id DESC").
+		Limit(limit).Scan(&rows)
 
 	if rows == nil {
 		ratings := getVisibleRatings(db, groupIDs)
@@ -954,7 +1005,8 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	}
 	var users []userInfo
 	if len(userIDs) > 0 {
-		db.Raw("SELECT id, fullname FROM users WHERE id IN ?", userIDs).Scan(&users)
+		// ORM migration site 4d11adfa11a8 (wave 1).
+		db.Table("users").Select("id, fullname").Where("id IN ?", userIDs).Scan(&users)
 	}
 	userMap := make(map[uint64]*userInfo)
 	for i := range users {
@@ -969,8 +1021,9 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	}
 	var emails []emailInfo
 	if len(userIDs) > 0 {
-		db.Raw("SELECT userid, email, preferred FROM users_emails WHERE userid IN ? ORDER BY preferred DESC",
-			userIDs).Scan(&emails)
+		// ORM migration site 6110f539c46b (wave 1).
+		db.Table("users_emails").Select("userid, email, preferred").Where("userid IN ?", userIDs).
+			Order("preferred DESC").Scan(&emails)
 	}
 	emailMap := make(map[uint64]string)
 	for _, e := range emails {
@@ -1033,41 +1086,30 @@ func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
 
 	since := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 
-	groupPlaceholders := make([]string, len(groupIDs))
-	groupArgs := make([]interface{}, len(groupIDs))
-	for i, gid := range groupIDs {
-		groupPlaceholders[i] = "?"
-		groupArgs[i] = gid
-	}
-	groupIn := strings.Join(groupPlaceholders, ",")
-
-	args := make([]interface{}, 0, len(groupArgs)*2+1)
-	args = append(args, since)
-	args = append(args, groupArgs...)
-	args = append(args, groupArgs...)
-
-	sql := fmt.Sprintf(
-		"SELECT ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
+	// ORM migration site 1a000d04649b (Tier 3 keep-raw review). Both group-id
+	// lists are GORM's native "IN (?)" slice-bind, which the harness's
+	// collapseInLists normalizes regardless of length, so this has exactly one
+	// rendered form, declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_1a000d04649b (iznik-server-go/test).
+	var rows []ratingRow
+	db.Table("ratings").
+		Select("ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
 			"ratings.text, ratings.visible, ratings.timestamp, ratings.reviewrequired, "+
 			"m1.groupid, "+
 			"CASE WHEN u1.fullname IS NOT NULL THEN u1.fullname ELSE CONCAT(u1.firstname, ' ', u1.lastname) END AS raterdisplayname, "+
-			"CASE WHEN u2.fullname IS NOT NULL THEN u2.fullname ELSE CONCAT(u2.firstname, ' ', u2.lastname) END AS rateedisplayname "+
-			"FROM ratings "+
-			"INNER JOIN memberships m1 ON m1.userid = ratings.rater "+
-			"INNER JOIN memberships m2 ON m2.userid = ratings.ratee "+
-			"INNER JOIN users u1 ON ratings.rater = u1.id "+
-			"INNER JOIN users u2 ON ratings.ratee = u2.id "+
-			"WHERE ratings.timestamp >= ? "+
-			"AND m1.groupid IN (%s) "+
-			"AND m2.groupid IN (%s) "+
-			"AND m1.groupid = m2.groupid "+
-			"AND ratings.rating IS NOT NULL "+
-			"GROUP BY ratings.id "+
-			"ORDER BY ratings.timestamp DESC",
-		groupIn, groupIn)
-
-	var rows []ratingRow
-	db.Raw(sql, args...).Scan(&rows)
+			"CASE WHEN u2.fullname IS NOT NULL THEN u2.fullname ELSE CONCAT(u2.firstname, ' ', u2.lastname) END AS rateedisplayname").
+		Joins("INNER JOIN memberships m1 ON m1.userid = ratings.rater").
+		Joins("INNER JOIN memberships m2 ON m2.userid = ratings.ratee").
+		Joins("INNER JOIN users u1 ON ratings.rater = u1.id").
+		Joins("INNER JOIN users u2 ON ratings.ratee = u2.id").
+		Where("ratings.timestamp >= ?", since).
+		Where("m1.groupid IN (?)", groupIDs).
+		Where("m2.groupid IN (?)", groupIDs).
+		Where("m1.groupid = m2.groupid").
+		Where("ratings.rating IS NOT NULL").
+		Group("ratings.id").
+		Order("ratings.timestamp DESC").
+		Scan(&rows)
 
 	if rows == nil {
 		return []Rating{}
@@ -1185,7 +1227,8 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 
 	// Check the group exists.
 	var groupExists int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
+	// ORM migration site cf56bf438429 (wave 1).
+	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
 	if groupExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
@@ -1206,30 +1249,47 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// or log row anywhere, so a banned member's join attempt vanishes with
 	// nothing for a moderator to find while the partner is told it worked.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
-		userid, groupid).Scan(&bannedCount)
+	// ORM migration site dd226f0cacca (wave 1).
+	db.Table("users_banned").Where("userid = ? AND groupid = ?",
+		userid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
 	// Check if already a member.
 	var existingRole string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+	// ORM migration site 553e621a63b0 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
 	}
 
-	// Insert membership.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	// Insert membership. ORM migration site 759766c83c01 (wave 2). Golden column
+	// order (userid, groupid, role, collection) is not alphabetical, but
+	// normaliseColumnOrder sorts both sides' columns together with their values
+	// before comparing (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert),
+	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
+	db.Table("memberships").Create(map[string]interface{}{
+		"userid":     userid,
+		"groupid":    groupid,
+		"role":       utils.ROLE_MEMBER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	// Record in memberships_history with processingrequired=1 so the
 	// Laravel batch (memberships:process) sends the group welcome email,
 	// runs spam checks, and applies review flags. Without this row the
 	// cron has nothing to do and welcomes are silently dropped.
-	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
-		userid, groupid, utils.COLLECTION_APPROVED)
+	// ORM migration site 32d907621f09 (wave 2). processingrequired is a literal
+	// 1 in the golden, not a bind, so it goes through gorm.Expr. Identical twin:
+	// addMemberToGroup (2f0c55ec88d6).
+	db.Table("memberships_history").Create(map[string]interface{}{
+		"userid":             userid,
+		"groupid":            groupid,
+		"collection":         utils.COLLECTION_APPROVED,
+		"processingrequired": gorm.Expr("1"),
+	})
 
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
 
@@ -1241,14 +1301,16 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
 	// Check the group exists.
 	var groupExists int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
+	// ORM migration site 927556278e70 (wave 1).
+	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
 	if groupExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
 
 	// Check if already a member.
 	var existingRole string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?",
+	// ORM migration site 5b811f0c2cc6 (wave 1).
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": "Approved"})
@@ -1261,23 +1323,36 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	// like TrashNothing, or a moderator using the Add button) is told it worked. Return
 	// a real failure so the join doesn't silently disappear.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?",
-		userid, groupid).Scan(&bannedCount)
+	// ORM migration site 4651063e075b (wave 1).
+	db.Table("users_banned").Where("userid = ? AND groupid = ?",
+		userid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "Failed - banned")
 	}
 
-	// Insert membership as approved member.
-	result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	// Insert membership as approved member. ORM migration site 27aa0e237120
+	// (wave 2). Identical twin of putMembershipsPartner's insert (759766c83c01);
+	// see the comment there on why the map-Create column reorder is safe.
+	result := db.Table("memberships").Create(map[string]interface{}{
+		"userid":     userid,
+		"groupid":    groupid,
+		"role":       utils.ROLE_MEMBER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	if result.RowsAffected > 0 {
 		// Record in memberships_history with processingrequired=1 so the
 		// Laravel batch (memberships:process) sends the group welcome email,
 		// runs spam checks, and applies review flags. Without this row the
 		// cron has nothing to do and welcomes are silently dropped.
-		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
-			userid, groupid, utils.COLLECTION_APPROVED)
+		// ORM migration site 2f0c55ec88d6 (wave 2). Identical twin of
+		// putMembershipsPartner's insert (32d907621f09).
+		db.Table("memberships_history").Create(map[string]interface{}{
+			"userid":             userid,
+			"groupid":            groupid,
+			"collection":         utils.COLLECTION_APPROVED,
+			"processingrequired": gorm.Expr("1"),
+		})
 
 		// V1 parity (User.php:944-957): log text records how the user joined.
 		// manual=true→"Manual" (clicked Join button), false→"Auto" (auto-joined
@@ -1353,9 +1428,18 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
-		db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userid, req.Groupid)
-		db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE byuser = VALUES(byuser), date = NOW()",
-			userid, req.Groupid, myid)
+		// ORM migration site d60d7b2e0f2a (wave 2). Converted together with its
+		// identical twin in PostMemberships's Ban action (98ee705a8a74).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).Delete(nil)
+		// ORM migration site d788d299a578 (wave 3). Twin of dfc985e8ea67 above.
+		db.Table("users_banned").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "byuser"}, Value: clause.Column{Table: "excluded", Name: "byuser"}},
+				{Column: clause.Column{Name: "date"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"userid": userid, "groupid": req.Groupid, "byuser": myid,
+		})
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "via ban")
 		// A ban removes this membership; if it was the user's last Owner/Moderator
 		// role, demote a now-stale Moderator systemrole (V1 updateSystemRole parity).
@@ -1372,8 +1456,10 @@ func DeleteMemberships(c *fiber.Ctx) error {
 	}
 
 	// Remove the membership.
-	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-		userid, req.Groupid, utils.COLLECTION_APPROVED)
+	// ORM migration site 535641088fb3 (wave 2). Converted together with its
+	// identical twin in deleteMembershipsPartner (0fe2da6629e8).
+	result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
+		userid, req.Groupid, utils.COLLECTION_APPROVED).Delete(nil)
 
 	if result.RowsAffected > 0 {
 		// V1 parity: User::removeMembership() always logs Group/Left when the
@@ -1422,8 +1508,10 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 	}
 
 	// Remove the membership.
-	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-		userid, groupid, utils.COLLECTION_APPROVED)
+	// ORM migration site 0fe2da6629e8 (wave 2). Converted together with its
+	// identical twin in DeleteMemberships (535641088fb3).
+	result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
+		userid, groupid, utils.COLLECTION_APPROVED).Delete(nil)
 
 	if result.RowsAffected > 0 {
 		// V1 parity: User::removeMembership() always logs Group/Left when the
@@ -1489,28 +1577,32 @@ func PatchMemberships(c *fiber.Ctx) error {
 
 	// Verify the membership exists.
 	var membershipExists int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
-		userid, req.Groupid, utils.COLLECTION_APPROVED).Scan(&membershipExists)
+	// ORM migration site d52f362bd794 (wave 1).
+	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
+		userid, req.Groupid, utils.COLLECTION_APPROVED).Count(&membershipExists)
 	if membershipExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not a member of this group")
 	}
 
 	// Update whichever settings were provided.
 	if req.Emailfrequency != nil {
-		db.Exec("UPDATE memberships SET emailfrequency = ? WHERE userid = ? AND groupid = ?",
-			int(*req.Emailfrequency), userid, req.Groupid)
+		// ORM migration site c3cff12ce730 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("emailfrequency", int(*req.Emailfrequency))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
 			fmt.Sprintf("emailfrequency=%d", int(*req.Emailfrequency)))
 	}
 
 	if req.Eventsallowed != nil {
-		db.Exec("UPDATE memberships SET eventsallowed = ? WHERE userid = ? AND groupid = ?",
-			int(*req.Eventsallowed), userid, req.Groupid)
+		// ORM migration site 02963d1e570a (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("eventsallowed", int(*req.Eventsallowed))
 	}
 
 	if req.Volunteeringallowed != nil {
-		db.Exec("UPDATE memberships SET volunteeringallowed = ? WHERE userid = ? AND groupid = ?",
-			int(*req.Volunteeringallowed), userid, req.Groupid)
+		// ORM migration site 54535c67055f (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("volunteeringallowed", int(*req.Volunteeringallowed))
 	}
 
 	if req.Settings != nil {
@@ -1533,8 +1625,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 				}
 			}
 		}
-		db.Exec("UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
-			string(*req.Settings), userid, req.Groupid)
+		// ORM migration site 3d8f2d88b42d (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("settings", string(*req.Settings))
 	}
 
 	if req.Configid != nil {
@@ -1545,12 +1638,14 @@ func PatchMemberships(c *fiber.Ctx) error {
 		}
 		// Verify the config exists.
 		var configID uint64
-		db.Raw("SELECT id FROM mod_configs WHERE id = ?", *req.Configid).Scan(&configID)
+		// ORM migration site a35651ab9f60 (wave 1).
+		db.Table("mod_configs").Select("id").Where("id = ?", *req.Configid).Scan(&configID)
 		if configID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Config not found")
 		}
-		db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
-			*req.Configid, userid, req.Groupid)
+		// ORM migration site 683e16a0d881 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("configid", *req.Configid)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_CONFIG_CHANGE, req.Groupid, userid, myid,
 			fmt.Sprintf("configid=%d", *req.Configid))
 	}
@@ -1560,8 +1655,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change posting status")
 		}
-		db.Exec("UPDATE memberships SET ourPostingStatus = ? WHERE userid = ? AND groupid = ?",
-			*req.OurPostingStatus, userid, req.Groupid)
+		// ORM migration site 5a436bd174af (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
+			Update("ourPostingStatus", *req.OurPostingStatus)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_POSTING_STATUS, req.Groupid, userid, myid,
 			*req.OurPostingStatus)
 	}
@@ -1586,8 +1682,9 @@ func PatchMemberships(c *fiber.Ctx) error {
 			}
 		}
 
-		db.Exec("UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ? AND collection = ?",
-			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
+		// ORM migration site 948119564065 (wave 2).
+		db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", userid, req.Groupid, utils.COLLECTION_APPROVED).
+			Update("role", targetRole)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
 
 		// V1 parity (User::updateSystemRole, legacy V1 PHP implementation):
@@ -1604,19 +1701,22 @@ func PatchMemberships(c *fiber.Ctx) error {
 			// Promote: only flip 'User' to 'Moderator'. V1 used the same
 			// guard (UPDATE … WHERE systemrole = 'User') so Support / Admin
 			// users are never silently demoted to Moderator.
-			db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-				utils.SYSTEMROLE_MODERATOR, userid, utils.SYSTEMROLE_USER)
+			// ORM migration site 58a93e92bdd0 (wave 2).
+			db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_USER).
+				Update("systemrole", utils.SYSTEMROLE_MODERATOR)
 		} else {
 			// Demote: V1 only reverts systemrole to 'User' if the user no
 			// longer holds Moderator / Owner on ANY other approved group.
 			// Otherwise they're still a mod elsewhere and stay Moderator.
 			var remaining int64
-			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+			// ORM migration site 01aaf9fe55ea (wave 1).
+			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?",
 				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
-				Scan(&remaining)
+				Count(&remaining)
 			if remaining == 0 {
-				db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-					utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)
+				// ORM migration site e28d4a7241be (wave 2).
+				db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_MODERATOR).
+					Update("systemrole", utils.SYSTEMROLE_USER)
 			}
 		}
 	}

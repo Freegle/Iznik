@@ -1,0 +1,1558 @@
+{
+  "_comment": [
+    "Per-site SQL shapes for AssertGoldenShapes (shapes.go), plan 7.2 Layer 1",
+    "extended for sites kept raw as \"runtime-varying: the statement has more",
+    "than one possible rendered form\" (tools/orm-migration/keep-raw.json). A",
+    "single goldenSql cannot describe such a site; this lists every SQL form",
+    "its ORIGINAL raw-SQL code could produce, derived from that code's own",
+    "branching (a switch case, a map key, an if/else arm), not from the",
+    "conversion. AssertGoldenShapes fails unless a site's conversion test",
+    "covers every shape declared here, and only those.",
+    "",
+    "Declarative, like keep-raw.json and approved-diffs.json: the expected SQL",
+    "for each shape is recorded here for review, not asserted by whoever wrote",
+    "the conversion - a test that supplies both the expected SQL and the code",
+    "producing it proves only that the two agree with each other.",
+    "",
+    "Lives in this package (ormharness), unlike keep-raw.json and",
+    "approved-diffs.json which live in tools/orm-migration: it is embedded the",
+    "same way manifest.json is (see embeddedManifest in golden.go) - the apiv2",
+    "container mounts iznik-server-go as /app, so nothing outside that",
+    "directory exists at runtime, and go:embed cannot reach outside its own",
+    "package directory regardless of where the file lived."
+  ],
+  "sites": {
+    "bc2f944bfbb7": [
+      {
+        "name": "Message",
+        "sql": "SELECT `fromuser` FROM `messages` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT `userid` FROM `chat_messages` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT `userid` FROM `communityevents` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT `userid` FROM `volunteering` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT `userid` FROM `users_stories` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT `userid` FROM `newsfeed` WHERE id = ?"
+      }
+    ],
+    "1be407fe0a15": [
+      {
+        "name": "Message",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived, COALESCE(externalurl, '') AS externalurl FROM `messages_attachments` WHERE id = ?"
+      },
+      {
+        "name": "Group",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `groups_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `newsletters_images` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `communityevents_images` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `volunteering_images` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `chat_images` WHERE id = ?"
+      },
+      {
+        "name": "User",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `users_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `newsfeed_images` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `users_stories_images` WHERE id = ?"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "SELECT COALESCE(externaluid, '') AS externaluid, COALESCE(externalmods, '') AS externalmods, COALESCE(archived, 0) AS archived FROM `noticeboards_images` WHERE id = ?"
+      }
+    ],
+    "1606033fd8f7": [
+      {
+        "name": "Message",
+        "sql": "SELECT data, 'image/jpeg' AS contenttype FROM `messages_attachments` WHERE id = ?"
+      },
+      {
+        "name": "Group",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `groups_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `newsletters_images` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `communityevents_images` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `volunteering_images` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `chat_images` WHERE id = ?"
+      },
+      {
+        "name": "User",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `users_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `newsfeed_images` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `users_stories_images` WHERE id = ?"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "SELECT data, COALESCE(NULLIF(contenttype, ''), 'image/jpeg') AS contenttype FROM `noticeboards_images` WHERE id = ?"
+      }
+    ],
+    "7ba4875e8aec": [
+      {
+        "name": "chatid",
+        "sql": "UPDATE helper_repliers SET chatid = ? WHERE id = ?"
+      },
+      {
+        "name": "state",
+        "sql": "UPDATE helper_repliers SET state = ? WHERE id = ?"
+      },
+      {
+        "name": "collection_ok",
+        "sql": "UPDATE helper_repliers SET collection_ok = ? WHERE id = ?"
+      },
+      {
+        "name": "criteria_met",
+        "sql": "UPDATE helper_repliers SET criteria_met = ? WHERE id = ?"
+      },
+      {
+        "name": "transport_ok",
+        "sql": "UPDATE helper_repliers SET transport_ok = ? WHERE id = ?"
+      },
+      {
+        "name": "distance_miles",
+        "sql": "UPDATE helper_repliers SET distance_miles = ? WHERE id = ?"
+      },
+      {
+        "name": "is_connector",
+        "sql": "UPDATE helper_repliers SET is_connector = ? WHERE id = ?"
+      },
+      {
+        "name": "related_to",
+        "sql": "UPDATE helper_repliers SET related_to = ? WHERE id = ?"
+      },
+      {
+        "name": "escalation_reason",
+        "sql": "UPDATE helper_repliers SET escalation_reason = ? WHERE id = ?"
+      },
+      {
+        "name": "parked_reason",
+        "sql": "UPDATE helper_repliers SET parked_reason = ? WHERE id = ?"
+      },
+      {
+        "name": "next_action",
+        "sql": "UPDATE helper_repliers SET next_action = ? WHERE id = ?"
+      },
+      {
+        "name": "other_items_mentioned",
+        "sql": "UPDATE helper_repliers SET other_items_mentioned = ? WHERE id = ?"
+      },
+      {
+        "name": "cooldown_until",
+        "sql": "UPDATE helper_repliers SET cooldown_until = ? WHERE id = ?"
+      },
+      {
+        "name": "offerer_last_message_at",
+        "sql": "UPDATE helper_repliers SET offerer_last_message_at = ? WHERE id = ?"
+      },
+      {
+        "name": "last_processed_chatmsgid",
+        "sql": "UPDATE helper_repliers SET last_processed_chatmsgid = ? WHERE id = ?"
+      },
+      {
+        "name": "knowledge",
+        "sql": "UPDATE helper_repliers SET knowledge = ? WHERE id = ?"
+      }
+    ],
+    "b48b319835d0": [
+      {
+        "name": "state",
+        "sql": "UPDATE helper_item_states SET state = ? WHERE id = ?"
+      },
+      {
+        "name": "qty_wanted",
+        "sql": "UPDATE helper_item_states SET qty_wanted = ? WHERE id = ?"
+      },
+      {
+        "name": "qty_allocated",
+        "sql": "UPDATE helper_item_states SET qty_allocated = ? WHERE id = ?"
+      },
+      {
+        "name": "score",
+        "sql": "UPDATE helper_item_states SET score = ? WHERE id = ?"
+      },
+      {
+        "name": "score_breakdown",
+        "sql": "UPDATE helper_item_states SET score_breakdown = ? WHERE id = ?"
+      }
+    ],
+    "3d5506803f0c": [
+      {
+        "name": "Admin_NoPending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid = ? ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Admin_Pending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid = ? AND a.pending = 1 ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Admin_NotPending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid = ? AND a.pending = 0 ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Mod_NoGroupid_NoPending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid IN (?) ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Mod_NoGroupid_Pending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid IN (?) AND a.pending = 1 ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Mod_NoGroupid_NotPending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid IN (?) AND a.pending = 0 ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Mod_WithGroupid_NoPending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid IN (?) AND a.groupid = ? ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Mod_WithGroupid_Pending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid IN (?) AND a.groupid = ? AND a.pending = 1 ORDER BY a.created DESC, a.id DESC"
+      },
+      {
+        "name": "Mod_WithGroupid_NotPending",
+        "sql": "SELECT a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected FROM admins a WHERE a.groupid IN (?) AND a.groupid = ? AND a.pending = 0 ORDER BY a.created DESC, a.id DESC"
+      }
+    ],
+    "f557717fbfce": [
+      {
+        "name": "Mod_Excl_Desc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) AND chat_messages.id != ? ORDER BY date DESC LIMIT 10"
+      },
+      {
+        "name": "Mod_Excl_Desc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) AND chat_messages.id != ? ORDER BY date DESC"
+      },
+      {
+        "name": "Mod_Excl_Asc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) AND chat_messages.id != ? ORDER BY date ASC LIMIT 10"
+      },
+      {
+        "name": "Mod_Excl_Asc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) AND chat_messages.id != ? ORDER BY date ASC"
+      },
+      {
+        "name": "Mod_NoExcl_Desc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) ORDER BY date DESC LIMIT 10"
+      },
+      {
+        "name": "Mod_NoExcl_Desc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) ORDER BY date DESC"
+      },
+      {
+        "name": "Mod_NoExcl_Asc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) ORDER BY date ASC LIMIT 10"
+      },
+      {
+        "name": "Mod_NoExcl_Asc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (reviewrejected = 0 OR userid = ?) ORDER BY date ASC"
+      },
+      {
+        "name": "NonMod_Excl_Desc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) AND chat_messages.id != ? ORDER BY date DESC LIMIT 10"
+      },
+      {
+        "name": "NonMod_Excl_Desc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) AND chat_messages.id != ? ORDER BY date DESC"
+      },
+      {
+        "name": "NonMod_Excl_Asc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) AND chat_messages.id != ? ORDER BY date ASC LIMIT 10"
+      },
+      {
+        "name": "NonMod_Excl_Asc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) AND chat_messages.id != ? ORDER BY date ASC"
+      },
+      {
+        "name": "NonMod_NoExcl_Desc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) ORDER BY date DESC LIMIT 10"
+      },
+      {
+        "name": "NonMod_NoExcl_Desc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) ORDER BY date DESC"
+      },
+      {
+        "name": "NonMod_NoExcl_Asc_Limit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) ORDER BY date ASC LIMIT 10"
+      },
+      {
+        "name": "NonMod_NoExcl_Asc_NoLimit",
+        "sql": "SELECT chat_messages.*, chat_images.archived, chat_images.externaluid AS imageuid, chat_images.externalmods AS imagemods FROM chat_messages LEFT JOIN chat_images ON chat_images.chatmsgid = chat_messages.id INNER JOIN users ON users.id = chat_messages.userid WHERE chatid = ? AND (userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released'))) AND (users.deleted IS NULL OR users.id = ?) ORDER BY date ASC"
+      }
+    ],
+    "67cd5e1cc4ec": [
+      {
+        "name": "Default",
+        "sql": "SELECT COUNT(*) AS reach_rows, COALESCE(MAX(((ST_GeometryType(rr.outer_bound) <> 'POINT' AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))))) OR (ST_GeometryType(rr.outer_bound) = 'POINT' AND EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))))), 0) AS in_reach FROM rippling_reach rr WHERE rr.msgid = ?"
+      }
+    ],
+    "07113a2db28b": [
+      {
+        "name": "Participant_Ctx",
+        "sql": "SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.type, chat_messages.message, chat_messages.date, chat_messages.refmsgid, chat_messages.reportreason FROM chat_messages INNER JOIN users ON users.id = chat_messages.userid WHERE chat_messages.chatid = ? AND (chat_messages.userid = ? OR (chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1)) AND (users.deleted IS NULL OR users.id = ?) AND chat_messages.id < ? ORDER BY chat_messages.id DESC LIMIT ?"
+      },
+      {
+        "name": "Participant_NoCtx",
+        "sql": "SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.type, chat_messages.message, chat_messages.date, chat_messages.refmsgid, chat_messages.reportreason FROM chat_messages INNER JOIN users ON users.id = chat_messages.userid WHERE chat_messages.chatid = ? AND (chat_messages.userid = ? OR (chat_messages.reviewrequired = 0 AND chat_messages.reviewrejected = 0 AND chat_messages.processingsuccessful = 1)) AND (users.deleted IS NULL OR users.id = ?) ORDER BY chat_messages.id DESC LIMIT ?"
+      },
+      {
+        "name": "Mod_Ctx",
+        "sql": "SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.type, chat_messages.message, chat_messages.date, chat_messages.refmsgid, chat_messages.reportreason FROM chat_messages INNER JOIN users ON users.id = chat_messages.userid WHERE chat_messages.chatid = ? AND (chat_messages.reviewrejected = 0 OR chat_messages.userid = ?) AND chat_messages.id < ? ORDER BY chat_messages.id DESC LIMIT ?"
+      },
+      {
+        "name": "Mod_NoCtx",
+        "sql": "SELECT chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.type, chat_messages.message, chat_messages.date, chat_messages.refmsgid, chat_messages.reportreason FROM chat_messages INNER JOIN users ON users.id = chat_messages.userid WHERE chat_messages.chatid = ? AND (chat_messages.reviewrejected = 0 OR chat_messages.userid = ?) ORDER BY chat_messages.id DESC LIMIT ?"
+      }
+    ],
+    "35023816be21": [
+      {
+        "name": "NoSearch",
+        "sql": "SELECT DISTINCT chat_rooms.id FROM chat_rooms INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid WHERE memberships.userid = ? AND memberships.role IN (?, ?) AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0) AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ? AND (chat_rooms.msgvalid + chat_rooms.msginvalid = 0 OR chat_rooms.msgvalid > 0) "
+      },
+      {
+        "name": "WithSearch",
+        "sql": "SELECT DISTINCT chat_rooms.id FROM chat_rooms INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid WHERE memberships.userid = ? AND memberships.role IN (?, ?) AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ? AND (chat_rooms.msgvalid + chat_rooms.msginvalid = 0 OR chat_rooms.msgvalid > 0) "
+      }
+    ],
+    "e99680f74b2e": [
+      {
+        "name": "NoSearch",
+        "sql": "SELECT DISTINCT id FROM (SELECT chat_rooms.id FROM chat_rooms INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid WHERE memberships.userid = ? AND (memberships.role IN (?, ?) OR chat_rooms.user1 = ?) AND (memberships.settings IS NULL OR LOCATE('\"active\"', memberships.settings) = 0 OR LOCATE('\"active\":1', memberships.settings) > 0) AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ?) AS combined"
+      },
+      {
+        "name": "WithSearch",
+        "sql": "SELECT DISTINCT id FROM (SELECT chat_rooms.id FROM chat_rooms INNER JOIN memberships ON chat_rooms.groupid = memberships.groupid LEFT JOIN chat_roster ON chat_roster.userid = ? AND chat_rooms.id = chat_roster.chatid WHERE memberships.userid = ? AND (memberships.role IN (?, ?) OR chat_rooms.user1 = ?) AND chat_rooms.chattype = ? AND (chat_roster.status IS NULL OR chat_roster.status != ?) AND chat_rooms.latestmessage >= ?) AS combined"
+      }
+    ],
+    "f1e9e49a9c89": [
+      {
+        "name": "Group_Ctx_Admin",
+        "sql": "SELECT * FROM users_comments WHERE groupid = ? AND users_comments.id < ? AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "Group_Ctx_Mod",
+        "sql": "SELECT * FROM users_comments WHERE groupid = ? AND users_comments.id < ? AND (groupid IN (?) OR users_comments.byuserid = ?) AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "Group_NoCtx_Admin",
+        "sql": "SELECT * FROM users_comments WHERE groupid = ? AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "Group_NoCtx_Mod",
+        "sql": "SELECT * FROM users_comments WHERE groupid = ? AND (groupid IN (?) OR users_comments.byuserid = ?) AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoGroup_Ctx_Admin",
+        "sql": "SELECT * FROM users_comments WHERE users_comments.id < ? AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoGroup_Ctx_Mod",
+        "sql": "SELECT * FROM users_comments WHERE users_comments.id < ? AND (groupid IN (?) OR users_comments.byuserid = ?) AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoGroup_NoCtx_Admin",
+        "sql": "SELECT * FROM users_comments WHERE 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoGroup_NoCtx_Mod",
+        "sql": "SELECT * FROM users_comments WHERE (groupid IN (?) OR users_comments.byuserid = ?) AND 1=1 ORDER BY users_comments.id DESC LIMIT 10"
+      }
+    ],
+    "e1daa6fea45a": [
+      {
+        "name": "NoDateRange",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent, SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary FROM bounces_emails WHERE reset = 0"
+      },
+      {
+        "name": "WithDateRange",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent, SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary FROM bounces_emails WHERE reset = 0 AND date BETWEEN ? AND ?"
+      }
+    ],
+    "52ecf7eb71ac": [
+      {
+        "name": "Base",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied, SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND has_amp = 1"
+      },
+      {
+        "name": "Type",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied, SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND email_type = ? AND has_amp = 1"
+      },
+      {
+        "name": "Date",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied, SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND sent_at BETWEEN ? AND ? AND has_amp = 1"
+      },
+      {
+        "name": "TypeDate",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied, SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND email_type = ? AND sent_at BETWEEN ? AND ? AND has_amp = 1"
+      }
+    ],
+    "c8a4c6cbcae8": [
+      {
+        "name": "Base",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND has_amp = 0"
+      },
+      {
+        "name": "Type",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND email_type = ? AND has_amp = 0"
+      },
+      {
+        "name": "Date",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND sent_at BETWEEN ? AND ? AND has_amp = 0"
+      },
+      {
+        "name": "TypeDate",
+        "sql": "SELECT COUNT(*) as total, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied FROM email_tracking LEFT JOIN users ON email_tracking.userid = users.id WHERE 1=1 AND users.tnuserid IS NULL AND email_type = ? AND sent_at BETWEEN ? AND ? AND has_amp = 0"
+      }
+    ],
+    "ef321afa5b7a": [
+      {
+        "name": "Base",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 1 AND 1=1 AND u.tnuserid IS NULL"
+      },
+      {
+        "name": "Type",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 1 AND 1=1 AND u.tnuserid IS NULL AND email_type = ?"
+      },
+      {
+        "name": "Date",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 1 AND 1=1 AND u.tnuserid IS NULL AND e.sent_at BETWEEN ? AND ?"
+      },
+      {
+        "name": "TypeDate",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 1 AND 1=1 AND u.tnuserid IS NULL AND email_type = ? AND e.sent_at BETWEEN ? AND ?"
+      }
+    ],
+    "b37a229bfb0b": [
+      {
+        "name": "Base",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 0 AND 1=1 AND u.tnuserid IS NULL"
+      },
+      {
+        "name": "Type",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 0 AND 1=1 AND u.tnuserid IS NULL AND email_type = ?"
+      },
+      {
+        "name": "Date",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 0 AND 1=1 AND u.tnuserid IS NULL AND e.sent_at BETWEEN ? AND ?"
+      },
+      {
+        "name": "TypeDate",
+        "sql": "SELECT COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.has_amp = 0 AND 1=1 AND u.tnuserid IS NULL AND email_type = ? AND e.sent_at BETWEEN ? AND ?"
+      }
+    ],
+    "69f6acdc5a6b": [
+      {
+        "name": "NoType",
+        "sql": "SELECT DATE(sent_at) as date, COUNT(*) as sent, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN has_amp = 1 THEN 1 ELSE 0 END) as amp_sent, SUM(CASE WHEN has_amp = 1 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as amp_opened, SUM(CASE WHEN has_amp = 1 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as amp_clicked, SUM(CASE WHEN has_amp = 1 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as amp_linked_bounces, SUM(CASE WHEN has_amp = 1 AND replied_at IS NOT NULL THEN 1 ELSE 0 END) as amp_replied, SUM(CASE WHEN has_amp = 0 THEN 1 ELSE 0 END) as non_amp_sent, SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened, SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked, SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces FROM email_tracking FORCE INDEX (sent_at) LEFT JOIN users ON email_tracking.userid = users.id WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ? GROUP BY DATE(sent_at) ORDER BY date ASC"
+      },
+      {
+        "name": "WithType",
+        "sql": "SELECT DATE(sent_at) as date, COUNT(*) as sent, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, SUM(CASE WHEN has_amp = 1 THEN 1 ELSE 0 END) as amp_sent, SUM(CASE WHEN has_amp = 1 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as amp_opened, SUM(CASE WHEN has_amp = 1 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as amp_clicked, SUM(CASE WHEN has_amp = 1 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as amp_linked_bounces, SUM(CASE WHEN has_amp = 1 AND replied_at IS NOT NULL THEN 1 ELSE 0 END) as amp_replied, SUM(CASE WHEN has_amp = 0 THEN 1 ELSE 0 END) as non_amp_sent, SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened, SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked, SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces FROM email_tracking FORCE INDEX (sent_at) LEFT JOIN users ON email_tracking.userid = users.id WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ? AND email_type = ? GROUP BY DATE(sent_at) ORDER BY date ASC"
+      }
+    ],
+    "9d115fb3ebcd": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT DATE(date) as date, COUNT(*) as total_bounces, SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent_bounces, SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary_bounces FROM bounces_emails WHERE reset = 0 AND date BETWEEN ? AND ? GROUP BY DATE(date)"
+      }
+    ],
+    "ecbedcafc048": [
+      {
+        "name": "NoDateRange",
+        "sql": "SELECT email_type, COUNT(*) as total_sent, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces FROM email_tracking FORCE INDEX (sent_at) LEFT JOIN users ON email_tracking.userid = users.id WHERE users.tnuserid IS NULL GROUP BY email_type ORDER BY total_sent DESC"
+      },
+      {
+        "name": "WithDateRange",
+        "sql": "SELECT email_type, COUNT(*) as total_sent, SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces FROM email_tracking FORCE INDEX (sent_at) LEFT JOIN users ON email_tracking.userid = users.id WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ? GROUP BY email_type ORDER BY total_sent DESC"
+      }
+    ],
+    "f6e4a52a0fb6": [
+      {
+        "name": "NoDateRange",
+        "sql": "SELECT c.link_url, COUNT(*) as click_count FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id WHERE 1=1 GROUP BY c.link_url ORDER BY click_count DESC"
+      },
+      {
+        "name": "WithDateRange",
+        "sql": "SELECT c.link_url, COUNT(*) as click_count FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id WHERE 1=1 AND c.clicked_at BETWEEN ? AND ? GROUP BY c.link_url ORDER BY click_count DESC"
+      }
+    ],
+    "284dfbc44866": [
+      {
+        "name": "DefaultType",
+        "sql": "SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt FROM email_tracking e FORCE INDEX (sent_at) LEFT JOIN users u ON e.userid = u.id WHERE e.email_type LIKE 'UnifiedDigest%' AND u.tnuserid IS NULL AND e.metadata IS NOT NULL AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0 AND e.sent_at BETWEEN ? AND ? GROUP BY num_posts"
+      },
+      {
+        "name": "ExplicitType",
+        "sql": "SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt FROM email_tracking e FORCE INDEX (sent_at) LEFT JOIN users u ON e.userid = u.id WHERE e.email_type = ? AND u.tnuserid IS NULL AND e.metadata IS NOT NULL AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0 AND e.sent_at BETWEEN ? AND ? GROUP BY num_posts"
+      }
+    ],
+    "dce69264c9c0": [
+      {
+        "name": "DefaultType",
+        "sql": "SELECT c.link_position AS link_position, COUNT(DISTINCT c.email_tracking_id) AS emails_clicked, COUNT(*) AS clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.email_type LIKE 'UnifiedDigest%' AND u.tnuserid IS NULL AND e.metadata IS NOT NULL AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0 AND e.sent_at BETWEEN ? AND ? AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$' GROUP BY c.link_position"
+      },
+      {
+        "name": "ExplicitType",
+        "sql": "SELECT c.link_position AS link_position, COUNT(DISTINCT c.email_tracking_id) AS emails_clicked, COUNT(*) AS clicks FROM email_tracking_clicks c JOIN email_tracking e ON c.email_tracking_id = e.id LEFT JOIN users u ON e.userid = u.id WHERE e.email_type = ? AND u.tnuserid IS NULL AND e.metadata IS NOT NULL AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0 AND e.sent_at BETWEEN ? AND ? AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$' GROUP BY c.link_position"
+      }
+    ],
+    "15d5998c44f2": [
+      {
+        "name": "NoExtra",
+        "sql": "SELECT me.msgid, m.fromuser, me.subject_embedding, me.body_embedding, ms.groupid, ms.msgtype, ST_Y(ms.point) as lat, ST_X(ms.point) as lng, m.subject, ms.arrival FROM messages_embeddings me INNER JOIN messages_spatial ms ON ms.msgid = me.msgid INNER JOIN messages m ON m.id = me.msgid WHERE ms.successful = 0 AND ms.promised = 0"
+      },
+      {
+        "name": "WithMsgidIn",
+        "sql": "SELECT me.msgid, m.fromuser, me.subject_embedding, me.body_embedding, ms.groupid, ms.msgtype, ST_Y(ms.point) as lat, ST_X(ms.point) as lng, m.subject, ms.arrival FROM messages_embeddings me INNER JOIN messages_spatial ms ON ms.msgid = me.msgid INNER JOIN messages m ON m.id = me.msgid WHERE ms.successful = 0 AND ms.promised = 0 AND me.msgid IN (?)"
+      }
+    ],
+    "6f9c3996f035": [
+      {
+        "name": "Message",
+        "sql": "SELECT `msgid` FROM `messages_attachments` WHERE id = ?"
+      },
+      {
+        "name": "Group",
+        "sql": "SELECT `groupid` FROM `groups_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "SELECT `articleid` FROM `newsletters_images` WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "SELECT `eventid` FROM `communityevents_images` WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "SELECT `opportunityid` FROM `volunteering_images` WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "SELECT `chatmsgid` FROM `chat_images` WHERE id = ?"
+      },
+      {
+        "name": "User",
+        "sql": "SELECT `userid` FROM `users_images` WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "SELECT `newsfeedid` FROM `newsfeed_images` WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "SELECT `storyid` FROM `users_stories_images` WHERE id = ?"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "SELECT `noticeboardid` FROM `noticeboards_images` WHERE id = ?"
+      }
+    ],
+    "2ad46344c8b2": [
+      {
+        "name": "Message",
+        "sql": "UPDATE `messages_attachments` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "Group",
+        "sql": "UPDATE `groups_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "UPDATE `newsletters_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "UPDATE `communityevents_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "UPDATE `volunteering_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "UPDATE `chat_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "User",
+        "sql": "UPDATE `users_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "UPDATE `newsfeed_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "Story",
+        "sql": "UPDATE `users_stories_images` SET externalmods = ? WHERE id = ?"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "UPDATE `noticeboards_images` SET externalmods = ? WHERE id = ?"
+      }
+    ],
+    "b262bf75df3c": [
+      {
+        "name": "PostcodeOnly",
+        "sql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? AND l1.type = 'Postcode' AND l1.name LIKE '% %' LIMIT ?"
+      },
+      {
+        "name": "AnyType",
+        "sql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? AND l1.name LIKE '% %' LIMIT ?"
+      }
+    ],
+    "71f1772f4a99": [
+      {
+        "name": "PostcodeOnly",
+        "sql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? AND l1.type = 'Postcode' AND l1.name LIKE '% %' LIMIT ?"
+      },
+      {
+        "name": "AnyType",
+        "sql": "SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.name LIKE ? AND l1.name LIKE '% %' LIMIT ?"
+      }
+    ],
+    "2c3b155f346b": [
+      {
+        "name": "NoContext",
+        "sql": "SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, b.date AS added, b.date AS bandate, b.byuser AS bannedby, u.fullname, u.firstname, u.lastname, u.engagement, b.userid AS id, NULL AS heldby, NULL AS settings, 0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason FROM users_banned b JOIN users u ON u.id = b.userid WHERE b.groupid = ? ORDER BY b.userid DESC LIMIT ?"
+      },
+      {
+        "name": "WithContext",
+        "sql": "SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, b.date AS added, b.date AS bandate, b.byuser AS bannedby, u.fullname, u.firstname, u.lastname, u.engagement, b.userid AS id, NULL AS heldby, NULL AS settings, 0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason FROM users_banned b JOIN users u ON u.id = b.userid WHERE b.groupid = ? AND b.userid < ? ORDER BY b.userid DESC LIMIT ?"
+      }
+    ],
+    "836dc8807739": [
+      {
+        "name": "OneGroup_NoFilter",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Notes",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_ModTeam",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND m.role IN ('Owner', 'Moderator') AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Bouncing",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND u.bouncing = 1 AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_NoFilter",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Notes",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_ModTeam",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.role IN ('Owner', 'Moderator') AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Bouncing",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND u.bouncing = 1 AND m.userid = ? ORDER BY m.added DESC LIMIT ?"
+      }
+    ],
+    "5f742c0fcf1f": [
+      {
+        "name": "OneGroup_NoFilter",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid = ? AND m.collection = ? AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Notes",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid = ? AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_ModTeam",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid = ? AND m.collection = ? AND m.role IN ('Owner', 'Moderator') AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Bouncing",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid = ? AND m.collection = ? AND u.bouncing = 1 AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_NoFilter",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Notes",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_ModTeam",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.role IN ('Owner', 'Moderator') AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Bouncing",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid LEFT JOIN users_emails ue ON ue.userid = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND u.bouncing = 1 AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?) GROUP BY m.id ORDER BY m.added DESC LIMIT ?"
+      }
+    ],
+    "bbc55cf96110": [
+      {
+        "name": "OneGroup_NoFilter_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_NoFilter_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Notes_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Notes_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_ModTeam_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND m.role IN ('Owner', 'Moderator') ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_ModTeam_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND m.role IN ('Owner', 'Moderator') AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Bouncing_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND u.bouncing = 1 ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "OneGroup_Bouncing_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid = ? AND m.collection = ? AND u.bouncing = 1 AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_NoFilter_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_NoFilter_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Notes_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Notes_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid) AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_ModTeam_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.role IN ('Owner', 'Moderator') ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_ModTeam_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.role IN ('Owner', 'Moderator') AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Bouncing_NoCtx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND u.bouncing = 1 ORDER BY m.id DESC LIMIT ?"
+      },
+      {
+        "name": "AllGroups_Bouncing_Ctx",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND u.bouncing = 1 AND m.id < ? ORDER BY m.id DESC LIMIT ?"
+      }
+    ],
+    "5f6ca1b9022f": [
+      {
+        "name": "OneGroup_NoFilter",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid = ? AND m.collection = ?"
+      },
+      {
+        "name": "OneGroup_Notes",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid = ? AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
+      },
+      {
+        "name": "OneGroup_ModTeam",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid = ? AND m.collection = ? AND m.role IN ('Owner', 'Moderator')"
+      },
+      {
+        "name": "OneGroup_Bouncing",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid = ? AND m.collection = ? AND u.bouncing = 1"
+      },
+      {
+        "name": "AllGroups_NoFilter",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ?"
+      },
+      {
+        "name": "AllGroups_Notes",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
+      },
+      {
+        "name": "AllGroups_ModTeam",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND m.role IN ('Owner', 'Moderator')"
+      },
+      {
+        "name": "AllGroups_Bouncing",
+        "sql": "SELECT COUNT(DISTINCT m.userid) FROM memberships m JOIN users u ON u.id = m.userid WHERE m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('Moderator', 'Owner') AND collection = 'Approved') AND m.collection = ? AND u.bouncing = 1"
+      }
+    ],
+    "fdd14a1656c7": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, u.fullname, u.firstname, u.lastname, m.settings, m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, b.date AS bandate, b.byuser AS bannedby, m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing FROM memberships m JOIN users u ON u.id = m.userid LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) ORDER BY m.userid DESC LIMIT ?"
+      }
+    ],
+    "3119115f3abe": [
+      {
+        "name": "NoFilter",
+        "sql": "SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, m.fromuser, mg.groupid, m.subject FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (?) AND mg.rippled_in = 0 INNER JOIN messages m ON m.id = mo.msgid WHERE mo.timestamp > ? AND mo.comments IS NOT NULL AND mo.comments NOT IN (?) AND mg.arrival > ? ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?"
+      },
+      {
+        "name": "Happy",
+        "sql": "SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, m.fromuser, mg.groupid, m.subject FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (?) AND mg.rippled_in = 0 INNER JOIN messages m ON m.id = mo.msgid WHERE mo.timestamp > ? AND mo.comments IS NOT NULL AND mo.comments NOT IN (?) AND mo.happiness = 'Happy' AND mg.arrival > ? ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?"
+      },
+      {
+        "name": "Unhappy",
+        "sql": "SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, m.fromuser, mg.groupid, m.subject FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (?) AND mg.rippled_in = 0 INNER JOIN messages m ON m.id = mo.msgid WHERE mo.timestamp > ? AND mo.comments IS NOT NULL AND mo.comments NOT IN (?) AND mo.happiness = 'Unhappy' AND mg.arrival > ? ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?"
+      },
+      {
+        "name": "Fine",
+        "sql": "SELECT mo.id, mo.timestamp, mo.msgid, mo.outcome, mo.happiness, mo.comments, mo.reviewed, m.fromuser, mg.groupid, m.subject FROM messages_outcomes mo INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.groupid IN (?) AND mg.rippled_in = 0 INNER JOIN messages m ON m.id = mo.msgid WHERE mo.timestamp > ? AND mo.comments IS NOT NULL AND mo.comments NOT IN (?) AND (mo.happiness IS NULL OR mo.happiness = 'Fine') AND mg.arrival > ? ORDER BY mo.reviewed ASC, mo.timestamp DESC, mo.id DESC LIMIT ?"
+      }
+    ],
+    "1a000d04649b": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, ratings.text, ratings.visible, ratings.timestamp, ratings.reviewrequired, m1.groupid, CASE WHEN u1.fullname IS NOT NULL THEN u1.fullname ELSE CONCAT(u1.firstname, ' ', u1.lastname) END AS raterdisplayname, CASE WHEN u2.fullname IS NOT NULL THEN u2.fullname ELSE CONCAT(u2.firstname, ' ', u2.lastname) END AS rateedisplayname FROM ratings INNER JOIN memberships m1 ON m1.userid = ratings.rater INNER JOIN memberships m2 ON m2.userid = ratings.ratee INNER JOIN users u1 ON ratings.rater = u1.id INNER JOIN users u2 ON ratings.ratee = u2.id WHERE ratings.timestamp >= ? AND m1.groupid IN (?) AND m2.groupid IN (?) AND m1.groupid = m2.groupid AND ratings.rating IS NOT NULL GROUP BY ratings.id ORDER BY ratings.timestamp DESC"
+      }
+    ],
+    "bc6d923b540d": [
+      {
+        "name": "SpecificGroup",
+        "sql": "SELECT * FROM (SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival, m.arrival AS posted, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages_spatial INNER JOIN messages m ON m.id = messages_spatial.msgid LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? WHERE 1=1 AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid = 5 AND mg.collection = 'Approved' AND mg.deleted = 0)  UNION SELECT lat, lng, messages.id, ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, ANY_VALUE(messages_groups.groupid) AS groupid, messages.type, MAX(messages_groups.arrival) AS arrival, messages.arrival AS posted, ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id LEFT JOIN messages_promises ON messages_promises.msgid = messages.id LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? WHERE fromuser = ? AND messages_groups.arrival >= ? AND messages_outcomes.id IS NULL GROUP BY messages.id) t ORDER BY unseen DESC, arrival DESC, id DESC"
+      },
+      {
+        "name": "CombinedBrowse",
+        "sql": "SELECT * FROM (SELECT ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, messages_spatial.msgtype AS type, messages_spatial.arrival, m.arrival AS posted, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages_spatial INNER JOIN messages m ON m.id = messages_spatial.msgid LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? WHERE 1=1 AND EXISTS (SELECT 1 FROM messages_groups mg INNER JOIN memberships mem ON mem.groupid = mg.groupid WHERE mg.msgid = messages_spatial.msgid AND mem.userid = ? AND mg.collection = 'Approved' AND mg.deleted = 0)  UNION SELECT lat, lng, messages.id, ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, ANY_VALUE(messages_groups.groupid) AS groupid, messages.type, MAX(messages_groups.arrival) AS arrival, messages.arrival AS posted, ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id LEFT JOIN messages_promises ON messages_promises.msgid = messages.id LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? WHERE fromuser = ? AND messages_groups.arrival >= ? AND messages_outcomes.id IS NULL GROUP BY messages.id) t ORDER BY unseen DESC, arrival DESC, id DESC"
+      }
+    ],
+    "08bb471351a0": [
+      {
+        "name": "NonMod",
+        "sql": "SELECT messages.id, messages.arrival, messages.date, messages.fromuser, messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages LEFT JOIN users ON users.id = messages.fromuser LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? WHERE messages.id = ? AND messages.deleted IS NULL AND users.deleted IS NULL"
+      },
+      {
+        "name": "Mod",
+        "sql": "SELECT messages.id, messages.arrival, messages.date, messages.fromuser, messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, messages.message, CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages LEFT JOIN users ON users.id = messages.fromuser LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? WHERE messages.id = ? AND messages.deleted IS NULL"
+      }
+    ],
+    "2de07c2af78b": [
+      {
+        "name": "Inactive",
+        "sql": "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, messages_spatial.id AS spatialid, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, 0 AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = messages.fromuser LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND messages_groups.rippled_in = 0 AND messages.type IN (?, ?) ORDER BY unseen DESC, messages_groups.arrival DESC"
+      },
+      {
+        "name": "Active",
+        "sql": "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, messages_spatial.id AS spatialid, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, 0 AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = messages.fromuser LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND messages_groups.rippled_in = 0 AND messages.type IN (?, ?) HAVING ((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages_groups.collection IN ('Pending', 'Rejected')) ORDER BY unseen DESC, messages_groups.arrival DESC"
+      }
+    ],
+    "bca1186d1ea4": [
+      {
+        "name": "Inactive",
+        "sql": "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, messages_spatial.id AS spatialid, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = messages.fromuser LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND messages_groups.rippled_in = 0 AND messages.type IN (?, ?) ORDER BY unseen DESC, messages_groups.arrival DESC"
+      },
+      {
+        "name": "Active",
+        "sql": "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, messages_spatial.id AS spatialid, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN users ON users.id = messages.fromuser INNER JOIN messages_spatial ON messages_spatial.msgid = messages.id WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND messages_groups.rippled_in = 0 AND messages.type IN (?, ?) HAVING hasoutcome = 0 ORDER BY unseen DESC, messages_groups.arrival DESC"
+      }
+    ],
+    "bfe25b4914e8": [
+      {
+        "name": "NoFromuser_NoCtx",
+        "sql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+      },
+      {
+        "name": "Fromuser_NoCtx",
+        "sql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.fromuser = ? ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+      },
+      {
+        "name": "NoFromuser_Ctx",
+        "sql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?)) ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+      },
+      {
+        "name": "Fromuser_Ctx",
+        "sql": "SELECT DISTINCT mg.msgid FROM messages_groups mg INNER JOIN messages m ON m.id = mg.msgid WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.fromuser = ? AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?)) ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+      }
+    ],
+    "ff9be67577e8": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT rr.msgid FROM rippling_reach rr WHERE rr.msgid IN (?) AND NOT ((ST_GeometryType(rr.outer_bound) <> 'POINT' AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))))) OR (ST_GeometryType(rr.outer_bound) = 'POINT' AND EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))))"
+      }
+    ],
+    "80c36f2da91e": [
+      {
+        "name": "SpecificGroup",
+        "sql": "SELECT COUNT(*) FROM memberships INNER JOIN `groups` ON memberships.groupid = `groups`.id WHERE memberships.userid = ? AND memberships.groupid = ? AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)"
+      },
+      {
+        "name": "AllGroups",
+        "sql": "SELECT COUNT(*) FROM memberships INNER JOIN `groups` ON memberships.groupid = `groups`.id WHERE memberships.userid = ? AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)"
+      }
+    ],
+    "309561e40e15": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT messages_groups.msgid FROM messages_groups INNER JOIN messages ON messages.id = messages_groups.msgid INNER JOIN `groups` ON groups.id = messages_groups.groupid LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ? WHERE messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) AND collection = ? AND autoreposts = 0 ORDER BY messages_groups.arrival ASC LIMIT 1"
+      }
+    ],
+    "bde82a974f05": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT messages_spatial.msgid, (SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount, (SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount FROM messages_spatial INNER JOIN messages_groups ON messages_spatial.msgid = messages_groups.msgid INNER JOIN messages ON messages.id = messages_spatial.msgid INNER JOIN `groups` ON groups.id = messages_groups.groupid LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ? LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid WHERE messages_groups.groupid IN (?) AND DATE(messages.arrival) = CURDATE() AND fromuser != ? AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) AND collection = ? AND autoreposts = 0 HAVING approvalcount < ? AND reviewcount < ? ORDER BY messages_groups.arrival ASC LIMIT 1"
+      }
+    ],
+    "ff5193d35cf8": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT messages_attachments.id, (SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount FROM messages_groups INNER JOIN messages_attachments ON messages_attachments.msgid = messages_groups.msgid LEFT JOIN microactions ON microactions.rotatedimage = messages_attachments.id AND userid = ? INNER JOIN `groups` ON groups.id = messages_groups.groupid AND microvolunteering = 1 AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.photorotate') = 1) WHERE arrival >= ? AND groupid IN (?) AND microactions.id IS NULL HAVING reviewcount < ? ORDER BY RAND() LIMIT 9"
+      }
+    ],
+    "3762cb36efcf": [
+      {
+        "name": "NoContext",
+        "sql": "SELECT DISTINCT microactions.* FROM microactions INNER JOIN memberships ON memberships.userid = microactions.userid WHERE memberships.groupid IN (?) AND microactions.timestamp >= ? ORDER BY microactions.id DESC LIMIT ?"
+      },
+      {
+        "name": "WithContext",
+        "sql": "SELECT DISTINCT microactions.* FROM microactions INNER JOIN memberships ON memberships.userid = microactions.userid WHERE memberships.groupid IN (?) AND microactions.timestamp >= ? AND microactions.id < ? ORDER BY microactions.id DESC LIMIT ?"
+      }
+    ],
+    "d80ab5badcb6": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT id FROM newsfeed WHERE id IN (?) AND type != ? AND `timestamp` >= ? AND userid != ?"
+      }
+    ],
+    "f382f9bfe80b": [
+      {
+        "name": "All",
+        "sql": "SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled FROM (SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') ORDER BY RAND() LIMIT ?) samp JOIN messages m ON m.id = samp.msgid JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? JOIN users u ON u.id = cm.userid JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL ORDER BY samp.msgid"
+      },
+      {
+        "name": "Rural",
+        "sql": "SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled FROM (SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers < 1700 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') ORDER BY RAND() LIMIT ?) samp JOIN messages m ON m.id = samp.msgid JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? JOIN users u ON u.id = cm.userid JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL ORDER BY samp.msgid"
+      },
+      {
+        "name": "Suburban",
+        "sql": "SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled FROM (SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 1700 AND rr.total_freeglers < 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') ORDER BY RAND() LIMIT ?) samp JOIN messages m ON m.id = samp.msgid JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? JOIN users u ON u.id = cm.userid JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL ORDER BY samp.msgid"
+      },
+      {
+        "name": "Dense",
+        "sql": "SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival WHERE og.msgid = samp.msgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled FROM (SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') ORDER BY RAND() LIMIT ?) samp JOIN messages m ON m.id = samp.msgid JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? JOIN users u ON u.id = cm.userid JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL ORDER BY samp.msgid"
+      }
+    ],
+    "2def63211a50": [
+      {
+        "name": "All",
+        "sql": "SELECT COUNT(*) AS posts, SUM(replied_36h) AS replied36h, SUM(nreplies > 0) AS replied_ever, SUM(taken) AS taken, SUM(nreplies) AS total_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied_36h, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      },
+      {
+        "name": "Rural",
+        "sql": "SELECT COUNT(*) AS posts, SUM(replied_36h) AS replied36h, SUM(nreplies > 0) AS replied_ever, SUM(taken) AS taken, SUM(nreplies) AS total_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied_36h, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers < 1700 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      },
+      {
+        "name": "Suburban",
+        "sql": "SELECT COUNT(*) AS posts, SUM(replied_36h) AS replied36h, SUM(nreplies > 0) AS replied_ever, SUM(taken) AS taken, SUM(nreplies) AS total_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied_36h, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 1700 AND rr.total_freeglers < 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      },
+      {
+        "name": "Dense",
+        "sql": "SELECT COUNT(*) AS posts, SUM(replied_36h) AS replied36h, SUM(nreplies > 0) AS replied_ever, SUM(taken) AS taken, SUM(nreplies) AS total_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied_36h, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      }
+    ],
+    "62cea0b491c9": [
+      {
+        "name": "All",
+        "sql": "SELECT COUNT(*) FROM rippling_held_replies hr JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0 JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer' WHERE hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"
+      },
+      {
+        "name": "Rural",
+        "sql": "SELECT COUNT(*) FROM rippling_held_replies hr JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0 AND rr.total_freeglers < 1700 JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer' WHERE hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"
+      },
+      {
+        "name": "Suburban",
+        "sql": "SELECT COUNT(*) FROM rippling_held_replies hr JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0 AND rr.total_freeglers >= 1700 AND rr.total_freeglers < 3800 JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer' WHERE hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"
+      },
+      {
+        "name": "Dense",
+        "sql": "SELECT COUNT(*) FROM rippling_held_replies hr JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0 AND rr.total_freeglers >= 3800 JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer' WHERE hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"
+      }
+    ],
+    "1dee90c3c378": [
+      {
+        "name": "All",
+        "sql": "SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day, COUNT(*) AS posts, 100 * SUM(replied) / COUNT(*) AS replied_pct, 100 * SUM(taken) / COUNT(*) AS taken_pct, SUM(nreplies) / COUNT(*) AS mean_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.created_at AS created, rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' AND cm.date <= rr.created_at + INTERVAL 36 HOUR) AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid AND mb.timestamp <= rr.created_at + INTERVAL 14 DAY) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d GROUP BY day ORDER BY day"
+      },
+      {
+        "name": "Rural",
+        "sql": "SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day, COUNT(*) AS posts, 100 * SUM(replied) / COUNT(*) AS replied_pct, 100 * SUM(taken) / COUNT(*) AS taken_pct, SUM(nreplies) / COUNT(*) AS mean_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.created_at AS created, rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' AND cm.date <= rr.created_at + INTERVAL 36 HOUR) AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid AND mb.timestamp <= rr.created_at + INTERVAL 14 DAY) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers < 1700 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d GROUP BY day ORDER BY day"
+      },
+      {
+        "name": "Suburban",
+        "sql": "SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day, COUNT(*) AS posts, 100 * SUM(replied) / COUNT(*) AS replied_pct, 100 * SUM(taken) / COUNT(*) AS taken_pct, SUM(nreplies) / COUNT(*) AS mean_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.created_at AS created, rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' AND cm.date <= rr.created_at + INTERVAL 36 HOUR) AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid AND mb.timestamp <= rr.created_at + INTERVAL 14 DAY) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 1700 AND rr.total_freeglers < 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d GROUP BY day ORDER BY day"
+      },
+      {
+        "name": "Dense",
+        "sql": "SELECT DATE_FORMAT(created, '%Y-%m-%d') AS day, COUNT(*) AS posts, 100 * SUM(replied) / COUNT(*) AS replied_pct, 100 * SUM(taken) / COUNT(*) AS taken_pct, SUM(nreplies) / COUNT(*) AS mean_replies, AVG(freeglers) AS mean_freeglers FROM ( SELECT rr.created_at AS created, rr.total_freeglers AS freeglers, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' AND cm.date <= rr.created_at + INTERVAL 36 HOUR) AS nreplies, EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' AND c2.date <= rr.created_at + INTERVAL 36 HOUR) AS replied, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid AND mb.timestamp <= rr.created_at + INTERVAL 14 DAY) AS taken FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d GROUP BY day ORDER BY day"
+      }
+    ],
+    "0608bbe6423f": [
+      {
+        "name": "All",
+        "sql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0 JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      },
+      {
+        "name": "Rural",
+        "sql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0 AND rr.total_freeglers < 1700 JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      },
+      {
+        "name": "Suburban",
+        "sql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0 AND rr.total_freeglers >= 1700 AND rr.total_freeglers < 3800 JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      },
+      {
+        "name": "Dense",
+        "sql": "SELECT COUNT(*) AS replies, SUM(rippled) AS rippled_replies, SUM(is_taker) AS takers, SUM(rippled AND is_taker) AS rippled_takers, SUM(client_rippled) AS client_rippled FROM ( SELECT (NOT EXISTS(SELECT 1 FROM messages_groups og INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = cm.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE og.msgid = cm.refmsgid AND og.rippled_in = 0 AND og.deleted = 0)) AS rippled, EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = cm.refmsgid AND mb.userid = cm.userid) AS is_taker, EXISTS(SELECT 1 FROM rippling_reply_attribution rra WHERE rra.msgid = cm.refmsgid AND rra.userid = cm.userid AND rra.attribution IN ('ripple_notified','ripple_group','ripple_join','ripple_reach')) AS client_rippled FROM chat_messages cm JOIN rippling_reach rr ON rr.msgid = cm.refmsgid AND rr.total_freeglers > 0 AND rr.total_freeglers >= 3800 JOIN messages m ON m.id = cm.refmsgid AND m.type = 'Offer' WHERE cm.type = 'Interested' AND cm.date >= ? AND cm.date < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = cm.refmsgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) ) d"
+      }
+    ],
+    "1f03ad9be65b": [
+      {
+        "name": "All",
+        "sql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x"
+      },
+      {
+        "name": "Rural",
+        "sql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers < 1700 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x"
+      },
+      {
+        "name": "Suburban",
+        "sql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 1700 AND rr.total_freeglers < 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x"
+      },
+      {
+        "name": "Dense",
+        "sql": "SELECT COUNT(*) FROM ( SELECT rr.msgid FROM rippling_reach rr JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0 AND rr.total_freeglers >= 3800 AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0) AND EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested') AND NOT EXISTS( SELECT 1 FROM chat_messages ch INNER JOIN messages_groups og ON og.msgid = ch.refmsgid AND og.rippled_in = 0 AND og.deleted = 0 INNER JOIN memberships mem ON mem.groupid = og.groupid AND mem.userid = ch.userid AND mem.collection = 'Approved' AND mem.added < og.arrival AND mem.rippled = 0 WHERE ch.refmsgid = rr.msgid AND ch.type = 'Interested') ) x"
+      }
+    ],
+    "10ee37c98574": [
+      {
+        "name": "NoGroup",
+        "sql": "SELECT COALESCE(rra.client_source, '(not reported)') AS source, COUNT(*) AS count FROM rippling_reply_attribution rra WHERE rra.replied_at >= ? AND rra.replied_at < ? GROUP BY source ORDER BY count DESC"
+      },
+      {
+        "name": "WithGroup",
+        "sql": "SELECT COALESCE(rra.client_source, '(not reported)') AS source, COUNT(*) AS count FROM rippling_reply_attribution rra JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0 WHERE rra.replied_at >= ? AND rra.replied_at < ? GROUP BY source ORDER BY count DESC"
+      }
+    ],
+    "f43d5f680ef9": [
+      {
+        "name": "NotHeld",
+        "sql": "SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND cmh.userid IS NULL AND ((cr.chattype = ? AND cr.groupid IN ?) OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships m INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m.groupid IN ?)) OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships m INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) AND EXISTS (SELECT 1 FROM memberships m INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? WHERE m.userid = cm.userid AND m.groupid IN ?)))"
+      },
+      {
+        "name": "Held",
+        "sql": "SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND cmh.userid IS NOT NULL AND ((cr.chattype = ? AND cr.groupid IN ?) OR (cr.chattype = ? AND EXISTS (SELECT 1 FROM memberships m INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m.groupid IN ?)) OR (cr.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships m INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? WHERE m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)) AND EXISTS (SELECT 1 FROM memberships m INNER JOIN `groups` g ON m.groupid = g.id AND g.type = ? WHERE m.userid = cm.userid AND m.groupid IN ?)))"
+      }
+    ],
+    "3f3696f3bba4": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id INNER JOIN memberships m ON m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) INNER JOIN `groups` g ON m.groupid = g.id AND g.type = 'Freegle' WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND cmh.id IS NULL AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND (cm.reportreason IS NULL OR cm.reportreason != 'User') AND NOT EXISTS (SELECT 1 FROM memberships m2 WHERE m2.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m2.groupid IN (?))"
+      }
+    ],
+    "76555fe088e5": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id INNER JOIN memberships m ON m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) INNER JOIN `groups` g ON m.groupid = g.id AND g.type = 'Freegle' WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND cmh.id IS NULL AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND (cm.reportreason IS NULL OR cm.reportreason != 'User')"
+      }
+    ],
+    "d64650fb9560": [
+      {
+        "name": "NoColl_NoCtx_NoUid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_NoCtx_NoUid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_NoCtx_Uid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.userid = ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_NoCtx_Uid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.userid = ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_Ctx_NoUid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.id < ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_Ctx_NoUid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.id < ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_Ctx_Uid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.id < ? AND spam_users.userid = ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "NoColl_Ctx_Uid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.id < ? AND spam_users.userid = ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_NoCtx_NoUid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.collection = ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_NoCtx_NoUid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.collection = ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_NoCtx_Uid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.collection = ? AND spam_users.userid = ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_NoCtx_Uid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.collection = ? AND spam_users.userid = ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_Ctx_NoUid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.collection = ? AND spam_users.id < ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_Ctx_NoUid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.collection = ? AND spam_users.id < ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_Ctx_Uid_NoSearch",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id WHERE 1=1 AND spam_users.collection = ? AND spam_users.id < ? AND spam_users.userid = ? ORDER BY spam_users.id DESC LIMIT 10"
+      },
+      {
+        "name": "Coll_Ctx_Uid_Search",
+        "sql": "SELECT DISTINCT spam_users.* FROM spam_users INNER JOIN users ON spam_users.userid = users.id LEFT JOIN users_emails ON users_emails.userid = spam_users.userid WHERE 1=1 AND spam_users.collection = ? AND spam_users.id < ? AND spam_users.userid = ? AND (users_emails.email LIKE ? OR users.fullname LIKE ?) ORDER BY spam_users.id DESC LIMIT 10"
+      }
+    ],
+    "0ca4810292dc": [
+      {
+        "name": "Authority",
+        "sql": "SELECT DISTINCT users_stories.id FROM users_stories INNER JOIN users ON users.id = users_stories.userid LEFT JOIN locations ON locations.id = users.lastlocation WHERE reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL AND locations.lat IS NOT NULL AND ST_Contains((SELECT polygon FROM authorities WHERE id = ?), ST_SRID(POINT(locations.lng, locations.lat), ?)) ORDER BY date DESC LIMIT ?"
+      },
+      {
+        "name": "Review_NoNewsletterFilter",
+        "sql": "SELECT DISTINCT users_stories.id FROM users_stories INNER JOIN users ON users.id = users_stories.userid INNER JOIN memberships ON memberships.userid = users_stories.userid WHERE reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ? ORDER BY date DESC LIMIT ?"
+      },
+      {
+        "name": "Review_NewsletterFilter",
+        "sql": "SELECT DISTINCT users_stories.id FROM users_stories INNER JOIN users ON users.id = users_stories.userid INNER JOIN memberships ON memberships.userid = users_stories.userid WHERE reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ? AND newsletterreviewed = ? ORDER BY date DESC LIMIT ?"
+      },
+      {
+        "name": "Plain_NoNewsletterFilter",
+        "sql": "SELECT users_stories.id FROM users_stories INNER JOIN users ON users.id = users_stories.userid WHERE reviewed = ? AND public = ? AND userid IS NOT NULL AND users.deleted IS NULL ORDER BY date DESC LIMIT ?"
+      },
+      {
+        "name": "Plain_NewsletterFilter",
+        "sql": "SELECT users_stories.id FROM users_stories INNER JOIN users ON users.id = users_stories.userid WHERE reviewed = ? AND public = ? AND userid IS NOT NULL AND users.deleted IS NULL AND newsletterreviewed = ? ORDER BY date DESC LIMIT ?"
+      }
+    ],
+    "4853849663f1": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1"
+      }
+    ],
+    "e04bf70e7bee": [
+      {
+        "name": "Fixed",
+        "sql": "SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1"
+      }
+    ],
+    "e0558c2c039d": [
+      {
+        "name": "NoSettings",
+        "sql": "SELECT users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, chatmodstatus, newsfeedmodstatus, tnuserid, ljuserid, CASE WHEN systemrole IN (?, ?, ?) AND JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod FROM users WHERE users.id = ?"
+      },
+      {
+        "name": "WithSettings",
+        "sql": "SELECT users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, chatmodstatus, newsfeedmodstatus, tnuserid, ljuserid, settings, CASE WHEN systemrole IN (?, ?, ?) AND JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod FROM users WHERE users.id = ?"
+      }
+    ],
+    "395499023142": [
+      {
+        "name": "NoType",
+        "sql": "SELECT DISTINCT m.id, m.subject, m.type, mg.arrival, mo.outcome FROM chat_messages cm INNER JOIN messages m ON m.id = cm.refmsgid INNER JOIN messages_groups mg ON mg.msgid = m.id LEFT JOIN messages_outcomes mo ON mo.msgid = m.id WHERE cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ? ORDER BY mg.arrival DESC LIMIT 100"
+      },
+      {
+        "name": "WithType",
+        "sql": "SELECT DISTINCT m.id, m.subject, m.type, mg.arrival, mo.outcome FROM chat_messages cm INNER JOIN messages m ON m.id = cm.refmsgid INNER JOIN messages_groups mg ON mg.msgid = m.id LEFT JOIN messages_outcomes mo ON mo.msgid = m.id WHERE cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ? AND m.type = ? ORDER BY mg.arrival DESC LIMIT 100"
+      }
+    ],
+    "d5ecca066b1b": [
+      {
+        "name": "locations_excluded.userid",
+        "sql": "UPDATE locations_excluded SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "spam_users.userid",
+        "sql": "UPDATE IGNORE spam_users SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "spam_users.byuserid",
+        "sql": "UPDATE IGNORE spam_users SET byuserid = ? WHERE byuserid = ?"
+      },
+      {
+        "name": "users_addresses.userid",
+        "sql": "UPDATE IGNORE users_addresses SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_comments.userid",
+        "sql": "UPDATE users_comments SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_comments.byuserid",
+        "sql": "UPDATE users_comments SET byuserid = ? WHERE byuserid = ?"
+      },
+      {
+        "name": "users_donations.userid",
+        "sql": "UPDATE IGNORE users_donations SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_images.userid",
+        "sql": "UPDATE IGNORE users_images SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_invitations.userid",
+        "sql": "UPDATE IGNORE users_invitations SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_nearby.userid",
+        "sql": "UPDATE IGNORE users_nearby SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_notifications.fromuser",
+        "sql": "UPDATE IGNORE users_notifications SET fromuser = ? WHERE fromuser = ?"
+      },
+      {
+        "name": "users_notifications.touser",
+        "sql": "UPDATE IGNORE users_notifications SET touser = ? WHERE touser = ?"
+      },
+      {
+        "name": "users_nudges.fromuser",
+        "sql": "UPDATE IGNORE users_nudges SET fromuser = ? WHERE fromuser = ?"
+      },
+      {
+        "name": "users_nudges.touser",
+        "sql": "UPDATE IGNORE users_nudges SET touser = ? WHERE touser = ?"
+      },
+      {
+        "name": "users_push_notifications.userid",
+        "sql": "UPDATE IGNORE users_push_notifications SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_requests.userid",
+        "sql": "UPDATE IGNORE users_requests SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_requests.completedby",
+        "sql": "UPDATE IGNORE users_requests SET completedby = ? WHERE completedby = ?"
+      },
+      {
+        "name": "users_searches.userid",
+        "sql": "UPDATE IGNORE users_searches SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "newsfeed.userid",
+        "sql": "UPDATE IGNORE newsfeed SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "messages_reneged.userid",
+        "sql": "UPDATE IGNORE messages_reneged SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_stories.userid",
+        "sql": "UPDATE IGNORE users_stories SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_stories_likes.userid",
+        "sql": "UPDATE IGNORE users_stories_likes SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_stories_requested.userid",
+        "sql": "UPDATE IGNORE users_stories_requested SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_thanks.userid",
+        "sql": "UPDATE IGNORE users_thanks SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "modnotifs.userid",
+        "sql": "UPDATE IGNORE modnotifs SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "teams_members.userid",
+        "sql": "UPDATE IGNORE teams_members SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "users_aboutme.userid",
+        "sql": "UPDATE IGNORE users_aboutme SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "ratings.rater",
+        "sql": "UPDATE IGNORE ratings SET rater = ? WHERE rater = ?"
+      },
+      {
+        "name": "ratings.ratee",
+        "sql": "UPDATE IGNORE ratings SET ratee = ? WHERE ratee = ?"
+      },
+      {
+        "name": "users_replytime.userid",
+        "sql": "UPDATE IGNORE users_replytime SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "messages_promises.userid",
+        "sql": "UPDATE IGNORE messages_promises SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "messages_by.userid",
+        "sql": "UPDATE IGNORE messages_by SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "trysts.user1",
+        "sql": "UPDATE IGNORE trysts SET user1 = ? WHERE user1 = ?"
+      },
+      {
+        "name": "trysts.user2",
+        "sql": "UPDATE IGNORE trysts SET user2 = ? WHERE user2 = ?"
+      },
+      {
+        "name": "isochrones_users.userid",
+        "sql": "UPDATE IGNORE isochrones_users SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "microactions.userid",
+        "sql": "UPDATE IGNORE microactions SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "volunteering.userid",
+        "sql": "UPDATE volunteering SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "volunteering.deletedby",
+        "sql": "UPDATE volunteering SET deletedby = ? WHERE deletedby = ?"
+      },
+      {
+        "name": "volunteering.heldby",
+        "sql": "UPDATE volunteering SET heldby = ? WHERE heldby = ?"
+      },
+      {
+        "name": "communityevents.userid",
+        "sql": "UPDATE communityevents SET userid = ? WHERE userid = ?"
+      },
+      {
+        "name": "communityevents.heldby",
+        "sql": "UPDATE communityevents SET heldby = ? WHERE heldby = ?"
+      }
+    ],
+    "5adca7e5928e": [
+      {
+        "name": "LegacySeen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND rr.status != 'held' AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "LegacyUnseen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND rr.status != 'held' AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "SandwichSeen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND rr.status != 'held' AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "SandwichUnseen",
+        "sql": "SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, ms.successful, ms.promised, ms.groupid, ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND rr.status != 'held' AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      }
+    ],
+    "73c548fa7cce": [
+      {
+        "name": "Legacy",
+        "sql": "SELECT COUNT(DISTINCT ms.msgid) FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      },
+      {
+        "name": "Sandwich",
+        "sql": "SELECT COUNT(DISTINCT ms.msgid) FROM messages_spatial ms INNER JOIN messages m ON m.id = ms.msgid INNER JOIN users au ON au.id = m.fromuser INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? WHERE ms.successful = 0 AND ml.msgid IS NULL AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) AND (au.settings IS NULL OR JSON_EXTRACT(au.settings, '$.browseMaxDistance') IS NULL OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) <= 0 OR CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6)) >= ? OR (3959 * ACOS(LEAST(1.0, COS(RADIANS(?)) * COS(RADIANS(ST_Y(ms.point))) * COS(RADIANS(ST_X(ms.point)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(ST_Y(ms.point)))))) <= CAST(JSON_UNQUOTE(JSON_EXTRACT(au.settings, '$.browseMaxDistance')) AS DECIMAL(20,6))) "
+      }
+    ],
+    "31fea9e6f321": [
+      {
+        "name": "NoGroup",
+        "sql": "SELECT COALESCE(SUM(GrossAmount), 0) AS raised FROM users_donations WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01') AND Payer != ? AND Payer != ?"
+      },
+      {
+        "name": "WithGroup",
+        "sql": "SELECT COALESCE(SUM(GrossAmount), 0) AS raised FROM users_donations INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ? WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01') AND Payer != ? AND Payer != ?"
+      }
+    ],
+    "bc3af5374c0c": [
+      {
+        "name": "NoCategory",
+        "sql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry)))) / 1000 AS dist_km FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id IN (?) AND category IS NOT NULL AND (ST_Dimension(jobs.geometry) < 2 OR ST_Area(jobs.geometry) / ST_Area(ST_SRID(POLYGON(LINESTRING(POINT(-0.600000, 51.000000), POINT(-0.600000, 52.000000), POINT(0.400000, 52.000000), POINT(0.400000, 51.000000), POINT(-0.600000, 51.000000))), 3857)) < 2) ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT 50"
+      },
+      {
+        "name": "WithCategory",
+        "sql": "SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry)))) / 1000 AS dist_km FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title WHERE jobs.id IN (?) AND category REGEXP ? AND (ST_Dimension(jobs.geometry) < 2 OR ST_Area(jobs.geometry) / ST_Area(ST_SRID(POLYGON(LINESTRING(POINT(-0.600000, 51.000000), POINT(-0.600000, 52.000000), POINT(0.400000, 52.000000), POINT(0.400000, 51.000000), POINT(-0.600000, 51.000000))), 3857)) < 2) ORDER BY jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC LIMIT 50"
+      }
+    ],
+    "a5e382bd3536": [
+      {
+        "name": "NoGroups",
+        "sql": "SELECT messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_spatial WHERE messages_spatial.msgid = ? LIMIT 1"
+      },
+      {
+        "name": "WithGroups",
+        "sql": "SELECT messages_spatial.msgid, messages_spatial.groupid, messages_spatial.arrival, messages_spatial.msgtype AS type, ST_Y(point) AS lat, ST_X(point) AS lng FROM messages_spatial WHERE messages_spatial.msgid = ? AND EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = messages_spatial.msgid AND mg.groupid IN (?) AND mg.collection = 'Approved' AND mg.deleted = 0) LIMIT 1"
+      }
+    ],
+    "941509171a6e": [
+      {
+        "name": "NoLastLocation",
+        "sql": "UPDATE users SET settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON)) WHERE id = ?"
+      },
+      {
+        "name": "WithLastLocation",
+        "sql": "UPDATE users SET lastlocation = ?, settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON)) WHERE id = ?"
+      }
+    ],
+    "99713f48c505": [
+      {
+        "name": "SubjectOnly",
+        "sql": "UPDATE messages SET editedby = NULL, subject = ? WHERE id = ?"
+      },
+      {
+        "name": "TextbodyOnly",
+        "sql": "UPDATE messages SET editedby = NULL, textbody = ? WHERE id = ?"
+      },
+      {
+        "name": "Both",
+        "sql": "UPDATE messages SET editedby = NULL, subject = ?, textbody = ? WHERE id = ?"
+      }
+    ],
+    "1571f00a4ce8": [
+      {
+        "name": "Message",
+        "sql": "INSERT INTO `messages_attachments` (`msgid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Group",
+        "sql": "INSERT INTO `groups_images` (`groupid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Newsletter",
+        "sql": "INSERT INTO `newsletters_images` (`articleid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "CommunityEvent",
+        "sql": "INSERT INTO `communityevents_images` (`eventid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Volunteering",
+        "sql": "INSERT INTO `volunteering_images` (`opportunityid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "ChatMessage",
+        "sql": "INSERT INTO `chat_images` (`chatmsgid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "User",
+        "sql": "INSERT INTO `users_images` (`userid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Newsfeed",
+        "sql": "INSERT INTO `newsfeed_images` (`newsfeedid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Story",
+        "sql": "INSERT INTO `users_stories_images` (`storyid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      },
+      {
+        "name": "Noticeboard",
+        "sql": "INSERT INTO `noticeboards_images` (`noticeboardid`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')"
+      }
+    ],
+    "b0445c89f59e": [
+      {
+        "name": "Message",
+        "sql": "INSERT INTO `messages_attachments` (`msgid`, externaluid, externalmods, hash) VALUES (?, ?, ?, ?)"
+      }
+    ],
+    "7653c7a2e4ed": [
+      {
+        "name": "NoInnerBound",
+        "sql": "UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? SET mr.polygon = ST_Difference(mr.polygon, g.polyindex) WHERE mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(mr.polygon, g.polyindex) AND NOT ST_Within(mr.polygon, g.polyindex)"
+      },
+      {
+        "name": "WithInnerBound",
+        "sql": "UPDATE rippling_reach mr JOIN `groups` g ON g.id = ? SET mr.polygon = ST_Difference(mr.polygon, g.polyindex), mr.inner_bound = NULL WHERE mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT' AND ST_Intersects(mr.polygon, g.polyindex) AND NOT ST_Within(mr.polygon, g.polyindex)"
+      }
+    ],
+    "568a5645fba7": [
+      {
+        "name": "NarrowNoGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END AS bucket\n\t\t    FROM rippling_reply_attribution rra\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      },
+      {
+        "name": "WideNoGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           COALESCE(rra.attribution, CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END) AS bucket\n\t\t    FROM rippling_reply_attribution rra\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      },
+      {
+        "name": "NarrowWithGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END AS bucket\n\t\t    FROM rippling_reply_attribution rra JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      },
+      {
+        "name": "WideWithGroup",
+        "sql": "\n\t\tSELECT day,\n\t\t       COUNT(*) AS replies,\n\t\t       SUM(bucket = 'home') AS home,\n\t\t       SUM(bucket = 'ripple_notified') AS ripple_notified,\n\t\t       SUM(bucket = 'ripple_group') AS ripple_group,\n\t\t       SUM(bucket = 'ripple_reach') AS ripple_reach,\n\t\t       SUM(bucket = 'organic_local') AS organic_local,\n\t\t       SUM(bucket = 'unknown') AS unknown\n\t\tFROM (\n\t\t    SELECT DATE_FORMAT(rra.replied_at, '%Y-%m-%d') AS day,\n\t\t           COALESCE(rra.attribution, CASE\n\t       WHEN rra.was_home_member = 1 THEN 'home'\n\t       WHEN EXISTS(SELECT 1 FROM rippling_reach_notified rrn\n\t                   WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid\n\t                     AND rrn.notified_at <= rra.replied_at) THEN 'ripple_notified'\n\t       WHEN EXISTS(SELECT 1 FROM messages_groups mgr\n\t                   INNER JOIN memberships mem ON mem.groupid = mgr.groupid\n\t                     AND mem.userid = rra.userid AND mem.collection = 'Approved'\n\t                     AND mem.added < mgr.arrival\n\t                   WHERE mgr.msgid = rra.msgid AND mgr.rippled_in = 1\n\t                     AND mgr.deleted = 0 AND mgr.arrival <= rra.replied_at) THEN 'ripple_group'\n\t       ELSE 'unknown'\n\t       END) AS bucket\n\t\t    FROM rippling_reply_attribution rra JOIN messages_groups mg ON mg.msgid = rra.msgid AND mg.groupid = ? AND mg.rippled_in = 0 AND mg.deleted = 0\n\t\t    WHERE rra.replied_at >= ? AND rra.replied_at < ?\n\t\t) b\n\t\tGROUP BY day\n\t\tORDER BY day DESC"
+      }
+    ]
+  }
+}

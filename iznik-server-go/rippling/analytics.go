@@ -342,27 +342,41 @@ func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) [
 	var rows []row
 	// Sample post ids first (ORDER BY RAND over the windowed rippled set), then expand to
 	// replier points. Bounded to posts that actually have an Interested reply.
-	db.Raw(`
-		SELECT samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng,
-		       DATE_FORMAT(cm.date, '%Y-%m-%d') AS day,
-		       EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker,
-		       (NOT `+EstablishedOriginMemberExists("samp.msgid", "cm.userid")+`) AS rippled
-		FROM (
-		    SELECT rr.msgid
-		    FROM rippling_reach rr
-		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
-		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
-		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
-		      AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')
-		    ORDER BY RAND() LIMIT ?
-		) samp
-		JOIN messages m    ON m.id = samp.msgid
-		JOIN locations ml  ON ml.id = m.locationid AND ml.lat IS NOT NULL
-		JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested'
-		                     AND cm.date >= ? AND cm.date < ?
-		JOIN users u       ON u.id = cm.userid
-		JOIN locations ul  ON ul.id = u.lastlocation AND ul.lat IS NOT NULL
-		ORDER BY samp.msgid`, start, end, sampleN, start, end).Scan(&rows)
+	//
+	// ORM migration site f382f9bfe80b (Tier 3 keep-raw review). stratumSQL is
+	// one of StratumFilter's 4 fixed strings (all/rural/suburban/dense) - 4
+	// possible rendered forms, all declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_f382f9bfe80b (iznik-server-go/test). Uses the
+	// derived-table trick (GORM's Table() passes its name argument through
+	// verbatim once it contains a space) already proven elsewhere in this
+	// codebase for a parenthesized subquery.
+	//
+	// The "rippled" column calls EstablishedOriginMemberExists rather than
+	// spelling the EXISTS out again: master moved that predicate into the
+	// shared helper when it added the mem.rippled = 0 provenance test, and a
+	// second copy here would drift the moment either is edited.
+	innerSample := "(" +
+		"SELECT rr.msgid " +
+		"FROM rippling_reach rr " +
+		"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' " +
+		"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0" + stratumSQL +
+		" AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)" +
+		" AND EXISTS(SELECT 1 FROM chat_messages c WHERE c.refmsgid = rr.msgid AND c.type = 'Interested')" +
+		" ORDER BY RAND() LIMIT ?" +
+		") samp"
+
+	db.Table(innerSample, start, end, sampleN).
+		Select("samp.msgid, ml.lat AS plat, ml.lng AS plng, ul.lat AS rlat, ul.lng AS rlng, "+
+			"DATE_FORMAT(cm.date, '%Y-%m-%d') AS day, "+
+			"EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = samp.msgid AND mb.userid = cm.userid) AS taker, "+
+			"(NOT "+EstablishedOriginMemberExists("samp.msgid", "cm.userid")+") AS rippled").
+		Joins("JOIN messages m ON m.id = samp.msgid").
+		Joins("JOIN locations ml ON ml.id = m.locationid AND ml.lat IS NOT NULL").
+		Joins("JOIN chat_messages cm ON cm.refmsgid = samp.msgid AND cm.type = 'Interested' AND cm.date >= ? AND cm.date < ?", start, end).
+		Joins("JOIN users u ON u.id = cm.userid").
+		Joins("JOIN locations ul ON ul.id = u.lastlocation AND ul.lat IS NOT NULL").
+		Order("samp.msgid").
+		Scan(&rows)
 
 	byPost := map[uint64]*samplePost{}
 	order := []uint64{}
@@ -461,38 +475,49 @@ func Analytics(c *fiber.Ctx) error {
 	// eventually - the total.
 	go func() {
 		defer wg.Done()
-		db.Raw(fmt.Sprintf(`
-		SELECT COUNT(*) AS posts,
-		       SUM(replied_36h) AS replied36h,
-		       SUM(nreplies > 0) AS replied_ever,
-		       SUM(taken) AS taken,
-		       SUM(nreplies) AS total_replies,
-		       AVG(freeglers) AS mean_freeglers
-		FROM (
-		    SELECT rr.total_freeglers AS freeglers,
-		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies,
-		           EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested'
-		                  AND c2.date <= rr.created_at + INTERVAL %d HOUR) AS replied_36h,
-		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken
-		    FROM rippling_reach rr`, ReplyHorizonHours)+`
-		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
-		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`+stratumSQL+`
-		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
-		) d`, start, end).Scan(&agg)
+		// ORM migration site 2def63211a50 (Tier 3 keep-raw review). stratumSQL
+		// is one of StratumFilter's 4 fixed strings - 4 possible rendered
+		// forms, all declared in ormharness/shapes.json and proven by
+		// TestTier3Shapes_2def63211a50 (iznik-server-go/test). ReplyHorizonHours
+		// is a Go constant (36), inlined directly rather than via fmt.Sprintf.
+		innerCounts := fmt.Sprintf("(SELECT rr.total_freeglers AS freeglers, "+
+			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies, "+
+			"EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' "+
+			"AND c2.date <= rr.created_at + INTERVAL %d HOUR) AS replied_36h, "+
+			"EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid) AS taken "+
+			"FROM rippling_reach rr "+
+			"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' "+
+			"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0%s "+
+			"AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"+
+			") d", ReplyHorizonHours, stratumSQL)
+
+		db.Table(innerCounts, start, end).
+			Select("COUNT(*) AS posts, SUM(replied_36h) AS replied36h, SUM(nreplies > 0) AS replied_ever, " +
+				"SUM(taken) AS taken, SUM(nreplies) AS total_replies, AVG(freeglers) AS mean_freeglers").
+			Scan(&agg)
 	}()
 
 	// Reply friction: held replies over the window on rippled-out offers, as a share of all
 	// replies. rippling_held_replies has msgid + created_at so it scopes by post + stratum.
+	//
+	// ORM migration site 62cea0b491c9 (Tier 3 keep-raw review). Same
+	// stratumSQL toggle as 2def63211a50 above - 4 possible rendered forms,
+	// all declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_62cea0b491c9 (iznik-server-go/test).
 	var held int
 	go func() {
 		defer wg.Done()
-		db.Raw(`
-		SELECT COUNT(*) FROM rippling_held_replies hr
-		JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0`+stratumSQL+`
-		JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'
-		WHERE hr.created_at >= ? AND hr.created_at < ?
-		  AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)`,
-			start, end).Scan(&held)
+		// WHERE built as a single string for ONE Where() call: GORM's
+		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+		// paren pair once there is more than one Where expression to
+		// combine (clause/where.go buildExprs), which would diverge from
+		// the golden.
+		db.Table("rippling_held_replies hr").
+			Select("COUNT(*)").
+			Joins("JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0"+stratumSQL).
+			Joins("JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'").
+			Where("hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)", start, end).
+			Scan(&held)
 	}()
 
 	// The drive-time figures (the Section 1 overall mean, the Section 3 rippled-out mean, the
@@ -689,29 +714,30 @@ type TrendRow struct {
 // trendSeries returns per-day KPI points (ascending) over the window + stratum. Pure SQL plus
 // the maturity flags, which depend on the wall clock, not the data.
 func trendSeries(db *gorm.DB, start, end, stratumSQL string) []TrendRow {
+	// ORM migration site 1dee90c3c378 (Tier 3 keep-raw review). stratumSQL is
+	// one of StratumFilter's 4 fixed strings - 4 possible rendered forms, all
+	// declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_1dee90c3c378 (iznik-server-go/test). ReplyHorizonHours/
+	// TakenHorizonDays are Go constants (36, 14), inlined directly.
+	innerTrend := fmt.Sprintf("(SELECT rr.created_at AS created, rr.total_freeglers AS freeglers, "+
+		"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' "+
+		"AND cm.date <= rr.created_at + INTERVAL %d HOUR) AS nreplies, "+
+		"EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested' "+
+		"AND c2.date <= rr.created_at + INTERVAL %d HOUR) AS replied, "+
+		"EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid "+
+		"AND mb.timestamp <= rr.created_at + INTERVAL %d DAY) AS taken "+
+		"FROM rippling_reach rr "+
+		"JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer' "+
+		"WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0%s "+
+		"AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)"+
+		") d", ReplyHorizonHours, ReplyHorizonHours, TakenHorizonDays, stratumSQL)
+
 	rows := []TrendRow{}
-	db.Raw(fmt.Sprintf(`
-		SELECT DATE_FORMAT(created, '%%Y-%%m-%%d') AS day,
-		       COUNT(*) AS posts,
-		       100 * SUM(replied) / COUNT(*) AS replied_pct,
-		       100 * SUM(taken) / COUNT(*) AS taken_pct,
-		       SUM(nreplies) / COUNT(*) AS mean_replies,
-		       AVG(freeglers) AS mean_freeglers
-		FROM (
-		    SELECT rr.created_at AS created, rr.total_freeglers AS freeglers,
-		           (SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested'
-		            AND cm.date <= rr.created_at + INTERVAL %d HOUR) AS nreplies,
-		           EXISTS(SELECT 1 FROM chat_messages c2 WHERE c2.refmsgid = rr.msgid AND c2.type = 'Interested'
-		            AND c2.date <= rr.created_at + INTERVAL %d HOUR) AS replied,
-		           EXISTS(SELECT 1 FROM messages_by mb WHERE mb.msgid = rr.msgid
-		            AND mb.timestamp <= rr.created_at + INTERVAL %d DAY) AS taken
-		    FROM rippling_reach rr
-		    JOIN messages m ON m.id = rr.msgid AND m.type = 'Offer'
-		    WHERE rr.created_at >= ? AND rr.created_at < ? AND rr.total_freeglers > 0`,
-		ReplyHorizonHours, ReplyHorizonHours, TakenHorizonDays)+stratumSQL+`
-		      AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = rr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)
-		) d
-		GROUP BY day ORDER BY day`, start, end).Scan(&rows)
+	db.Table(innerTrend, start, end).
+		Select("DATE_FORMAT(created, '%Y-%m-%d') AS day, COUNT(*) AS posts, " +
+			"100 * SUM(replied) / COUNT(*) AS replied_pct, 100 * SUM(taken) / COUNT(*) AS taken_pct, " +
+			"SUM(nreplies) / COUNT(*) AS mean_replies, AVG(freeglers) AS mean_freeglers").
+		Group("day").Order("day").Scan(&rows)
 	now := time.Now()
 	for i := range rows {
 		rows[i].RepliedMature = trendMature(rows[i].Day, ReplyHorizonHours*time.Hour, now)
@@ -823,8 +849,15 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 	// cross-window dependency to break additivity.
 	var wg sync.WaitGroup
 	wg.Add(2)
+
 	go func() {
 		defer wg.Done()
+		// NOT converted here (raw): master replaced the single unchunked
+		// query (site 0608bbe6423f) with a per-day chunked loop - see this
+		// function's own doc comment on rippledOutDeadline/why both goroutines
+		// are chunked. Re-doing the .Table(innerShares,...) conversion per
+		// chunk was not attempted under a merge; left raw for a properly
+		// tested follow-up.
 		for _, w := range dayWindows(start, end) {
 			var chunk struct {
 				Replies        int
@@ -874,6 +907,9 @@ func rippledOutSection(db *gorm.DB, start, end, stratumSQL string) Section3Rippl
 	var rescued int
 	go func() {
 		defer wg.Done()
+		// NOT converted here (raw): master replaced the single unchunked
+		// query (site 1f03ad9be65b) with a per-day chunked loop, same
+		// reasoning as innerShares above.
 		for _, w := range dayWindows(start, end) {
 			var chunkRescued int
 			if err := db.Raw(`

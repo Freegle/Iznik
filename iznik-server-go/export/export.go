@@ -35,7 +35,8 @@ func PostExport(c *fiber.Ctx) error {
 	// Check for existing pending export to prevent abuse.
 	db := database.DBConn
 	var pendingCount int64
-	db.Raw("SELECT COUNT(*) FROM users_exports WHERE userid = ? AND completed IS NULL", myid).Scan(&pendingCount)
+	// ORM migration site b6628daeeaf7 (wave 1).
+	db.Table("users_exports").Where("userid = ? AND completed IS NULL", myid).Count(&pendingCount)
 	if pendingCount > 0 {
 		return fiber.NewError(fiber.StatusConflict, "Export already in progress")
 	}
@@ -48,23 +49,20 @@ func PostExport(c *fiber.Ctx) error {
 	}
 	tag := hex.EncodeToString(tagBytes)
 
-	// Use LastInsertId on the write connection: a SELECT here would be routed to a
-	// read replica by the read/write split and, under Galera's cross-node apply
-	// window, may not yet see the just-inserted row (returning id=0).
-	var id uint64
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Printf("Failed to get DB handle for export, user %d: %v", myid, err)
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create export")
-	}
-	res, err := sqlDB.Exec("INSERT INTO users_exports (userid, tag) VALUES (?, ?)", myid, tag)
-	if err != nil {
+	// ORM migration site da7e48606815 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback, which - like the
+	// raw sql.Result this replaces - reads the id back from the write connection
+	// that ran the INSERT (proven in test/orm_insertid_test.go). A SELECT here
+	// would be routed to a read replica by the read/write split and, under
+	// Galera's cross-node apply window, may not yet see the just-inserted row
+	// (returning id=0).
+	row := map[string]interface{}{"userid": myid, "tag": tag}
+	if err := db.Table("users_exports").Create(row).Error; err != nil {
 		log.Printf("Failed to insert export for user %d: %v", myid, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create export")
 	}
-	if lastID, idErr := res.LastInsertId(); idErr == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	return c.JSON(fiber.Map{
 		"id":  id,
@@ -113,8 +111,11 @@ func GetExport(c *fiber.Ctx) error {
 	}
 
 	var row ExportRow
-	db.Raw("SELECT id, userid, requested, started, completed, data FROM users_exports WHERE userid = ? AND id = ? AND tag = ?",
-		myid, id, tag).Scan(&row)
+	// ORM migration site 407acfe2232b (wave 1).
+	db.Table("users_exports").
+		Select("id, userid, requested, started, completed, data").
+		Where("userid = ? AND id = ? AND tag = ?", myid, id, tag).
+		Scan(&row)
 
 	if row.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Export not found")
@@ -146,7 +147,8 @@ func GetExport(c *fiber.Ctx) error {
 
 	// Not completed yet — return queue position.
 	var infront int64
-	db.Raw("SELECT COUNT(*) FROM users_exports WHERE id < ? AND completed IS NULL", id).Scan(&infront)
+	// ORM migration site 796077395eca (wave 1).
+	db.Table("users_exports").Where("id < ? AND completed IS NULL", id).Count(&infront)
 
 	return c.JSON(fiber.Map{
 		"export": fiber.Map{

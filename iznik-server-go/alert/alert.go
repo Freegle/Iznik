@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 var htmlTagRE = regexp.MustCompile(`(?s)<[^>]*>`)
@@ -77,7 +78,11 @@ func GetAlert(c *fiber.Ctx) error {
 	}
 
 	var a Alert
-	db.Raw("SELECT id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created FROM alerts WHERE id = ?", id).Scan(&a)
+	// ORM migration site 1b28d8692d77 (wave 1).
+	db.Table("alerts").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Where("id = ?", id).
+		Scan(&a)
 
 	if a.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Alert not found")
@@ -95,14 +100,20 @@ func GetAlert(c *fiber.Ctx) error {
 
 		// Get response counts.
 		var responseCounts []AlertResponseStat
-		db.Raw("SELECT response, COUNT(*) AS count FROM alerts_tracking WHERE alertid = ? AND response IS NOT NULL GROUP BY response", id).Scan(&responseCounts)
+		// ORM migration site 69fd80c0297d (wave 1).
+		db.Table("alerts_tracking").
+			Select("response, COUNT(*) AS count").
+			Where("alertid = ? AND response IS NOT NULL", id).
+			Group("response").
+			Scan(&responseCounts)
 		if responseCounts == nil {
 			responseCounts = make([]AlertResponseStat, 0)
 		}
 		stats.Responses = responseCounts
 
 		// Get reached (total tracking entries).
-		db.Raw("SELECT COUNT(*) FROM alerts_tracking WHERE alertid = ?", id).Scan(&stats.Reached)
+		// ORM migration site 40675ee7a91d (wave 1).
+		db.Table("alerts_tracking").Where("alertid = ?", id).Count(&stats.Reached)
 
 		// Merge stats into the alert map in the response.
 		alertMap := response["alert"].(Alert)
@@ -149,7 +160,11 @@ func ListAlerts(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var alerts []Alert
-	db.Raw("SELECT id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created FROM alerts ORDER BY created DESC").Scan(&alerts)
+	// ORM migration site 28fbc7fe399f (wave 1).
+	db.Table("alerts").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Order("created DESC").
+		Scan(&alerts)
 
 	if alerts == nil {
 		alerts = make([]Alert, 0)
@@ -233,25 +248,27 @@ func CreateAlert(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 54e869591bc4 (tier1). Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback. "from"/"to" are
+	// MySQL reserved words, but the MySQL dialect's QuoteTo backtick-quotes every
+	// identifier unconditionally, so no special-casing is needed here.
+	row := map[string]interface{}{
+		"createdby": myid,
+		"groupid":   groupid,
+		"from":      req.From,
+		"to":        req.To,
+		"subject":   req.Subject,
+		"text":      req.Text,
+		"html":      req.Html,
+		"askclick":  askclick,
+		"tryhard":   tryhard,
+		"created":   gorm.Expr("NOW()"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO alerts (createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-		myid, groupid, req.From, req.To, req.Subject, req.Text, req.Html, askclick, tryhard)
-
-	if err != nil {
+	if err := db.Table("alerts").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create alert")
 	}
-
-	var alertID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		alertID = uint64(lastID)
-	}
+	alertIDInt, _ := row["@id"].(int64)
+	alertID := uint64(alertIDInt)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -280,7 +297,9 @@ func RecordAlert(c *fiber.Ctx) error {
 
 	if req.Action == "clicked" && req.Trackid > 0 {
 		db := database.DBConn
-		db.Exec("UPDATE alerts_tracking SET responded = NOW(), response = 'Clicked' WHERE id = ?", req.Trackid)
+		// ORM migration site 053433aae0e7 (wave 2).
+		db.Table("alerts_tracking").Where("id = ?", req.Trackid).
+			Updates(map[string]interface{}{"responded": gorm.Expr("NOW()"), "response": gorm.Expr("'Clicked'")})
 	}
 
 	return c.JSON(fiber.Map{

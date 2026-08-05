@@ -47,14 +47,16 @@ func GetModConfig(c *fiber.Ctx) error {
 	if id > 0 {
 		// Return a single config.
 		var config ModConfig
-		db.Raw("SELECT * FROM mod_configs WHERE id = ?", id).Scan(&config)
+		// ORM migration site f719d0218049 (wave 1).
+		db.Table("mod_configs").Where("id = ?", id).Scan(&config)
 		if config.ID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Config not found")
 		}
 
 		// Fetch standard messages for this config.
 		var stdmsgs []StdMsg
-		db.Raw("SELECT * FROM mod_stdmsgs WHERE configid = ? ORDER BY id", id).Scan(&stdmsgs)
+		// ORM migration site 494b5692c466 (wave 1).
+		db.Table("mod_stdmsgs").Where("configid = ?", id).Order("id").Scan(&stdmsgs)
 
 		return c.JSON(fiber.Map{
 			"ret":    0,
@@ -90,10 +92,13 @@ func GetModConfig(c *fiber.Ctx) error {
 	// - default configs
 	// - configs used in their memberships
 	var configs []ModConfig
-	db.Raw("SELECT DISTINCT mc.* FROM mod_configs mc "+
-		"LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ? "+
-		"WHERE mc.createdby = ? OR mc.`default` = 1 OR m.id IS NOT NULL "+
-		"ORDER BY mc.name", myid, myid).Scan(&configs)
+	// ORM migration site 67206ab9f1ab (wave 4).
+	db.Table("mod_configs mc").
+		Select("DISTINCT mc.*").
+		Joins("LEFT JOIN memberships m ON m.configid = mc.id AND m.userid = ?", myid).
+		Where("mc.createdby = ? OR mc.`default` = 1 OR m.id IS NOT NULL", myid).
+		Order("mc.name").
+		Scan(&configs)
 
 	return c.JSON(configs)
 }

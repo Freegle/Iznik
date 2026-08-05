@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
 )
 
 // --- ChitChat moderator tools: duplicate flagging, and posting for a member ---
@@ -28,11 +29,16 @@ func makeChitChatMod(t *testing.T, userid uint64) {
 	db.Raw("SELECT id FROM teams WHERE name = 'ChitChat Moderation' LIMIT 1").Scan(&teamid)
 
 	if teamid == 0 {
-		id, err := database.ExecInsertGetID(db, "INSERT INTO teams (name) VALUES ('ChitChat Moderation')")
-		if err != nil {
+		res := gorm.WithResult()
+		if err := db.Table("teams").Clauses(res).
+			Create(map[string]interface{}{"name": "ChitChat Moderation"}).Error; err != nil {
 			t.Fatalf("ERROR: could not create ChitChat Moderation team: %v", err)
 		}
-		teamid = id
+		id, err := res.Result.LastInsertId()
+		if err != nil {
+			t.Fatalf("ERROR: could not read back the ChitChat Moderation team id: %v", err)
+		}
+		teamid = uint64(id)
 	}
 
 	db.Exec("INSERT INTO teams_members (teamid, userid) VALUES (?, ?)", teamid, userid)

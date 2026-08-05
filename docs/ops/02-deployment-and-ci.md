@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-08-01
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -15,7 +15,10 @@ This describes how code reaches production. The CI reference is
 ## The web pipeline
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
-   Playwright) via a shared reusable orb.
+   Playwright) via a shared reusable orb. A fast **ORM migration inventory ratchet** runs
+   first, before any container starts, and fails the build if raw SQL was added to the Go
+   API without a matching manifest entry. See
+   [the harness reference](../developers/reference/orm-migration-harness.md).
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same

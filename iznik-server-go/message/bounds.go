@@ -91,6 +91,17 @@ func Bounds(c *fiber.Ctx) error {
 
 	// The posts in the bounds that everyone can see: the spatial index, which the daily batch
 	// prunes of expired posts.
+	// NOT converted here (raw, keep-raw reason recorded in the manifest):
+	// master removed the LEFT JOIN messages_likes + CASE this site used to
+	// compute "unseen" inline - see the comment below this query for why
+	// (it turned a wide, no-location bounding box into tens of thousands of
+	// per-row lookups into the 86M-row messages_likes table; unseen is now
+	// computed separately via viewedMessageIDs/applyUnseen). Re-merging a
+	// GORM chain for the simplified form is plausible but was not attempted
+	// here: this is a merge-conflict resolution, not a fresh conversion, and
+	// this exact site was already flagged for spatial review once before
+	// (see the site history this replaces). Left for a properly tested
+	// re-conversion attempt rather than guessed at under a merge.
 	db.Raw(""+
 		"SELECT ST_Y(point) AS lat, "+
 		"ST_X(point) AS lng, "+
@@ -138,37 +149,29 @@ func Bounds(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 
 	ownMsgs := []MessageSummary{}
-	db.Raw(""+
-		"SELECT messages.lat, messages.lng, messages.id, "+
-		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-		"MIN(messages_groups.groupid) AS groupid, "+
-		"messages.type,"+
-		"MAX(messages_groups.arrival) AS arrival, "+
-		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"INNER JOIN `groups` ON groups.id = messages_groups.groupid "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-		"LEFT JOIN messages_promises ON messages_promises.msgid = messages.id "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE fromuser = ? AND messages_groups.arrival >= ? AND "+
-		"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
-		"AND messages_outcomes.id IS NULL "+
-		"GROUP BY messages.id",
-		utils.OUTCOME_TAKEN,
-		utils.OUTCOME_RECEIVED,
-		myid, utils.MESSAGE_LIKES_VIEW,
-		myid,
-		start,
-		swlng, swlat,
-		swlng, nelat,
-		nelng, nelat,
-		nelng, swlat,
-		swlng, swlat,
-		utils.SRID,
-		utils.SRID,
-	).Scan(&ownMsgs)
+	// ORM migration site 72fd7dc3ca1e (Tier 1 spatial review, round 2). Bind
+	// order mirrors clause build order: Select's own two binds (the IN list),
+	// then the bound messages_likes Joins ON clause, then Where.
+	db.Table("messages").
+		Select("messages.lat, messages.lng, messages.id, "+
+			"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
+			"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+			"MIN(messages_groups.groupid) AS groupid, "+
+			"messages.type,"+
+			"MAX(messages_groups.arrival) AS arrival, "+
+			"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen",
+			utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+		Joins("LEFT JOIN messages_promises ON messages_promises.msgid = messages.id").
+		Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where("fromuser = ? AND messages_groups.arrival >= ? AND "+
+			"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
+			"AND messages_outcomes.id IS NULL",
+			myid, start, swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID, utils.SRID).
+		Group("messages.id").
+		Scan(&ownMsgs)
 
 	// Drop own posts that have aged out, and note their ids so they don't linger via the spatial arm
 	// either (before the daily batch has pruned their spatial row).

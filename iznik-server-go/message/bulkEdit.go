@@ -23,6 +23,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // generateEditToken returns a 32-char URL-safe random secret (192 bits of
@@ -41,7 +42,8 @@ func generateEditToken() (string, error) {
 // concurrent create is handled by re-reading the stored value.
 func ensureBulkEditToken(db *gorm.DB, msgid uint64) string {
 	var token string
-	db.Raw("SELECT COALESCE(edittoken, '') FROM messages_bulk_access WHERE msgid = ?", msgid).Scan(&token)
+	// ORM migration site 36a2a7be3fff (wave 1).
+	db.Table("messages_bulk_access").Select("COALESCE(edittoken, '')").Where("msgid = ?", msgid).Scan(&token)
 	if token != "" {
 		return token
 	}
@@ -50,9 +52,17 @@ func ensureBulkEditToken(db *gorm.DB, msgid uint64) string {
 		return ""
 	}
 	// COALESCE keeps any token another request set first (unique index also guards).
-	db.Exec("INSERT INTO messages_bulk_access (msgid, edittoken) VALUES (?, ?) "+
-		"ON DUPLICATE KEY UPDATE edittoken = COALESCE(edittoken, VALUES(edittoken))", msgid, newTok)
-	db.Raw("SELECT COALESCE(edittoken, '') FROM messages_bulk_access WHERE msgid = ?", msgid).Scan(&token)
+	// ORM migration site eccba6faf480 (wave 3).
+	db.Table("messages_bulk_access").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"edittoken": gorm.Expr("COALESCE(edittoken, VALUES(edittoken))"),
+		}),
+	}).Create(map[string]interface{}{
+		"msgid":     msgid,
+		"edittoken": newTok,
+	})
+	// ORM migration site 52538d138ab2 (wave 1).
+	db.Table("messages_bulk_access").Select("COALESCE(edittoken, '')").Where("msgid = ?", msgid).Scan(&token)
 	return token
 }
 
@@ -67,11 +77,13 @@ func resolveBulkEditToken(db *gorm.DB, token string) uint64 {
 		return 0
 	}
 	var msgid uint64
-	db.Raw("SELECT a.msgid FROM messages_bulk_access a "+
-		"INNER JOIN messages m ON m.id = a.msgid AND m.deleted IS NULL "+
-		"WHERE a.edittoken = ? AND a.edittoken <> '' "+
-		"AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = a.msgid) LIMIT 1",
-		token).Scan(&msgid)
+	// ORM migration site 95a87268e014 (wave 5).
+	db.Table("messages_bulk_access a").
+		Select("a.msgid").
+		Joins("INNER JOIN messages m ON m.id = a.msgid AND m.deleted IS NULL").
+		Where("a.edittoken = ? AND a.edittoken <> '' AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = a.msgid)", token).
+		Limit(1).
+		Scan(&msgid)
 	return msgid
 }
 
@@ -103,8 +115,12 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 		Photourl   *string
 	}
 	var rows []row
-	db.Raw("SELECT id, position, name, quantity, available, `condition`, dimensions, photourl "+
-		"FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&rows)
+	// ORM migration site ffb087326c1a (wave 1).
+	db.Table("messages_bulk_items").
+		Select("id, position, name, quantity, available, `condition`, dimensions, photourl").
+		Where("msgid = ?", msgid).
+		Order("position ASC, id ASC").
+		Scan(&rows)
 
 	// One representative attachment per item (primary first), for the thumbnail.
 	type att struct {
@@ -115,11 +131,13 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 		Externalmods string
 	}
 	var atts []att
-	db.Raw("SELECT bia.bulkitemid, ma.id, ma.archived, "+
-		"COALESCE(ma.externaluid, '') AS externaluid, COALESCE(ma.externalmods, '') AS externalmods "+
-		"FROM messages_bulk_item_attachments bia "+
-		"INNER JOIN messages_attachments ma ON ma.id = bia.attachmentid "+
-		"WHERE ma.msgid = ? ORDER BY ma.`primary` DESC, ma.id ASC", msgid).Scan(&atts)
+	// ORM migration site 7f1d565c4908 (wave 4).
+	db.Table("messages_bulk_item_attachments bia").
+		Select("bia.bulkitemid, ma.id, ma.archived, COALESCE(ma.externaluid, '') AS externaluid, COALESCE(ma.externalmods, '') AS externalmods").
+		Joins("INNER JOIN messages_attachments ma ON ma.id = bia.attachmentid").
+		Where("ma.msgid = ?", msgid).
+		Order("ma.`primary` DESC, ma.id ASC").
+		Scan(&atts)
 	firstAtt := map[uint64]att{}
 	for _, a := range atts {
 		if _, ok := firstAtt[a.Bulkitemid]; !ok {
@@ -161,9 +179,10 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 // owner toggles availability / edits counts: the sum of quantities across items
 // still marked available.
 func recomputeBulkAvailableNow(db *gorm.DB, msgid uint64) {
-	db.Exec("UPDATE messages SET availablenow = "+
-		"(SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items WHERE msgid = ? AND available = 1) "+
-		"WHERE id = ?", msgid, msgid)
+	// ORM migration site 56dfb1008d60 (wave 5).
+	db.Table("messages").
+		Where("id = ?", msgid).
+		Update("availablenow", gorm.Expr("(SELECT COALESCE(SUM(quantity), 0) FROM messages_bulk_items WHERE msgid = ? AND available = 1)", msgid))
 }
 
 // recordBulkOutcomeIfComplete inserts a Taken outcome row for a bulk offer once
@@ -173,12 +192,14 @@ func recomputeBulkAvailableNow(db *gorm.DB, msgid uint64) {
 // exists is a no-op.
 func recordBulkOutcomeIfComplete(db *gorm.DB, msgid uint64) {
 	var availablenow int
-	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgid).Scan(&availablenow)
+	// ORM migration site 99b4885acfb6 (wave 1).
+	db.Table("messages").Select("availablenow").Where("id = ?", msgid).Scan(&availablenow)
 	if availablenow > 0 {
 		return
 	}
-	db.Exec(
-		"INSERT INTO messages_outcomes (msgid, outcome) "+
+	// ORM migration site 85f3246d11af (tier4).
+	database.InsertSelect(db, "messages_outcomes",
+		"(msgid, outcome) "+
 			"SELECT ?, ? WHERE NOT EXISTS "+
 			"(SELECT 1 FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?))",
 		msgid, utils.OUTCOME_TAKEN,
@@ -202,7 +223,8 @@ func GetBulkEditOffer(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Unknown or expired link")
 	}
 	var subject string
-	db.Raw("SELECT subject FROM messages WHERE id = ?", msgid).Scan(&subject)
+	// ORM migration site 2765d951f216 (wave 1).
+	db.Table("messages").Select("subject").Where("id = ?", msgid).Scan(&subject)
 	items := bulkEditItems(db, msgid)
 	return c.JSON(fiber.Map{
 		"ret":     0,
@@ -254,7 +276,8 @@ func PostBulkEditOffer(c *fiber.Ctx) error {
 
 	// The item must belong to the offer the token authorises.
 	var owning uint64
-	db.Raw("SELECT msgid FROM messages_bulk_items WHERE id = ?", req.Itemid).Scan(&owning)
+	// ORM migration site e7dc4cec288b (wave 1).
+	db.Table("messages_bulk_items").Select("msgid").Where("id = ?", req.Itemid).Scan(&owning)
 	if owning != msgid {
 		return fiber.NewError(fiber.StatusNotFound, "Item not found")
 	}
@@ -264,14 +287,16 @@ func PostBulkEditOffer(c *fiber.Ctx) error {
 		if *req.Available {
 			av = 1
 		}
-		db.Exec("UPDATE messages_bulk_items SET available = ? WHERE id = ? AND msgid = ?", av, req.Itemid, msgid)
+		// ORM migration site 7b9310de870b (wave 2).
+		db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", req.Itemid, msgid).Update("available", av)
 	}
 	if req.Quantity != nil {
 		q := *req.Quantity
 		if q < 0 {
 			q = 0
 		}
-		db.Exec("UPDATE messages_bulk_items SET quantity = ? WHERE id = ? AND msgid = ?", q, req.Itemid, msgid)
+		// ORM migration site 74516dda0fb7 (wave 2).
+		db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", req.Itemid, msgid).Update("quantity", q)
 	}
 
 	recomputeBulkAvailableNow(db, msgid)

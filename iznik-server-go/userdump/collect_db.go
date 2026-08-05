@@ -1,10 +1,10 @@
 package userdump
 
 import (
-	"database/sql"
-	"fmt"
 	"regexp"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // dbSpec is one extraction: SELECT * FROM <table> WHERE <where>, optionally
@@ -35,25 +35,34 @@ func redactColFor(table string) func(col string) bool {
 
 // existingTables returns the lowercased set of tables in the current database,
 // so specs for tables absent from this schema are skipped quietly.
-func existingTables(sqlDB *sql.DB) map[string]bool {
+//
+// ORM migration site f0543b22c8e8 (userdump keep-raw review, revisited). The
+// prior reason ("consistent with the sqlite.go entries") was wrong: this
+// queries the Percona cluster, not the SQLite export file - gdb is the same
+// *gorm.DB every other converted site uses, not a separate connection.
+func existingTables(gdb *gorm.DB) map[string]bool {
 	out := map[string]bool{}
-	rows, err := sqlDB.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()")
-	if err != nil {
-		return out
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var t string
-		if rows.Scan(&t) == nil {
-			out[strings.ToLower(t)] = true
-		}
+	var names []string
+	gdb.Table("information_schema.tables").Select("table_name").Where("table_schema = DATABASE()").Scan(&names)
+	for _, t := range names {
+		out[strings.ToLower(t)] = true
 	}
 	return out
 }
 
 // scanIDs returns a single numeric column as a slice of args for IN clauses.
-func scanIDs(sqlDB *sql.DB, query string, args ...interface{}) []interface{} {
-	rows, err := sqlDB.Query(query, args...)
+// query is caller-supplied SQL text (a fixed literal at each of its three
+// call sites in userdump.go's buildPlan, but the string itself lives at the
+// call site, not here) - this remains a keep-raw site (e7d7cae307a7): the
+// SQL this call actually executes belongs to its callers, the same way
+// database/insert.go's ExecInsertGetID and database/retry.go's wrappers are
+// keep-raw as generic executors rather than converted or inventoried per
+// caller. Only the connection handle changes here (sqlDB *sql.DB ->
+// gdb *gorm.DB, sqlDB.Query -> gdb.Raw(...).Rows(), same *sql.Rows-returning
+// contract), needed so this and existingTables/runDBSpec/gatherEmails share
+// one handle type through buildDump/buildPlan again.
+func scanIDs(gdb *gorm.DB, query string, args ...interface{}) []interface{} {
+	rows, err := gdb.Raw(query, args...).Rows()
 	if err != nil {
 		return nil
 	}
@@ -76,12 +85,25 @@ func inClause(ids []interface{}) (string, []interface{}) {
 }
 
 // runDBSpec executes one spec and copies the rows into the dump.
-func runDBSpec(b *Builder, sqlDB *sql.DB, spec dbSpec) (int, error) {
-	q := fmt.Sprintf("SELECT * FROM `%s` WHERE %s", spec.table, spec.where)
+//
+// ORM migration site 1722b492f85b (userdump keep-raw review, revisited).
+// spec.table and spec.where are never user input - they come from the fixed
+// literal list buildDBSpecs assembles (61 hardcoded table/where pairs) - so
+// .Table(spec.table) and .Where(spec.where, spec.args...) are the same
+// runtime-variable-but-caller-controlled shape as any other converted site
+// that takes its table name from a Go string variable. GORM auto-quotes
+// spec.table as a constructed identifier, so the manual backtick-wrapping
+// the raw SQL needed is no longer necessary. The previous "signature change
+// is a redesign" framing undersold this: gdb replaces sqlDB uniformly across
+// existingTables/scanIDs/runDBSpec/gatherEmails and their two callers
+// (buildDump, buildPlan), all four already only ever needed "a handle to
+// query the Percona cluster" - there was no second pattern to split across.
+func runDBSpec(b *Builder, gdb *gorm.DB, spec dbSpec) (int, error) {
+	tx := gdb.Table(spec.table).Where(spec.where, spec.args...)
 	if spec.limit > 0 {
-		q += fmt.Sprintf(" ORDER BY 1 DESC LIMIT %d", spec.limit)
+		tx = tx.Order("1 DESC").Limit(spec.limit)
 	}
-	rows, err := sqlDB.Query(q, spec.args...)
+	rows, err := tx.Rows()
 	if err != nil {
 		return 0, err
 	}

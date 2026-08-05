@@ -278,10 +278,12 @@ func IsNameExempt(db *gorm.DB, userid uint64) bool {
 		Systemrole string
 		IsMod      int
 	}
-	db.Raw("SELECT u.systemrole, "+
-		"IF(EXISTS(SELECT 1 FROM memberships m WHERE m.userid = u.id AND m.role IN (?, ?)), 1, 0) AS is_mod "+
-		"FROM users u WHERE u.id = ?",
-		utils.ROLE_OWNER, utils.ROLE_MODERATOR, userid).Scan(&row)
+	// ORM migration site 745ae2e2abc8 (wave 5).
+	db.Table("users u").
+		Select("u.systemrole, IF(EXISTS(SELECT 1 FROM memberships m WHERE m.userid = u.id AND m.role IN (?, ?)), 1, 0) AS is_mod",
+			utils.ROLE_OWNER, utils.ROLE_MODERATOR).
+		Where("u.id = ?", userid).
+		Scan(&row)
 	switch row.Systemrole {
 	case utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN:
 		return true

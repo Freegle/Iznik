@@ -63,7 +63,8 @@ func GetIllustration(c *fiber.Ctx) error {
 	db := database.DBConn
 	var externalUID sql.NullString
 
-	err := db.Raw("SELECT externaluid FROM ai_images WHERE name = ?", itemName).Scan(&externalUID).Error
+	// ORM migration site cb7eb47d0076 (wave 1).
+	err := db.Table("ai_images").Select("externaluid").Where("name = ?", itemName).Scan(&externalUID).Error
 
 	if err != nil || !externalUID.Valid || externalUID.String == "" {
 		// Not cached - frontend should fall back to image generation.

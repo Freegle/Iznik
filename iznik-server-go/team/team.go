@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm/clause"
 )
 
 type Team struct {
@@ -58,7 +59,8 @@ func GetTeam(c *fiber.Ctx) error {
 
 	// Get by name.
 	if name != "" {
-		db.Raw("SELECT id FROM teams WHERE name LIKE ?", name).Scan(&id)
+		// ORM migration site 95dc122ad363 (wave 1).
+		db.Table("teams").Select("id").Where("name LIKE ?", name).Scan(&id)
 		if id == 0 {
 			// Team not found is a search result, not a resource error - return 200.
 			return c.JSON(fiber.Map{"ret": 2, "status": "Not found"})
@@ -68,14 +70,16 @@ func GetTeam(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single team with members.
 		var t Team
-		db.Raw("SELECT * FROM teams WHERE id = ?", id).Scan(&t)
+		// ORM migration site 17b90a8329d8 (wave 1).
+		db.Table("teams").Where("id = ?", id).Scan(&t)
 		if t.ID == 0 {
 			return c.JSON(fiber.Map{"ret": 2, "status": "Not found"})
 		}
 
 		var members []TeamMember
-		db.Raw("SELECT userid, description, added, nameoverride, imageoverride "+
-			"FROM teams_members WHERE teamid = ?", id).Scan(&members)
+		// ORM migration site 7fa3d8451353 (wave 1).
+		db.Table("teams_members").Select("userid, description, added, nameoverride, imageoverride").
+			Where("teamid = ?", id).Scan(&members)
 
 		memberList := make([]map[string]interface{}, len(members))
 		for i, m := range members {
@@ -90,8 +94,9 @@ func GetTeam(c *fiber.Ctx) error {
 				entry["displayname"] = *m.Nameoverride
 			} else {
 				var displayname string
-				db.Raw("SELECT COALESCE(fullname, CONCAT(COALESCE(firstname,''), ' ', COALESCE(lastname,'')), 'Unknown') FROM users WHERE id = ?",
-					m.Userid).Scan(&displayname)
+				// ORM migration site e0154f7f2b3c (wave 1).
+				db.Table("users").Select("COALESCE(fullname, CONCAT(COALESCE(firstname,''), ' ', COALESCE(lastname,'')), 'Unknown')").
+					Where("id = ?", m.Userid).Scan(&displayname)
 				entry["displayname"] = strings.TrimSpace(displayname)
 			}
 
@@ -120,7 +125,8 @@ func GetTeam(c *fiber.Ctx) error {
 
 	// List all teams.
 	var teams []Team
-	db.Raw("SELECT * FROM teams ORDER BY LOWER(name) ASC").Scan(&teams)
+	// ORM migration site 7f14b1d8b5c5 (wave 1).
+	db.Table("teams").Order("LOWER(name) ASC").Scan(&teams)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -143,13 +149,13 @@ func getVolunteers(c *fiber.Ctx) error {
 	}
 
 	var vols []VolRow
-	db.Raw("SELECT DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, "+
-		"users.added, users.settings "+
-		"FROM memberships "+
-		"INNER JOIN `groups` ON `groups`.id = memberships.groupid "+
-		"AND memberships.role IN (?, ?) "+
-		"INNER JOIN users ON users.id = memberships.userid "+
-		"WHERE `groups`.type = ?", utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.GROUP_TYPE_FREEGLE).Scan(&vols)
+	// ORM migration site 2937feaa1317 (wave 4).
+	db.Table("memberships").
+		Select("DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, users.added, users.settings").
+		Joins("INNER JOIN `groups` ON `groups`.id = memberships.groupid AND memberships.role IN (?, ?)", utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Joins("INNER JOIN users ON users.id = memberships.userid").
+		Where("`groups`.type = ?", utils.GROUP_TYPE_FREEGLE).
+		Scan(&vols)
 
 	members := []map[string]interface{}{}
 	for _, v := range vols {
@@ -216,7 +222,8 @@ func getUserProfile(userid uint64, imageOverride *string) map[string]interface{}
 
 	db := database.DBConn
 	var imgID uint64
-	db.Raw("SELECT id FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userid).Scan(&imgID)
+	// ORM migration site 10f0be0a062b (wave 1).
+	db.Table("users_images").Select("id").Where("userid = ?", userid).Order("id DESC").Limit(1).Scan(&imgID)
 
 	if imgID > 0 {
 		return map[string]interface{}{
@@ -270,24 +277,20 @@ func PostTeam(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// ORM migration site 02f8f0aee316 (tier1). Plain, isolated, literal single-row
+	// INSERT; the generated id is read back via GORM's map-Create "@id" writeback
+	// (proven in test/orm_insertid_test.go), same pattern already shipped for over
+	// a dozen sibling sites.
+	row := map[string]interface{}{
+		"name":        req.Name,
+		"email":       req.Email,
+		"description": req.Description,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO teams (name, email, description) VALUES (?, ?, ?)",
-		req.Name, req.Email, req.Description)
-	if err != nil {
+	if err := db.Table("teams").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Create failed"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
@@ -342,27 +345,32 @@ func PatchTeam(c *fiber.Ctx) error {
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})
 		}
-		db.Exec("REPLACE INTO teams_members (userid, teamid, description) VALUES (?, ?, ?)",
-			req.Userid, req.ID, req.Description)
+		// ORM migration site f3a8b6237a60 (tier4).
+		db.Table("teams_members").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{"userid": req.Userid, "teamid": req.ID, "description": req.Description})
 	case "Remove":
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})
 		}
-		db.Exec("DELETE FROM teams_members WHERE userid = ? AND teamid = ?",
-			req.Userid, req.ID)
+		// ORM migration site c3c9a6a6b11f (wave 2).
+		db.Table("teams_members").Where("userid = ? AND teamid = ?", req.Userid, req.ID).Delete(nil)
 	default:
 		// Update team attributes.
 		if req.Name != "" {
-			db.Exec("UPDATE teams SET name = ? WHERE id = ?", req.Name, req.ID)
+			// ORM migration site d0644aa6dbe0 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("name", req.Name)
 		}
 		if req.Description != "" {
-			db.Exec("UPDATE teams SET description = ? WHERE id = ?", req.Description, req.ID)
+			// ORM migration site e3656e6c44b5 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("description", req.Description)
 		}
 		if req.Email != "" {
-			db.Exec("UPDATE teams SET email = ? WHERE id = ?", req.Email, req.ID)
+			// ORM migration site 0472cfcf52d2 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("email", req.Email)
 		}
 		if req.Wikiurl != "" {
-			db.Exec("UPDATE teams SET wikiurl = ? WHERE id = ?", req.Wikiurl, req.ID)
+			// ORM migration site f33669b723a8 (wave 2).
+			db.Table("teams").Where("id = ?", req.ID).Update("wikiurl", req.Wikiurl)
 		}
 	}
 
@@ -392,7 +400,9 @@ func DeleteTeam(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM teams WHERE id = ?", id)
+	// ORM migration site 76c84d731809 (wave 2). Team carries no gorm.DeletedAt,
+	// so this stays a hard DELETE rather than becoming a soft-delete UPDATE.
+	db.Where("id = ?", id).Delete(&Team{})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

@@ -2,7 +2,6 @@ package group
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -187,7 +186,11 @@ func GetGroup(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT * FROM groups_sponsorship WHERE groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1 ORDER BY amount DESC", id).Scan(&filteredSponsors)
+			// ORM migration site 21406c23a191 (wave 1).
+			db.Table("groups_sponsorship").
+				Where("groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1", id).
+				Order("amount DESC").
+				Scan(&filteredSponsors)
 		}()
 	}
 
@@ -205,8 +208,26 @@ func GetGroup(c *fiber.Ctx) error {
 			q = q.Preload("GroupSponsors")
 		}
 
-		err := q.Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", id).First(&group).Error
-		found = !errors.Is(err, gorm.ErrRecordNotFound)
+		// ORM migration site 2811b4d3acf7 (tier6). Converted from
+		// Raw(...).First(&group) to Table()/Select()/Where().Find(&group).
+		// First() unconditionally adds an ORDER BY + LIMIT 1 clause and sets
+		// RaiseErrorOnNotFound - but on a Raw()-based statement those clauses
+		// were silently dropped (BuildQuerySQL skips clause-building entirely
+		// once Statement.SQL is already populated by Raw()), so the golden's
+		// lack of ORDER BY/LIMIT was always the real executed SQL. A straight
+		// swap to Table()+First() would have started emitting a real
+		// "ORDER BY id LIMIT 1", since that short-circuit no longer applies -
+		// a genuine behaviour change, not a harmless rewrite. Find() never
+		// adds those clauses and never raises ErrRecordNotFound, so the
+		// caller now checks RowsAffected directly instead of comparing the
+		// returned error against ErrRecordNotFound - which is also a small
+		// correctness improvement: the old check treated ANY error other
+		// than "not found" (e.g. a genuine connection failure) as found=true.
+		tx := q.Table("groups").
+			Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+			Where("id = ?", id).
+			Find(&group)
+		found = tx.RowsAffected > 0
 
 		if found {
 			if group.Profile > 0 {
@@ -260,7 +281,8 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT poly, polyofficial FROM `groups` WHERE id = ?", id).Scan(&polyResult)
+				// ORM migration site 7c5c81bc5dc0 (wave 1).
+				db.Table("groups").Select("poly, polyofficial").Where("id = ?", id).Scan(&polyResult)
 			}()
 		}
 
@@ -268,7 +290,10 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).Scan(&myrole)
+				// ORM migration site 06597ffa764d (wave 1).
+				db.Table("memberships").Select("role").
+					Where("userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).
+					Scan(&myrole)
 			}()
 		}
 
@@ -276,7 +301,12 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1", myid).Scan(&email)
+				// ORM migration site 01adb146166c (wave 1).
+				db.Table("users_emails").Select("email").
+					Where("userid = ?", myid).
+					Order("preferred DESC, id ASC").
+					Limit(1).
+					Scan(&email)
 			}()
 		}
 
@@ -381,12 +411,17 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		go func(idx int, gid uint64) {
 			defer wg.Done()
 
+			// ORM migration site 547458a591ae (tier6). Same First()->Find()
+			// conversion as GetGroup (2811b4d3acf7) above, for the same
+			// reason: see that site's comment.
 			var g Group
-			err := db.Preload("GroupSponsors").
-				Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", gid).
-				First(&g).Error
+			tx := db.Preload("GroupSponsors").
+				Table("groups").
+				Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+				Where("id = ?", gid).
+				Find(&g)
 
-			if err != nil {
+			if tx.Error != nil || tx.RowsAffected == 0 {
 				return
 			}
 
@@ -411,7 +446,10 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 
 			if myid > 0 {
 				var myrole string
-				db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).Scan(&myrole)
+				// ORM migration site 3f55e9081ae4 (wave 1).
+				db.Table("memberships").Select("role").
+					Where("userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).
+					Scan(&myrole)
 				if myrole != "" {
 					g.Myrole = myrole
 				} else {
@@ -464,7 +502,8 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		}
 
 		var polyRows []PolyRow
-		db.Raw("SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?", polyIDs).Scan(&polyRows)
+		// ORM migration site 9494e3480fa0 (wave 1).
+		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", polyIDs).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
 		for i := range polyRows {
@@ -502,13 +541,20 @@ func ListGroups(c *fiber.Ctx) error {
 
 	if isAdminOrSupport {
 		// Support mode: return all groups (not just published/onhere) with extra fields.
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
-			"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
-			"founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, "+
-			"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby "+
-			"FROM `groups` WHERE type = ?", FREEGLE).Scan(&groups)
+		// ORM migration site 1a4bd532caa4 (wave 1).
+		db.Table("groups").
+			Select("id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
+				"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
+				"founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, "+
+				"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby").
+			Where("type = ?", FREEGLE).
+			Scan(&groups)
 	} else {
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
+		// ORM migration site d7629b3fa332 (wave 1).
+		db.Table("groups").
+			Select("id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin").
+			Where("publish = 1 AND onhere = 1 AND type = ?", FREEGLE).
+			Scan(&groups)
 	}
 
 	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
@@ -535,14 +581,20 @@ func ListGroups(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start31, "Message", "Autoapproved").Scan(&autoApproves)
+			// ORM migration site f207e41516c4 (wave 1).
+			db.Table("logs").Select("COUNT(*) AS count, groupid").
+				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Autoapproved").
+				Group("groupid").
+				Scan(&autoApproves)
 		}()
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start31, "Message", "Approved").Scan(&manualApproves)
+			// ORM migration site a1d28f99a959 (wave 1).
+			db.Table("logs").Select("COUNT(*) AS count, groupid").
+				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Approved").
+				Group("groupid").
+				Scan(&manualApproves)
 		}()
 
 		go func() {
@@ -550,12 +602,12 @@ func ListGroups(c *fiber.Ctx) error {
 			// Count messages where a moderator manually approved (approvedby IS NOT NULL)
 			// vs total messages arriving in the past 30 days, grouped by community.
 			// Uses arrival rather than approvedat so the denominator is consistent.
-			db.Raw(`SELECT groupid,
-				SUM(approvedby IS NOT NULL) AS moderated_count,
-				COUNT(*) AS total_count
-				FROM messages_groups
-				WHERE arrival >= ?
-				GROUP BY groupid`, start30).Scan(&moderatedCounts)
+			// ORM migration site 9ab327a70a09 (wave 1).
+			db.Table("messages_groups").
+				Select("groupid, SUM(approvedby IS NOT NULL) AS moderated_count, COUNT(*) AS total_count").
+				Where("arrival >= ?", start30).
+				Group("groupid").
+				Scan(&moderatedCounts)
 		}()
 
 		wg.Wait()
@@ -618,7 +670,10 @@ func ListGroups(c *fiber.Ctx) error {
 		}
 
 		var polyRows []PolyRow
-		db.Raw("SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?", ids).Scan(&polyRows)
+		// ORM migration site a7496f46878c (wave 1). Converted together with its
+		// identical sibling above: leaving one of two textually identical
+		// statements raw is the configuration that renumbers site IDs.
+		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", ids).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
 		for i := range polyRows {
@@ -667,7 +722,17 @@ func validateGeometry(wkt string) bool {
 	db := database.DBConn
 
 	var valid *int
-	result := db.Raw("SELECT ST_IsValid(ST_GeomFromText(?))", wkt).Scan(&valid)
+	// ORM migration site 6d0982e798b5 (Tier 2 keep-raw review). Bare scalar
+	// SELECT with no FROM at all - same BuildClauses={"SELECT"} mechanism as
+	// amp.go's bare-EXISTS conversions (see the comment there and
+	// ormharness/bareexists_test.go). .Table(...) is still required even
+	// though it never renders: without it GORM's schema-parse-failure branch
+	// rejects the statement for having no table set. "groups" is used purely
+	// to satisfy that check - it never appears in the rendered SQL, since
+	// FROM is excluded from BuildClauses.
+	tx := db.Table("groups").Select("ST_IsValid(ST_GeomFromText(?))", wkt)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	result := tx.Scan(&valid)
 
 	if result.Error != nil || valid == nil {
 		return false
@@ -679,8 +744,15 @@ func validateGeometry(wkt string) bool {
 // logGroupEdit inserts an audit log entry for group edit operations.
 func logGroupEdit(groupid uint64, byuser uint64, text string) {
 	db := database.DBConn
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_EDIT, groupid, byuser, text)
+	// ORM migration site cbad92a90c0d (wave 2).
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_GROUP,
+		"subtype":   log.LOG_SUBTYPE_EDIT,
+		"groupid":   groupid,
+		"byuser":    byuser,
+		"text":      text,
+	})
 }
 
 type PatchGroupRequest struct {
@@ -732,7 +804,8 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Verify group exists
 	var groupCount int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", req.ID).Scan(&groupCount)
+	// ORM migration site 88ec4f8b3364 (wave 1).
+	db.Table("groups").Where("id = ?", req.ID).Count(&groupCount)
 	if groupCount == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
@@ -746,19 +819,24 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Apply mod/owner settable fields
 	if req.Tagline != nil {
-		db.Exec("UPDATE `groups` SET tagline = ? WHERE id = ?", *req.Tagline, req.ID)
+		// ORM migration site b1c25f5b67a9 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("tagline", *req.Tagline)
 	}
 	if req.Namefull != nil {
-		db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", *req.Namefull, req.ID)
+		// ORM migration site bc7de11031d3 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("namefull", *req.Namefull)
 	}
 	if req.Welcomemail != nil {
-		db.Exec("UPDATE `groups` SET welcomemail = ? WHERE id = ?", *req.Welcomemail, req.ID)
+		// ORM migration site 7a9e12196036 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("welcomemail", *req.Welcomemail)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE `groups` SET description = ? WHERE id = ?", *req.Description, req.ID)
+		// ORM migration site fb4e48c03bee (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Region != nil {
-		db.Exec("UPDATE `groups` SET region = ? WHERE id = ?", *req.Region, req.ID)
+		// ORM migration site 4fd65f2418a6 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("region", *req.Region)
 	}
 	if req.AffiliationConfirmed != nil {
 		affConfirmed := *req.AffiliationConfirmed
@@ -768,62 +846,84 @@ func PatchGroup(c *fiber.Ctx) error {
 				break
 			}
 		}
-		db.Exec("UPDATE `groups` SET affiliationconfirmed = ?, affiliationconfirmedby = ? WHERE id = ?",
-			affConfirmed, myid, req.ID)
+		// ORM migration site b7a7c29b7611 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"affiliationconfirmed": affConfirmed, "affiliationconfirmedby": myid})
 	}
 	if req.Onhere != nil {
-		db.Exec("UPDATE `groups` SET onhere = ? WHERE id = ?", *req.Onhere, req.ID)
+		// ORM migration site 0510fa1a8a85 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("onhere", *req.Onhere)
 	}
 	if req.Publish != nil {
-		db.Exec("UPDATE `groups` SET publish = ? WHERE id = ?", *req.Publish, req.ID)
+		// ORM migration site fd0917d06441 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("publish", *req.Publish)
 	}
 	if req.Microvolunteering != nil {
-		db.Exec("UPDATE `groups` SET microvolunteering = ? WHERE id = ?", *req.Microvolunteering, req.ID)
+		// ORM migration site 2e011a3ca233 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteering", *req.Microvolunteering)
 	}
 	if req.Microvolunteeringoptions != nil {
-		db.Exec("UPDATE `groups` SET microvolunteeringoptions = ? WHERE id = ?", string(*req.Microvolunteeringoptions), req.ID)
+		// ORM migration site 11cd46e11f5a (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteeringoptions", string(*req.Microvolunteeringoptions))
 	}
 	if req.Mentored != nil {
-		db.Exec("UPDATE `groups` SET mentored = ? WHERE id = ?", *req.Mentored, req.ID)
+		// ORM migration site dbd2165e28c7 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("mentored", *req.Mentored)
 	}
 	if req.Ontn != nil {
-		db.Exec("UPDATE `groups` SET ontn = ? WHERE id = ?", *req.Ontn, req.ID)
+		// ORM migration site 5a1f3cd17397 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("ontn", *req.Ontn)
 	}
 	if req.Onlovejunk != nil {
-		db.Exec("UPDATE `groups` SET onlovejunk = ? WHERE id = ?", *req.Onlovejunk, req.ID)
+		// ORM migration site 1e4d0a106c72 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("onlovejunk", *req.Onlovejunk)
 	}
 	if req.Profile != nil {
-		db.Exec("UPDATE `groups` SET profile = ? WHERE id = ?", *req.Profile, req.ID)
+		// ORM migration site 23cf0e34c542 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("profile", *req.Profile)
 		logGroupEdit(req.ID, myid, "Profile")
 	}
 	if req.Settings != nil {
-		db.Exec("UPDATE `groups` SET settings = ? WHERE id = ?", string(*req.Settings), req.ID)
+		// ORM migration site 585a51354a68 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("settings", string(*req.Settings))
 		logGroupEdit(req.ID, myid, "Settings")
 	}
 	if req.Rules != nil {
-		db.Exec("UPDATE `groups` SET rules = ? WHERE id = ?", string(*req.Rules), req.ID)
+		// ORM migration site 6de535f15717 (wave 2).
+		db.Table("groups").Where("id = ?", req.ID).Update("rules", string(*req.Rules))
 		logGroupEdit(req.ID, myid, "Rules")
 	}
 
 	// Admin/Support only fields
 	if isAdmin {
 		if req.Lat != nil {
-			db.Exec("UPDATE `groups` SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+			// ORM migration site cf14153e46ac (wave 2). Converted together with
+			// its identical twin in CreateGroup: a half-converted pair renumbers
+			// the survivor's site ID, so gate (h) refuses the split state.
+			db.Table("groups").Where("id = ?", req.ID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+			// ORM migration site 6a4f5b776c87 (wave 2). Converted together with
+			// its identical twin in CreateGroup (adbbb9dadd0c): a half-converted
+			// pair renumbers the survivor's site ID, so gate (h) refuses the
+			// split state.
+			db.Table("groups").Where("id = ?", req.ID).Update("lng", *req.Lng)
 		}
 		if req.Altlat != nil {
-			db.Exec("UPDATE `groups` SET altlat = ? WHERE id = ?", *req.Altlat, req.ID)
+			// ORM migration site 0e9905e6f0ce (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("altlat", *req.Altlat)
 		}
 		if req.Altlng != nil {
-			db.Exec("UPDATE `groups` SET altlng = ? WHERE id = ?", *req.Altlng, req.ID)
+			// ORM migration site 22727b8ed343 (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("altlng", *req.Altlng)
 		}
 		if req.Nameshort != nil {
-			db.Exec("UPDATE `groups` SET nameshort = ? WHERE id = ?", *req.Nameshort, req.ID)
+			// ORM migration site e5fa7f0e05bd (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("nameshort", *req.Nameshort)
 		}
 		if req.Licenserequired != nil {
-			db.Exec("UPDATE `groups` SET licenserequired = ? WHERE id = ?", *req.Licenserequired, req.ID)
+			// ORM migration site dd57ad0485df (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("licenserequired", *req.Licenserequired)
 		}
 		// poly (DPA) / polyofficial (CGA). An empty string means "clear this area" - it must be
 		// allowed (a moderator removing the DPA), so skip geometry validation and store NULL rather
@@ -831,33 +931,44 @@ func PatchGroup(c *fiber.Ctx) error {
 		polyChanged := false
 		if req.Poly != nil {
 			if *req.Poly == "" {
-				db.Exec("UPDATE `groups` SET poly = NULL WHERE id = ?", req.ID)
+				// ORM migration site 7993248ef4e6 (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("poly", gorm.Expr("NULL"))
 			} else {
 				if !validateGeometry(*req.Poly) {
 					return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
 				}
-				db.Exec("UPDATE `groups` SET poly = ? WHERE id = ?", *req.Poly, req.ID)
+				// ORM migration site 450c5b5fca94 (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("poly", *req.Poly)
 			}
 			polyChanged = true
 		}
 		if req.Polyofficial != nil {
 			if *req.Polyofficial == "" {
-				db.Exec("UPDATE `groups` SET polyofficial = NULL WHERE id = ?", req.ID)
+				// ORM migration site cff1d8adacf1 (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", gorm.Expr("NULL"))
 			} else {
 				if !validateGeometry(*req.Polyofficial) {
 					return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
 				}
-				db.Exec("UPDATE `groups` SET polyofficial = ? WHERE id = ?", *req.Polyofficial, req.ID)
+				// ORM migration site e4f0bcf9f2eb (wave 2).
+				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", *req.Polyofficial)
 			}
 			polyChanged = true
 		}
 		if polyChanged {
 			// Recompute the spatial index so the poly/polyofficial change takes effect. When the DPA
 			// (poly) is cleared the group falls back to the CGA (polyofficial), then to POINT(0 0).
-			db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d) WHERE id = ?", utils.SRID), req.ID)
+			// ORM migration site 548090e97d00 (Tier 1 spatial review, round 3).
+			// SRID is folded into the gorm.Expr string via fmt.Sprintf, the
+			// same shipped idiom location.go's locations_spatial REPLACE
+			// sites use (25b7b92e33fd/6f1d6543e5c0).
+			db.Table("groups").
+				Where("id = ?", req.ID).
+				Update("polyindex", gorm.Expr(fmt.Sprintf("ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d)", utils.SRID)))
 		}
 		if req.Showonyahoo != nil {
-			db.Exec("UPDATE `groups` SET showonyahoo = ? WHERE id = ?", *req.Showonyahoo, req.ID)
+			// ORM migration site 34c2c6e9128b (wave 2).
+			db.Table("groups").Where("id = ?", req.ID).Update("showonyahoo", *req.Showonyahoo)
 		}
 	}
 
@@ -904,43 +1015,60 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	if !isAdmin {
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modCount)
+		// ORM migration site fcf7a3fd9364 (wave 1).
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Count(&modCount)
 		if modCount == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator to create groups")
 		}
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// ORM migration site 8cbeeeb7e32f (Tier 1 batch review). GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT returned (under
+	// the map key "@id"), the same write-connection guarantee the old
+	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
+	// string via fmt.Sprintf, the shipped idiom this file's PatchGroup
+	// (site 548090e97d00) and location.go's locations_spatial REPLACE sites
+	// already use.
+	row := map[string]interface{}{
+		"nameshort": req.Name,
+		"namefull":  req.Name,
+		"type":      req.GroupType,
+		"publish":   gorm.Expr("1"),
+		"onhere":    gorm.Expr("1"),
+		"polyindex": gorm.Expr(fmt.Sprintf("ST_GeomFromText('POINT(0 0)', %d)", utils.SRID)),
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?, ?, 1, 1, ST_GeomFromText('POINT(0 0)', %d))", utils.SRID),
-		req.Name, req.Name, req.GroupType)
-	if err != nil {
+	if err := db.Table("groups").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create group")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		newID = uint64(idInt64)
 	}
 
 	// Admin/support can set lat/lng.
 	if isAdmin {
 		if req.Lat != nil {
-			db.Exec("UPDATE `groups` SET lat = ? WHERE id = ?", *req.Lat, newID)
+			// ORM migration site 194062f24f48 (wave 2).
+			db.Table("groups").Where("id = ?", newID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, newID)
+			// ORM migration site adbbb9dadd0c (wave 2). Converted together with
+			// its identical twin in PatchGroup (6a4f5b776c87): a half-converted
+			// pair renumbers the survivor's site ID, so gate (h) refuses the
+			// split state.
+			db.Table("groups").Where("id = ?", newID).Update("lng", *req.Lng)
 		}
 	}
 
 	// Creator becomes Owner.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)", myid, newID, utils.ROLE_OWNER, utils.COLLECTION_APPROVED)
+	// ORM migration site ea603dbc3fe0 (wave 2).
+	db.Table("memberships").Create(map[string]interface{}{
+		"userid":     myid,
+		"groupid":    newID,
+		"role":       utils.ROLE_OWNER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }

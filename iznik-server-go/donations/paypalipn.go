@@ -64,7 +64,8 @@ func PayPalIPN(c *fiber.Ctx) error {
 				if err == nil && pi != nil && pi.Metadata != nil {
 					if uidStr, ok := pi.Metadata["uid"]; ok && uidStr != "" {
 						var uid uint64
-						gdb.Raw("SELECT id FROM users WHERE id = ?", uidStr).Scan(&uid)
+						// ORM migration site b55d22304524 (wave 1).
+						gdb.Table("users").Select("id").Where("id = ?", uidStr).Scan(&uid)
 						if uid > 0 {
 							userID = uid
 							log.Printf("[PayPalIPN] Matched user %d from Stripe metadata", userID)
@@ -108,11 +109,18 @@ func PayPalIPN(c *fiber.Ctx) error {
 		userIDPtr = &userID
 	}
 
-	result := gdb.Exec(
-		"INSERT INTO users_donations (userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source, TransactionType, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		userIDPtr, payerEmail, displayName, timestamp,
-		txnID, mcGross, SOURCE_DONATE_WITH_PAYPAL, txnType, TYPE_PAYPAL,
-	)
+	// ORM migration site 6fdb2c3b96f5 (wave 2).
+	result := gdb.Table("users_donations").Create(map[string]interface{}{
+		"userid":           userIDPtr,
+		"Payer":            payerEmail,
+		"PayerDisplayName": displayName,
+		"timestamp":        timestamp,
+		"TransactionID":    txnID,
+		"GrossAmount":      mcGross,
+		"source":           SOURCE_DONATE_WITH_PAYPAL,
+		"TransactionType":  txnType,
+		"type":             TYPE_PAYPAL,
+	})
 
 	if result.Error != nil {
 		log.Printf("[PayPalIPN] Failed to record donation: %v", result.Error)

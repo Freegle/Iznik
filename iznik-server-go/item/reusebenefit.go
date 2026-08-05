@@ -128,7 +128,8 @@ func LoadCPIData(db *gorm.DB) map[int]float64 {
 		Value string `gorm:"column:value"`
 	}
 
-	result := db.Raw("SELECT value FROM config WHERE `key` = ? LIMIT 1", CPIConfigKey).Scan(&row)
+	// ORM migration site 346c71c939e2 (wave 1).
+	result := db.Table("config").Select("value").Where("`key` = ?", CPIConfigKey).Limit(1).Scan(&row)
 	if result.Error != nil || row.Value == "" {
 		return FallbackCPIData
 	}

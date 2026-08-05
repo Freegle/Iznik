@@ -9,6 +9,8 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // TaskHousekeeperNotify is the background_tasks type for housekeeping notifications.
@@ -114,16 +116,25 @@ func upsertRegistry(registry []TaskInfo) {
 			continue
 		}
 
-		db.Exec(`INSERT INTO housekeeper_tasks (task_key, name, description, interval_hours, enabled, placeholder, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, NOW())
-			ON DUPLICATE KEY UPDATE
-				name = VALUES(name),
-				description = VALUES(description),
-				interval_hours = VALUES(interval_hours),
-				enabled = VALUES(enabled),
-				placeholder = VALUES(placeholder),
-				updated_at = NOW()`,
-			t.TaskKey, t.Name, t.Description, t.IntervalHours, t.Enabled, t.Placeholder)
+		// ORM migration site 9bf0aed4b060 (wave 3).
+		db.Table("housekeeper_tasks").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "name"}, Value: clause.Column{Table: "excluded", Name: "name"}},
+				{Column: clause.Column{Name: "description"}, Value: clause.Column{Table: "excluded", Name: "description"}},
+				{Column: clause.Column{Name: "interval_hours"}, Value: clause.Column{Table: "excluded", Name: "interval_hours"}},
+				{Column: clause.Column{Name: "enabled"}, Value: clause.Column{Table: "excluded", Name: "enabled"}},
+				{Column: clause.Column{Name: "placeholder"}, Value: clause.Column{Table: "excluded", Name: "placeholder"}},
+				{Column: clause.Column{Name: "updated_at"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"task_key":       t.TaskKey,
+			"name":           t.Name,
+			"description":    t.Description,
+			"interval_hours": t.IntervalHours,
+			"enabled":        t.Enabled,
+			"placeholder":    t.Placeholder,
+			"updated_at":     gorm.Expr("NOW()"),
+		})
 	}
 }
 
@@ -131,14 +142,22 @@ func upsertRegistry(registry []TaskInfo) {
 func upsertLastRun(taskKey, status, summary string) {
 	db := database.DBConn
 
-	db.Exec(`INSERT INTO housekeeper_tasks (task_key, name, last_run_at, last_status, last_summary, updated_at)
-		VALUES (?, ?, NOW(), ?, ?, NOW())
-		ON DUPLICATE KEY UPDATE
-			last_run_at = NOW(),
-			last_status = VALUES(last_status),
-			last_summary = VALUES(last_summary),
-			updated_at = NOW()`,
-		taskKey, taskKey, status, summary)
+	// ORM migration site dbbe018930e1 (wave 3).
+	db.Table("housekeeper_tasks").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "last_run_at"}, Value: gorm.Expr("NOW()")},
+			{Column: clause.Column{Name: "last_status"}, Value: clause.Column{Table: "excluded", Name: "last_status"}},
+			{Column: clause.Column{Name: "last_summary"}, Value: clause.Column{Table: "excluded", Name: "last_summary"}},
+			{Column: clause.Column{Name: "updated_at"}, Value: gorm.Expr("NOW()")},
+		},
+	}).Create(map[string]interface{}{
+		"task_key":     taskKey,
+		"name":         taskKey,
+		"last_run_at":  gorm.Expr("NOW()"),
+		"last_status":  status,
+		"last_summary": summary,
+		"updated_at":   gorm.Expr("NOW()"),
+	})
 }
 
 // CompleteTask marks a placeholder (manual) housekeeping task as done.
@@ -162,10 +181,14 @@ func CompleteTask(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	result := db.Exec(`UPDATE housekeeper_tasks
-		SET last_run_at = NOW(), last_status = 'success', last_summary = 'Marked done manually', updated_at = NOW()
-		WHERE task_key = ? AND placeholder = 1`,
-		taskKey)
+	// ORM migration site aae1a88f63f1 (wave 2).
+	result := db.Table("housekeeper_tasks").Where("task_key = ? AND placeholder = 1", taskKey).
+		Updates(map[string]interface{}{
+			"last_run_at":  gorm.Expr("NOW()"),
+			"last_status":  gorm.Expr("'success'"),
+			"last_summary": gorm.Expr("'Marked done manually'"),
+			"updated_at":   gorm.Expr("NOW()"),
+		})
 
 	if result.Error != nil {
 		log.Printf("[Housekeeper] CompleteTask error: %v", result.Error)
@@ -198,7 +221,8 @@ func ListTasks(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var tasks []HousekeeperTask
-	result := db.Raw(`SELECT * FROM housekeeper_tasks ORDER BY task_key`).Scan(&tasks)
+	// ORM migration site 2c37feb50055 (wave 1).
+	result := db.Table("housekeeper_tasks").Order("task_key").Scan(&tasks)
 
 	if result.Error != nil {
 		log.Printf("[Housekeeper] ListTasks query error: %v", result.Error)
@@ -485,7 +509,8 @@ func ListCronJobs(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var statuses []cronJobStatus
-	statusResult := db.Raw(`SELECT * FROM cron_job_status`).Scan(&statuses)
+	// ORM migration site e574518b4ebd (wave 1).
+	statusResult := db.Table("cron_job_status").Scan(&statuses)
 
 	if statusResult.Error != nil {
 		log.Printf("[Housekeeper] ListCronJobs cron_job_status query error: %v", statusResult.Error)

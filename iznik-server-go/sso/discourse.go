@@ -140,11 +140,13 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	}
 
 	var sessions []SessionRow
-	db.Raw(`SELECT sessions.userid FROM sessions
-		INNER JOIN users ON sessions.userid = users.id
-		WHERE users.systemrole IN ('Admin', 'Support', 'Moderator')
-		AND sessions.id = ? AND sessions.token = ?`,
-		cookieID, cookieToken).Scan(&sessions)
+	// ORM migration site f1f646ab3b9a (wave 4).
+	db.Table("sessions").
+		Select("sessions.userid").
+		Joins("INNER JOIN users ON sessions.userid = users.id").
+		Where("users.systemrole IN ('Admin', 'Support', 'Moderator') AND sessions.id = ? AND sessions.token = ?",
+			cookieID, cookieToken).
+		Scan(&sessions)
 
 	if len(sessions) == 0 {
 		return nil, fmt.Errorf("no valid moderator session found")
@@ -154,10 +156,11 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Check they are a mod on a Freegle group.
 	var freegleGroupCount int64
-	db.Raw(`SELECT COUNT(*) FROM memberships
-		INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-		WHERE memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator')
-		AND ` + "`groups`" + `.type = 'Freegle'`, userID).Scan(&freegleGroupCount)
+	// ORM migration site cc828e26aabf (wave 4).
+	db.Table("memberships").
+		Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
+		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Count(&freegleGroupCount)
 
 	if freegleGroupCount == 0 {
 		return nil, fmt.Errorf("user %d is not a moderator of a Freegle group", userID)
@@ -165,17 +168,21 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Get user details.
 	var fullname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", userID).Scan(&fullname)
+	// ORM migration site 2edbbcc133b4 (wave 1).
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", userID).Scan(&fullname)
 
 	var email string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&email)
+	// ORM migration site 0e811eecaa3a (wave 1).
+	db.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&email)
 
 	var profileURL string
-	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&profileURL)
+	// ORM migration site 5ad089d40930 (wave 1).
+	db.Table("users_images").Select("url").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
 
 	var isAdmin bool
 	var systemrole string
-	db.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	// ORM migration site fc671dfc8f18 (wave 1).
+	db.Table("users").Select("systemrole").Where("id = ?", userID).Scan(&systemrole)
 	isAdmin = systemrole == "Admin"
 
 	// Get group list — try active mod groups first, fall back to all moderatorships.
@@ -201,10 +208,12 @@ func getModGroupList(userID uint64) string {
 	}
 
 	var groups []GroupName
-	db.Raw(`SELECT COALESCE(namefull, nameshort) AS namedisplay FROM `+"`groups`"+`
-		INNER JOIN memberships ON memberships.groupid = `+"`groups`"+`.id
-		WHERE memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator')
-		AND `+"`groups`"+`.type = 'Freegle'`, userID).Scan(&groups)
+	// ORM migration site a9deba91c9c5 (wave 4).
+	db.Table("`groups`").
+		Select("COALESCE(namefull, nameshort) AS namedisplay").
+		Joins("INNER JOIN memberships ON memberships.groupid = `groups`.id").
+		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Scan(&groups)
 
 	names := make([]string, 0, len(groups))
 	for _, g := range groups {

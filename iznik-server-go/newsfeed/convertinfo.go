@@ -46,7 +46,8 @@ func ConvertInfo(c *fiber.Ctx) error {
 	}
 
 	var author uint64
-	database.DBConn.Raw("SELECT userid FROM newsfeed WHERE id = ? AND deleted IS NULL", id).Scan(&author)
+	// ORM migration site 7684033bc776 (wave 1).
+	database.DBConn.Table("newsfeed").Select("userid").Where("id = ? AND deleted IS NULL", id).Scan(&author)
 
 	if author == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Newsfeed item not found")

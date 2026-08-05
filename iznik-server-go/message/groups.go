@@ -60,51 +60,63 @@ func Groups(c *fiber.Ctx) error {
 	// hasn't made it into messages_spatial yet.
 	// The own-messages arm joins messages_groups and can produce one row per group for a cross-posted
 	// message; GROUP BY messages.id + MAX(arrival) collapses those into a single row.
-	db.Raw("SELECT * FROM ("+
-		"SELECT ST_Y(point) AS lat, "+
-		"ST_X(point) AS lng, "+
-		"messages_spatial.msgid AS id, "+
-		"messages_spatial.successful, "+
-		"messages_spatial.promised, "+
-		"messages_spatial.groupid, "+
-		"messages_spatial.msgtype AS type, "+
-		"messages_spatial.arrival, "+
+	//
+	// ORM migration site bc6d923b540d (Tier 3 keep-raw review). gid>0 is the
+	// only toggle (it drives spatialGroupFilter and spatialArgs together) - 2
+	// possible rendered forms, both declared in ormharness/shapes.json and
+	// proven by TestTier3Shapes_bc6d923b540d (iznik-server-go/test). Uses the
+	// derived-table trick (GORM's Table() passes its name argument through
+	// verbatim once it contains a space) already proven elsewhere in this
+	// codebase for a parenthesized UNION subquery.
+	derivedTable := "(" +
+		"SELECT ST_Y(point) AS lat, " +
+		"ST_X(point) AS lng, " +
+		"messages_spatial.msgid AS id, " +
+		"messages_spatial.successful, " +
+		"messages_spatial.promised, " +
+		"messages_spatial.groupid, " +
+		"messages_spatial.msgtype AS type, " +
+		"messages_spatial.arrival, " +
 		// posted = the ORIGINAL post time (messages.arrival), stable across rippling.
 		// The client's "Newest posted" sort keys on posted; messages_spatial.arrival is
 		// ripple-BUMPED, so without posted the mygroups feed fell back to it and the
 		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
 		// Mirrors the nearby/reach feed (isochrone/message.go).
-		"m.arrival AS posted, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
-		"FROM messages_spatial "+
-		"INNER JOIN messages m ON m.id = messages_spatial.msgid "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE 1=1 "+spatialGroupFilter+
-		"UNION "+
-		"SELECT lat, lng, messages.id, "+
-		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-		"ANY_VALUE(messages_groups.groupid) AS groupid, "+
-		"messages.type, "+
-		"MAX(messages_groups.arrival) AS arrival, "+
-		"messages.arrival AS posted, "+
-		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-		"LEFT JOIN messages_promises ON messages_promises.msgid = messages.id "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE fromuser = ? AND messages_groups.arrival >= ? "+
-		"AND messages_outcomes.id IS NULL "+
-		"GROUP BY messages.id "+
-		") t "+
-		"ORDER BY unseen DESC, arrival DESC, id DESC;",
+		"m.arrival AS posted, " +
+		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen " +
+		"FROM messages_spatial " +
+		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
+		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? " +
+		"WHERE 1=1 " + spatialGroupFilter +
+		"UNION " +
+		"SELECT lat, lng, messages.id, " +
+		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, " +
+		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, " +
+		"ANY_VALUE(messages_groups.groupid) AS groupid, " +
+		"messages.type, " +
+		"MAX(messages_groups.arrival) AS arrival, " +
+		"messages.arrival AS posted, " +
+		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen " +
+		"FROM messages " +
+		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id " +
+		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id " +
+		"LEFT JOIN messages_promises ON messages_promises.msgid = messages.id " +
+		"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? " +
+		"WHERE fromuser = ? AND messages_groups.arrival >= ? " +
+		"AND messages_outcomes.id IS NULL " +
+		"GROUP BY messages.id" +
+		") t"
+
+	db.Table(derivedTable,
 		append(spatialArgs,
 			utils.OUTCOME_TAKEN,
 			utils.OUTCOME_RECEIVED,
 			myid, utils.MESSAGE_LIKES_VIEW,
 			myid,
-			start)...).Scan(&msgs)
+			start)...).
+		Select("*").
+		Order("unseen DESC, arrival DESC, id DESC").
+		Scan(&msgs)
 
 	// Viewer location for the per-post distance. GetLatLng reads settings.mylocation.
 	latlng := user.GetLatLng(myid)

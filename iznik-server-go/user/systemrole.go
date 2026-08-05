@@ -30,7 +30,8 @@ func SyncSystemRole(db *gorm.DB, userid uint64) {
 	}
 
 	var systemrole string
-	db.Raw("SELECT systemrole FROM users WHERE id = ?", userid).Scan(&systemrole)
+	// ORM migration site 132e1b9b2d4a (wave 1).
+	db.Table("users").Select("systemrole").Where("id = ?", userid).Scan(&systemrole)
 
 	// Only the User<->Moderator transition is automatic; never touch Support/Admin.
 	if systemrole != utils.SYSTEMROLE_USER && systemrole != utils.SYSTEMROLE_MODERATOR {
@@ -38,16 +39,19 @@ func SyncSystemRole(db *gorm.DB, userid uint64) {
 	}
 
 	var modCount int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
-		userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	// ORM migration site 21d2f5cc09d7 (wave 1).
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?)",
+		userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 
 	switch {
 	case modCount > 0 && systemrole == utils.SYSTEMROLE_USER:
 		// Guarded WHERE so a concurrent Support/Admin change is never clobbered.
-		db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-			utils.SYSTEMROLE_MODERATOR, userid, utils.SYSTEMROLE_USER)
+		// ORM migration site df3c6bdb7aba (wave 2).
+		db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_USER).
+			Update("systemrole", utils.SYSTEMROLE_MODERATOR)
 	case modCount == 0 && systemrole == utils.SYSTEMROLE_MODERATOR:
-		db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
-			utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)
+		// ORM migration site e4f7cca3adb8 (wave 2).
+		db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_MODERATOR).
+			Update("systemrole", utils.SYSTEMROLE_USER)
 	}
 }

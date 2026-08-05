@@ -1,0 +1,62 @@
+{
+  "_comment": "Sites whose SQL TEXT uses LAST_INSERT_ID - the upsert idiom id = LAST_INSERT_ID(id), or a separate SELECT LAST_INSERT_ID(). Generated from 31979fa2e80c61a7d1bfebb03033643fb7b2e99a by check-lastinsertid.sh --regenerate. These depend on connection-scoped session state and stay raw. Reading sql.Result.LastInsertId() in Go is a DIFFERENT thing and is safe - see the header comment.",
+  "sites": {
+    "050e3574aa6f": {
+      "file": "iznik-server-go/message/bulkItem.go",
+      "line": 426,
+      "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON "
+    },
+    "123512413259": {
+      "file": "iznik-server-go/message/helper.go",
+      "line": 636,
+      "sql": "INSERT INTO helper_repliers (batchid, userid, chatid, state) VALUES (?, ?, ?, 'NEW') ON DU"
+    },
+    "258437a60f5d": {
+      "file": "iznik-server-go/donations/giftaid.go",
+      "line": 274,
+      "sql": "INSERT INTO giftaid (userid, period, fullname, firstname, lastname, homeaddress) VALUES (?"
+    },
+    "26c94565517d": {
+      "file": "iznik-server-go/message/message.go",
+      "line": 5121,
+      "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON "
+    },
+    "3efeb225c001": {
+      "file": "iznik-server-go/chat/chatroom.go",
+      "line": 584,
+      "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) ON DUPL"
+    },
+    "4aef5392a01f": {
+      "file": "iznik-server-go/message/helper.go",
+      "line": 438,
+      "sql": "INSERT INTO helper_repliers (batchid, userid, state) VALUES (?, ?, 'NEW') ON DUPLICATE KEY"
+    },
+    "65574169749a": {
+      "file": "iznik-server-go/chat/chatroom.go",
+      "line": 407,
+      "sql": "INSERT INTO chat_rooms (user1, chattype, groupid, latestmessage) VALUES (?, ?, ?, ?) ON DU"
+    },
+    "659e00792d43": {
+      "file": "iznik-server-go/chat/chatroom.go",
+      "line": 465,
+      "sql": "INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?) ON DUPL"
+    },
+    "7e3e5f4d0b36": {
+      "file": "iznik-server-go/message/helper.go",
+      "line": 361,
+      "sql": "INSERT INTO helper_batches (msgid, offereruserid, status) VALUES (?, ?, 'active') ON DUPLI"
+    },
+    "dfc3d2fdb2ba": {
+      "file": "iznik-server-go/message/helper.go",
+      "line": 518,
+      "sql": "INSERT INTO helper_item_states (replierid, bulkitemid, state) VALUES (?, ?, 'NEW') ON DUPL"
+    },
+    "938d9dc56c71": {
+      "file": "iznik-server-go/tryst/tryst.go",
+      "line": 210,
+      "sql": "INSERT INTO trysts (user1, user2, arrangedfor) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE id ",
+      "addedAfterMergeBase": true,
+      "note": "NOT produced by --regenerate, and deliberately so: at the merge-base commit this statement did NOT use LAST_INSERT_ID - that absence WAS the bug (a duplicate-key hit reported id 0, which CreateTryst returned to the caller). The id-forcing clause was added as a fix on this branch, so a regeneration against the merge base can never find it. Added by hand to keep gate (k) covering the site; it will be produced normally by the next --regenerate run against a commit that contains the fix, and this entry can be dropped then."
+    }
+  }
+}

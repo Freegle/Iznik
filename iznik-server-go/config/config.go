@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm/clause"
 	"strconv"
 	"strings"
 )
@@ -61,7 +62,13 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 			Systemrole string `json:"systemrole"`
 		}
 
-		db.Raw("SELECT users.id, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1", sessionID, userID).Scan(&userInfo)
+		// ORM migration site a2a6a74e67d6 (wave 4).
+		db.Table("sessions").
+			Select("users.id, users.systemrole").
+			Joins("INNER JOIN users ON users.id = sessions.userid").
+			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
+			Limit(1).
+			Scan(&userInfo)
 
 		if userInfo.ID == 0 {
 			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")
@@ -104,7 +111,8 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	db.Raw("SELECT * FROM config WHERE `key` = ?", key).Scan(&items)
+	// ORM migration site 1f790095e709 (wave 1).
+	db.Table("config").Where("`key` = ?", key).Scan(&items)
 
 	if len(items) > 0 {
 		return c.JSON(items)
@@ -151,8 +159,15 @@ func PatchAdminConfig(c *fiber.Ctx) error {
 			strVal = string(b)
 		}
 
-		db.Exec("INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-			key, strVal, strVal)
+		// ORM migration site 4eabda40530c (wave 3), through the portable
+		// upsert wrapper: clause.OnConflict emits ON DUPLICATE KEY UPDATE on
+		// MySQL and ON CONFLICT DO UPDATE on PostgreSQL from this one call.
+		// "key" is a reserved word, so the quoting has to come from the
+		// dialector rather than being hand-written.
+		db.Table("config").Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"value": strVal}),
+		}).Create(map[string]interface{}{"key": key, "value": strVal})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

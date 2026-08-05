@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // imageTypeConfig maps imgtype names to their database table and parent ID column.
@@ -20,9 +21,10 @@ type imageTypeConfig struct {
 	IDColumn string
 	// TrustStoredContentType says whether a row's stored contenttype can be
 	// believed when serving a legacy `data` blob. It is NOT "does this table
-	// have the column" - all ten do, NOT NULL with no default. Message is false
-	// because historic messages_attachments rows were written without it (see
-	// below), so their stored value is blank and must not be served as a
+	// have the column" - all ten do, NOT NULL with no default - and it does NOT
+	// control whether doCreate writes contenttype, which it always does. Message
+	// is false because historic messages_attachments rows were written without it
+	// (see below), so their stored value is blank and must not be served as a
 	// Content-Type.
 	TrustStoredContentType bool
 }
@@ -143,7 +145,8 @@ func Post(c *fiber.Ctx) error {
 	if raterecognise != "" && id != "" {
 		idNum, _ := strconv.ParseUint(id, 10, 64)
 		db := database.DBConn
-		db.Exec("UPDATE messages_attachments_recognise SET rating = ? WHERE attid = ?", raterecognise, idNum)
+		// ORM migration site 30517f1cbffd (wave 2).
+		db.Table("messages_attachments_recognise").Where("attid = ?", idNum).Update("rating", raterecognise)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
@@ -195,7 +198,14 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	}
 	db := database.DBConn
 	var owner uint64
-	db.Raw("SELECT `"+ownerCol+"` FROM `"+table+"` WHERE id = ?", parentID).Scan(&owner)
+	// ORM migration site bc2f944bfbb7 (wave 5 shapes pilot). ownerCol/table
+	// come from the switch above, which has exactly 6 reachable cases
+	// (Message, ChatMessage, CommunityEvent, Volunteering, Story, Newsfeed -
+	// "User" and the default branch return before reaching this query), so
+	// this statement has exactly 6 possible rendered forms. All 6 are
+	// declared in ormharness/shapes.json and proven by
+	// TestShapesPilot_bc2f944bfbb7 (iznik-server-go/test).
+	db.Table("`"+table+"`").Select("`"+ownerCol+"`").Where("id = ?", parentID).Scan(&owner)
 	return owner != 0 && owner == myid
 }
 
@@ -251,15 +261,6 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		stdlog.Printf("image doCreate: could not get sql.DB for imgtype %s: %v", imgType, err)
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-
 	// Always write contenttype. Every one of the ten tables declares it NOT NULL
 	// with no default, so omitting it is only survivable when the server is not
 	// in strict mode: MySQL then substitutes '' and the row is written with a
@@ -275,14 +276,29 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	// could 500 early in a run and succeed later (Playwright's HEIC mobile give
 	// flow, intermittently).
 	//
-	// A single unconditional statement removes the dependency on server mode
-	// entirely, which is the only version that is correct in both.
-	sqlResult, err := sqlDB.Exec(
-		"INSERT INTO `"+cfg.Table+"` (`"+cfg.IDColumn+"`, externaluid, externalmods, hash, contenttype) VALUES (?, ?, ?, ?, 'image/jpeg')",
-		parentIDParam, req.ExternalUID, modsStr, utils.NilIfEmpty(req.Hash),
-	)
+	// A single unconditional write removes the dependency on server mode
+	// entirely, which is the only version that is correct in both. Every
+	// uploaded image is normalised to JPEG before it reaches here.
+	row := map[string]interface{}{
+		cfg.IDColumn:   parentIDParam,
+		"externaluid":  req.ExternalUID,
+		"externalmods": modsStr,
+		"hash":         utils.NilIfEmpty(req.Hash),
+		"contenttype":  gorm.Expr("'image/jpeg'"),
+	}
 
-	if err != nil {
+	// ORM migration site 1571f00a4ce8, now covering all 10 typeConfigs
+	// entries (previously split 9/1 against site b0445c89f59e, which omitted
+	// contenttype for Message - a bug, not a schema difference; see
+	// imageTypeConfig.TrustStoredContentType). cfg.Table/cfg.IDColumn are
+	// runtime-varying but bounded to exactly 10 combinations; see
+	// ormharness/shapes.json and TestTier3Shapes_1571f00a4ce8
+	// (iznik-server-go/test). Table()+map-Create reads the generated id
+	// back from the same sql.Result the INSERT returned, under the map key
+	// "@id" - no separate connection-scoped SELECT LAST_INSERT_ID() query.
+	// This is a plain INSERT (no ON DUPLICATE KEY UPDATE), so RowsAffected
+	// is always 1 and GORM never skips the id writeback.
+	if err := db.Table("`" + cfg.Table + "`").Create(row).Error; err != nil {
 		// Log the real cause. Returning only the generic message made a genuine
 		// server-side fault indistinguishable from any other, and cost real
 		// diagnosis time: a NOT NULL violation on this INSERT surfaced in CI as a
@@ -296,8 +312,7 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	}
 
 	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
+	if lastID, ok := row["@id"].(int64); ok && lastID > 0 {
 		id = uint64(lastID)
 	}
 
@@ -326,14 +341,23 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	}
 	db := database.DBConn
 	var rotateParentID uint64
-	db.Raw("SELECT `"+cfg.IDColumn+"` FROM `"+cfg.Table+"` WHERE id = ?", req.ID).Scan(&rotateParentID)
+	// ORM migration site 6f9c3996f035 (Tier 3 keep-raw review). cfg.IDColumn/
+	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
+	// reachable here - one rendered form per entry, declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_6f9c3996f035
+	// (iznik-server-go/test).
+	db.Table("`"+cfg.Table+"`").Select("`"+cfg.IDColumn+"`").Where("id = ?", req.ID).Scan(&rotateParentID)
 	if !ownsImageParent(myid, imgType, rotateParentID) {
 		return fiber.NewError(fiber.StatusForbidden, "Cannot rotate an image you do not own")
 	}
 
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`
 
-	result := db.Exec("UPDATE `"+cfg.Table+"` SET externalmods = ? WHERE id = ?", modsJSON, req.ID)
+	// ORM migration site 2ad46344c8b2 (Tier 3 keep-raw review). Same
+	// typeConfigs-driven table name as 6f9c3996f035 above - 10 possible
+	// rendered forms, declared in ormharness/shapes.json and proven by
+	// TestTier3Shapes_2ad46344c8b2 (iznik-server-go/test).
+	result := db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Update("externalmods", modsJSON)
 
 	if result.Error != nil {
 		stdlog.Printf("image doRotate: UPDATE %s id %d failed: %v", cfg.Table, req.ID, result.Error)
@@ -455,7 +479,15 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var rows []legacyAttachment
-	db.Raw("SELECT "+cols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&rows)
+	// ORM migration site 1be407fe0a15 (wave 5 shapes pilot). cfg.Table comes
+	// from typeConfigs, which has exactly 10 entries, all reachable here (the
+	// default imgType "Message" plus the 9 getFlagTypes flags); cols is
+	// determined by imgType too (only Message adds externalurl), so there is
+	// exactly one rendered form per typeConfigs entry, not a cross product -
+	// 10 possible shapes total. All 10 are declared in
+	// ormharness/shapes.json and proven by TestShapesPilot_1be407fe0a15
+	// (iznik-server-go/test).
+	db.Table("`"+cfg.Table+"`").Select(cols).Where("id = ?", id).Scan(&rows)
 
 	if len(rows) == 0 {
 		return c.Redirect(defaultImageURL(imgType), fiber.StatusFound)
@@ -497,7 +529,13 @@ func Get(c *fiber.Ctx) error {
 		Data        []byte
 		Contenttype string
 	}
-	db.Raw("SELECT "+blobCols+" FROM `"+cfg.Table+"` WHERE id = ?", id).Scan(&blob)
+	// ORM migration site 1606033fd8f7 (wave 5 shapes pilot). Same reasoning as
+	// 1be407fe0a15 above: blobCols is determined by cfg.TrustStoredContentType,
+	// which is itself a function of imgType (false only for Message), so this
+	// is again exactly one rendered form per typeConfigs entry - 10 shapes, all
+	// declared in ormharness/shapes.json and proven by
+	// TestShapesPilot_1606033fd8f7 (iznik-server-go/test).
+	db.Table("`"+cfg.Table+"`").Select(blobCols).Where("id = ?", id).Scan(&blob)
 	if len(blob.Data) > 0 {
 		ct := blob.Contenttype
 		if ct == "" {

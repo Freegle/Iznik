@@ -123,7 +123,8 @@ func handleGoogleLogin(c *fiber.Ctx, jwtToken string) error {
 	// A new INSERT would become the effective avatar (ORDER BY id DESC LIMIT 1),
 	// overwriting any custom upload the user has set.
 	var avatarCount int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM users_images WHERE userid = ?", userID).Scan(&avatarCount)
+	// ORM migration site 9257e777c710 (wave 1).
+	database.DBConn.Table("users_images").Where("userid = ?", userID).Count(&avatarCount)
 	if avatarCount == 0 {
 		saveProfileImage(userID, tokenInfo.Picture)
 	}

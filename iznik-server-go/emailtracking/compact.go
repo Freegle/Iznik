@@ -198,15 +198,15 @@ func reconstructAvatarURL(userID uint64, width int) string {
 		ImageURL *string
 		Email    *string
 	}
-	db.Raw(`
-		SELECT ui.id AS image_id, ui.url AS image_url, ue.email AS email
-		FROM users u
-		LEFT JOIN users_images ui ON ui.userid = u.id
-		LEFT JOIN users_emails ue ON ue.userid = u.id
-		WHERE u.id = ?
-		ORDER BY ui.default DESC, ui.id ASC, ue.preferred DESC
-		LIMIT 1
-	`, userID).Scan(&result)
+	// ORM migration site ded0ef5a98c8 (wave 4).
+	db.Table("users u").
+		Select("ui.id AS image_id, ui.url AS image_url, ue.email AS email").
+		Joins("LEFT JOIN users_images ui ON ui.userid = u.id").
+		Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+		Where("u.id = ?", userID).
+		Order("ui.default DESC, ui.id ASC, ue.preferred DESC").
+		Limit(1).
+		Scan(&result)
 
 	imageDomain := imagesDomainHost()
 

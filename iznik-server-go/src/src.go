@@ -59,11 +59,12 @@ func recordSource(src string, userID uint64, sessionID string) error {
 	db := database.DBConn
 
 	// Insert into logs_src table
-	// Using Exec since we don't need the result
-	result := db.WithContext(ctx).Exec(`
-		INSERT INTO logs_src (src, userid, session)
-		VALUES (?, ?, ?)
-	`, src, userID, sessionID)
+	// ORM migration site 0e7a8f66e4c4 (wave 2).
+	result := db.WithContext(ctx).Table("logs_src").Create(map[string]interface{}{
+		"src":     src,
+		"userid":  userID,
+		"session": sessionID,
+	})
 
 	// Note: Errors are logged but not propagated - handler always returns 204
 	if result.Error != nil {
@@ -72,11 +73,9 @@ func recordSource(src string, userID uint64, sessionID string) error {
 
 	// If user is logged in, update their source field if not already set
 	if userID > 0 {
-		result = db.WithContext(ctx).Exec(`
-			UPDATE users
-			SET source = ?
-			WHERE id = ? AND source IS NULL
-		`, src, userID)
+		// ORM migration site 352b3c03f2f7 (wave 2).
+		result = db.WithContext(ctx).Table("users").Where("id = ? AND source IS NULL", userID).
+			Update("source", src)
 
 		// Note: UPDATE errors are also ignored by handler
 		if result.Error != nil {

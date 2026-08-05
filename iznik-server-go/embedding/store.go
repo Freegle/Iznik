@@ -76,18 +76,27 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 		return nil, fmt.Errorf("database not initialized")
 	}
 
-	var rows []embeddingRow
-	query := `
-		SELECT me.msgid, m.fromuser, me.subject_embedding, me.body_embedding,
-		       ms.groupid, ms.msgtype,
-		       ST_Y(ms.point) as lat, ST_X(ms.point) as lng,
-		       m.subject, ms.arrival
-		FROM messages_embeddings me
-		INNER JOIN messages_spatial ms ON ms.msgid = me.msgid
-		INNER JOIN messages m ON m.id = me.msgid
-		WHERE ms.successful = 0 AND ms.promised = 0` + extraWhere
+	// ORM migration site 15d5998c44f2 (Tier 3 keep-raw review). extraWhere has
+	// exactly two callers: Load passes "" and Refresh passes
+	// " AND me.msgid IN (?)" - 2 possible rendered forms, both declared in
+	// ormharness/shapes.json and proven by TestTier3Shapes_15d5998c44f2
+	// (iznik-server-go/test).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	whereSQL := "ms.successful = 0 AND ms.promised = 0" + extraWhere
 
-	if result := db.Raw(query, args...).Scan(&rows); result.Error != nil {
+	var rows []embeddingRow
+	tx := db.Table("messages_embeddings me").
+		Select("me.msgid, m.fromuser, me.subject_embedding, me.body_embedding, "+
+			"ms.groupid, ms.msgtype, ST_Y(ms.point) as lat, ST_X(ms.point) as lng, "+
+			"m.subject, ms.arrival").
+		Joins("INNER JOIN messages_spatial ms ON ms.msgid = me.msgid").
+		Joins("INNER JOIN messages m ON m.id = me.msgid").
+		Where(whereSQL, args...)
+
+	if result := tx.Scan(&rows); result.Error != nil {
 		return nil, fmt.Errorf("query: %w", result.Error)
 	}
 
@@ -146,10 +155,11 @@ func (s *Store) Refresh() error {
 	}
 
 	var openIds []uint64
-	if err := db.Raw(`
-		SELECT me.msgid FROM messages_embeddings me
-		INNER JOIN messages_spatial ms ON ms.msgid = me.msgid
-		WHERE ms.successful = 0 AND ms.promised = 0`).Pluck("msgid", &openIds).Error; err != nil {
+	// ORM migration site 80d6f1951971 (wave 4).
+	if err := db.Table("messages_embeddings me").
+		Joins("INNER JOIN messages_spatial ms ON ms.msgid = me.msgid").
+		Where("ms.successful = 0 AND ms.promised = 0").
+		Pluck("me.msgid", &openIds).Error; err != nil {
 		return fmt.Errorf("refresh id query: %w", err)
 	}
 

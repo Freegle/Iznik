@@ -152,6 +152,12 @@ func Stats(c *fiber.Ctx) error {
 	windows := dayWindows(sinceTime, now)
 
 	// Per-day impressions + clicks per source.
+	// NOT converted here (raw): master replaced the single unchunked GORM
+	// query (site 22036e3caf64) with a per-calendar-day chunked loop over
+	// `windows` - see the comment above this block on why (an unchunked scan
+	// over up to 365 days was enough to stall Galera's applier). Re-doing
+	// the ORM conversion per-chunk was not attempted under a merge; left raw
+	// for a properly tested follow-up.
 	var funnelRows []funnelRow
 	for _, w := range windows {
 		var chunk []funnelRow
@@ -174,6 +180,9 @@ func Stats(c *fiber.Ctx) error {
 
 	// Per-day attributed replies per source: an opened (pageview=1) tagged view
 	// followed within 7 days by an Interested reply to that post by the same user.
+	// NOT converted here (raw): same reasoning as funnelRows above - master
+	// replaced the single unchunked GORM query (site eba122e9abad) with a
+	// per-day chunked loop.
 	var replyRows []replyRow
 	for _, w := range windows {
 		var chunk []replyRow
@@ -274,6 +283,13 @@ func Stats(c *fiber.Ctx) error {
 		Users   int64 `gorm:"column:users"`
 		Replies int64 `gorm:"column:replies"`
 	}
+	// NOT converted here (raw): master replaced the derived-table LEFT JOIN
+	// (site c9e06d962d78) with a CTE that joins the cohort into chat_messages
+	// BEFORE the reply-count GROUP BY - see the comment above this block for
+	// why (lets MySQL seek chat_messages per cohort user via userid_2 instead
+	// of a full scan). Re-doing the .Table()-text conversion for the CTE form
+	// was not attempted under a merge; left raw for a properly tested
+	// follow-up.
 	if err := db.Raw(`WITH cohort AS (
 	            SELECT userid, MAX(source = ?) = 0 holdout FROM messages_likes
 	            WHERE source IN (?, ?) AND timestamp >= ?

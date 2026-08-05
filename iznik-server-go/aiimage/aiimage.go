@@ -21,6 +21,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // AIImageReview is the data returned for each image needing regeneration.
@@ -550,10 +551,12 @@ func ListReview(c *fiber.Ctx) error {
 	}
 
 	var rows []aiImageRow
-	db.Raw(`SELECT id, name, COALESCE(externaluid, '') AS externaluid, status,
-		regeneration_notes, pending_externaluid
-		FROM ai_images WHERE status IN ('rejected', 'regenerating')
-		ORDER BY id DESC`).Scan(&rows)
+	// ORM migration site f1f623a9631a (wave 1).
+	db.Table("ai_images").
+		Select("id, name, COALESCE(externaluid, '') AS externaluid, status, regeneration_notes, pending_externaluid").
+		Where("status IN ('rejected', 'regenerating')").
+		Order("id DESC").
+		Scan(&rows)
 
 	type voteRow struct {
 		AIImageID      uint64    `gorm:"column:aiimageid"`
@@ -574,13 +577,15 @@ func ListReview(c *fiber.Ctx) error {
 	}
 
 	var votes []voteRow
-	db.Raw(`SELECT ma.aiimageid, ma.userid,
-		CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname,
-		ma.result, ma.containspeople, ma.timestamp
-		FROM microactions ma
-		INNER JOIN users u ON u.id = ma.userid
-		WHERE ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview'
-		ORDER BY ma.timestamp ASC`, ids).Scan(&votes)
+	// ORM migration site 7940b0e0d9ff (wave 4).
+	db.Table("microactions ma").
+		Select("ma.aiimageid, ma.userid, "+
+			"CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname, "+
+			"ma.result, ma.containspeople, ma.timestamp").
+		Joins("INNER JOIN users u ON u.id = ma.userid").
+		Where("ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview'", ids).
+		Order("ma.timestamp ASC").
+		Scan(&votes)
 
 	// Group votes by image ID.
 	votesByID := make(map[uint64][]AIImageVote)
@@ -668,18 +673,21 @@ func Regenerate(c *fiber.Ctx) error {
 
 	// Verify image exists and is in a regenerable state.
 	var name string
-	db.Raw("SELECT name FROM ai_images WHERE id = ? AND status IN ('rejected', 'regenerating')", id).Scan(&name)
+	// ORM migration site f77079a22d72 (wave 1).
+	db.Table("ai_images").Select("name").Where("id = ? AND status IN ('rejected', 'regenerating')", id).Scan(&name)
 	if name == "" {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found or not in rejected/regenerating status")
 	}
 
 	// Save notes.
 	if req.Notes != "" {
-		db.Exec("UPDATE ai_images SET regeneration_notes = ? WHERE id = ?", req.Notes, id)
+		// ORM migration site 267affbdac01 (wave 2).
+		db.Table("ai_images").Where("id = ?", id).Update("regeneration_notes", req.Notes)
 	}
 
 	// Mark as regenerating while we generate.
-	db.Exec("UPDATE ai_images SET status = 'regenerating' WHERE id = ?", id)
+	// ORM migration site 96a7eba3a018 (wave 2).
+	db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'regenerating'"))
 
 	// If the moderator supplied an item description override, use it as the prompt
 	// subject instead of the stored name. This lets them steer toward a better image
@@ -692,26 +700,31 @@ func Regenerate(c *fiber.Ctx) error {
 	// Generate image via Cloudflare Workers AI.
 	imageData, err := ImageGenerator(subject)
 	if err != nil {
-		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		// ORM migration site 1eb5aa6248d2 (wave 2).
+		db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'rejected'"))
 		return fiber.NewError(fiber.StatusServiceUnavailable, "Image generation failed: "+err.Error())
 	}
 
 	// Apply Freegle duotone (dark green to white).
 	jpegData, err := applyDuotoneGreen(imageData)
 	if err != nil {
-		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		// ORM migration site b528277cdc9b (wave 2).
+		db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'rejected'"))
 		return fiber.NewError(fiber.StatusInternalServerError, "Image processing failed: "+err.Error())
 	}
 
 	// Upload to TUS to get a real externaluid.
 	externaluid, err := ImageUploader(jpegData, "image/jpeg")
 	if err != nil {
-		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		// ORM migration site f8044e167f2b (wave 2).
+		db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'rejected'"))
 		return fiber.NewError(fiber.StatusInternalServerError, "Image upload failed: "+err.Error())
 	}
 
 	// Store the pending externaluid — not applied until admin clicks Accept.
-	db.Exec("UPDATE ai_images SET pending_externaluid = ?, status = 'regenerating' WHERE id = ?", externaluid, id)
+	// ORM migration site 94d2aaa6a692 (wave 2).
+	db.Table("ai_images").Where("id = ?", id).
+		Updates(map[string]interface{}{"pending_externaluid": externaluid, "status": gorm.Expr("'regenerating'")})
 
 	return c.JSON(fiber.Map{
 		"ret":         0,
@@ -760,7 +773,8 @@ func Accept(c *fiber.Ctx) error {
 		PendingExternaluid *string `gorm:"column:pending_externaluid"`
 	}
 	var row aiRow
-	db.Raw("SELECT COALESCE(externaluid, '') AS externaluid, pending_externaluid FROM ai_images WHERE id = ?", id).Scan(&row)
+	// ORM migration site db12a9f0ba25 (wave 1).
+	db.Table("ai_images").Select("COALESCE(externaluid, '') AS externaluid, pending_externaluid").Where("id = ?", id).Scan(&row)
 	if row.Externaluid == "" && (row.PendingExternaluid == nil || *row.PendingExternaluid == "") {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
 	}
@@ -777,16 +791,22 @@ func Accept(c *fiber.Ctx) error {
 	}
 
 	// Apply the new image: update ai_images, clear pending state, reset to active.
-	db.Exec(`UPDATE ai_images
-		SET externaluid = ?, pending_externaluid = NULL, regeneration_notes = NULL, status = 'active'
-		WHERE id = ?`, newUID, id)
+	// ORM migration site 2882b7e01f7c (wave 2).
+	db.Table("ai_images").Where("id = ?", id).Updates(map[string]interface{}{
+		"externaluid":         newUID,
+		"pending_externaluid": gorm.Expr("NULL"),
+		"regeneration_notes":  gorm.Expr("NULL"),
+		"status":              gorm.Expr("'active'"),
+	})
 
 	// Delete old votes so the new image can be reviewed fresh.
-	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
+	// ORM migration site 928518b21213 (wave 2).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = 'AIImageReview'", id).Delete(nil)
 
 	// Apply the new externaluid to all message attachments that had the old one.
 	if oldUID != "" && oldUID != newUID {
-		db.Exec(`UPDATE messages_attachments SET externaluid = ? WHERE externaluid = ?`, newUID, oldUID)
+		// ORM migration site d36eef2965b0 (wave 2).
+		db.Table("messages_attachments").Where("externaluid = ?", oldUID).Update("externaluid", newUID)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -819,8 +839,14 @@ func KeepCurrent(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Clear pending state and votes so this image stops appearing in the review queue.
-	db.Exec(`UPDATE ai_images SET pending_externaluid = NULL, regeneration_notes = NULL, status = 'active' WHERE id = ?`, id)
-	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
+	// ORM migration site 8f3096d6a203 (wave 2).
+	db.Table("ai_images").Where("id = ?", id).Updates(map[string]interface{}{
+		"pending_externaluid": gorm.Expr("NULL"),
+		"regeneration_notes":  gorm.Expr("NULL"),
+		"status":              gorm.Expr("'active'"),
+	})
+	// ORM migration site 9aec98330507 (wave 2).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = 'AIImageReview'", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -858,13 +884,20 @@ func Suppress(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var existing uint64
-	db.Raw("SELECT id FROM ai_images WHERE id = ?", id).Scan(&existing)
+	// ORM migration site e6f234781920 (wave 1).
+	db.Table("ai_images").Select("id").Where("id = ?", id).Scan(&existing)
 	if existing == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
 	}
 
-	db.Exec(`UPDATE ai_images SET status = 'suppressed', pending_externaluid = NULL, regeneration_notes = NULL WHERE id = ?`, id)
-	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
+	// ORM migration site c7ce92f07464 (wave 2).
+	db.Table("ai_images").Where("id = ?", id).Updates(map[string]interface{}{
+		"status":              gorm.Expr("'suppressed'"),
+		"pending_externaluid": gorm.Expr("NULL"),
+		"regeneration_notes":  gorm.Expr("NULL"),
+	})
+	// ORM migration site b8c45eacd1d6 (wave 2).
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = 'AIImageReview'", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -888,7 +921,8 @@ func Count(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var count int64
-	db.Raw(`SELECT COUNT(*) FROM ai_images WHERE status IN ('rejected', 'regenerating')`).Scan(&count)
+	// ORM migration site 701f9b6a7b6e (wave 1).
+	db.Table("ai_images").Where("status IN ('rejected', 'regenerating')").Count(&count)
 
 	return c.JSON(fiber.Map{"count": count})
 }
