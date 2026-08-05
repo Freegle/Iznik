@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:22:57Z",
+    "generated": "2026-08-05T17:25:15Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 420,
-        "converted": 94,
-        "raw": 217,
+        "converted": 95,
+        "raw": 216,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -13473,13 +13473,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = ? AND mg.rippled_in = 1 AND NOT EXISTS ( SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid ) AND NOT EXISTS ( SELECT 1 FROM logs lj WHERE lj.user = ? AND lj.groupid = mg.groupid AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled' AND NOT EXISTS ( SELECT 1 FROM logs lj2 WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid AND lj2.type = 'Group' AND lj2.subtype = 'Joined' AND lj2.id > lj.id ) AND EXISTS ( SELECT 1 FROM logs ll WHERE ll.user = lj.user AND ll.groupid = lj.groupid AND ll.type = 'Group' AND ll.subtype = 'Left' AND ll.id > lj.id ) ) AND NOT EXISTS ( -- Never re-join a poster to a group they are banned from. A ban deletes -- their membership and withdraws their posts; site A already stops the post -- rippling in, but this guards the membership backfill independently (it -- runs for every already-rippled group, incl. pre-guard ones). No expiry. SELECT 1 FROM users_banned ub WHERE ub.userid = ? AND ub.groupid = mg.groupid )",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select `mg`.`groupid` from `messages_groups` as `mg` where `mg`.`msgid` = ? and `mg`.`rippled_in` = ? and not exists (select * from `memberships` as `m` where `m`.`userid` = ? and `m`.`groupid` = `mg`.`groupid`) and not exists (select * from `logs` as `lj` where `lj`.`user` = ? and `lj`.`groupid` = `mg`.`groupid` and `lj`.`type` = ? and `lj`.`subtype` = ? and `lj`.`text` = ? and not exists (select * from `logs` as `lj2` where `lj2`.`user` = `lj`.`user` and `lj2`.`groupid` = `lj`.`groupid` and `lj2`.`type` = ? and `lj2`.`subtype` = ? and `lj2`.`id` > `lj`.`id`) and exists (select * from `logs` as `ll` where `ll`.`user` = `lj`.`user` and `ll`.`groupid` = `lj`.`groupid` and `ll`.`type` = ? and `ll`.`subtype` = ? and `ll`.`id` > `lj`.`id`)) and not exists (select * from `users_banned` as `ub` where `ub`.`userid` = ? and `ub`.`groupid` = `mg`.`groupid`)"
         },
         "273df11c1838": {
             "id": "273df11c1838",
@@ -13512,7 +13512,7 @@
         "28a4f595cd02": {
             "id": "28a4f595cd02",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1449,
+            "line": 1454,
             "class": "ExpandService",
             "function": "maybeSendRippleIntro",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13544,7 +13544,7 @@
         "cf5d1076e522": {
             "id": "cf5d1076e522",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1506,
+            "line": 1511,
             "class": "ExpandService",
             "function": "pullRippledPostsFromLeftGroups",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13574,7 +13574,7 @@
         "fadc818bba4f": {
             "id": "fadc818bba4f",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1577,
+            "line": 1582,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13606,7 +13606,7 @@
         "63989dd3163d": {
             "id": "63989dd3163d",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1595,
+            "line": 1600,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13634,7 +13634,7 @@
         "c3d282d5d0c3": {
             "id": "c3d282d5d0c3",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1611,
+            "line": 1616,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13666,7 +13666,7 @@
         "6be336e702f5": {
             "id": "6be336e702f5",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1629,
+            "line": 1634,
             "class": "ExpandService",
             "function": "unionWithOriginGroupArea",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13694,7 +13694,7 @@
         "c04b516c2938": {
             "id": "c04b516c2938",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1700,
+            "line": 1705,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "$q",
@@ -13720,7 +13720,7 @@
         "9b7889b7ab83": {
             "id": "9b7889b7ab83",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1730,
+            "line": 1735,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13748,7 +13748,7 @@
         "18b9c6511cb5": {
             "id": "18b9c6511cb5",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1758,
+            "line": 1763,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13774,7 +13774,7 @@
         "02417b69537b": {
             "id": "02417b69537b",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1764,
+            "line": 1769,
             "class": "ExpandService",
             "function": "backfillReach",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13800,7 +13800,7 @@
         "8e7a0bceb501": {
             "id": "8e7a0bceb501",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1875,
+            "line": 1880,
             "class": "ExpandService",
             "function": "reapplyClips",
             "receiver": "Illuminate\\Support\\Facades\\DB",
@@ -13860,7 +13860,7 @@
         "07087e8cc794": {
             "id": "07087e8cc794",
             "file": "iznik-batch/app/Services/Ripple/ExpandService.php",
-            "line": 1945,
+            "line": 1950,
             "class": "ExpandService",
             "function": "hasTerminalOutcome",
             "receiver": "Illuminate\\Support\\Facades\\DB",

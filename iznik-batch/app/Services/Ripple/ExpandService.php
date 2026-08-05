@@ -1579,40 +1579,45 @@ class ExpandService
             // last joined manually/ordinarily and then left must NOT block rippling. (The post
             // itself is also pulled from such groups by pullRippledPostsFromLeftGroups; here we only
             // gate the membership.)
-            $targets = DB::select(
-                "SELECT mg.groupid
-                 FROM messages_groups mg
-                 WHERE mg.msgid = ? AND mg.rippled_in = 1
-                   AND NOT EXISTS (
-                       SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM logs lj
-                       WHERE lj.user = ? AND lj.groupid = mg.groupid
-                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                         AND NOT EXISTS (
-                             SELECT 1 FROM logs lj2
-                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                               AND lj2.id > lj.id
-                         )
-                         AND EXISTS (
-                             SELECT 1 FROM logs ll
-                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                               AND ll.type = 'Group' AND ll.subtype = 'Left'
-                               AND ll.id > lj.id
-                         )
-                   )
-                   AND NOT EXISTS (
-                       -- Never re-join a poster to a group they are banned from. A ban deletes
-                       -- their membership and withdraws their posts; site A already stops the post
-                       -- rippling in, but this guards the membership backfill independently (it
-                       -- runs for every already-rippled group, incl. pre-guard ones). No expiry.
-                       SELECT 1 FROM users_banned ub
-                       WHERE ub.userid = ? AND ub.groupid = mg.groupid
-                   )",
-                [$msgid, $posterId, $posterId, $posterId]
-            );
+            $targets = DB::table('messages_groups as mg')
+                ->select('mg.groupid')
+                ->where('mg.msgid', $msgid)
+                ->where('mg.rippled_in', 1)
+                // Not already a member.
+                ->whereNotExists(fn ($q) => $q->from('memberships as m')
+                    ->where('m.userid', $posterId)
+                    ->whereColumn('m.groupid', 'mg.groupid'))
+                // Not previously rippled-in and then left. The inner pair is
+                // what makes this mean "the LATEST Joined log for this group
+                // was a ripple, AND they have since Left": the NOT EXISTS on
+                // lj2 pins lj to the most recent Joined, and the EXISTS on ll
+                // requires a later Leave. Flattening either one changes the
+                // question from "did they leave after we last auto-joined
+                // them" to something much weaker.
+                ->whereNotExists(fn ($q) => $q->from('logs as lj')
+                    ->where('lj.user', $posterId)
+                    ->whereColumn('lj.groupid', 'mg.groupid')
+                    ->where('lj.type', 'Group')
+                    ->where('lj.subtype', 'Joined')
+                    ->where('lj.text', 'Rippled')
+                    ->whereNotExists(fn ($q2) => $q2->from('logs as lj2')
+                        ->whereColumn('lj2.user', 'lj.user')
+                        ->whereColumn('lj2.groupid', 'lj.groupid')
+                        ->where('lj2.type', 'Group')
+                        ->where('lj2.subtype', 'Joined')
+                        ->whereColumn('lj2.id', '>', 'lj.id'))
+                    ->whereExists(fn ($q2) => $q2->from('logs as ll')
+                        ->whereColumn('ll.user', 'lj.user')
+                        ->whereColumn('ll.groupid', 'lj.groupid')
+                        ->where('ll.type', 'Group')
+                        ->where('ll.subtype', 'Left')
+                        ->whereColumn('ll.id', '>', 'lj.id')))
+                // Never re-join a poster to a group they are banned from.
+                ->whereNotExists(fn ($q) => $q->from('users_banned as ub')
+                    ->where('ub.userid', $posterId)
+                    ->whereColumn('ub.groupid', 'mg.groupid'))
+                ->get()
+                ->all();
 
             $addedThisCall = 0;
             foreach ($targets as $t) {
