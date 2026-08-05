@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-05T17:42:33Z",
+    "generated": "2026-08-05T17:43:55Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 473,
-        "converted": 104,
+        "converted": 105,
         "excluded": 70,
-        "raw": 154,
+        "raw": 153,
         "retired": 1,
         "test-fixture": 352
     },
@@ -16743,18 +16743,18 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT DISTINCT chat_rooms.id FROM chat_rooms INNER JOIN ( SELECT DISTINCT chatid FROM chat_roster WHERE userid = ? UNION SELECT DISTINCT chatid FROM chat_messages WHERE userid = ? OR reviewedby = ? ) t ON t.chatid = chat_rooms.id ORDER BY chat_rooms.id ASC",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select distinct `chat_rooms`.`id` from `chat_rooms` inner join ((select distinct `chatid` from `chat_roster` where `userid` = ?) union (select distinct `chatid` from `chat_messages` where (`userid` = ? or `reviewedby` = ?))) as `t` on `t`.`chatid` = `chat_rooms`.`id` order by `chat_rooms`.`id` asc"
         },
         "7979391b3327": {
             "id": "7979391b3327",
             "file": "iznik-batch/app/Services/UserDataExportService.php",
-            "line": 563,
+            "line": 578,
             "class": "UserDataExportService",
             "function": "getAboutMe",
             "receiver": "DB::table()->where()",

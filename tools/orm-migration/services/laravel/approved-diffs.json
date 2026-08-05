@@ -207,6 +207,11 @@
       "id": "07087e8cc794",
       "sql": "select exists(select * from `messages_outcomes` where `msgid` = ? and `outcome` in (?, ?, ?)) as `exists`",
       "reason": "A real rewrite, not a rendering nicety, and approved on those terms. The raw form - SELECT 1 AS x ... LIMIT 1, then testing the result for null - is the hand-rolled version of the question ->exists() asks, and the caller only ever coerced it to a bool. compileExists wraps the same predicate in EXISTS(), which MySQL can short-circuit at the first matching row exactly as LIMIT 1 did. Keeping the literal select list would have required DB::raw, itself a raw site here, so the alternative was not a purer conversion but no conversion at all."
+    },
+    {
+      "id": "a2a0b695276b",
+      "sql": "select distinct `chat_rooms`.`id` from `chat_rooms` inner join ((select distinct `chatid` from `chat_roster` where `userid` = ?) union (select distinct `chatid` from `chat_messages` where (`userid` = ? or `reviewedby` = ?))) as `t` on `t`.`chatid` = `chat_rooms`.`id` order by `chat_rooms`.`id` asc",
+      "reason": "Parenthesisation and an explicit asc, nothing semantic. Laravel wraps each union arm and the derived table itself in parentheses, and MySQL parses that identically to the bare form. Everything that decides the result is unchanged: DISTINCT on the outer and both arms, UNION rather than UNION ALL - so a chat matching both arms appears once rather than duplicating in the export - and the grouped OR in the second arm, which flat would have bound against that arm's whole WHERE and pulled in every chat the user ever moderated."
     }
   ]
 }
