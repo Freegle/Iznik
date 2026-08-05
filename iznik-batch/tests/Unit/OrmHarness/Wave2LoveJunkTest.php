@@ -24,6 +24,12 @@ class Wave2LoveJunkTest extends TestCase
     // SELECT messages.id ... LEFT JOIN lovejunk ... AND NOT EXISTS (...)
     private const SITE_NEW = '8784a573032d';
 
+    // SELECT DISTINCT messages.id FROM messages_outcomes INNER JOIN ... x4
+    private const SITE_OUTCOMES = 'a792f4c8557c';
+
+    // SELECT mp.userid, u.ljuserid FROM messages_promises mp INNER JOIN users u ...
+    private const SITE_PROMISES = '63bbb51470ed';
+
     public function test_edited_messages_sweep(): void
     {
         GoldenSql::assert(self::SITE_EDITED, fn () => DB::table('messages')
@@ -66,5 +72,32 @@ class Wave2LoveJunkTest extends TestCase
             ->whereNotExists(fn ($q) => $q->from('messages_bulk_items')
                 ->whereColumn('messages_bulk_items.msgid', 'messages.id'))
             ->orderBy('messages.arrival'));
+    }
+
+    public function test_messages_with_outcomes(): void
+    {
+        GoldenSql::assert(self::SITE_OUTCOMES, fn () => DB::table('messages_outcomes')
+            ->distinct()
+            ->select('messages.id')
+            ->join('messages', 'messages.id', '=', 'messages_outcomes.msgid')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('lovejunk', 'lovejunk.msgid', '=', 'messages_outcomes.msgid')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages_outcomes.timestamp', '>=', '2026-01-01')
+            ->where('messages.type', 'Offer')
+            ->where('lovejunk.success', 1)
+            ->whereNull('lovejunk.deleted')
+            ->where('lovejunk.status', 'LIKE', '{%')
+            ->where('groups.onlovejunk', 1)
+            ->orderBy('messages.arrival'));
+    }
+
+    public function test_promises_with_lovejunk_users(): void
+    {
+        GoldenSql::assert(self::SITE_PROMISES, fn () => DB::table('messages_promises as mp')
+            ->select('mp.userid', 'u.ljuserid')
+            ->join('users as u', 'u.id', '=', 'mp.userid')
+            ->where('mp.msgid', 1)
+            ->whereNotNull('u.ljuserid'));
     }
 }

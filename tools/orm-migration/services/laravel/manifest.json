@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:10:50Z",
+    "generated": "2026-08-05T17:12:15Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 80,
-        "raw": 235,
+        "converted": 82,
+        "raw": 233,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -9885,13 +9885,13 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT DISTINCT messages.id FROM messages_outcomes INNER JOIN messages ON messages.id = messages_outcomes.msgid INNER JOIN messages_groups ON messages_groups.msgid = messages.id INNER JOIN lovejunk ON lovejunk.msgid = messages_outcomes.msgid INNER JOIN `groups` ON groups.id = messages_groups.groupid WHERE messages_outcomes.timestamp >= ? AND messages.type = 'Offer' AND lovejunk.success = 1 AND lovejunk.deleted IS NULL AND lovejunk.status LIKE '{%' AND groups.onlovejunk = 1 ORDER BY messages.arrival ASC",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "select distinct `messages`.`id` from `messages_outcomes` inner join `messages` on `messages`.`id` = `messages_outcomes`.`msgid` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `lovejunk` on `lovejunk`.`msgid` = `messages_outcomes`.`msgid` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages_outcomes`.`timestamp` >= ? and `messages`.`type` = ? and `lovejunk`.`success` = ? and `lovejunk`.`deleted` is null and `lovejunk`.`status` LIKE ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc"
         },
         "63bbb51470ed": {
             "id": "63bbb51470ed",
@@ -9914,9 +9914,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT mp.userid, u.ljuserid FROM messages_promises mp INNER JOIN users u ON u.id = mp.userid WHERE mp.msgid = ? AND u.ljuserid IS NOT NULL",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
@@ -9925,7 +9925,7 @@
         "b3867b4b17c4": {
             "id": "b3867b4b17c4",
             "file": "iznik-batch/app/Services/LoveJunkService.php",
-            "line": 240,
+            "line": 242,
             "class": "LoveJunkService",
             "function": "buildPayload",
             "receiver": "Illuminate\\Support\\Facades\\DB",

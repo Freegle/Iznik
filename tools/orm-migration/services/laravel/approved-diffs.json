@@ -177,6 +177,11 @@
       "id": "8784a573032d",
       "sql": "select `messages`.`id` from `messages` left join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages`.`type` = ? and `lovejunk`.`msgid` is null and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? and not exists (select * from `messages_bulk_items` where `messages_bulk_items`.`msgid` = `messages`.`id`) order by `messages`.`arrival` asc",
       "reason": "Inlined constants now bound, plus one genuine rendering difference: whereNotExists writes 'select *' inside the subquery where the raw statement wrote 'select 1'. The select list of an EXISTS is never evaluated - MySQL only asks whether a row exists - so the two are equivalent. Unchanged, and load-bearing: the LEFT JOIN plus 'lovejunk.msgid IS NULL' anti-join, which is what selects messages NOT yet sent; an inner join would return precisely the opposite set and re-send everything."
+    },
+    {
+      "id": "a792f4c8557c",
+      "sql": "select distinct `messages`.`id` from `messages_outcomes` inner join `messages` on `messages`.`id` = `messages_outcomes`.`msgid` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `lovejunk` on `lovejunk`.`msgid` = `messages_outcomes`.`msgid` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages_outcomes`.`timestamp` >= ? and `messages`.`type` = ? and `lovejunk`.`success` = ? and `lovejunk`.`deleted` is null and `lovejunk`.`status` LIKE ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc",
+      "reason": "Four inlined constants now bound, including the LIKE pattern '{%' - which is worth naming because it is not a wildcard search but a JSON-shape test: lovejunk.status holds a JSON document and this selects rows whose status actually starts with an object brace. Binding it changes nothing about that. DISTINCT, all four joins in order, the IS NULL and the ORDER BY are unchanged."
     }
   ]
 }

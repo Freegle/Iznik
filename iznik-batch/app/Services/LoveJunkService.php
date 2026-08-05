@@ -84,21 +84,22 @@ class LoveJunkService
             }
         }
 
-        $withOutcomes = DB::select("
-            SELECT DISTINCT messages.id
-            FROM messages_outcomes
-            INNER JOIN messages ON messages.id = messages_outcomes.msgid
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN lovejunk ON lovejunk.msgid = messages_outcomes.msgid
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
-            WHERE messages_outcomes.timestamp >= ?
-              AND messages.type = 'Offer'
-              AND lovejunk.success = 1
-              AND lovejunk.deleted IS NULL
-              AND lovejunk.status LIKE '{%'
-              AND groups.onlovejunk = 1
-            ORDER BY messages.arrival ASC
-        ", [$since]);
+        $withOutcomes = DB::table('messages_outcomes')
+            ->distinct()
+            ->select('messages.id')
+            ->join('messages', 'messages.id', '=', 'messages_outcomes.msgid')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('lovejunk', 'lovejunk.msgid', '=', 'messages_outcomes.msgid')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages_outcomes.timestamp', '>=', $since)
+            ->where('messages.type', 'Offer')
+            ->where('lovejunk.success', 1)
+            ->whereNull('lovejunk.deleted')
+            ->where('lovejunk.status', 'LIKE', '{%')
+            ->where('groups.onlovejunk', 1)
+            ->orderBy('messages.arrival')
+            ->get()
+            ->all();
 
         foreach ($withOutcomes as $msg) {
             if (!$dryRun) {
@@ -163,12 +164,13 @@ class LoveJunkService
     {
         $fromUser = DB::table('messages')->where('id', $msgId)->value('fromuser');
 
-        $promises = DB::select("
-            SELECT mp.userid, u.ljuserid
-            FROM messages_promises mp
-            INNER JOIN users u ON u.id = mp.userid
-            WHERE mp.msgid = ? AND u.ljuserid IS NOT NULL
-        ", [$msgId]);
+        $promises = DB::table('messages_promises as mp')
+            ->select('mp.userid', 'u.ljuserid')
+            ->join('users as u', 'u.id', '=', 'mp.userid')
+            ->where('mp.msgid', $msgId)
+            ->whereNotNull('u.ljuserid')
+            ->get()
+            ->all();
 
         $completed = false;
 
