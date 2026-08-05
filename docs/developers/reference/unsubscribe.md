@@ -9,6 +9,8 @@ covers:
   - iznik-batch/tests/Unit/Mail/ListUnsubscribeHeaderTest.php
   - iznik-server-go/test/unsubscribe_test.go
   - scripts/check-unsubscribe-categories.mjs
+  - iznik-nuxt3/server/middleware/oneClickUnsubscribe.js
+  - iznik-nuxt3/tests/unit/server/oneClickUnsubscribe.spec.js
 ---
 
 # Unsubscribing from email
@@ -98,6 +100,24 @@ node scripts/check-unsubscribe-categories.mjs
 
 It compares both the category lists and the member-facing descriptions, and exits non-zero
 if they differ. Run it if you add or rename a category.
+
+## The old URL, and mail already in inboxes
+
+A deploy does not change mail that has already been delivered. Anything sent before this
+keeps the header it was sent with, so `/one-click-unsubscribe/{uid}/{key}` — which
+`ChatNotification` used to point `List-Unsubscribe` at — has to keep working, and keep
+working safely, for as long as that mail sits in people's inboxes.
+
+It used to delete the account. `server/middleware/oneClickUnsubscribe.js` only intercepted
+non-POST requests; a POST fell through to the page underneath, whose `<script setup>` runs
+during SSR and calls `authStore.forget()`. So Gmail's one-click POST — a machine action
+with nobody confirming anything — removed the member outright. Reproduced in a worktree:
+one `curl -X POST` set `users.deleted`.
+
+The middleware now handles the route entirely: GET still redirects to `/unsubscribe?u=&k=`,
+and POST calls the apiv2 endpoint with `t=all` — "stop emailing me", account untouched. The
+page has been deleted, so there is nothing to fall through to. The app's deep-link handler
+in `stores/mobile.js` did the same thing on tap and now routes to `/unsubscribe` instead.
 
 ## Acknowledgement
 
