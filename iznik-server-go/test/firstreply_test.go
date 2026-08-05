@@ -525,3 +525,65 @@ func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "50")
 	assert.Equal(t, msgID%100 < 50, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 }
+
+// The sysadmin metrics endpoint must actually answer, against the real schema.
+//
+// This exists because it silently did not. "Posts spoken to" was counted with
+// SELECT COUNT(DISTINCT msgid) FROM firstreply_prompts_sent - correct when a
+// prompt was about one post, and dead once prompts were grouped and that table
+// was re-keyed on the member. The column was gone, so the query errored, GORM's
+// Scan left the destination at its zero value, and the dashboard - which guards
+// the sentence with v-if on that value - simply stopped printing it. Nothing
+// failed, nothing logged, a section of the panel just silently went missing, and
+// no test noticed because nothing here called the endpoint at all.
+//
+// So this asserts the whole handler runs and that the number is right, rather
+// than re-stating any single query - a test that repeated the SQL would have
+// been just as wrong as the code.
+func TestFirstReplyMetricsEndpoint_CountsPostsFromTheGroupedSet(t *testing.T) {
+	ensureFirstReplyTables(t)
+
+	prefix := uniquePrefix("frmetrics")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	db := database.DBConn
+
+	// Two prompts covering three posts between them, with one post in BOTH -
+	// which is the normal case (a photo question and a delivery question can
+	// cover the same item) and the one a naive count gets wrong.
+	msgA := CreateTestMessage(t, posterID, groupID, "OFFER: metrics a", 51.5, -0.1)
+	msgB := CreateTestMessage(t, posterID, groupID, "OFFER: metrics b", 51.5, -0.1)
+	msgC := CreateTestMessage(t, posterID, groupID, "OFFER: metrics c", 51.5, -0.1)
+
+	chatID := CreateTestChatRoom(t, adminID, &posterID, nil, "User2User")
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+
+	for _, set := range [][]uint64{{msgA, msgB}, {msgB, msgC}} {
+		chatMsgID := seedPrompt(t, chatID, adminID, set[0], "photo", "[]")
+		msgids, _ := json.Marshal(set)
+		db.Exec("UPDATE chat_prompts SET msgids = ? WHERE chatmsgid = ?", string(msgids), chatMsgID)
+		defer db.Exec("DELETE FROM chat_prompts WHERE chatmsgid = ?", chatMsgID)
+	}
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/firstreply/metrics?jwt=%s", token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	// Every section the dashboard reads must be present - a query that errors
+	// leaves its key at a zero value rather than failing the request.
+	for _, key := range []string{"daily", "passthrough", "scouts", "prompts", "postsengaged"} {
+		_, ok := result[key]
+		assert.True(t, ok, "metrics payload must carry %s", key)
+	}
+
+	engaged, _ := result["postsengaged"].(float64)
+	assert.GreaterOrEqual(t, engaged, float64(3),
+		"three distinct posts were covered, counted once each despite one appearing twice")
+}

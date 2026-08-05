@@ -141,17 +141,18 @@ func Metrics(c *fiber.Ctx) error {
 	}
 
 	daily := []DayCount{}
-	db.Raw("SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count "+
-		"FROM firstreply_event_metrics "+
-		"WHERE day BETWEEN DATE(?) AND DATE(?) "+
-		"ORDER BY day, event", start, end).Scan(&daily)
+	db.Table("firstreply_event_metrics").
+		Select("DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count").
+		Where("day BETWEEN DATE(?) AND DATE(?)", start, end).
+		Order("day, event").
+		Scan(&daily)
 
 	var passthrough PassthroughSummary
-	db.Raw("SELECT "+
-		"COALESCE(SUM(CASE WHEN event = 'passthrough_web' THEN count END), 0) AS web, "+
-		"COALESCE(SUM(CASE WHEN event = 'passthrough_email' THEN count END), 0) AS email "+
-		"FROM firstreply_event_metrics "+
-		"WHERE day BETWEEN DATE(?) AND DATE(?)", start, end).Scan(&passthrough)
+	db.Table("firstreply_event_metrics").
+		Select("COALESCE(SUM(CASE WHEN event = 'passthrough_web' THEN count END), 0) AS web, "+
+			"COALESCE(SUM(CASE WHEN event = 'passthrough_email' THEN count END), 0) AS email").
+		Where("day BETWEEN DATE(?) AND DATE(?)", start, end).
+		Scan(&passthrough)
 
 	// How much earlier the poster actually heard, per reply, from the sweep that
 	// asks which tick would have covered each replier.
@@ -162,13 +163,14 @@ func Metrics(c *fiber.Ctx) error {
 		SameDay int64    `gorm:"column:sameday"`
 		Unsized int64    `gorm:"column:unsized"`
 	}
-	db.Raw("SELECT COUNT(waited_hours) AS sized, "+
-		"AVG(waited_hours) AS avghrs, "+
-		"MAX(waited_hours) AS maxhrs, "+
-		"COALESCE(SUM(waited_hours < 24), 0) AS sameday, "+
-		"COALESCE(SUM(waited_hours IS NULL AND computed_at IS NOT NULL), 0) AS unsized "+
-		"FROM firstreply_passthroughs "+
-		"WHERE created_at BETWEEN ? AND ?", start, end).Scan(&sized)
+	db.Table("firstreply_passthroughs").
+		Select("COUNT(waited_hours) AS sized, "+
+			"AVG(waited_hours) AS avghrs, "+
+			"MAX(waited_hours) AS maxhrs, "+
+			"COALESCE(SUM(waited_hours < 24), 0) AS sameday, "+
+			"COALESCE(SUM(waited_hours IS NULL AND computed_at IS NOT NULL), 0) AS unsized").
+		Where("created_at BETWEEN ? AND ?", start, end).
+		Scan(&sized)
 	passthrough.Sized = sized.Sized
 	passthrough.AvgHoursEarlier = sized.AvgHrs
 	passthrough.MaxHoursEarlier = sized.MaxHrs
@@ -178,40 +180,59 @@ func Metrics(c *fiber.Ctx) error {
 	// Holds that still happened, for context on how much of the problem the
 	// passthrough is catching.
 	var heldReleased int64
-	db.Raw("SELECT COUNT(*) FROM rippling_held_replies "+
-		"WHERE status = 'released' AND releasedat IS NOT NULL "+
-		"AND created_at BETWEEN ? AND ?", start, end).Scan(&heldReleased)
+	db.Table("rippling_held_replies").
+		Where("status = 'released' AND releasedat IS NOT NULL AND created_at BETWEEN ? AND ?",
+			start, end).
+		Count(&heldReleased)
 	passthrough.HeldReleased = heldReleased
 
 	signals := []ScoutSignal{}
-	db.Raw("SELECT fs.reason AS reason, "+
-		"COUNT(*) AS mailed, "+
-		"SUM(fs.replied_at IS NOT NULL) AS replied, "+
-		"COUNT(DISTINCT fs.msgid) AS posts, "+
-		"COUNT(DISTINCT CASE WHEN mo.msgid IS NOT NULL THEN fs.msgid END) AS taken, "+
-		"AVG(CASE WHEN fs.replied_at IS NOT NULL "+
-		"    THEN TIMESTAMPDIFF(MINUTE, fs.sent_at, fs.replied_at) / 60 END) AS medianhours "+
-		"FROM firstreply_scouts fs "+
-		"LEFT JOIN messages_outcomes mo ON mo.msgid = fs.msgid AND mo.outcome IN ('Taken', 'Received') "+
-		"WHERE fs.sent_at BETWEEN ? AND ? "+
-		"GROUP BY fs.reason "+
-		"ORDER BY mailed DESC", start, end).Scan(&signals)
+	db.Table("firstreply_scouts fs").
+		Select("fs.reason AS reason, "+
+			"COUNT(*) AS mailed, "+
+			"SUM(fs.replied_at IS NOT NULL) AS replied, "+
+			"COUNT(DISTINCT fs.msgid) AS posts, "+
+			"COUNT(DISTINCT CASE WHEN mo.msgid IS NOT NULL THEN fs.msgid END) AS taken, "+
+			"AVG(CASE WHEN fs.replied_at IS NOT NULL "+
+			"    THEN TIMESTAMPDIFF(MINUTE, fs.sent_at, fs.replied_at) / 60 END) AS medianhours").
+		Joins("LEFT JOIN messages_outcomes mo ON mo.msgid = fs.msgid AND mo.outcome IN ('Taken', 'Received')").
+		Where("fs.sent_at BETWEEN ? AND ?", start, end).
+		Group("fs.reason").
+		Order("mailed DESC").
+		Scan(&signals)
 
 	prompts := []PromptKind{}
-	db.Raw("SELECT cp.kind AS kind, "+
-		"COUNT(*) AS sent, "+
-		"SUM(cp.answered_at IS NOT NULL) AS answered, "+
-		"SUM(cp.answer IN ('maybe', 'weekend', 'week', 'twoweeks', 'add')) AS acted "+
-		"FROM chat_prompts cp "+
-		"WHERE cp.created_at BETWEEN ? AND ? "+
-		"GROUP BY cp.kind "+
-		"ORDER BY sent DESC", start, end).Scan(&prompts)
+	db.Table("chat_prompts cp").
+		Select("cp.kind AS kind, "+
+			"COUNT(*) AS sent, "+
+			"SUM(cp.answered_at IS NOT NULL) AS answered, "+
+			"SUM(cp.answer IN ('maybe', 'weekend', 'week', 'twoweeks', 'add')) AS acted").
+		Where("cp.created_at BETWEEN ? AND ?", start, end).
+		Group("cp.kind").
+		Order("sent DESC").
+		Scan(&prompts)
 
 	// How many posts the chat spoke to at all, so prompt counts can be read as
 	// "of the silent posts we engaged" rather than as a bare total.
+	//
+	// Counted from chat_prompts.msgids, not from firstreply_prompts_sent. Once
+	// prompts were grouped, that table stopped being per-post: it is keyed on the
+	// MEMBER and carries a postcount, so it can say how many post-slots were
+	// covered but not which posts, and the same post covered by both a photo and
+	// a delivery question would be counted twice. msgids is the actual set, so
+	// DISTINCT over it is the honest answer.
+	//
+	// The previous version selected COUNT(DISTINCT msgid) from that table, which
+	// stopped existing when it was re-keyed. The query errored, Scan left this at
+	// zero, and the dashboard's v-if on the value then hid the sentence
+	// altogether - so the number did not go wrong in front of anyone, it quietly
+	// stopped being there at all.
 	var postsEngaged int64
-	db.Raw("SELECT COUNT(DISTINCT msgid) FROM firstreply_prompts_sent "+
-		"WHERE sent_at BETWEEN ? AND ?", start, end).Scan(&postsEngaged)
+	db.Table("chat_prompts cp").
+		Joins("JOIN JSON_TABLE(cp.msgids, '$[*]' COLUMNS (msgid BIGINT UNSIGNED PATH '$')) jt").
+		Where("cp.created_at BETWEEN ? AND ?", start, end).
+		Distinct("jt.msgid").
+		Count(&postsEngaged)
 
 	return c.JSON(fiber.Map{
 		"start":        start,

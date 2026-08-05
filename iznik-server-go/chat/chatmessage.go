@@ -735,19 +735,27 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					if rc.ReachRows > 0 && rc.InReach == 0 {
 						holdReply = !firstreply.ShouldPassThrough(db, *payload.Refmsgid, reach.lng, reach.lat)
 						if !holdReply {
-							db.Exec("INSERT INTO firstreply_event_metrics (day, event, count) " +
-								"VALUES (CURDATE(), 'passthrough_web', 1) " +
-								"ON DUPLICATE KEY UPDATE count = count + 1")
+							db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
+								DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+							}).Create(map[string]interface{}{
+								"day":   gorm.Expr("CURDATE()"),
+								"event": gorm.Expr("'passthrough_web'"),
+								"count": gorm.Expr("1"),
+							})
 							// Record it individually too, with where the replier was, so the batch
 							// sweep can work out how long THIS reply would otherwise have waited.
 							// The counter says the lever fired; only that says what firing bought.
 							// Deliberately just an INSERT: working out which tick would have covered
 							// them means parsing the reach schedule, and doing that here as well as
 							// in the batch app would be the same geometry in two languages.
-							db.Exec("INSERT INTO firstreply_passthroughs "+
-								"(msgid, userid, source, lat, lng, created_at) "+
-								"VALUES (?, ?, 'web', ?, ?, NOW())",
-								*payload.Refmsgid, myid, reach.lat, reach.lng)
+							db.Table("firstreply_passthroughs").Create(map[string]interface{}{
+								"msgid":      *payload.Refmsgid,
+								"userid":     myid,
+								"source":     "web",
+								"lat":        reach.lat,
+								"lng":        reach.lng,
+								"created_at": gorm.Expr("NOW()"),
+							})
 						}
 					}
 				}

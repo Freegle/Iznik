@@ -113,11 +113,12 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	// made the post any less silent. The poster's own messages on their own post
 	// do not count either.
 	var repliers int64
-	if err := db.Raw(
-		"SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm "+
-			"JOIN messages m ON m.id = cm.refmsgid "+
-			"WHERE cm.refmsgid = ? AND cm.type = ? AND cm.userid <> m.fromuser",
-		refmsgid, utils.CHAT_MESSAGE_INTERESTED).Scan(&repliers).Error; err != nil {
+	if err := db.Table("chat_messages cm").
+		Joins("JOIN messages m ON m.id = cm.refmsgid").
+		Where("cm.refmsgid = ? AND cm.type = ? AND cm.userid <> m.fromuser",
+			refmsgid, utils.CHAT_MESSAGE_INTERESTED).
+		Distinct("cm.userid").
+		Count(&repliers).Error; err != nil {
 		return false
 	}
 
@@ -131,10 +132,11 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	// until it gets there (and on any deploy that predates the migration), so a
 	// missing column or value degrades to the existing hold behaviour.
 	var within int
-	if err := db.Raw(
-		"SELECT COALESCE(MAX(ST_Contains(max_polygon, ST_SRID(POINT(?, ?), ?))), 0) "+
-			"FROM rippling_reach WHERE msgid = ? AND max_polygon IS NOT NULL",
-		lng, lat, utils.SRID, refmsgid).Scan(&within).Error; err != nil {
+	if err := db.Table("rippling_reach").
+		Select("COALESCE(MAX(ST_Contains(max_polygon, ST_SRID(POINT(?, ?), ?))), 0)",
+			lng, lat, utils.SRID).
+		Where("msgid = ? AND max_polygon IS NOT NULL", refmsgid).
+		Scan(&within).Error; err != nil {
 		return false
 	}
 
@@ -163,7 +165,7 @@ func SystemUserID(db *gorm.DB) uint64 {
 		}
 
 		var id uint64
-		db.Raw("SELECT userid FROM users_emails WHERE email = ? LIMIT 1", email).Scan(&id)
+		db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&id)
 		systemUserID = id
 	})
 
