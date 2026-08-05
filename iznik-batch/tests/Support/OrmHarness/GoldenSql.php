@@ -208,6 +208,48 @@ final class GoldenSql
         $grammar = DB::connection()->getQueryGrammar();
         $renderedRaw = $grammar->substituteBindingsIntoRawSql($sql, $bindings);
 
+        // The approvedDiff is checked HERE, before the golden placeholder-count
+        // guard below, and the ordering is load-bearing.
+        //
+        // By far the commonest real divergence is that the raw statement INLINED
+        // a constant and the builder BINDS it - `SET replyexpected = 0` becomes
+        // `set replyexpected = ?`, `role IN ('Owner','Moderator')` becomes
+        // `role in (?, ?)`. That is exactly a change in the number of bind
+        // arguments, so the guard below fires on it and, when the check sat
+        // after that guard, killed the test before the approved diff could be
+        // consulted at all: a diff recorded for precisely this case could never
+        // be honoured. Found the first time a real conversion needed one - Phase
+        // B could not have caught it, because every site ProvenSitesTest proves
+        // matches its golden exactly.
+        //
+        // Comparing here is sound: the approvedDiff IS the emitted statement, so
+        // its placeholders and the bindings are 1:1 by construction, and the
+        // golden's own count is irrelevant when we are deliberately not
+        // comparing against the golden.
+        $approvedDiff = $site['approvedDiff'] ?? '';
+        if ($approvedDiff !== '') {
+            $approvedPlaceholders = Canonical::countPlaceholders($approvedDiff);
+            if ($approvedPlaceholders !== count($bindings)) {
+                Assert::fail(sprintf(
+                    "ormharness: site \"%s\": the recorded approvedDiff has %d placeholder(s) but the replacement ".
+                    "bound %d argument(s). An approvedDiff must be the statement the builder actually emits, so its ".
+                    "placeholders and the bindings have to line up 1:1.\n".
+                    "  approvedDiff: %s\n".
+                    "  rendered:     %s",
+                    $siteId,
+                    $approvedPlaceholders,
+                    count($bindings),
+                    $approvedDiff,
+                    $sql
+                ));
+            }
+            $approvedRaw = $grammar->substituteBindingsIntoRawSql($approvedDiff, $bindings);
+            if (Canonical::normalise($approvedRaw) === Canonical::normalise($renderedRaw)) {
+                Assert::assertTrue(true); // a reviewer already recorded and justified exactly this divergence
+                return;
+            }
+        }
+
         $goldenPlaceholders = Canonical::countPlaceholders($goldenSql);
         if ($goldenPlaceholders !== count($bindings)) {
             Assert::fail(sprintf(
@@ -215,8 +257,11 @@ final class GoldenSql
                 "argument(s), so they cannot be substituted 1:1 to compare literal-for-literal.\n".
                 "  golden:   %s\n".
                 "  rendered: %s\n".
-                'This usually means the representative bind values chosen for this test do not match the shape '.
-                'of the original call site (extra/missing WHERE conditions, a different number of columns, etc).',
+                'Usually the representative bind values chosen for this test do not match the shape of the '.
+                "original call site (extra/missing WHERE conditions, a different number of columns, etc).\n".
+                'If instead the split genuinely changed - the raw statement inlined a constant and the builder '.
+                'binds it, which is the commonest case - that is what an approvedDiff is for: record the emitted '.
+                'statement in services/laravel/approved-diffs.json with a reason.',
                 $siteId,
                 $goldenPlaceholders,
                 count($bindings),
@@ -232,15 +277,6 @@ final class GoldenSql
         if ($wantCanon === $gotCanon) {
             Assert::assertSame($wantCanon, $gotCanon); // real assertion, so PHPUnit does not flag the test as risky
             return;
-        }
-
-        $approvedDiff = $site['approvedDiff'] ?? '';
-        if ($approvedDiff !== '') {
-            $approvedRaw = $grammar->substituteBindingsIntoRawSql($approvedDiff, $bindings);
-            if (Canonical::normalise($approvedRaw) === $gotCanon) {
-                Assert::assertTrue(true); // a reviewer already recorded and justified exactly this divergence
-                return;
-            }
         }
 
         $verdict = $approvedDiff === ''
