@@ -1057,10 +1057,17 @@ function applyKeepRaw(array &$sites, string $path): int
                 }
             } else {
                 $file = $r['file'] ?? '';
-                $matchFile = $s['file'] === $file
-                    || (str_ends_with($file, '/') && str_starts_with($s['file'], $file));
-                if (!$matchFile) {
-                    continue;
+                // A rule with no file is a construct rule: it selects purely on
+                // surface + sqlMatches, wherever the construct appears.
+                if ($file !== '') {
+                    $matchFile = $s['file'] === $file
+                        || (str_ends_with($file, '/') && str_starts_with($s['file'], $file));
+                    if (!$matchFile) {
+                        continue;
+                    }
+                } elseif (empty($r['sqlMatches'])) {
+                    fwrite(STDERR, "extract: keep-raw rule {$ri} has neither id, file nor sqlMatches - it would match everything\n");
+                    exit(1);
                 }
                 if (!empty($r['function']) && $s['function'] !== $r['function']) {
                     continue;
@@ -1075,6 +1082,19 @@ function applyKeepRaw(array &$sites, string $path): int
                 // sites within it, leaving DB::/builder-fragment sites in
                 // the same file or directory to normal triage.
                 if (!empty($r['surface']) && $s['surface'] !== $r['surface']) {
+                    continue;
+                }
+                // Optional "sqlMatches" regex over the recorded golden SQL.
+                // Needed for the fragment/expression surfaces, where the reason
+                // to stay raw is a property of the SQL CONSTRUCT (a JSON_EXTRACT
+                // predicate, an aliased aggregate, a spatial function) rather
+                // than of the file it appears in. One argued rule per construct
+                // beats two hundred near-identical paragraphs keyed by id, and
+                // unlike a blanket surface rule it cannot silently absorb the
+                // fragments that ARE convertible (whereColumn, plain
+                // comparisons, whereNotExists) - those keep failing triage
+                // until someone converts them.
+                if (!empty($r['sqlMatches']) && !preg_match($r['sqlMatches'], (string) $s['goldenSql'])) {
                     continue;
                 }
             }

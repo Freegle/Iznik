@@ -49,6 +49,62 @@
       "reason": "WhatJobsService::geocodePostcode's bounding-box lookup selects SIX aliased aggregates in one statement - AVG(lat), AVG(lng), MIN(lat), MIN(lng), MAX(lat), MAX(lng). Laravel's builder has first-class aggregates (->avg/->min/->max) but each computes ONE value and issues its own statement; there is no non-raw way to select several aliased aggregates together. The only conversion available is ->select(DB::raw('AVG(lat) AS lat'), ...), and DB::raw is itself a raw site in this inventory - that would move the site from surface \"statement\" to surface \"expression\" and convert nothing. Splitting it into six separate queries is not equivalent either: it would turn one scan of the postcode rows into six.",
       "porting": "PostgreSQL: AVG/MIN/MAX are standard and the statement ports unchanged. The LIKE on name and the IS NOT NULL guard are standard too. No dialect work needed.",
       "category": "Multiple aliased aggregates in one statement"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
+      "reason": "MySQL JSON accessors inside an otherwise-ORM chain. Laravel does have a JSON where syntax (->where('settings->key', 1)), but it does NOT emit the same SQL: it wraps the extraction in json_unquote() and casts, so a predicate written as JSON_EXTRACT(settings, '$.k') = 1 changes meaning at the edges - notably for JSON true/false versus 1/0, and for a key that is absent rather than null, both of which appear in these very predicates (several read `= true`, several test IS NULL). Converting them would be a behaviour change dressed as a refactor, on settings that gate who gets mailed. They stay raw until someone ports them deliberately, with data to check against.",
+      "porting": "PostgreSQL: this is the single biggest dialect gap in this manifest. JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so every one of these needs reading rather than substituting. Doing it behind a helper (one place that renders a settings predicate) is worth more than converting them in situ first.",
+      "category": "JSON column access"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/\\b(COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\(.*\\)\\s+AS\\s+/i",
+      "reason": "An aggregate given an alias inside a SELECT list. Laravel's ->count()/->sum()/->avg()/->min()/->max() are first-class but each computes ONE value and issues its own statement; there is no builder form for 'select these aggregates, aliased, alongside these columns'. The only conversion available is ->select(DB::raw('COUNT(*) AS cnt')), and DB::raw is itself a raw site in this inventory - the site would move from surface fragment to surface expression and nothing would be converted. Splitting one grouped scan into N separate aggregate queries is not equivalent either.",
+      "porting": "PostgreSQL: standard SQL, ports unchanged. GROUP_CONCAT is the exception - it becomes string_agg(expr, delim) with a different argument order, and any ORDER BY inside it moves too.",
+      "category": "Aliased aggregate in a select list"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/ST_Contains|ST_GeomFromText|ST_Intersects|ST_Distance|ST_Within|haversine\\(/i",
+      "reason": "MySQL spatial functions and the project's own haversine() SQL function. The builder has no spatial vocabulary at all, so these can only ever be raw text; converting means DB::raw, which converts nothing. They are also the statements most likely to be index-sensitive, so rewriting their shape casually risks a table scan on locations.",
+      "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS is lng/lat) and will silently transpose coordinates if unhandled. haversine() is a project-defined MySQL function with no Postgres counterpart - port it as ST_DWithin on geography, which is both correct and index-assisted, rather than translating the arithmetic.",
+      "category": "Spatial predicate"
+    },
+    {
+      "surface": "fragment",
+      "sqlMatches": "/\\bRAND\\s*\\(|\\bNOW\\s*\\(|\\bCURDATE\\s*\\(|DATE_SUB|DATE_ADD|DATEDIFF|\\bYEAR\\s*\\(/i",
+      "reason": "Functions the DATABASE must evaluate: RAND() for sampling, and the clock/date arithmetic family (NOW, DATE_SUB, DATEDIFF, YEAR). The builder equivalents would compute the value in PHP and bind it, which moves the clock from the database to the application and changes what the query means under clock skew, timezone differences, or a long-running batch. DATEDIFF is the sharpest case: it counts CALENDAR DAY boundaries, so rewriting DATEDIFF(NOW(), t) < 2 as t >= now()->subDays(2) silently changes which rows match. These stay raw on correctness grounds, not convenience.",
+      "porting": "PostgreSQL: NOW() and CURRENT_DATE carry over; RAND() becomes random(); DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'); DATEDIFF has no direct equivalent and becomes a date subtraction yielding an integer, which is the same calendar-day semantics. Each needs rewriting, none needs redesigning.",
+      "category": "Non-deterministic or clock function"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
+      "reason": "MySQL JSON accessors inside an otherwise-ORM chain. Laravel does have a JSON where syntax (->where('settings->key', 1)), but it does NOT emit the same SQL: it wraps the extraction in json_unquote() and casts, so a predicate written as JSON_EXTRACT(settings, '$.k') = 1 changes meaning at the edges - notably for JSON true/false versus 1/0, and for a key that is absent rather than null, both of which appear in these very predicates (several read `= true`, several test IS NULL). Converting them would be a behaviour change dressed as a refactor, on settings that gate who gets mailed. They stay raw until someone ports them deliberately, with data to check against. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL: this is the single biggest dialect gap in this manifest. JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so every one of these needs reading rather than substituting. Doing it behind a helper (one place that renders a settings predicate) is worth more than converting them in situ first.",
+      "category": "JSON column access (expression)"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/\\b(COUNT|SUM|AVG|MIN|MAX|GROUP_CONCAT)\\s*\\(.*\\)\\s+AS\\s+/i",
+      "reason": "An aggregate given an alias inside a SELECT list. Laravel's ->count()/->sum()/->avg()/->min()/->max() are first-class but each computes ONE value and issues its own statement; there is no builder form for 'select these aggregates, aliased, alongside these columns'. The only conversion available is ->select(DB::raw('COUNT(*) AS cnt')), and DB::raw is itself a raw site in this inventory - the site would move from surface fragment to surface expression and nothing would be converted. Splitting one grouped scan into N separate aggregate queries is not equivalent either. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL: standard SQL, ports unchanged. GROUP_CONCAT is the exception - it becomes string_agg(expr, delim) with a different argument order, and any ORDER BY inside it moves too.",
+      "category": "Aliased aggregate in a select list (expression)"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/ST_Contains|ST_GeomFromText|ST_Intersects|ST_Distance|ST_Within|haversine\\(/i",
+      "reason": "MySQL spatial functions and the project's own haversine() SQL function. The builder has no spatial vocabulary at all, so these can only ever be raw text; converting means DB::raw, which converts nothing. They are also the statements most likely to be index-sensitive, so rewriting their shape casually risks a table scan on locations. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL/PostGIS: ST_Contains/ST_Intersects/ST_Within carry over by name, but SRID axis order differs (MySQL is lat/lng for 4326, PostGIS is lng/lat) and will silently transpose coordinates if unhandled. haversine() is a project-defined MySQL function with no Postgres counterpart - port it as ST_DWithin on geography, which is both correct and index-assisted, rather than translating the arithmetic.",
+      "category": "Spatial predicate (expression)"
+    },
+    {
+      "surface": "expression",
+      "sqlMatches": "/\\bRAND\\s*\\(|\\bNOW\\s*\\(|\\bCURDATE\\s*\\(|DATE_SUB|DATE_ADD|DATEDIFF|\\bYEAR\\s*\\(/i",
+      "reason": "Functions the DATABASE must evaluate: RAND() for sampling, and the clock/date arithmetic family (NOW, DATE_SUB, DATEDIFF, YEAR). The builder equivalents would compute the value in PHP and bind it, which moves the clock from the database to the application and changes what the query means under clock skew, timezone differences, or a long-running batch. DATEDIFF is the sharpest case: it counts CALENDAR DAY boundaries, so rewriting DATEDIFF(NOW(), t) < 2 as t >= now()->subDays(2) silently changes which rows match. These stay raw on correctness grounds, not convenience. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",
+      "porting": "PostgreSQL: NOW() and CURRENT_DATE carry over; RAND() becomes random(); DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'); DATEDIFF has no direct equivalent and becomes a date subtraction yielding an integer, which is the same calendar-day semantics. Each needs rewriting, none needs redesigning.",
+      "category": "Non-deterministic or clock function (expression)"
     }
   ]
 }
