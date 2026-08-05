@@ -934,4 +934,160 @@ describe('ModSupportAIAssistant', () => {
       expect(wrapper.vm.messages).toEqual([])
     })
   })
+  describe('refer to geeks', () => {
+    // Gets the component into the state a volunteer is actually in when they
+    // give up: a member selected and a conversation on screen.
+    async function withConversation() {
+      const wrapper = mountComponent()
+      wrapper.vm.selectedUser = {
+        id: 35909200,
+        displayname: 'Edward Hibbert',
+        email: 'edward@ehibbert.org.uk',
+      }
+      wrapper.vm.deviceSummary = {
+        devices: [{ isApp: true, appVersion: '3.2.28' }],
+      }
+      wrapper.vm.messages = [
+        { role: 'user', content: 'Why is his reply stuck?' },
+        {
+          role: 'assistant',
+          content: 'It is held by rippling.',
+          costUsd: 0.18,
+          usage: { inputTokens: 100, outputTokens: 40 },
+        },
+      ]
+      await nextTick()
+      return wrapper
+    }
+
+    it('offers the referral only once there is something to refer', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.selectedUser = { id: 1 }
+      await nextTick()
+      expect(wrapper.find('.referral-bar').exists()).toBe(false)
+
+      const withChat = await withConversation()
+      expect(withChat.find('.referral-bar').exists()).toBe(true)
+      expect(withChat.text()).toContain('Refer to geeks')
+    })
+
+    it('sends the whole investigation, the note and the member', async () => {
+      const wrapper = await withConversation()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, ref: 'SR-4F2QW' }),
+      })
+
+      wrapper.vm.referralNote = 'Badge keeps generating support mail.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      const [url, opts] = mockFetch.mock.calls[0]
+      expect(url).toContain('/api/refer-to-geeks')
+      expect(opts.method).toBe('POST')
+      expect(opts.headers.Authorization).toBe('Bearer test-jwt-123')
+
+      const body = JSON.parse(opts.body)
+      expect(body.note).toBe('Badge keeps generating support mail.')
+      expect(body.member.id).toBe(35909200)
+      expect(body.member.email).toBe('edward@ehibbert.org.uk')
+      expect(body.deviceSummary.devices).toHaveLength(1)
+      expect(body.messages).toHaveLength(2)
+      expect(body.messages[0].role).toBe('user')
+      // The email must show what was on screen, so the rendered HTML goes too.
+      expect(body.messages[1].html).toContain('It is held by rippling.')
+      expect(body.totals.inputTokens).toBe(100)
+      // No money: the helper runs on a subscription, so a dollar figure would
+      // be a notional price nobody is charged.
+      expect(body.totals.costUsd).toBeUndefined()
+      expect(body.messages[1].costUsd).toBeUndefined()
+    })
+
+    it('shows the tracking reference once it has gone', async () => {
+      const wrapper = await withConversation()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, ref: 'SR-4F2QW' }),
+      })
+
+      wrapper.vm.referralNote = 'Please look.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+      await nextTick()
+
+      expect(wrapper.vm.referralResult).toEqual({
+        ok: true,
+        ref: 'SR-4F2QW',
+      })
+      expect(wrapper.text()).toContain('SR-4F2QW')
+      expect(wrapper.vm.showReferralModal).toBe(false)
+      expect(wrapper.vm.referralNote).toBe('')
+    })
+
+    it('will not send without the volunteer saying why', async () => {
+      const wrapper = await withConversation()
+      mockFetch.mockReset()
+
+      wrapper.vm.referralNote = '   '
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+
+      expect(mockFetch).not.toHaveBeenCalled()
+      expect(wrapper.vm.referralResult).toBeNull()
+    })
+
+    it('reports a failure instead of claiming it was sent', async () => {
+      const wrapper = await withConversation()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: () =>
+          Promise.resolve({ message: 'Could not send: relay refused' }),
+      })
+
+      wrapper.vm.openReferral()
+      wrapper.vm.referralNote = 'Please look.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+
+      expect(wrapper.vm.referralError).toBe('Could not send: relay refused')
+      expect(wrapper.vm.referralResult).toBeNull()
+      // The modal stays open so they can see what went wrong and retry.
+      expect(wrapper.vm.showReferralModal).toBe(true)
+      // The note stays put so they do not have to retype it.
+      expect(wrapper.vm.referralNote).toBe('Please look.')
+    })
+
+    it('reports a network failure too', async () => {
+      const wrapper = await withConversation()
+      mockFetch.mockReset()
+      mockFetch.mockRejectedValue(new Error('boom'))
+
+      wrapper.vm.referralNote = 'Please look.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+
+      expect(wrapper.vm.referralError).toContain('boom')
+      expect(wrapper.vm.referralResult).toBeNull()
+      expect(wrapper.vm.referring).toBe(false)
+    })
+
+    it('clears referral state when the member is changed', async () => {
+      const wrapper = await withConversation()
+      wrapper.vm.referralNote = 'something'
+      wrapper.vm.referralResult = { ok: true, ref: 'SR-4F2QW' }
+
+      wrapper.vm.changeUser()
+      await nextTick()
+
+      expect(wrapper.vm.referralNote).toBe('')
+      expect(wrapper.vm.referralResult).toBeNull()
+    })
+  })
 })

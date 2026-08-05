@@ -1,11 +1,13 @@
 ---
-last_reviewed: 2026-07-29
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
   - claude-agent-sdk/tools.js
   - claude-agent-sdk/server.js
   - claude-agent-sdk/auth.js
+  - claude-agent-sdk/referral-mjml.js
+  - claude-agent-sdk/referral-email.js
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
 ---
 
@@ -92,6 +94,51 @@ it — so a member can be fully active with zero device sessions. When that happ
 endpoint falls back to the member's newest `source="api"` Loki line (`lastApiActivity`)
 and the panel says so explicitly, rather than showing a bare "no sessions" that misreads
 as "not active".
+
+## Refer to geeks
+
+When a volunteer gets as far as they can, **Refer to geeks** (in
+`ModSupportAIAssistant.vue`, shown as soon as there is a conversation) hands the whole
+investigation over by email, so nobody has to retype the story.
+
+`POST /api/refer-to-geeks` (Support/Admin gated and audited, like everything else) takes
+the member, the device summary, every message, the running totals and the volunteer's
+**referral text** — which is required, because a transcript with no statement of what the
+volunteer wants doing about it is not a referral. It emails `GEEKS_EMAIL`
+(`geeks@ilovefreegle.org`) with **Reply-To set to the referring volunteer**, so a reply
+goes back to the person who actually saw the problem.
+
+Every referral gets a short reference — `SR-XXXXX`, generated **server-side** so the client
+cannot choose or reuse one. It appears in the subject line, the email body, an
+`X-Freegle-Support-Referral` header, the audit trail, and back in the UI for the volunteer
+to quote. It is deliberately brief (eight characters, from an alphabet with `0/1/O/I/L`
+removed) so it can lead a subject line without crowding out what the referral is about, and
+survive being read aloud or retyped.
+
+**No money appears in the email.** The helper runs on a Claude subscription, so the SDK's
+`total_cost_usd` is a notional list price nobody is charged (see `billableCostUsd` in
+`auth.js`). Token counts are kept — they say how much work the investigation was — but the
+dollar figures are neither sent nor rendered.
+
+The email is **MJML** (`referral-mjml.js` builds it, `referral-email.js` compiles and
+sends it) and deliberately mirrors the helper's own screen — same header, member chip,
+device cards and green-you/blue-assistant chat bubbles — so reading the mail feels like
+looking at the tool. Two things follow from that:
+
+- **`referral-mjml.js` has no `require` at all.** CI runs the `claude-agent-sdk` specs
+  with no `node_modules`, so everything worth testing lives in the dependency-free module
+  and only the MJML compile and the SMTP send need libraries.
+- **Message bodies are the HTML the browser already rendered** —
+  `DOMPurify.sanitize(marked(...))`, the exact markup that was on screen. That is what
+  makes the email a faithful copy rather than a second, subtly different rendering.
+  `stripUnsafeHtml()` is a *second* belt over that already-sanitised HTML (script/style/
+  frame elements, inline handlers, `javascript:` URLs), not the primary sanitiser.
+  Everything else — names, emails, the referral text — is escaped, so a volunteer's typed
+  `<script>` shows as visible text and never as markup.
+
+SMTP defaults to the local **mailpit** (`SUPPORT_SMTP_HOST`), so a referral sent while
+developing lands at `mailpit.localhost` and never reaches the real geeks list; edge/prod
+points `SUPPORT_SMTP_*` at a real relay.
 
 ## Security controls
 
