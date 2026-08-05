@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-05T17:40:03Z",
+    "generated": "2026-08-05T17:41:19Z",
     "root": "iznik-batch",
     "counts": {
-        "keep-raw": 471,
+        "keep-raw": 473,
         "converted": 103,
         "excluded": 70,
-        "raw": 157,
+        "raw": 155,
         "retired": 1,
         "test-fixture": 352
     },
@@ -10401,10 +10401,10 @@
             "goldenSql": "SELECT DISTINCT ma_ai.id, ma_ai.msgid FROM messages_attachments ma_ai INNER JOIN messages_attachments ma_real ON ma_real.msgid = ma_ai.msgid WHERE JSON_EXTRACT(ma_ai.externalmods, '$.ai') = TRUE AND ( ma_real.externalmods IS NULL OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE )",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "Statements built on MySQL JSON accessors - the same position as the fragment-surface rule of that name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. The reason is if anything sharper here: MessageIllustrationsService compares JSON_EXTRACT(...) against TRUE and FALSE and separately tests IS NULL, and Laravel's JSON where syntax wraps the extraction in json_unquote() with different semantics for exactly those three cases. Converting would change which duplicate AI illustrations get deleted.",
+            "porting": "PostgreSQL: JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so each needs reading rather than substituting. Doing it behind one helper that renders a JSON predicate is worth more than converting them in place.",
+            "category": "JSON column access (statement)",
             "approvedDiff": ""
         },
         "d4d815c33ac9": {
@@ -17767,10 +17767,10 @@
             "goldenSql": "SELECT count FROM (SELECT t.*, @row_num := @row_num + 1 AS row_num FROM jobs_keywords t, (SELECT @row_num:=0) counter ORDER BY count) temp WHERE temp.row_num = ROUND(0.95 * @row_num)",
             "presentInCode": true,
             "hasParityTest": false,
-            "status": "raw",
-            "reason": "",
-            "porting": "",
-            "category": "",
+            "status": "keep-raw",
+            "reason": "MySQL user variables used for procedural row numbering - '@row_num := @row_num + 1'. This is imperative state threaded through a SELECT to emulate a window function, and the query builder has no concept of it at all; nor is the ordering of assignment across rows something any ORM can promise. It is also the one construct here that MySQL itself deprecates in favour of window functions, so the right fix is a rewrite to ROW_NUMBER() OVER (...) - a behaviour-preserving change worth making deliberately, with its own test, not as a by-product of an ORM migration.",
+            "porting": "PostgreSQL: user variables do not exist in any form, so this MUST be rewritten as a window function before it can port - ROW_NUMBER() OVER (ORDER BY ...). MySQL 8 supports the same syntax, so the rewrite can be done and verified on MySQL first and then ports unchanged.",
+            "category": "MySQL user variable",
             "approvedDiff": ""
         },
         "6e8108f5bfeb": {

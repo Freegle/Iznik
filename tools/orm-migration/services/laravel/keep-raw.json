@@ -223,6 +223,20 @@
       "reason": "A counter increment expressed in SQL - 'ON DUPLICATE KEY UPDATE count = count + ?'. The value is a function OF THE EXISTING ROW, which is exactly what makes it correct under concurrency: the database reads and writes it inside one statement, so two workers incrementing the same metric row cannot lose an update. Laravel's ->increment() exists for a bare UPDATE but not inside an upsert's update clause, where the only route is DB::raw - a raw site here. Reading the current value and writing back a computed one is NOT a conversion of this: it is the lost-update bug the SQL form exists to avoid, and these are event-metric counters written from several concurrent batch paths.",
       "porting": "PostgreSQL: 'count = count + ?' inside ON CONFLICT DO UPDATE is standard, written against the EXCLUDED pseudo-row where the new value is needed. Ports directly, with the same concurrency guarantee.",
       "category": "SQL-side counter increment"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
+      "reason": "Statements built on MySQL JSON accessors - the same position as the fragment-surface rule of that name, recorded separately because the extractor classifies a whole statement differently from a fragment inside one. The reason is if anything sharper here: MessageIllustrationsService compares JSON_EXTRACT(...) against TRUE and FALSE and separately tests IS NULL, and Laravel's JSON where syntax wraps the extraction in json_unquote() with different semantics for exactly those three cases. Converting would change which duplicate AI illustrations get deleted.",
+      "porting": "PostgreSQL: JSON_EXTRACT becomes -> / ->> and JSON_UNQUOTE disappears into ->>, but the NULL and boolean semantics differ again, so each needs reading rather than substituting. Doing it behind one helper that renders a JSON predicate is worth more than converting them in place.",
+      "category": "JSON column access (statement)"
+    },
+    {
+      "surface": "statement",
+      "sqlMatches": "/@\\w+\\s*:=/",
+      "reason": "MySQL user variables used for procedural row numbering - '@row_num := @row_num + 1'. This is imperative state threaded through a SELECT to emulate a window function, and the query builder has no concept of it at all; nor is the ordering of assignment across rows something any ORM can promise. It is also the one construct here that MySQL itself deprecates in favour of window functions, so the right fix is a rewrite to ROW_NUMBER() OVER (...) - a behaviour-preserving change worth making deliberately, with its own test, not as a by-product of an ORM migration.",
+      "porting": "PostgreSQL: user variables do not exist in any form, so this MUST be rewritten as a window function before it can port - ROW_NUMBER() OVER (ORDER BY ...). MySQL 8 supports the same syntax, so the rewrite can be done and verified on MySQL first and then ports unchanged.",
+      "category": "MySQL user variable"
     }
   ]
 }
