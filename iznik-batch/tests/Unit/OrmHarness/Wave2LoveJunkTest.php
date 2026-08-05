@@ -30,6 +30,9 @@ class Wave2LoveJunkTest extends TestCase
     // SELECT mp.userid, u.ljuserid FROM messages_promises mp INNER JOIN users u ...
     private const SITE_PROMISES = '63bbb51470ed';
 
+    // buildPayload's five-LEFT-join row assembly.
+    private const SITE_PAYLOAD = 'b3867b4b17c4';
+
     public function test_edited_messages_sweep(): void
     {
         GoldenSql::assert(self::SITE_EDITED, fn () => DB::table('messages')
@@ -99,5 +102,33 @@ class Wave2LoveJunkTest extends TestCase
             ->join('users as u', 'u.id', '=', 'mp.userid')
             ->where('mp.msgid', 1)
             ->whereNotNull('u.ljuserid'));
+    }
+
+    /**
+     * Five LEFT joins, every one of them deliberate: a message with no item,
+     * no location or no area must still come back with nulls. Any one of these
+     * as an inner join silently drops messages from the LoveJunk feed rather
+     * than failing visibly. Note also that `la` joins `l`, not `m` - it is the
+     * AREA of the message's location, so re-pointing it at m.locationid would
+     * quietly return the location twice.
+     */
+    public function test_payload_row(): void
+    {
+        GoldenSql::assert(self::SITE_PAYLOAD, fn () => DB::table('messages as m')
+            ->select(
+                'm.id', 'm.textbody', 'm.fromuser', 'm.locationid', 'm.lat', 'm.lng',
+                'm.sourceheader', 'm.subject', 'm.type',
+                'i.name as item',
+                'u.fullname', 'u.firstname', 'u.lastname',
+                'l.name as postcode',
+                'la.name as area'
+            )
+            ->leftJoin('messages_items as mi', 'mi.msgid', '=', 'm.id')
+            ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
+            ->leftJoin('users as u', 'u.id', '=', 'm.fromuser')
+            ->leftJoin('locations as l', 'l.id', '=', 'm.locationid')
+            ->leftJoin('locations as la', 'la.id', '=', 'l.areaid')
+            ->where('m.id', 1)
+            ->limit(1));
     }
 }

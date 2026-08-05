@@ -239,22 +239,28 @@ class LoveJunkService
 
     private function buildPayload(int $msgId): ?array
     {
-        $msg = DB::selectOne("
-            SELECT m.id, m.textbody, m.fromuser, m.locationid, m.lat, m.lng,
-                   m.sourceheader, m.subject, m.type,
-                   i.name as item,
-                   u.fullname, u.firstname, u.lastname,
-                   l.name as postcode,
-                   la.name as area
-            FROM messages m
-            LEFT JOIN messages_items mi ON mi.msgid = m.id
-            LEFT JOIN items i ON i.id = mi.itemid
-            LEFT JOIN users u ON u.id = m.fromuser
-            LEFT JOIN locations l ON l.id = m.locationid
-            LEFT JOIN locations la ON la.id = l.areaid
-            WHERE m.id = ?
-            LIMIT 1
-        ", [$msgId]);
+        $msg = DB::table('messages as m')
+            ->select(
+                'm.id', 'm.textbody', 'm.fromuser', 'm.locationid', 'm.lat', 'm.lng',
+                'm.sourceheader', 'm.subject', 'm.type',
+                'i.name as item',
+                'u.fullname', 'u.firstname', 'u.lastname',
+                'l.name as postcode',
+                'la.name as area'
+            )
+            // Every join here is a LEFT join on purpose: a message with no
+            // item, no location or no area must still come back, just with
+            // nulls. Any of these as an inner join silently drops messages
+            // from the LoveJunk feed rather than erroring.
+            ->leftJoin('messages_items as mi', 'mi.msgid', '=', 'm.id')
+            ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
+            ->leftJoin('users as u', 'u.id', '=', 'm.fromuser')
+            ->leftJoin('locations as l', 'l.id', '=', 'm.locationid')
+            // la joins l, not m - the area of the message's location.
+            ->leftJoin('locations as la', 'la.id', '=', 'l.areaid')
+            ->where('m.id', $msgId)
+            ->limit(1)
+            ->first();
 
         if (!$msg) {
             return null;

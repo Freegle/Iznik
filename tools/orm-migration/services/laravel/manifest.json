@@ -1,10 +1,10 @@
 {
-    "generated": "2026-08-05T17:17:42Z",
+    "generated": "2026-08-05T17:18:38Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 416,
-        "converted": 87,
-        "raw": 228,
+        "converted": 88,
+        "raw": 227,
         "excluded": 70,
         "retired": 1,
         "test-fixture": 352
@@ -9946,9 +9946,9 @@
             "dynamic": false,
             "args": 1,
             "goldenSql": "SELECT m.id, m.textbody, m.fromuser, m.locationid, m.lat, m.lng, m.sourceheader, m.subject, m.type, i.name as item, u.fullname, u.firstname, u.lastname, l.name as postcode, la.name as area FROM messages m LEFT JOIN messages_items mi ON mi.msgid = m.id LEFT JOIN items i ON i.id = mi.itemid LEFT JOIN users u ON u.id = m.fromuser LEFT JOIN locations l ON l.id = m.locationid LEFT JOIN locations la ON la.id = l.areaid WHERE m.id = ? LIMIT 1",
-            "presentInCode": true,
-            "hasParityTest": false,
-            "status": "raw",
+            "presentInCode": false,
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
