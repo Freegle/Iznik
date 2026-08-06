@@ -126,6 +126,10 @@ describe('ChatMessage', () => {
             template: '<div class="chat-message-reminder" />',
             props: ['id', 'chatid', 'pov'],
           },
+          ChatMessagePrompt: {
+            template: '<div class="chat-message-prompt" />',
+            props: ['id', 'chatid', 'pov'],
+          },
           ChatMessageDateRead: {
             template: '<div class="chat-message-date-read" />',
             props: ['id', 'chatid', 'last', 'pov'],
@@ -259,6 +263,19 @@ describe('ChatMessage', () => {
       expect(wrapper.find('.chat-message-reminder').exists()).toBe(true)
     })
 
+    // A Freegle prompt - a question with tappable answers. Without its own arm
+    // here it fell through to the raw "Unknown chat message type" debug dump.
+    it('renders Prompt type correctly', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, type: 'Prompt' }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-prompt').exists()).toBe(true)
+    })
+
     // System notices (e.g. "the item you replied about has now been taken") must
     // render their text, NOT fall through to the raw "Unknown chat message type"
     // debug dump that members were seeing.
@@ -275,6 +292,28 @@ describe('ChatMessage', () => {
       expect(wrapper.find('.system-message').exists()).toBe(true)
       expect(wrapper.text()).toContain('has now been taken')
       expect(wrapper.text()).not.toContain('Unknown chat message type')
+    })
+
+    // The case this build cannot see: a type added AFTER it shipped. An app in
+    // the wild cannot be upgraded in arrears, so the catch-all has to be safe
+    // rather than diagnostic - it used to dump the type and two raw objects into
+    // the member's conversation, which is what happened with System.
+    it('renders an unknown future type as its text rather than a debug dump', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      const message = 'Could you deliver? Tap below to let people know.'
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          type: 'SomethingInventedLater',
+          message,
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Could you deliver?')
+      expect(wrapper.text()).not.toContain('Unknown chat message type')
+      expect(wrapper.text()).not.toContain('SomethingInventedLater')
     })
   })
 
