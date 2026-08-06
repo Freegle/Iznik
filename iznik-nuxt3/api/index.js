@@ -55,7 +55,6 @@ import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
-import VoicePostAPI from './VoicePostAPI.js'
 import VolunteeringAPI from './VolunteeringAPI.js'
 
 export default (config) => {
@@ -108,7 +107,6 @@ export default (config) => {
     user: new UserAPI(options),
     usersearch: new UserSearchAPI(options),
     visualise: new VisualiseAPI(options),
-    voicepost: new VoicePostAPI(options),
     volunteering: new VolunteeringAPI(options),
   }
 }
