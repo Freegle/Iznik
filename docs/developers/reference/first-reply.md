@@ -438,21 +438,41 @@ and the guess is what gets rationed.
 | Setting | Applies to | Default |
 |---|---|---|
 | `max_per_post` | `frequent` only - propensity scouts | 10 |
-| `max_strong_per_post` | `wanted` + `search` - safety ceiling, not a target | 50 |
+| `max_strong_per_post` | `wanted` + `search` - backstop, should never bind | 50 |
 
-**Strong is not unlimited, and the ceiling is not cosmetic.** In the most recent 200k rows of
-`users_searches` alone - 0.7% of a 27M-row table - **358 distinct members hold the term "Sofa"**,
-313 "Table", 285 "tv". If a common OFFER clears the threshold against a decent share of those,
-"no limit" is a mail-out to thousands from a lever whose entire premise is that these are the
-right *few* people.
+**How big is the strong population really?** Sized from live:
 
-The true uncapped fan-out is **not currently known**. The only live evidence at this threshold is
-`messages_matched_notified`, and that table is itself capped by
-`freegle.matched.match_limit_per_post` (10), so it cannot show what the number would have been -
-its observed maximum of 9 per post is the cap talking, not the data. The ceiling is therefore set
-well above anything expected, and when it bites it logs and increments `scouts_strong_capped`, so
-the real distribution shows up in the dashboard rather than being guessed at a second time. Once
-there is a run's worth of that counter, set the number from it.
+| Quantity | Live value |
+|---|---|
+| Freeglers a rippled post reaches | ~3,600 average, ~19,000 max |
+| Share of the 2.5M-member network that is | **0.14%** |
+| Members holding a common term (`sofa`) network-wide | single-digit thousands (~0.03% of 27M live rows) |
+| **So, in-reach holders of a common term** | **order of ten people** |
+
+Ten, before the not-yet-reached band, the 24h cooldown, the weekly cap, post-email consent and
+the 0.85 threshold cut it further. The realistic per-post figure is single digits, which is why
+strong is not rationed and the backstop should never fire.
+
+> A previous version of this page justified the ceiling with "358 members hold Sofa". That was a
+> **network-wide** count with no geography applied, so it said nothing about what a single post
+> would send - `filterEligible()` bounds every candidate to the reach band. It made a non-problem
+> look like a mailbomb. Keep per-post numbers per-post.
+
+The ceiling stays because it costs nothing when it never fires, and `scouts_strong_capped` counts
+the times it does, so a pathological post surfaces rather than quietly mailing everyone.
+
+### Saved searches have to be recent
+
+`users_searches` is never pruned - `deleted = 0` covers ~99% of a 27M-row table whose rows go back
+to **2017** - and nothing else that reads it for matching bounds it by date. Unbounded, a member
+gets mail because of something they searched for years ago, which reads as "why are you emailing
+me about a sofa?" rather than as help.
+
+`SearchMatchesForPost` therefore only considers searches from the last
+**`FIRSTREPLY_SEARCH_MAX_AGE_MONTHS`** months (default 6). That is a judgement, not a measurement:
+long enough for a slow-moving want to survive, short enough that the term still describes what
+somebody is after. It does not starve the signal - live has ~120k searches in the last 3 months
+and ~400k in the last year in the newest slice of the table alone.
 
 ### Changing the caps without a deploy
 

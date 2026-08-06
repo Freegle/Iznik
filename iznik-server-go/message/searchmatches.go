@@ -2,12 +2,36 @@ package message
 
 import (
 	"math"
+	"os"
 	"strconv"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/gofiber/fiber/v2"
 )
+
+// searchMaxAgeMonths bounds how old a saved search may be and still earn its
+// holder an unsolicited email.
+//
+// users_searches is never pruned - deleted=0 covers ~99% of a 27M-row table
+// whose rows go back to 2017 - and nothing else that reads it for MATCHING
+// bounds it either. Without this a member gets mail because of something they
+// looked for years ago, which reads as "why are you emailing me about a sofa?"
+// rather than as help. The only other consumer, the profile's saved-search list,
+// bounds itself a different way (their most recent 100).
+//
+// Six months is a judgement, not a measurement: long enough that a slow-moving
+// want survives, short enough that the search still plausibly describes what
+// somebody is after. Env-settable so it can move without a deploy of this
+// reasoning.
+func searchMaxAgeMonths() int {
+	if v := os.Getenv("FIRSTREPLY_SEARCH_MAX_AGE_MONTHS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 6
+}
 
 // SearchMatch is one member whose saved search matches a post.
 type SearchMatch struct {
@@ -96,6 +120,7 @@ func SearchMatchesForPost(c *fiber.Ctx) error {
 		Select("e.searchid, s.userid, s.term, e.term_embedding").
 		Joins("INNER JOIN users_searches s ON s.id = e.searchid").
 		Where("s.deleted = 0").
+		Where("s.date >= DATE_SUB(NOW(), INTERVAL ? MONTH)", searchMaxAgeMonths()).
 		Where("s.userid <> ?", srcFromuser).
 		Scan(&rows)
 

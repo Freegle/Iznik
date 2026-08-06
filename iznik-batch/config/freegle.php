@@ -649,19 +649,20 @@ return [
             // down (or off, with 0) without waiting for a deploy. This env value
             // is the default when that row is absent. See ScoutService::scoutConfig().
             'max_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_PER_POST', 10),
-            // Safety ceiling on wanted/search scouts - people with an open post
-            // for this item or a matching saved search. They asked, so there is
-            // no good reason to tell the first ten and not the eleventh, and the
-            // small cap above deliberately does not apply to them.
+            // Backstop on wanted/search scouts - people with an open post for
+            // this item or a matching saved search. They asked, so the small cap
+            // above deliberately does not apply to them, and this number should
+            // essentially never bind.
             //
-            // Not unlimited, though. In the most recent 200k rows of
-            // users_searches alone (0.7% of a 27M-row table) 358 members hold the
-            // term "Sofa" and 313 "Table", so an unbounded common OFFER could mail
-            // thousands. The true fan-out is unmeasured - the one live source at
-            // this threshold, messages_matched_notified, is itself capped by
-            // matched.match_limit_per_post - so this is set well above anything
-            // expected, logged and counted when it bites, and tunable at runtime
-            // via `firstreply_scouts_max_strong_per_post`.
+            // Sized from live: a rippled post reaches ~3,600 freeglers (0.14% of
+            // the network), and a common term is held by single-digit thousands
+            // network-wide, so the in-reach population for a common OFFER is of
+            // the order of ten people - before the not-yet-reached band, cooldown,
+            // weekly cap, consent and the 0.85 threshold cut it further. 50 is
+            // therefore a guard against something pathological, not a limit on
+            // the signal. Overridable at runtime via
+            // `firstreply_scouts_max_strong_per_post`; `scouts_strong_capped`
+            // counts the times it fires.
             'max_strong_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_STRONG_PER_POST', 50),
             // Nobody should become Freegle's unpaid alerting service. A member is
             // not scouted again within this many hours...

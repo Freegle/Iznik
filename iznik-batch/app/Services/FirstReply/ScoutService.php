@@ -371,21 +371,28 @@ class ScoutService
         // lot of things"), which is a guess, and a guess is exactly what should
         // be rationed.
         //
-        // Strong still has a ceiling, and it is deliberately far above anything
-        // expected rather than absent. Live saved-search data says why: in the
-        // most recent 200k rows of users_searches ALONE - 0.7% of the 27M-row
-        // table - 358 distinct members hold the term "Sofa", 313 "Table", 285
-        // "tv". If a common OFFER clears the threshold against a decent share of
-        // those, "no limit" is a mail-out to thousands, from a lever whose whole
-        // premise is that these are the RIGHT few people.
+        // Strong still has a ceiling, but it is a backstop against something
+        // pathological, NOT a rationing of the signal - it should essentially
+        // never bind. Sized from live:
         //
-        // The true uncapped fan-out is NOT known: the only live evidence at this
-        // threshold is messages_matched_notified, and that is itself capped by
-        // freegle.matched.match_limit_per_post (10), so it cannot show what the
-        // number would have been. Hence a ceiling that is generous enough never
-        // to bite in the normal case, tunable at runtime, and counted when it
-        // does bite (below) so the real distribution becomes visible in the
-        // dashboard instead of being guessed at again.
+        //   - a rippled post reaches ~3,600 freeglers on average (max ~19,000),
+        //     which is 0.14% of the 2.5M-member network;
+        //   - a common term is held network-wide by single-digit thousands
+        //     (~0.03% of the 27M live rows in users_searches hold "sofa");
+        //   - so the in-reach population for a common OFFER is of the order of
+        //     TEN people, before the not-yet-reached band, the cooldown, the
+        //     weekly cap, post-email consent and the 0.85 threshold cut it
+        //     further.
+        //
+        // An earlier version of this comment justified the ceiling with "358
+        // members hold Sofa". That number was network-wide, with no geography
+        // applied at all, and so said nothing about what one post would send -
+        // filterEligible() bounds every candidate to the reach band. Quoting it
+        // here made a non-problem look like a mailbomb.
+        //
+        // The ceiling stays because it costs nothing when it never fires, and it
+        // is counted when it does (below), so a pathological post shows up
+        // instead of quietly mailing everybody.
         $maxFrequent = max(0, (int) ($cfg['max_per_post'] ?? 10));
         $maxStrong = max(0, (int) ($cfg['max_strong_per_post'] ?? 50));
 

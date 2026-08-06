@@ -66,6 +66,13 @@ func TestSearchMatchesHoldTheEmailThreshold(t *testing.T) {
 	seed(weak, "bookend", 0.82)         // clears the strip's bar only
 	seed(poster, "bookcase", 0.99)      // their own post
 
+	// A perfect match on a search nobody has touched for years. users_searches is
+	// never pruned and goes back to 2017, so without an age bound this member
+	// gets mail about something they looked for long ago.
+	stale := CreateTestUser(t, prefix+"_stale", "User")
+	seed(stale, "pine bookcase please", 0.99)
+	db.Exec("UPDATE users_searches SET date = DATE_SUB(NOW(), INTERVAL 3 YEAR) WHERE userid = ?", stale)
+
 	resp, _ := getApp().Test(httptest.NewRequest("GET",
 		fmt.Sprintf("/api/message/%d/searchmatches", msgID), nil), 60000)
 	require.Equal(t, 200, resp.StatusCode)
@@ -81,6 +88,7 @@ func TestSearchMatchesHoldTheEmailThreshold(t *testing.T) {
 	assert.True(t, got[strong], "0.95 is well clear of the email threshold")
 	assert.False(t, got[weak], "0.82 would show on the similar-posts strip but must not be mailed")
 	assert.False(t, got[poster], "never match somebody against their own post")
+	assert.False(t, got[stale], "a three-year-old search is not a current want, whatever it scores")
 }
 
 // A post with no embedding matches nothing, rather than falling back to
