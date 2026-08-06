@@ -156,7 +156,9 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 		add("messages_items", "msgid IN "+in, args, 0)
 		add("messages_deadlines", "msgid IN "+in, args, 0)
 		add("messages_history", "fromuser = ? OR msgid IN "+in, withU(args), 0)
-		add("messages_outcomes", "userid = ? OR msgid IN "+in, withU(args), 0)
+		// messages_outcomes has no userid column - it is msgid-keyed only
+		// (id, timestamp, msgid, outcome, happiness, comments, reviewed).
+		add("messages_outcomes", "msgid IN "+in, args, 0)
 		add("messages_promises", "userid = ? OR msgid IN "+in, withU(args), 0)
 		add("messages_reneged", "userid = ? OR msgid IN "+in, withU(args), 0)
 		add("messages_likes", "userid = ? OR msgid IN "+in, withU(args), 0)
@@ -164,7 +166,8 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 		add("messages_edits", "byuser = ? OR msgid IN "+in, withU(args), 0)
 	} else {
 		add("messages_history", "fromuser = ?", u, 0)
-		add("messages_outcomes", "userid = ?", u, 0)
+		// No messages_outcomes here: it is msgid-keyed and with no messages
+		// there is nothing to anchor on.
 		add("messages_promises", "userid = ?", u, 0)
 		add("messages_reneged", "userid = ?", u, 0)
 		add("messages_likes", "userid = ?", u, 0)
@@ -189,10 +192,13 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	if in, args := inClause(chatIDs); in != "" {
 		add("chat_rooms", "id IN "+in, args, 0)
 		add("chat_roster", "chatid IN "+in, args, 0)
-		add("chat_messages_held", "chatid IN "+in+" OR userid = ?", append(append([]interface{}{}, args...), userID), 0)
-	} else {
-		add("chat_messages_held", "userid = ?", u, 0)
 	}
+	// chat_messages_held has no chatid - its msgid references chat_messages.id
+	// (which mod is holding a chat message for review). Anchor on userid: the
+	// holds the member placed as a mod. Holds ON the member's own chat messages
+	// would need a chat_messages.userid sweep, which is not worth a scan of the
+	// biggest table for mod-review state that expires in days.
+	add("chat_messages_held", "userid = ?", u, 0)
 	if in, args := inClause(recentChatIDs); in != "" {
 		add("chat_messages", "chatid IN "+in+" AND date >= ?", append(append([]interface{}{}, args...), since), 0)
 	}

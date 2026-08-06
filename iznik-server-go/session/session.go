@@ -887,15 +887,24 @@ func GetSession(c *fiber.Ctx) error {
 
 	// Record app/web version in users_builddates.
 	// Throttled client-side via lastversiontime; we just insert/update.
+	// A still-valid JWT can outlive its user (purged account), and the FK on
+	// users_builddates then rejects the insert (~2/day since May) - so check
+	// the user still exists rather than tolerating the 1452, which would also
+	// hide real FK trouble. Same ghost-user family as the impersonation-link
+	// guard in user.GetUser.
 	webversion := c.Query("webversion")
 	if webversion != "" || appversion != "" {
-		db.Table("users_builddates").Clauses(clause.OnConflict{
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"timestamp": gorm.Expr("NOW()"), "webversion": webversion, "appversion": appversion,
-			}),
-		}).Create(map[string]interface{}{
-			"userid": myid, "webversion": webversion, "appversion": appversion,
-		})
+		var userExists int64
+		db.Table("users").Where("id = ?", myid).Count(&userExists)
+		if userExists > 0 {
+			db.Table("users_builddates").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"timestamp": gorm.Expr("NOW()"), "webversion": webversion, "appversion": appversion,
+				}),
+			}).Create(map[string]interface{}{
+				"userid": myid, "webversion": webversion, "appversion": appversion,
+			})
+		}
 	}
 
 	// Parallel fetches for user data.

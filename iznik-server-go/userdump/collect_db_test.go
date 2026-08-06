@@ -108,11 +108,12 @@ func TestBuildDBSpecs_ChatMessagesAreWindowed(t *testing.T) {
 	assert.NotNil(t, roster)
 	assert.Equal(t, "chatid IN (?,?,?)", roster.where)
 
-	// Held messages are keyed on every room too, plus the member themselves.
+	// Held records are keyed on the member only: chat_messages_held has no
+	// chatid column (its msgid references chat_messages.id), so the previous
+	// chatid-anchored spec was invalid SQL and 1054'd on every real dump.
 	held := findSpec(specs, "chat_messages_held")
 	assert.NotNil(t, held)
-	assert.Contains(t, held.where, "chatid IN (?,?,?)")
-	assert.Contains(t, held.where, "userid = ?")
+	assert.Equal(t, "userid = ?", held.where)
 }
 
 // A member with rooms but none active in the window gets no chat_messages spec
