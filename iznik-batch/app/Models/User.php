@@ -718,7 +718,7 @@ class User extends Model implements Auditable
             ->where(function (Builder $q) {
                 // simplemail in settings JSON is either absent (default = TRUE)
                 // or any value other than 'None'.
-                $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
                     ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
                         self::SIMPLE_MAIL_NONE,
                     ]);

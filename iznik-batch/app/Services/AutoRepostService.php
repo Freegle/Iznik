@@ -176,7 +176,7 @@ class AutoRepostService
             // V1: check user hasn't disabled autoreposts.
             $userDisabled = DB::table('users')
                 ->where('id', $msg->fromuser)
-                ->whereRaw("JSON_EXTRACT(settings, '$.autorepostsdisable') = true")
+                ->where('settings->autorepostsdisable', true)
                 ->exists();
 
             if ($userDisabled) {

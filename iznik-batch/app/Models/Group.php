@@ -354,7 +354,7 @@ class Group extends Model implements Auditable
             ->whereIn('communityevents_groups.groupid', $groupids)
             ->where(function ($q) {
                 $q->whereNull('groups.settings')
-                    ->orWhereRaw("JSON_EXTRACT(groups.settings, '$.communityevents') IS NULL")
+                    ->orWhereJsonDoesntContainKey('groups.settings->communityevents')
                     ->orWhereRaw("JSON_EXTRACT(groups.settings, '$.communityevents') = 1");
             })
             ->where('communityevents.pending', 1)
@@ -378,7 +378,7 @@ class Group extends Model implements Auditable
             ->where('volunteering.expired', 0)
             ->where(function ($q) {
                 $q->whereNull('groups.settings')
-                    ->orWhereRaw("JSON_EXTRACT(groups.settings, '$.volunteering') IS NULL")
+                    ->orWhereJsonDoesntContainKey('groups.settings->volunteering')
                     ->orWhereRaw("JSON_EXTRACT(groups.settings, '$.volunteering') = 1");
             })
             ->where(function ($q) use ($eventsqltime) {

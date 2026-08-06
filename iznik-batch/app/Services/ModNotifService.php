@@ -308,13 +308,13 @@ class ModNotifService
             ->where('groups.type', 'Freegle')
             ->where(function ($q) {
                 $q->whereNull('memberships.settings')
-                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.active') = true")
+                    ->orWhere('memberships.settings->active', true)
                     ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.active') = 1")
                     ->orWhere(function ($q2) {
-                        $q2->whereRaw("JSON_EXTRACT(memberships.settings, '$.active') IS NULL")
+                        $q2->whereJsonDoesntContainKey('memberships.settings->active')
                             ->where(function ($q3) {
-                                $q3->whereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') IS NULL")
-                                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') = true")
+                                $q3->whereJsonDoesntContainKey('memberships.settings->showmessages')
+                                    ->orWhere('memberships.settings->showmessages', true)
                                     ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') = 1");
                             });
                     });

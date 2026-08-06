@@ -125,7 +125,7 @@ class ReengageService
                 $q->whereNull('onholidaytill')->orWhere('onholidaytill', '<', now());
             })
             ->where(function ($q) {
-                $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
                     ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [User::SIMPLE_MAIL_NONE]);
             })
             ->select('id')
