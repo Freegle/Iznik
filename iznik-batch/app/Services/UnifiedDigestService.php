@@ -943,9 +943,10 @@ class UnifiedDigestService
 
         if ($cursorMsgdate) {
             // (arrival, msgid) > (cursorMsgdate, cursorMsgid)
-            $query->whereRaw(
-                '(messages_groups.arrival > ? OR (messages_groups.arrival = ? AND messages_groups.msgid > ?))',
-                [$cursorMsgdate, $cursorMsgdate, $cursorMsgid]
+            $query->whereRowValues(
+                ['messages_groups.arrival', 'messages_groups.msgid'],
+                '>',
+                [$cursorMsgdate, $cursorMsgid]
             );
         }
 
@@ -977,9 +978,10 @@ class UnifiedDigestService
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
 
         if ($cursorMsgdate) {
-            $watermark->whereRaw(
-                '(mg.arrival > ? OR (mg.arrival = ? AND mg.msgid > ?))',
-                [$cursorMsgdate, $cursorMsgdate, $cursorMsgid]
+            $watermark->whereRowValues(
+                ['mg.arrival', 'mg.msgid'],
+                '>',
+                [$cursorMsgdate, $cursorMsgid]
             );
         }
 
@@ -1238,7 +1240,7 @@ class UnifiedDigestService
             // bypasses this gate entirely (manual sampling).
             $allowlist = $this->getDailyAllowlist();
             if ($allowlist === []) {
-                $query->whereRaw('1 = 0');
+                $query->whereIn('messages.id', []);
                 Log::info('UnifiedDigestService: daily mode disabled (empty FREEGLE_DIGEST_DAILY_ALLOWLIST); V1 cron owns daily');
             } elseif ($allowlist !== ['*']) {
                 $lowercased = array_map('strtolower', $allowlist);

@@ -1146,7 +1146,7 @@ class TestMailCommand extends Command
             ->where('users_stories.newsletterreviewed', 1)
             ->where('users_stories.newsletter', 1)
             ->select(['users_stories.id'])
-            ->selectRaw('users_stories_images.id AS photoid')
+            ->addSelect('users_stories_images.id as photoid')
             ->groupBy('users_stories.id', 'users_stories_images.id')
             ->inRandomOrder()
             ->limit(StoriesNewsletterService::MAX_STORIES)

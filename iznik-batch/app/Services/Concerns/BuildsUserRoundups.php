@@ -80,7 +80,7 @@ trait BuildsUserRoundups
     protected function eligibleUsers(array $groupIds, string $allowedColumn, string $mode): LazyCollection
     {
         if (empty($groupIds)) {
-            return User::query()->whereRaw('1 = 0')->lazyById(500);
+            return User::query()->whereIn('id', [])->lazyById(500);
         }
 
         return User::query()

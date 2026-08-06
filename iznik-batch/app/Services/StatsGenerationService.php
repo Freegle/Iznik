@@ -108,7 +108,7 @@ class StatsGenerationService
         $searchCounts = [];
         DB::table('search_history')
             ->where('date', '>=', $date)
-            ->whereRaw('DATE(date) = ?', [$date])
+            ->whereDate('date', $date)
             ->whereNotNull('groups')
             ->where('groups', '!=', '')
             ->select('groups')

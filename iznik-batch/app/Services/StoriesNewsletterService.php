@@ -48,7 +48,7 @@ class StoriesNewsletterService
             ->where('users_stories.mailedtomembers', 0)
             ->when($since, fn ($q) => $q->where('users_stories.updated', '>', $since))
             ->select(['users_stories.id'])
-            ->selectRaw('users_stories_images.id AS photoid')
+            ->addSelect('users_stories_images.id as photoid')
             ->selectRaw('COUNT(*) AS vote_count')
             ->groupBy('users_stories.id', 'users_stories_images.id')
             ->orderByDesc('vote_count')
