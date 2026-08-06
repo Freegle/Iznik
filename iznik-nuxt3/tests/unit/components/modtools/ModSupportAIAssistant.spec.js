@@ -971,6 +971,29 @@ describe('ModSupportAIAssistant', () => {
       expect(withChat.text()).toContain('Refer to geeks')
     })
 
+    it('shows a live progress bar while a snapshot is building', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.selectedUser = { id: 1 }
+      wrapper.vm.isProcessing = true
+      wrapper.vm.toolProgress = {
+        tool: 'get_user_dump',
+        percent: 42,
+        section: 'loki_logs',
+        etaMs: 30000,
+      }
+      await nextTick()
+
+      const bar = wrapper.find('[data-testid="dump-progress"]')
+      expect(bar.exists()).toBe(true)
+      expect(bar.text()).toContain('loki_logs')
+      expect(bar.text()).toContain('42%')
+      expect(bar.text()).toContain('30s left')
+
+      wrapper.vm.toolProgress = null
+      await nextTick()
+      expect(wrapper.find('[data-testid="dump-progress"]').exists()).toBe(false)
+    })
+
     it('hides the referral while the assistant is still working', async () => {
       const wrapper = await withConversation()
       expect(wrapper.find('.referral-bar').exists()).toBe(true)

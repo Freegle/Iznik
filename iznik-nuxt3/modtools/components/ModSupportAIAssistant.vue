@@ -403,6 +403,21 @@
               <p v-else class="text-muted mb-2">
                 Starting investigation&hellip;
               </p>
+              <!-- Live progress for a long tool run (the member snapshot can
+                   take minutes on a big account) - a moving bar with elapsed
+                   time is the difference between "working" and "broken". -->
+              <div v-if="toolProgress" class="dump-progress mb-2" data-testid="dump-progress">
+                <div class="small text-muted mb-1">
+                  Building member snapshot: {{ toolProgress.section || 'starting' }}
+                  ({{ toolProgress.percent }}%<span v-if="toolProgress.etaMs">, ~{{ Math.round(toolProgress.etaMs / 1000) }}s left</span><span v-else-if="toolProgress.elapsedMs">, {{ Math.round(toolProgress.elapsedMs / 1000) }}s elapsed</span>)
+                </div>
+                <b-progress
+                  :value="toolProgress.percent"
+                  :max="100"
+                  height="0.5rem"
+                  :animated="toolProgress.percent < 100"
+                />
+              </div>
               <b-button variant="outline-danger" size="sm" @click="cancelQuery">
                 Cancel
               </b-button>
@@ -533,6 +548,9 @@ const query = ref('')
 const isProcessing = ref(false)
 const claudeSessionId = ref(null) // For Claude Code conversation continuity
 const transcript = ref([]) // Running transcript of thinking/tool/status steps
+// Live progress of a long-running tool (the member snapshot): {percent,
+// section, etaMs, elapsedMs} from 'progress' SSE events, null when idle.
+const toolProgress = ref(null)
 
 // Conversation
 const messages = ref([])
@@ -778,6 +796,7 @@ async function submitQuery() {
 
   isProcessing.value = true
   transcript.value = []
+  toolProgress.value = null
 
   try {
     const result = await queryLogsForUser(queryText)
@@ -800,6 +819,7 @@ async function submitQuery() {
   } finally {
     isProcessing.value = false
     transcript.value = []
+    toolProgress.value = null
   }
 }
 
@@ -885,6 +905,11 @@ async function queryLogsForUser(userQuery) {
               transcript.value = []
             } else if (event.type === 'error') {
               throw new Error(event.message)
+            } else if (event.type === 'progress') {
+              // Structured tool progress (the member snapshot) - drives the
+              // progress bar rather than the transcript.
+              toolProgress.value =
+                event.message && !event.message.done ? event.message : null
             } else if (
               event.type === 'thinking' ||
               event.type === 'tool' ||
@@ -1043,6 +1068,7 @@ function formatDebugData(data) {
 function cancelQuery() {
   isProcessing.value = false
   transcript.value = []
+  toolProgress.value = null
 }
 
 function formatDate(dateStr) {

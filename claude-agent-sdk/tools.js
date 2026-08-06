@@ -403,18 +403,29 @@ function buildTools(ctx) {
           p('tool', `Reusing snapshot for user ${id} (built ${ageS}s ago)…`)
         } else {
           p('tool', `Downloading full snapshot for user ${id}…`)
-          // Progress: the DB tables fly by, so only surface the coarse
-          // milestones and the slow sections (loki/sentry) by name.
+          // Structured progress for the UI's progress bar: forward the framed
+          // per-section updates (throttled to ~1/s), and let heartbeats
+          // refresh elapsed time so a slow section still visibly ticks. A big
+          // member's snapshot takes minutes - a silent wait reads as broken.
+          let lastEmit = 0
           let lastPct = 0
+          let lastSection = ''
           const onProgress = (pr) => {
-            const slow = pr.section === 'loki_logs' || pr.section === 'sentry_issues'
-            if (slow || pr.percent - lastPct >= 25) {
-              lastPct = pr.percent
-              const eta = pr.eta_ms > 1000 ? `, ~${Math.round(pr.eta_ms / 1000)}s left` : ''
-              p('tool', `Snapshot ${pr.percent}%: ${pr.section} ${pr.status}${eta}`)
-            }
+            if (pr.section) lastSection = pr.section
+            if (typeof pr.percent === 'number' && pr.percent > lastPct) lastPct = pr.percent
+            const now = Date.now()
+            if (now - lastEmit < 1000) return
+            lastEmit = now
+            p('progress', {
+              tool: 'get_user_dump',
+              percent: Math.round(lastPct),
+              section: lastSection,
+              elapsedMs: pr.elapsed_ms || 0,
+              etaMs: pr.eta_ms > 1000 ? pr.eta_ms : null,
+            })
           }
           const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
+          p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
           if (cached && cached.file !== file) {
             try {
               fs.unlinkSync(cached.file)
