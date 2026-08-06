@@ -1,5 +1,5 @@
 {
-    "generated": "2026-08-06T10:44:41Z",
+    "generated": "2026-08-06T11:00:37Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 481,
@@ -11376,12 +11376,12 @@
             "args": 0,
             "goldenSql": "SELECT id, message FROM newsfeed WHERE DATEDIFF(NOW(), `timestamp`) < 2",
             "presentInCode": false,
-            "hasParityTest": false,
+            "hasParityTest": true,
             "status": "keep-raw",
             "reason": "A statement whose PREDICATE does date arithmetic in SQL - 'cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)'. The builder has no form for it: ->where('latestmessage', '>=', now()->subDays($d)) computes the cutoff in PHP and binds it, which moves the clock from the database to the application. That is not cosmetic on a batch job - the process may start hours before the statement runs, and on a long queue drain the two answers differ. DATEDIFF is worse still, since it counts CALENDAR DAY boundaries rather than 24-hour spans, so no binding of a computed datetime reproduces it. Deliberately scoped to date ARITHMETIC, not to any mention of NOW(): a statement that merely writes NOW() is covered by its own rule, and one that compares against a plain bound datetime converts fine.",
             "porting": "PostgreSQL: DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'), TIMESTAMPDIFF becomes an age()/extract() pair, and DATEDIFF becomes a date subtraction returning an integer - which preserves the calendar-day semantics. Mechanical per statement, but each needs reading rather than substituting.",
             "category": "Date arithmetic in a predicate",
-            "approvedDiff": ""
+            "approvedDiff": "select `id`, `message` from `newsfeed` where date(`timestamp`) > ?"
         },
         "d3579da9736a": {
             "id": "d3579da9736a",
@@ -11404,12 +11404,12 @@
             "args": 1,
             "goldenSql": "SELECT id FROM link_previews WHERE url = ? AND DATEDIFF(NOW(), retrieved) < 7",
             "presentInCode": false,
-            "hasParityTest": false,
+            "hasParityTest": true,
             "status": "keep-raw",
             "reason": "A statement whose PREDICATE does date arithmetic in SQL - 'cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)'. The builder has no form for it: ->where('latestmessage', '>=', now()->subDays($d)) computes the cutoff in PHP and binds it, which moves the clock from the database to the application. That is not cosmetic on a batch job - the process may start hours before the statement runs, and on a long queue drain the two answers differ. DATEDIFF is worse still, since it counts CALENDAR DAY boundaries rather than 24-hour spans, so no binding of a computed datetime reproduces it. Deliberately scoped to date ARITHMETIC, not to any mention of NOW(): a statement that merely writes NOW() is covered by its own rule, and one that compares against a plain bound datetime converts fine.",
             "porting": "PostgreSQL: DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'), TIMESTAMPDIFF becomes an age()/extract() pair, and DATEDIFF becomes a date subtraction returning an integer - which preserves the calendar-day semantics. Mechanical per statement, but each needs reading rather than substituting.",
             "category": "Date arithmetic in a predicate",
-            "approvedDiff": ""
+            "approvedDiff": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?"
         },
         "33219aae3e9a": {
             "id": "33219aae3e9a",
@@ -11432,12 +11432,12 @@
             "args": 1,
             "goldenSql": "SELECT id FROM link_previews WHERE url = ? AND DATEDIFF(NOW(), retrieved) < 7",
             "presentInCode": false,
-            "hasParityTest": false,
+            "hasParityTest": true,
             "status": "keep-raw",
             "reason": "A statement whose PREDICATE does date arithmetic in SQL - 'cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)'. The builder has no form for it: ->where('latestmessage', '>=', now()->subDays($d)) computes the cutoff in PHP and binds it, which moves the clock from the database to the application. That is not cosmetic on a batch job - the process may start hours before the statement runs, and on a long queue drain the two answers differ. DATEDIFF is worse still, since it counts CALENDAR DAY boundaries rather than 24-hour spans, so no binding of a computed datetime reproduces it. Deliberately scoped to date ARITHMETIC, not to any mention of NOW(): a statement that merely writes NOW() is covered by its own rule, and one that compares against a plain bound datetime converts fine.",
             "porting": "PostgreSQL: DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'), TIMESTAMPDIFF becomes an age()/extract() pair, and DATEDIFF becomes a date subtraction returning an integer - which preserves the calendar-day semantics. Mechanical per statement, but each needs reading rather than substituting.",
             "category": "Date arithmetic in a predicate",
-            "approvedDiff": ""
+            "approvedDiff": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?"
         },
         "b271269c7634": {
             "id": "b271269c7634",

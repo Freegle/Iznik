@@ -277,6 +277,21 @@
       "id": "6f40faa9e18c",
       "sql": "delete from `users_active` where `timestamp` < ? limit 500",
       "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "ea03606b98f1",
+      "sql": "select `id`, `message` from `newsfeed` where date(`timestamp`) > ?",
+      "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
+    },
+    {
+      "id": "d3579da9736a",
+      "sql": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?",
+      "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
+    },
+    {
+      "id": "33219aae3e9a",
+      "sql": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?",
+      "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
     }
   ]
 }
