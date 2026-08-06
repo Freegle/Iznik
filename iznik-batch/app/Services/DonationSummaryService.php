@@ -50,8 +50,8 @@ class DonationSummaryService
                         ->where('userid', $donation->userid)
                         ->where('GrossAmount', $donation->GrossAmount)
                         ->whereIn('TransactionType', self::RECURRING_TYPES)
-                        ->whereRaw('DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)')
-                        ->whereRaw('DATE(timestamp) < CURDATE()')
+                        ->whereDate('timestamp', '>=', today()->subMonth()->toDateString())
+                        ->whereDate('timestamp', '<', today()->toDateString())
                         ->count();
 
                     $skipBirthdayCheck = $lastMonth > 0;

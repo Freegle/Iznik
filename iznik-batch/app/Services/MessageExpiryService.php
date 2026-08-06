@@ -79,7 +79,7 @@ class MessageExpiryService
             ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
-            ->whereRaw('messages.deadline < CURDATE()')
+            ->where('messages.deadline', '<', today()->toDateString())
             ->whereNull('messages_outcomes.id')
             ->distinct()
             ->lazyById(500, 'messages.id', 'id');

@@ -76,7 +76,7 @@ class DonationThankPrepService
             // unaffected. Server time is UTC; donation timestamps are UTC.
             $lastId    = null;
             $donations = DB::table('users_donations')
-                ->whereRaw('timestamp >= CURDATE()')
+                ->where('timestamp', '>=', today()->toDateString())
                 ->orderBy('id')
                 ->get();
         } else {
@@ -521,8 +521,8 @@ class DonationThankPrepService
                 ->where('userid', $userId)
                 ->where('GrossAmount', $donation->GrossAmount)
                 ->whereIn('TransactionType', self::RECURRING_TYPES)
-                ->whereRaw('DATE(timestamp) >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)')
-                ->whereRaw('DATE(timestamp) < CURDATE()')
+                ->whereDate('timestamp', '>=', today()->subMonth()->toDateString())
+                ->whereDate('timestamp', '<', today()->toDateString())
                 ->count();
             $skipBirthdayCheck = $lastMonth > 0;
         }

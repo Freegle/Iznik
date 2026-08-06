@@ -150,7 +150,7 @@ class EngageEmailService
         $variants = DB::table('engage_mails')
             ->where('engagement', $engagement)
             ->orderByDesc('rate')
-            ->orderByRaw('RAND()')
+            ->inRandomOrder()
             ->get();
 
         if ($variants->isEmpty()) {
