@@ -60,6 +60,9 @@ class UserManagementService
         ];
 
         // Find email addresses linked to multiple users.
+        // keep-raw: COUNT(DISTINCT userid) is an aggregate with no query builder
+        // method - having() only compares a column/alias to a value, it cannot
+        // express a DISTINCT-counted aggregate condition.
         $duplicates = UserEmail::select('email')
             ->groupBy('email')
             ->havingRaw('COUNT(DISTINCT userid) > 1')
@@ -268,37 +271,46 @@ class UserManagementService
 
         // Find candidates: no memberships, no spammer record, no mod notes,
         // last access > 6 months, systemrole = User, not deleted.
-        $candidates = DB::select("
-            SELECT users.id
-            FROM users
-            LEFT JOIN memberships ON users.id = memberships.userid
-            LEFT JOIN spam_users ON users.id = spam_users.userid
-            LEFT JOIN users_comments ON users.id = users_comments.userid
-            WHERE memberships.userid IS NULL
-              AND spam_users.userid IS NULL
-              AND users_comments.userid IS NULL
-              AND users.lastaccess < ?
-              AND users.systemrole = ?
-              AND users.deleted IS NULL
-              AND users.forgotten IS NULL
-            LIMIT {$limit}
-        ", [$sixMonthsAgo, 'User']);
+        $candidates = DB::table('users')
+            ->select('users.id')
+            ->leftJoin('memberships', 'users.id', '=', 'memberships.userid')
+            ->leftJoin('spam_users', 'users.id', '=', 'spam_users.userid')
+            ->leftJoin('users_comments', 'users.id', '=', 'users_comments.userid')
+            ->whereNull('memberships.userid')
+            ->whereNull('spam_users.userid')
+            ->whereNull('users_comments.userid')
+            ->where('users.lastaccess', '<', $sixMonthsAgo)
+            ->where('users.systemrole', 'User')
+            ->whereNull('users.deleted')
+            ->whereNull('users.forgotten')
+            ->limit($limit)
+            ->get();
 
         $count = 0;
 
         foreach ($candidates as $candidate) {
             // Check for recent meaningful logs (excluding User/Created and User/Deleted).
-            $logs = DB::select("
-                SELECT DATEDIFF(NOW(), timestamp) AS logsago
-                FROM logs
-                WHERE user = ?
-                  AND (type != 'User' OR (subtype != 'Created' AND subtype != 'Deleted'))
-                ORDER BY id DESC
-                LIMIT 1
-            ", [$candidate->id]);
+            // Equivalent to the original "no logs at all OR most recent meaningful
+            // log's DATEDIFF(NOW(), timestamp) > 90": DATEDIFF > 90 is DATEDIFF >= 91,
+            // which is whereDate(timestamp, '<=', today()->subDays(91)); negating
+            // that (the "recent enough" case) gives whereDate('>', today()->subDays(91)).
+            // Checking existence rather than fetching the single most-recent row is
+            // equivalent because logs.id increases with timestamp, so if any
+            // qualifying log is recent enough the most-recent one is too.
+            $hasRecentLog = DB::table('logs')
+                ->where('user', $candidate->id)
+                ->where(function ($q) {
+                    $q->where('type', '!=', 'User')
+                        ->orWhere(function ($q2) {
+                            $q2->where('subtype', '!=', 'Created')
+                                ->where('subtype', '!=', 'Deleted');
+                        });
+                })
+                ->whereDate('timestamp', '>', today()->subDays(91))
+                ->exists();
 
             // Forget if no logs at all, or most recent meaningful log is > 90 days old.
-            if (count($logs) === 0 || $logs[0]->logsago > 90) {
+            if (!$hasRecentLog) {
                 if (!$dryRun) {
                     Log::info("Forgetting inactive user #{$candidate->id}");
                     $this->forgetUser($candidate->id, 'Inactive');
@@ -319,16 +331,17 @@ class UserManagementService
     {
         $limit = $limit ?? 50000;
 
-        $users = DB::select("
-            SELECT id
-            FROM users
-            WHERE deleted IS NOT NULL
-              AND DATEDIFF(NOW(), deleted) > 14
-              AND forgotten IS NULL
-            LIMIT {$limit}
-        ");
+        // DATEDIFF(NOW(), deleted) > 14 is DATEDIFF >= 15, i.e.
+        // whereDate(deleted, '<=', today()->subDays(15)).
+        $users = DB::table('users')
+            ->select('id')
+            ->whereNotNull('deleted')
+            ->whereDate('deleted', '<=', today()->subDays(15))
+            ->whereNull('forgotten')
+            ->limit($limit)
+            ->get();
 
-        $count = count($users);
+        $count = $users->count();
 
         if (!$dryRun) {
             foreach ($users as $user) {
@@ -468,17 +481,16 @@ class UserManagementService
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
         $limit = $limit ?? 100000;
 
-        $users = DB::select("
-            SELECT users.id
-            FROM users
-            LEFT JOIN messages ON messages.fromuser = users.id
-            WHERE users.forgotten IS NOT NULL
-              AND users.lastaccess < ?
-              AND messages.id IS NULL
-            LIMIT {$limit}
-        ", [$sixMonthsAgo]);
+        $users = DB::table('users')
+            ->select('users.id')
+            ->leftJoin('messages', 'messages.fromuser', '=', 'users.id')
+            ->whereNotNull('users.forgotten')
+            ->where('users.lastaccess', '<', $sixMonthsAgo)
+            ->whereNull('messages.id')
+            ->limit($limit)
+            ->get();
 
-        $count = count($users);
+        $count = $users->count();
 
         if (!$dryRun) {
             $processed = 0;
@@ -580,6 +592,7 @@ class UserManagementService
 
         foreach ($users as $user) {
             // Find the latest activity timestamp from chat messages or memberships.
+            // keep-raw: GREATEST() and COALESCE() have no query builder equivalents.
             $result = DB::selectOne("
                 SELECT GREATEST(
                     COALESCE((SELECT MAX(date) FROM chat_messages WHERE userid = ?), '1970-01-01'),
@@ -742,8 +755,10 @@ class UserManagementService
         $staleMods = DB::table('users')
             ->where('systemrole', 'Moderator')
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('memberships')
+                // No select() call needed: the subquery is used only for its
+                // existence, not its column list, so the default "select *" is
+                // functionally identical to "select 1" here.
+                $q->from('memberships')
                     ->whereColumn('memberships.userid', 'users.id')
                     ->whereIn('memberships.role', ['Moderator', 'Owner']);
             })

@@ -1096,6 +1096,8 @@ class WhatJobsService
         // instead of inheriting their own wrong point. The per-run in-memory cache
         // above still dedupes, so each tuple is geocoded at most once per run.
         if (!$this->forceRegeocode) {
+            // keep-raw: ST_AsText/ST_Envelope are spatial functions the query
+            // builder has no method for.
             $geo = DB::select(
                 "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
                  WHERE city = ? AND state = ? AND country = ? LIMIT 1",
@@ -1275,6 +1277,10 @@ class WhatJobsService
      */
     protected function geocodePostcode(string $outward): ?array
     {
+        // keep-raw: six differently-aliased aggregates (AVG/MIN/MAX x2) in one
+        // SELECT list - the builder's aggregate methods (avg()/min()/max()) each
+        // run and return a single value, there is no method that projects
+        // several aliased aggregates together in one query.
         $row = DB::selectOne(
             "SELECT AVG(lat) AS lat, AVG(lng) AS lng,
                     MIN(lat) AS swlat, MIN(lng) AS swlng,
@@ -1517,6 +1523,10 @@ class WhatJobsService
     public function prepareTempTable(): void
     {
         Schema::dropIfExists('jobs_new');
+        // keep-raw: CREATE TABLE ... LIKE clones the full structure (columns,
+        // indexes, spatial SRID attribute) of the live `jobs` table verbatim.
+        // Schema::create() has no equivalent; hand-redefining the columns would
+        // fork from the jobs migration and silently drift out of sync with it.
         DB::statement('CREATE TABLE jobs_new LIKE jobs');
     }
 
@@ -1592,6 +1602,18 @@ class WhatJobsService
                  clickability,bodyhash,seenat,visible,canonical_title)
                 VALUES ' . implode(',', $placeholders);
 
+            // keep-raw: this is otherwise the "multi-row INSERT IGNORE with
+            // hand-built placeholders -> insertOrIgnore(array)" pattern, but the
+            // geometry column needs the ST_GeomFromText(?,?) spatial function
+            // applied per row with real bound parameters (WKT + SRID, both
+            // per-row data). insertOrIgnore()'s value array only binds plain
+            // scalars/Expressions; an Expression column value (DB::raw(...))
+            // contributes zero entries to the bindings array (see
+            // Builder::cleanBindings(), which rejects Expression instances), so
+            // a parameterised call embedded as an Expression would leave literal
+            // "?" characters in the SQL with nothing bound to them. Embedding
+            // the WKT/SRID as literals instead would mean hand-escaping
+            // externally-sourced feed data into raw SQL - not safe.
             DB::statement($sql, $bindings);
             $inserted += count($buffer);
             $buffer = [];
@@ -1611,6 +1633,12 @@ class WhatJobsService
     public function swapTables(): void
     {
         Schema::dropIfExists('jobs_old');
+        // keep-raw: a single multi-table RENAME TABLE is atomic - both renames
+        // take effect together, so `jobs` is never missing. Schema::rename()
+        // only renames one table per call; doing this as two separate
+        // Schema::rename() calls (jobs->jobs_old, then jobs_new->jobs) would
+        // open a window where the `jobs` table doesn't exist at all, which
+        // concurrently-running reads/serving code would hit.
         DB::statement('RENAME TABLE jobs TO jobs_old, jobs_new TO jobs');
         Schema::dropIfExists('jobs_old');
     }
@@ -1645,6 +1673,10 @@ class WhatJobsService
             ->all();
         foreach ($clicked as $row) {
             foreach ($this->getKeywords($row->title) as $keyword) {
+                // keep-raw: ON DUPLICATE KEY UPDATE count = count + 1 is an
+                // atomic increment. upsert() only emits `col = values(col)` or
+                // `col = ?` (both a REPLACE of the stored value); converting
+                // would discard the running count instead of incrementing it.
                 DB::statement(
                     'INSERT INTO jobs_keywords (keyword, count) VALUES (?,1)
                      ON DUPLICATE KEY UPDATE count = count + 1',
@@ -1675,6 +1707,12 @@ class WhatJobsService
 
     private function getMaxish(): float
     {
+        // keep-raw: emulates a window function (ROW_NUMBER() over count order)
+        // via MySQL user-defined session variables (@row_num) to find the 95th
+        // percentile count, then references that same session variable again in
+        // the outer WHERE (ROUND(0.95 * @row_num)). The query builder has no
+        // method for session variables, this cross-joined derived-table idiom,
+        // or window functions.
         $rows = DB::select(
             'SELECT count FROM
              (SELECT t.*, @row_num := @row_num + 1 AS row_num

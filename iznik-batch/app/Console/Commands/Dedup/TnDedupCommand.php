@@ -21,6 +21,9 @@ class TnDedupCommand extends Command
         }
 
         // Find tnpostids with multiple message IDs.
+        // keep-raw: MIN(id)/COUNT(*) are aggregates with aliases in a multi-row SELECT list
+        // under GROUP BY; no builder method projects a named aggregate column, and both
+        // aliases (canonical_id, cnt) are read back below via $dup->canonical_id / $dup->cnt.
         $duplicates = DB::table('messages')
             ->select('tnpostid', DB::raw('MIN(id) as canonical_id'), DB::raw('COUNT(*) as cnt'))
             ->whereNotNull('tnpostid')
@@ -46,6 +49,9 @@ class TnDedupCommand extends Command
                     DB::transaction(function () use ($dup, $dupeId) {
                         // Move messages_groups rows to canonical message.
                         // Use INSERT IGNORE in case the canonical already has a row for this group.
+                        // keep-raw: INSERT ... SELECT with IGNORE. insertOrIgnore() only accepts an
+                        // array of values, not a SELECT source, so it cannot express this without
+                        // first pulling the source rows into PHP and losing the atomic IGNORE guard.
                         DB::statement('
                             INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, msgtype)
                             SELECT ?, groupid, collection, arrival, autoreposts, msgtype
@@ -53,11 +59,15 @@ class TnDedupCommand extends Command
                         ', [$dup->canonical_id, $dupeId]);
 
                         // Move messages_history rows.
+                        // keep-raw: UPDATE IGNORE has no query-builder equivalent (update() emits a
+                        // plain UPDATE with no IGNORE modifier).
                         DB::statement('
                             UPDATE IGNORE messages_history SET msgid = ? WHERE msgid = ?
                         ', [$dup->canonical_id, $dupeId]);
 
                         // Move messages_postings rows.
+                        // keep-raw: UPDATE IGNORE has no query-builder equivalent (update() emits a
+                        // plain UPDATE with no IGNORE modifier).
                         DB::statement('
                             UPDATE IGNORE messages_postings SET msgid = ? WHERE msgid = ?
                         ', [$dup->canonical_id, $dupeId]);

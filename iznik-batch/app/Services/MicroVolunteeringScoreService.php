@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -99,6 +100,11 @@ class MicroVolunteeringScoreService
     {
         $count = 0;
 
+        // keep-raw: 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative))
+        // is arithmetic combining two aggregates under GROUP BY, projected as an ALIAS
+        // ("score") that the HAVING clause then filters on. No query-builder method
+        // projects an aliased aggregate expression in a multi-row SELECT list, and
+        // havingRaw's "score >= ?" only works because that alias exists - both stay raw.
         $users = DB::table('microactions')
             ->join('users', 'users.id', '=', 'microactions.userid')
             ->where('users.trustlevel', self::TRUST_BASIC)
@@ -108,10 +114,16 @@ class MicroVolunteeringScoreService
             ->pluck('microactions.userid');
 
         foreach ($users as $userId) {
-            $duration = DB::table('microactions')
-                ->where('userid', $userId)
-                ->selectRaw('DATEDIFF(MAX(timestamp), MIN(timestamp)) AS diff')
-                ->value('diff');
+            // DATEDIFF(MAX(timestamp), MIN(timestamp)) converts to two plain aggregate
+            // queries plus a calendar-day diff in PHP (see coding-standards: DATEDIFF
+            // counts calendar-day boundaries, so both ends are truncated to startOfDay()
+            // before diffing - matches MySQL's date-only semantics exactly).
+            $maxTs = DB::table('microactions')->where('userid', $userId)->max('timestamp');
+            $minTs = DB::table('microactions')->where('userid', $userId)->min('timestamp');
+
+            $duration = ($maxTs !== null && $minTs !== null)
+                ? Carbon::parse($maxTs)->startOfDay()->diffInDays(Carbon::parse($minTs)->startOfDay(), true)
+                : null;
 
             if ($duration >= self::PROMOTE_DAYS) {
                 if (!$dryRun) {

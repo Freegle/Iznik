@@ -228,6 +228,9 @@ class AuthorityStatsService
 
         // Overlap of each group's polyindex with the authority polygon, in both
         // directions, so we can keep any group that meaningfully intersects.
+        // keep-raw: ST_GeometryType()/ST_Intersection()/ST_Area()/ST_Intersects()
+        // are spatial functions the query builder has no method for, wrapped in
+        // CASE expressions the builder also cannot project as select columns.
         $rows = DB::select(
             "SELECT groups.id AS id, nameshort, namefull,
                 CASE WHEN ST_GeometryType(ST_Intersection(polyindex, COALESCE(simplified, polygon))) IN ('POLYGON', 'MULTIPOLYGON') THEN
@@ -285,6 +288,9 @@ class AuthorityStatsService
 
         $ret = [];
         foreach ($types as $type) {
+            // keep-raw: an aggregate (SUM(count)) aliased alongside a plain
+            // column (date) in a multi-row SELECT under GROUP BY - no builder
+            // method projects an aggregate expression as one column among others.
             $rows = DB::select(
                 'SELECT SUM(count) AS count, date FROM stats
                  WHERE date >= ? AND date < ? AND groupid IN (' . $this->placeholders($groupids) . ') AND type = ?
@@ -314,6 +320,9 @@ class AuthorityStatsService
 
         // Population popularity-weighted mean item weight, used where an item's
         // own weight is unknown.
+        // keep-raw: SUM(popularity*weight)/SUM(popularity) is arithmetic (a
+        // multiplication, then a division) across two aggregates the builder's
+        // ->sum() cannot express - it only sums a single named column.
         $avg = (float) (DB::table('items')
             ->whereNotNull('weight')
             ->where('weight', '!=', 0)
@@ -322,6 +331,11 @@ class AuthorityStatsService
 
         // Materialise the locations inside the authority once, so the per-metric
         // queries stay cheap.
+        // keep-raw: Schema::dropIfExists() emits DROP TABLE, not DROP TEMPORARY
+        // TABLE - dropping without the TEMPORARY keyword would risk hitting a
+        // permanent table named `pc` if one ever existed. CREATE TEMPORARY TABLE
+        // ... AS SELECT (with an ST_Contains() spatial join) has no query-builder
+        // or Schema-builder equivalent at all.
         DB::statement('DROP TEMPORARY TABLE IF EXISTS pc');
         DB::statement(
             'CREATE TEMPORARY TABLE pc AS (
@@ -348,6 +362,15 @@ class AuthorityStatsService
         $pcExpr = 'SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2)';
 
         // Offer / Wanted message counts.
+        // keep-raw: applies to all four queries against `pc` below. SUBSTRING()
+        // and LENGTH() are functions the builder has no method for, and each
+        // query also aliases an aggregate (COUNT(*)/SUM(...)) next to that
+        // computed column under GROUP BY, which no builder method projects.
+        // The trailing `false` forces the write PDO because `pc` is a
+        // temporary table that only exists on the connection that created it
+        // (sticky=false means a plain read would land on a different
+        // connection and see "table doesn't exist") - preserve it in any
+        // future rewrite.
         foreach ([Message::TYPE_OFFER, Message::TYPE_WANTED] as $type) {
             $rows = DB::select(
                 "SELECT $pcExpr AS partialpc, COUNT(*) AS count FROM pc
@@ -366,6 +389,9 @@ class AuthorityStatsService
         }
 
         // Outcomes (Taken / Received).
+        // keep-raw: see the offer/wanted loop above - SUBSTRING() plus an
+        // aggregate alias under GROUP BY, `false` preserved for the same
+        // temp-table-visibility reason.
         $rows = DB::select(
             "SELECT $pcExpr AS partialpc, COUNT(*) AS count FROM pc
              INNER JOIN messages ON messages.locationid = pc.locationid
@@ -383,6 +409,9 @@ class AuthorityStatsService
         }
 
         // Weight of items with an outcome (fall back to the population average).
+        // keep-raw: see the offer/wanted loop above - SUBSTRING() plus an
+        // aggregate alias under GROUP BY, `false` preserved for the same
+        // temp-table-visibility reason.
         $rows = DB::select(
             "SELECT $pcExpr AS partialpc, SUM(COALESCE(weight, ?)) AS weight FROM pc
              INNER JOIN messages ON messages.locationid = pc.locationid
@@ -402,6 +431,9 @@ class AuthorityStatsService
         }
 
         // Searches.
+        // keep-raw: see the offer/wanted loop above - SUBSTRING() plus an
+        // aggregate alias under GROUP BY, `false` preserved for the same
+        // temp-table-visibility reason.
         $rows = DB::select(
             "SELECT $pcExpr AS partialpc, COUNT(*) AS count FROM pc
              INNER JOIN search_history ON search_history.locationid = pc.locationid
@@ -417,6 +449,8 @@ class AuthorityStatsService
             $ret[$r->partialpc][self::SEARCHES] += (int) $r->count;
         }
 
+        // keep-raw: Schema::dropIfExists() emits DROP TABLE, not DROP TEMPORARY
+        // TABLE (see the CREATE above for why that distinction matters here).
         DB::statement('DROP TEMPORARY TABLE IF EXISTS pc');
 
         return $ret;
@@ -444,6 +478,9 @@ class AuthorityStatsService
      */
     public function getClickHistory(int $shortlinkid): array
     {
+        // keep-raw: DATE() is a function the builder has no method for, and it
+        // is aliased alongside an aggregate (COUNT(*)) under GROUP BY, which no
+        // builder method projects.
         return DB::select(
             'SELECT DATE(timestamp) AS date, COUNT(*) AS count FROM shortlink_clicks
              WHERE shortlinkid = ? GROUP BY date ORDER BY date ASC',
@@ -554,12 +591,13 @@ class AuthorityStatsService
 
         // 3. Most recent geolocated message (ascending order, so the last write wins).
         if ($remaining) {
-            $rows = DB::select(
-                'SELECT fromuser AS userid, lat, lng FROM messages
-                 WHERE fromuser IN (' . $this->placeholders($remaining) . ')
-                 AND lat IS NOT NULL AND lng IS NOT NULL ORDER BY arrival ASC',
-                $remaining
-            );
+            $rows = DB::table('messages')
+                ->select('fromuser as userid', 'lat', 'lng')
+                ->whereIn('fromuser', $remaining)
+                ->whereNotNull('lat')
+                ->whereNotNull('lng')
+                ->orderBy('arrival')
+                ->get();
             foreach ($rows as $r) {
                 $ret[(int) $r->userid] = ['lat' => (float) $r->lat, 'lng' => (float) $r->lng];
             }
@@ -568,12 +606,11 @@ class AuthorityStatsService
 
         // 4. Most recent group membership's group location.
         if ($remaining) {
-            $rows = DB::select(
-                'SELECT userid, `groups`.lat AS lat, `groups`.lng AS lng
-                 FROM `groups` INNER JOIN memberships ON memberships.groupid = `groups`.id
-                 WHERE userid IN (' . $this->placeholders($remaining) . ') ORDER BY added ASC',
-                $remaining
-            );
+            $rows = DB::table('groups')
+                ->join('memberships', 'memberships.groupid', '=', 'groups.id')
+                ->whereIn('userid', $remaining)
+                ->orderBy('added')
+                ->get(['userid', 'groups.lat as lat', 'groups.lng as lng']);
             foreach ($rows as $r) {
                 $ret[(int) $r->userid] = ['lat' => (float) $r->lat, 'lng' => (float) $r->lng];
             }
@@ -606,6 +643,10 @@ class AuthorityStatsService
             $points[] = ['userid' => $uid, 'lat' => $loc['lat'], 'lng' => $loc['lng']];
         }
 
+        // keep-raw: JSON_TABLE() is a function-table construct the query
+        // builder cannot express (it needs to appear in the FROM clause, not
+        // as a value or predicate), and ST_Contains()/ST_SRID()/POINT() are
+        // spatial functions the builder also has no method for.
         $rows = DB::select(
             "SELECT jt.userid AS userid
              FROM JSON_TABLE(?, '$[*]' COLUMNS (

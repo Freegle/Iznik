@@ -194,6 +194,10 @@ class UnifiedDigestService
         // memberships.emailfrequency. Immediate members are ~0.7% of Approved, so the per-group
         // lookup is far cheaper. (A memberships(emailfrequency,groupid) index would make either
         // plan fast, but this needs no DDL.) groups_digests is tiny (~3k rows).
+        // keep-raw: /*+ QB_NAME(...) */ and /*+ NO_SEMIJOIN(...) */ are MySQL optimizer-hint
+        // comments, not column expressions — the query builder has no method that emits a hint
+        // into a select item, and (per the comment above) dropping them is not behavior-neutral:
+        // it reintroduces the ~2.37M-row / 10-24s semijoin scan.
         $query = DB::table('groups_digests as gd')
             ->where('gd.frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->whereExists(function ($q) {
@@ -209,6 +213,7 @@ class UnifiedDigestService
         // → safe to run shards concurrently with no overlap, no advisory
         // locking between them.
         if ($shards > 1) {
+            // keep-raw: MOD() applied to a column has no query builder method.
             $query->whereRaw('MOD(gd.groupid, ?) = ?', [$shards, $shard]);
         }
 
@@ -314,9 +319,11 @@ class UnifiedDigestService
         $allowlist = $this->getImmediateAllowlist();
         if ($allowlist !== ['*'] && !empty($memberIds)) {
             $lower = array_map('strtolower', $allowlist);
+            // LOWER(email) is a no-op here: every text column (incl. users_emails.email) is
+            // utf8mb4_unicode_ci, so plain equality already matches case-insensitively.
             $memberIds = DB::table('users_emails')
                 ->whereIn('userid', $memberIds)
-                ->whereIn(DB::raw('LOWER(email)'), $lower)
+                ->whereIn('email', $lower)
                 ->pluck('userid')->unique()->all();
         }
 
@@ -582,6 +589,7 @@ class UnifiedDigestService
         // Disjoint MOD(msgid, shards) partition — same model as sendImmediateDigests' MOD(groupid,
         // shards); each post is owned by exactly one shard, so shards run concurrently safely.
         if ($shards > 1) {
+            // keep-raw: MOD() applied to a column has no query builder method.
             $query->whereRaw('MOD(msgid, ?) = ?', [$shards, $shard]);
         }
 
@@ -641,6 +649,8 @@ class UnifiedDigestService
             // as resolveUserLatLng, so the distance-preference filter below measures from
             // exactly the point that decided reach-polygon membership, not a second,
             // possibly-divergent resolution.
+            // keep-raw: ST_Contains/ST_SRID/POINT (spatial), CAST() and JSON_EXTRACT() used
+            // inside a CASE expression have no query builder equivalents.
             $recipientRows = collect(DB::select(
                 "SELECT DISTINCT u.id AS id,
                        CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
@@ -698,11 +708,10 @@ class UnifiedDigestService
             $allowlist = $this->getImmediateAllowlist();
             if ($allowlist !== ['*']) {
                 $lower = array_map('strtolower', $allowlist);
+                // LOWER(email) is a no-op here: every text column (incl. users_emails.email) is
+                // utf8mb4_unicode_ci, so plain equality already matches case-insensitively.
                 $recipientIds = DB::table('users_emails')
                     ->whereIn('userid', $recipientIds)
-                    // users_emails.email is utf8mb4_unicode_ci, so this is
-                    // already case-insensitive. The LOWER() wrapper bought
-                    // nothing and stopped the index being usable.
                     ->whereIn('email', $lower)
                     ->pluck('userid')->unique()->map(fn ($v) => (int) $v)->all();
                 if (empty($recipientIds)) {
@@ -928,15 +937,14 @@ class UnifiedDigestService
             // ledger-deduped — so exclude them here or the cursor digest would double-mail.
             // Inert until the reach engine populates rippling_reach (no rows → no exclusion).
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))->from('rippling_reach')
+                $q->from('rippling_reach')
                     ->whereColumn('rippling_reach.msgid', 'messages.id');
             })
             // V1 parity (Digest.php:218): a post with any outcome
             // (Taken/Received/Withdrawn/...) is no longer available, so it
             // must not appear in the immediate digest either.
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
+                $q->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
@@ -1135,6 +1143,8 @@ class UnifiedDigestService
             // cluster size (e.g. 3/6/9 → almost everyone lands on one shard). CRC32 gives a
             // uniform spread for ANY shard count and is immune to the stride / a cluster-size
             // change. Disjoint partitions still hold (each id maps to exactly one shard).
+            // keep-raw: CRC32() and the % modulo operator applied to a column have no query
+            // builder methods.
             $query->whereRaw('CRC32(users.id) % ? = ?', [$shards, $shard]);
         }
 
@@ -1158,16 +1168,13 @@ class UnifiedDigestService
         // otherwise have no sender at all, so a member set to e.g. 4-hourly
         // must still be picked up here rather than silently dropped.
         $query->whereExists(function ($subquery) use ($mode) {
-            $subquery->select(DB::raw(1))
-                ->from('memberships')
+            $subquery->from('memberships')
                 ->whereColumn('memberships.userid', 'users.id')
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED);
             $this->applyDigestFrequency($subquery, $mode, 'memberships.emailfrequency');
         })->where(function ($q) {
             $q->whereJsonDoesntContainKey('users.settings->simplemail')
-                ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
-                    User::SIMPLE_MAIL_NONE,
-                ]);
+                ->orWhere('users.settings->simplemail', '!=', User::SIMPLE_MAIL_NONE);
         });
 
         if ($mode === self::MODE_IMMEDIATE) {
@@ -1180,11 +1187,12 @@ class UnifiedDigestService
             $allowlist = $this->getImmediateAllowlist();
             if ($allowlist !== ['*']) {
                 $lowercased = array_map('strtolower', $allowlist);
+                // LOWER(email) is a no-op here: users_emails.email is utf8mb4_unicode_ci, so
+                // plain equality already matches case-insensitively.
                 $query->whereExists(function ($q) use ($lowercased) {
-                    $q->select(DB::raw(1))
-                        ->from('users_emails')
+                    $q->from('users_emails')
                         ->whereColumn('users_emails.userid', 'users.id')
-                        ->whereIn(DB::raw('LOWER(users_emails.email)'), $lowercased);
+                        ->whereIn('users_emails.email', $lowercased);
                 });
                 Log::info('UnifiedDigestService: immediate mode restricted to allowlist', [
                     'allowlist_count' => count($allowlist),
@@ -1222,8 +1230,7 @@ class UnifiedDigestService
                 ->setTimezone('UTC')
                 ->toDateTimeString();
             $query->whereNotExists(function ($q) use ($londonDayStartUtc) {
-                $q->select(DB::raw(1))
-                    ->from('users_digests')
+                $q->from('users_digests')
                     ->whereColumn('users_digests.userid', 'users.id')
                     ->where('users_digests.mode', self::MODE_DAILY)
                     ->where('users_digests.lastsent', '>=', $londonDayStartUtc);
@@ -1244,11 +1251,12 @@ class UnifiedDigestService
                 Log::info('UnifiedDigestService: daily mode disabled (empty FREEGLE_DIGEST_DAILY_ALLOWLIST); V1 cron owns daily');
             } elseif ($allowlist !== ['*']) {
                 $lowercased = array_map('strtolower', $allowlist);
+                // LOWER(email) is a no-op here: users_emails.email is utf8mb4_unicode_ci, so
+                // plain equality already matches case-insensitively.
                 $query->whereExists(function ($q) use ($lowercased) {
-                    $q->select(DB::raw(1))
-                        ->from('users_emails')
+                    $q->from('users_emails')
                         ->whereColumn('users_emails.userid', 'users.id')
-                        ->whereIn(DB::raw('LOWER(users_emails.email)'), $lowercased);
+                        ->whereIn('users_emails.email', $lowercased);
                 });
                 Log::info('UnifiedDigestService: daily mode restricted to allowlist', [
                     'allowlist_count' => count($allowlist),
@@ -1631,21 +1639,56 @@ class UnifiedDigestService
         // withdrawn/expired (has_outcome && !has_success) are dropped by the
         // caller. V1 parity (Digest.php:218 only lists count(outcomes)==0 as
         // available); matches the platform browse/map dropping any outcome.
-        $successList = "'" . Message::OUTCOME_TAKEN . "','" . Message::OUTCOME_RECEIVED . "'";
+        //
+        // Each flag is a correlated aggregate subquery projected as a select column, built
+        // via selectSub() with the sub-builder's ->aggregate set directly (see Group.php's
+        // logincount for the same pattern) so it compiles without any raw SQL. has_outcome/
+        // has_success/seen_by_user were EXISTS(...) predicates; COUNT(*) is truth-equivalent
+        // (>0 rows iff EXISTS) and every caller only ever tests these for truthiness (!$p->
+        // has_outcome, filter(fn($p)=>$p->has_success), empty($p->seen_by_user)) — never
+        // compares an exact value — so the swap is behavior-preserving. "views" drops the
+        // SQL COALESCE(...,0) (no builder method covers COALESCE) because its one consumer,
+        // (int) ($post->views ?? 0) below, already treats a NULL SUM as 0.
+        $subHasOutcome = DB::table('messages_outcomes as mo')->whereColumn('mo.msgid', 'messages.id');
+        $subHasOutcome->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        $subHasSuccess = DB::table('messages_outcomes as mo')
+            ->whereColumn('mo.msgid', 'messages.id')
+            ->whereIn('mo.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]);
+        $subHasSuccess->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        // Engagement signal for the rippling 'budget' (underexposure) score term;
+        // mirrors iznik-routing-go/digest_simulator.go (views = SUM of 'View'
+        // like counts; replies = approved 'Interested' chat replies).
+        $subViews = DB::table('messages_likes as ml')
+            ->whereColumn('ml.msgid', 'messages.id')
+            ->where('ml.type', 'View');
+        $subViews->aggregate = ['function' => 'sum', 'columns' => ['ml.count']];
+
+        $subReplies = DB::table('chat_messages as cm')
+            ->whereColumn('cm.refmsgid', 'messages.id')
+            ->where('cm.type', 'Interested')
+            ->where('cm.reviewrejected', 0)
+            ->where('cm.reviewrequired', 0);
+        $subReplies->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        // Has THIS recipient already had a chance to see the post? A messages_likes
+        // 'View' row means they viewed it in-app OR opened/clicked a digest that
+        // contained it (mail:digest:mark-seen writes the latter). Used to sink
+        // already-seen posts in the daily order, mirroring the browse feed's
+        // unseen-first sort which reads the same signal.
+        $subSeenByUser = DB::table('messages_likes as mlseen')
+            ->whereColumn('mlseen.msgid', 'messages.id')
+            ->where('mlseen.userid', $user->id)
+            ->where('mlseen.type', 'View');
+        $subSeenByUser->aggregate = ['function' => 'count', 'columns' => ['*']];
+
         $query = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
-            ->selectRaw('EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id) AS has_outcome')
-            ->selectRaw("EXISTS(SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = messages.id AND mo.outcome IN ($successList)) AS has_success")
-            // Engagement signal for the rippling 'budget' (underexposure) score term;
-            // mirrors iznik-routing-go/digest_simulator.go (views = SUM of 'View'
-            // like counts; replies = approved 'Interested' chat replies).
-            ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
-            ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
-            // Has THIS recipient already had a chance to see the post? A messages_likes
-            // 'View' row means they viewed it in-app OR opened/clicked a digest that
-            // contained it (mail:digest:mark-seen writes the latter). Used to sink
-            // already-seen posts in the daily order, mirroring the browse feed's
-            // unseen-first sort which reads the same signal.
-            ->selectRaw('EXISTS(SELECT 1 FROM messages_likes mlseen WHERE mlseen.msgid = messages.id AND mlseen.userid = ? AND mlseen.type = ?) AS seen_by_user', [$user->id, 'View'])
+            ->selectSub($subHasOutcome, 'has_outcome')
+            ->selectSub($subHasSuccess, 'has_success')
+            ->selectSub($subViews, 'views')
+            ->selectSub($subReplies, 'replies')
+            ->selectSub($subSeenByUser, 'seen_by_user')
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->whereIn('messages_groups.groupid', $groupIds)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
@@ -1683,6 +1726,8 @@ class UnifiedDigestService
                 // filter — it still shows "came and went" posts — so degraded bounds must
                 // fall back to the exact polygon rather than reject them.
                 $point = 'ST_SRID(POINT(?, ?), 3857)';
+                // keep-raw: ST_Contains/ST_GeometryType/ST_SRID/POINT (spatial functions) and
+                // COALESCE() have no query builder equivalents.
                 $query->whereRaw(
                     "NOT EXISTS (SELECT 1 FROM rippling_reach rr
                         WHERE rr.msgid = messages.id
@@ -1697,6 +1742,8 @@ class UnifiedDigestService
                 );
             } else {
                 // Bounds table not migrated yet — the original exact-polygon gate.
+                // keep-raw: ST_Contains/ST_SRID/POINT (spatial functions) have no query
+                // builder equivalents.
                 $query->whereRaw(
                     'NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
                         AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), 3857)) = 0)',
@@ -1742,13 +1789,25 @@ class UnifiedDigestService
             return collect();
         }
 
-        return Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
-            // Live posts only: no outcome (so has_outcome/has_success are constant 0 — the caller
-            // treats these as available, matching the flags getPostsForUser computes).
-            ->selectRaw('0 AS has_outcome')
-            ->selectRaw('0 AS has_success')
-            ->selectRaw("(SELECT COALESCE(SUM(ml.count),0) FROM messages_likes ml WHERE ml.msgid = messages.id AND ml.type = 'View') AS views")
-            ->selectRaw("(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = messages.id AND cm.type = 'Interested' AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies")
+        // views/replies: correlated aggregate subqueries via selectSub() with the
+        // sub-builder's ->aggregate set directly (see getPostsForUser() above for the
+        // full explanation). "views" drops the SQL COALESCE(...,0) because its one
+        // consumer, (int) ($post->views ?? 0), already treats a NULL SUM as 0.
+        $subViews = DB::table('messages_likes as ml')
+            ->whereColumn('ml.msgid', 'messages.id')
+            ->where('ml.type', 'View');
+        $subViews->aggregate = ['function' => 'sum', 'columns' => ['ml.count']];
+
+        $subReplies = DB::table('chat_messages as cm')
+            ->whereColumn('cm.refmsgid', 'messages.id')
+            ->where('cm.type', 'Interested')
+            ->where('cm.reviewrejected', 0)
+            ->where('cm.reviewrequired', 0);
+        $subReplies->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        $posts = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
+            ->selectSub($subViews, 'views')
+            ->selectSub($subReplies, 'replies')
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->join('messages_pinned', 'messages_pinned.msgid', '=', 'messages.id')
             ->whereIn('messages_groups.groupid', $groupIds)
@@ -1757,13 +1816,23 @@ class UnifiedDigestService
             ->whereNull('messages.deleted')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
+                $q->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages.id');
             })
             ->orderBy('messages_groups.arrival', 'desc')
             ->with($this->digestPostEagerLoads())
             ->get();
+
+        // Live posts only (the whereNotExists above already enforces that): has_outcome/
+        // has_success are constant 0 — the caller treats these as available, matching the
+        // flags getPostsForUser computes. Set in PHP rather than a literal SQL "0 AS ..."
+        // select, since the value never varies per row.
+        $posts->each(function ($post) {
+            $post->has_outcome = 0;
+            $post->has_success = 0;
+        });
+
+        return $posts;
     }
 
     /**
@@ -1899,6 +1968,8 @@ class UnifiedDigestService
 
         $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
 
+        // keep-raw: ST_AsText() has no query builder equivalent, and it is what this query
+        // exists for — a partial builder chain would still need selectRaw for it.
         $row = DB::selectOne(
             'SELECT rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
                FROM rippling_reach rr WHERE rr.msgid = ?',
@@ -1941,6 +2012,8 @@ class UnifiedDigestService
 
         foreach (array_chunk($ids, 500) as $chunk) {
             $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            // keep-raw: ST_AsText() has no query builder equivalent, and it is what this
+            // query exists for — a partial builder chain would still need selectRaw for it.
             $rows = DB::select(
                 "SELECT rr.msgid, rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
                    FROM rippling_reach rr WHERE rr.msgid IN ($placeholders)",

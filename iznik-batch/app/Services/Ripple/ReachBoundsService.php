@@ -105,6 +105,12 @@ class ReachBoundsService
 
         $stored = false;
         try {
+            // keep-raw: SET assigns outer_bound/inner_bound from ST_GeomFromText(?, 3857)
+            // - a spatial constructor with no builder method - and self-assigns
+            // `updated_at = updated_at` to suppress the ON UPDATE auto-bump the delta/
+            // shadow copier keys off; ->update(['updated_at' => 'updated_at']) would bind
+            // the literal string, and DB::raw('updated_at') is itself a raw site, so
+            // neither actually converts the self-assignment.
             DB::update(
                 'UPDATE rippling_reach
                     SET outer_bound = ST_GeomFromText(?, 3857), '
@@ -223,6 +229,9 @@ class ReachBoundsService
 
         $derived = false;
         try {
+            // keep-raw: outerExpr()/innerExpr() render ST_Buffer(ST_Simplify(polygon, ...))
+            // - spatial functions with no builder method - plus the same
+            // `updated_at = updated_at` self-assignment trick as sync() above.
             DB::update(
                 'UPDATE rippling_reach
                     SET outer_bound = ' . self::outerExpr('polygon') . ',
@@ -267,6 +276,10 @@ class ReachBoundsService
         }
 
         try {
+            // keep-raw: ST_SRID(POINT(lng, lat), 3857) is a spatial constructor built
+            // from two OTHER columns (lng, lat), which the builder has no method for,
+            // plus the `updated_at = updated_at` self-assignment trick used throughout
+            // this class (see sync() above for why it must stay raw).
             DB::update(
                 'UPDATE rippling_reach
                     SET outer_bound = ST_SRID(POINT(lng, lat), 3857),
@@ -289,6 +302,11 @@ class ReachBoundsService
     private function verifySandwich(int $msgid): array
     {
         try {
+            // keep-raw: ST_Contains is a spatial predicate the builder has no method
+            // for, applied between two columns (not a column-vs-value comparison a
+            // whereColumn-style call could express). useReadPdo=false (the trailing
+            // `false`) is preserved: this must read our own just-written row, not a
+            // replica that may not have caught up yet.
             $check = DB::select(
                 'SELECT ST_Contains(outer_bound, polygon) AS o,
                         (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
@@ -312,6 +330,13 @@ class ReachBoundsService
     private function unionOuterWithOriginGroup(int $msgid): void
     {
         try {
+            // keep-raw: the SET assigns rr.outer_bound from a correlated scalar
+            // subquery wrapped in COALESCE, built on ST_Union/ST_GeometryType (spatial
+            // functions with no builder method), plus the same
+            // `rr.updated_at = rr.updated_at` self-assignment trick as elsewhere in
+            // this class. The builder can select an aggregate subquery (selectSub) but
+            // not use one as an UPDATE ... SET value, so even the JOIN-free parts of
+            // this statement have no builder path.
             DB::update(
                 'UPDATE rippling_reach rr
                     SET rr.outer_bound = COALESCE(
@@ -340,6 +365,9 @@ class ReachBoundsService
     private function fallbackToEnvelope(int $msgid): void
     {
         try {
+            // keep-raw: ST_Envelope(polygon) is a spatial function with no builder
+            // method, plus the `updated_at = updated_at` self-assignment trick used
+            // throughout this class (see sync() above for why it must stay raw).
             DB::update(
                 'UPDATE rippling_reach
                     SET outer_bound = ST_Envelope(polygon), inner_bound = NULL,

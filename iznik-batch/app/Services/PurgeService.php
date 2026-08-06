@@ -383,11 +383,14 @@ class PurgeService
         $end = now()->subDays(60)->startOfDay();
         $total = 0;
 
+        // LENGTH(message) > 0, combined with the whereNotNull above, is
+        // equivalent to message being a non-empty string: for any non-null
+        // value, MySQL's LENGTH() is 0 if and only if the string is ''.
         if ($dryRun) {
             return Message::where('arrival', '>=', $end)
                 ->where('arrival', '<=', $start)
                 ->whereNotNull('message')
-                ->whereRaw('LENGTH(message) > 0')
+                ->where('message', '!=', '')
                 ->count();
         }
 
@@ -395,7 +398,7 @@ class PurgeService
             $updated = $this->retryOnDeadlock(fn () => Message::where('arrival', '>=', $end)
                 ->where('arrival', '<=', $start)
                 ->whereNotNull('message')
-                ->whereRaw('LENGTH(message) > 0')
+                ->where('message', '!=', '')
                 ->limit($this->chunkSize)
                 ->update(['message' => null]));
 
@@ -826,10 +829,15 @@ class PurgeService
         do {
             // Fetch a chunk of orphan IDs rather than every match — keeps memory
             // bounded even when the 30-day window contains millions of rows.
-            $logs = DB::select(
-                "SELECT logs.id FROM logs LEFT JOIN messages ON messages.id = logs.msgid WHERE logs.msgid IS NOT NULL AND messages.id IS NULL AND logs.timestamp >= ? AND logs.timestamp < ? LIMIT {$this->chunkSize}",
-                [$end, $start]
-            );
+            $logs = DB::table('logs')
+                ->select('logs.id')
+                ->leftJoin('messages', 'messages.id', '=', 'logs.msgid')
+                ->whereNotNull('logs.msgid')
+                ->whereNull('messages.id')
+                ->where('logs.timestamp', '>=', $end)
+                ->where('logs.timestamp', '<', $start)
+                ->limit($this->chunkSize)
+                ->get();
 
             foreach ($logs as $log) {
                 DB::table('logs')->where('id', $log->id)->delete();
@@ -965,10 +973,14 @@ class PurgeService
         $total = 0;
 
         do {
-            $logs = DB::select(
-                "SELECT logs.id FROM logs LEFT JOIN users ON users.id = logs.user WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $logs = DB::table('logs')
+                ->select('logs.id')
+                ->leftJoin('users', 'users.id', '=', 'logs.user')
+                ->where('logs.timestamp', '<', $cutoff)
+                ->whereNotNull('logs.user')
+                ->whereNull('users.id')
+                ->limit($this->chunkSize)
+                ->get();
 
             foreach ($logs as $log) {
                 DB::table('logs')->where('id', $log->id)->delete();
@@ -1121,6 +1133,9 @@ class PurgeService
         $cutoff = now()->subDays($daysBack)->startOfDay();
         $deleted = 0;
 
+        // keep-raw: COUNT(*) needs an alias (`count`) to be usable in the having()
+        // below, and no query builder method projects an aliased aggregate
+        // alongside other columns in a GROUP BY select list.
         $duplicateChats = DB::table('chat_messages')
             ->select('chatid', 'message', 'refmsgid', DB::raw('COUNT(*) as count'))
             ->where('date', '>=', $cutoff)

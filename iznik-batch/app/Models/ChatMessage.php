@@ -302,6 +302,10 @@ class ChatMessage extends Model implements Auditable
             ->leftJoin('chat_messages_held', 'chat_messages_held.msgid', '=', 'chat_messages.id')
             ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
             ->join('memberships', function ($join) use ($groupIds, $otherUser) {
+                // keep-raw: the join condition compares a column to a CASE WHEN expression
+                // over two other columns - the builder's join clause has no method that
+                // takes an arbitrary expression on the right-hand side, only column-to-column
+                // (on) or column-to-bound-value (where) comparisons.
                 $join->whereRaw("memberships.userid = {$otherUser}")
                     ->whereIn('memberships.groupid', $groupIds);
             })
@@ -319,6 +323,8 @@ class ChatMessage extends Model implements Auditable
             ->leftJoin('chat_messages_held', 'chat_messages_held.msgid', '=', 'chat_messages.id')
             ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
             ->leftJoin('memberships as m1', function ($join) use ($otherUser) {
+                // keep-raw: same CASE WHEN join condition as part1 above - no builder
+                // method takes an arbitrary expression as the join comparison target.
                 $join->whereRaw("m1.userid = {$otherUser}");
             })
             ->leftJoin('groups', function ($join) {
@@ -351,6 +357,7 @@ class ChatMessage extends Model implements Auditable
                 ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
                 ->leftJoin('chat_messages_held', 'chat_messages.id', '=', 'chat_messages_held.msgid')
                 ->join('memberships', function ($join) use ($otherUser) {
+                    // keep-raw: same CASE WHEN join condition as part1/part2 above.
                     $join->whereRaw("memberships.userid = {$otherUser}");
                 })
                 ->join('groups', function ($join) {

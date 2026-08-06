@@ -100,6 +100,8 @@ class StatsGenerationService
         $avg = (float) (DB::table('items')
             ->whereNotNull('weight')
             ->where('weight', '!=', 0)
+            // keep-raw: division between two aggregates (SUM/SUM) - arithmetic
+            // across aggregate results has no builder method.
             ->selectRaw('SUM(popularity * weight) / SUM(popularity) AS average')
             ->value('average') ?? 0);
 
@@ -141,6 +143,9 @@ class StatsGenerationService
                 ->where('messages_groups.rippled_in', 0) // native posts only
                 ->whereNotNull('messages.sourceheader')
                 ->groupBy('messages_groups.groupid', 'messages.sourceheader')
+                // keep-raw: COUNT(*) aliased alongside two grouped columns in a
+                // multi-row SELECT list - no builder method projects an aliased
+                // aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, messages.sourceheader AS source, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -159,6 +164,9 @@ class StatsGenerationService
                 ->where('messages_groups.rippled_in', 0) // native posts only
                 ->whereNotNull('messages.type')
                 ->groupBy('messages_groups.groupid', 'messages.type')
+                // keep-raw: COUNT(*) aliased alongside two grouped columns in a
+                // multi-row SELECT list - no builder method projects an aliased
+                // aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, messages.type AS type, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -174,6 +182,9 @@ class StatsGenerationService
                 ->where('users_active.timestamp', '>=', $windowStart)
                 ->where('users_active.timestamp', '<', $windowEnd)
                 ->groupBy('memberships.groupid')
+                // keep-raw: COUNT(DISTINCT ...) aliased alongside a grouped
+                // column in a multi-row SELECT list - no builder method
+                // projects an aliased aggregate here.
                 ->selectRaw('memberships.groupid AS gid, COUNT(DISTINCT users_active.userid) AS cnt')
                 ->get() as $row
         ) {
@@ -191,11 +202,16 @@ class StatsGenerationService
                 ->where('messages_outcomes.timestamp', '<', $next)
                 ->whereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
                 ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('messages_bulk_items')
+                    // No ->select() needed inside EXISTS/NOT EXISTS: the default
+                    // column list is '*', which is semantically identical to
+                    // SELECT 1 for existence checks - verified via ->toSql().
+                    $q->from('messages_bulk_items')
                         ->whereColumn('messages_bulk_items.msgid', 'messages_outcomes.msgid');
                 })
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: aggregate (COUNT DISTINCT) aliased alongside a grouped
+                // column in a multi-row SELECT list - no builder method projects
+                // an aliased aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
                 ->get() as $row
         ) {
@@ -212,6 +228,9 @@ class StatsGenerationService
                 ->where('messages_bulk_items.updated_at', '>=', $date)
                 ->where('messages_bulk_items.updated_at', '<', $next)
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: SUM(...) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, SUM(messages_bulk_items.quantity) AS cnt')
                 ->get() as $row
         ) {
@@ -231,6 +250,9 @@ class StatsGenerationService
                 ->where('messages_bulk_items_interest.updated_at', '>=', $date)
                 ->where('messages_bulk_items_interest.updated_at', '<', $next)
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: SUM(...) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, SUM(messages_bulk_items_interest.quantity) AS cnt')
                 ->get() as $row
         ) {
@@ -248,6 +270,9 @@ class StatsGenerationService
                 ->where('messages.arrival', '<', $next)
                 ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: COUNT(DISTINCT ...) aliased alongside a grouped
+                // column in a multi-row SELECT list - no builder method
+                // projects an aliased aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_groups.msgid) AS cnt')
                 ->get() as $row
         ) {
@@ -263,8 +288,9 @@ class StatsGenerationService
             DB::table('messages_groups')
                 ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
                 ->whereExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('messages_bulk_items')
+                    // No ->select() needed inside EXISTS: default '*' is
+                    // semantically identical to SELECT 1 for existence checks.
+                    $q->from('messages_bulk_items')
                         ->whereColumn('messages_bulk_items.msgid', 'messages_groups.msgid');
                 })
                 ->where('messages_groups.rippled_in', 0)
@@ -272,6 +298,9 @@ class StatsGenerationService
                 ->where('messages.arrival', '<', $next)
                 ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: SUM(availableinitially - 1) is arithmetic on a column
+                // combined with an aggregate alias under GROUP BY - no builder
+                // method for either.
                 ->selectRaw('messages_groups.groupid AS gid, SUM(messages.availableinitially - 1) AS topup')
                 ->get() as $row
         ) {
@@ -290,6 +319,9 @@ class StatsGenerationService
                 ->where('added', '<', $next)
                 ->where('collection', Membership::COLLECTION_APPROVED)
                 ->groupBy('groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -306,6 +338,9 @@ class StatsGenerationService
                 ->where('subtype', 'ClassifiedSpam')
                 ->whereNotNull('groupid')
                 ->groupBy('groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -326,6 +361,9 @@ class StatsGenerationService
                 ->where('logs.subtype', 'Left')
                 ->whereNotNull('logs.groupid')
                 ->groupBy('logs.groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('logs.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -341,6 +379,9 @@ class StatsGenerationService
                 ->where('chattype', ChatRoom::TYPE_USER2MOD)
                 ->whereNotNull('groupid')
                 ->groupBy('groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -366,6 +407,9 @@ class StatsGenerationService
                     self::TYPE_FEEDBACK_UNHAPPY,
                 ])
                 ->groupBy('messages_groups.groupid', 'messages_outcomes.happiness')
+                // keep-raw: COUNT(DISTINCT ...) aliased alongside two grouped
+                // columns in a multi-row SELECT list - no builder method
+                // projects an aliased aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, messages_outcomes.happiness AS happiness, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
                 ->get() as $row
         ) {
@@ -379,6 +423,9 @@ class StatsGenerationService
         foreach (
             DB::table('memberships')
                 ->groupBy('groupid', 'ourPostingStatus')
+                // keep-raw: COUNT(*) aliased alongside two grouped columns in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('groupid AS gid, ourPostingStatus, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -396,11 +443,15 @@ class StatsGenerationService
                 ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
                 ->where('messages_groups.rippled_in', 0) // native posts only
                 ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('messages_bulk_items')
+                    // No ->select() needed inside NOT EXISTS: default '*' is
+                    // semantically identical to SELECT 1 for existence checks.
+                    $q->from('messages_bulk_items')
                         ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
                 })
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an aliased
+                // aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -416,6 +467,9 @@ class StatsGenerationService
                 ->where('messages_bulk_items_interest.created_at', '>=', $date)
                 ->where('messages_bulk_items_interest.created_at', '<', $next)
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an
+                // aliased aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -434,17 +488,20 @@ class StatsGenerationService
                 ->where('chat_messages.type', ChatMessage::TYPE_INTERESTED)
                 ->where('messages_groups.rippled_in', 0)
                 ->whereExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('messages_bulk_items')
+                    // No ->select() needed inside EXISTS/NOT EXISTS: default '*'
+                    // is semantically identical to SELECT 1 for existence checks.
+                    $q->from('messages_bulk_items')
                         ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
                 })
                 ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('messages_bulk_items_interest')
+                    $q->from('messages_bulk_items_interest')
                         ->whereColumn('messages_bulk_items_interest.msgid', 'chat_messages.refmsgid')
                         ->whereColumn('messages_bulk_items_interest.userid', 'chat_messages.userid');
                 })
                 ->groupBy('messages_groups.groupid')
+                // keep-raw: COUNT(*) aliased alongside a grouped column in a
+                // multi-row SELECT list - no builder method projects an aliased
+                // aggregate here.
                 ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
                 ->get() as $row
         ) {
@@ -459,6 +516,11 @@ class StatsGenerationService
         // per-group distinct()+foreach. Bulk-offer messages are excluded here.
         $weight = [];
         foreach (
+            // keep-raw: derived-table aggregate using COALESCE()/NULLIF()/ROUND()
+            // on columns and a bound parameter, plus a correlated NOT EXISTS
+            // inside the derived table - none of these have builder methods,
+            // and fromSub() would still need selectRaw for the COALESCE/NULLIF
+            // expression, so nothing is actually eliminated by partial conversion.
             DB::select(
                 'SELECT sub.groupid AS gid, ROUND(SUM(sub.eff_weight)) AS total_weight '
                 . 'FROM ('
@@ -482,6 +544,10 @@ class StatsGenerationService
         // WEIGHT bulk flip: catalogue items marked available=0 on $date, weighted by
         // items.weight matched by name (not itemid), multiplied by remaining quantity.
         foreach (
+            // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic on a
+            // column combined with COALESCE/NULLIF/ROUND, none of which have
+            // builder methods; also a COLLATE clause on the join, which the
+            // builder cannot express either.
             DB::select(
                 'SELECT mg.groupid AS gid, '
                 . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
@@ -504,6 +570,10 @@ class StatsGenerationService
         // WEIGHT collected: in-app collections attributed on updated_at day, weighted by
         // items.weight matched via the parent bulk item's name, times interest-row quantity.
         foreach (
+            // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic on a
+            // column combined with COALESCE/NULLIF/ROUND, none of which have
+            // builder methods; also a COLLATE clause on the join, which the
+            // builder cannot express either.
             DB::select(
                 'SELECT mg.groupid AS gid, '
                 . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight '
@@ -655,6 +725,8 @@ class StatsGenerationService
         $avg = (float) (DB::table('items')
             ->whereNotNull('weight')
             ->where('weight', '!=', 0)
+            // keep-raw: division between two aggregates (SUM/SUM) - arithmetic
+            // across aggregate results has no builder method.
             ->selectRaw('SUM(popularity * weight) / SUM(popularity) AS average')
             ->value('average') ?? 0);
 
@@ -672,6 +744,11 @@ class StatsGenerationService
             // to multiple items with different weights contributes all of
             // them — same shape as the PHP `distinct()` + foreach the old
             // path had. Bulk-offer messages are excluded and handled below.
+            // keep-raw: derived-table aggregate using COALESCE()/NULLIF()/ROUND()
+            // on columns and a bound parameter, plus a correlated NOT EXISTS
+            // inside the derived table - none of these have builder methods,
+            // and fromSub() would still need selectRaw for the COALESCE/NULLIF
+            // expression, so nothing is actually eliminated by partial conversion.
             $rows = DB::select(
                 'SELECT sub.groupid, ROUND(SUM(sub.eff_weight)) AS total_weight '
                 . 'FROM ('
@@ -701,6 +778,10 @@ class StatsGenerationService
             // WEIGHT bulk flip arm: catalogue items marked available=0 on this date,
             // weighted by items.weight matched by name, multiplied by remaining quantity.
             foreach (
+                // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic
+                // on a column combined with COALESCE/NULLIF/ROUND, none of which
+                // have builder methods; also a COLLATE clause on the join, which
+                // the builder cannot express either.
                 DB::select(
                     'SELECT mg.groupid, '
                     . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
@@ -722,6 +803,10 @@ class StatsGenerationService
 
             // WEIGHT collected arm: in-app collections attributed on updated_at day.
             foreach (
+                // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic
+                // on a column combined with COALESCE/NULLIF/ROUND, none of which
+                // have builder methods; also a COLLATE clause on the join, which
+                // the builder cannot express either.
                 DB::select(
                     'SELECT mg.groupid, '
                     . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight '
@@ -757,6 +842,11 @@ class StatsGenerationService
             }
 
             if (!empty($placeholders)) {
+                // keep-raw: REPLACE INTO. upsert() only emits ON DUPLICATE KEY
+                // UPDATE col = VALUES(col) / col = ?, which is INSERT-then-UPDATE
+                // semantics; REPLACE INTO here relies on delete-then-reinsert
+                // (and does so across a hand-built multi-row VALUES list), which
+                // upsert() cannot reproduce.
                 DB::statement(
                     'REPLACE INTO stats (date, groupid, type, count) VALUES '
                     . implode(', ', $placeholders),
@@ -784,6 +874,8 @@ class StatsGenerationService
             return 1;
         }
 
+        // keep-raw: REPLACE INTO - upsert() emits ON DUPLICATE KEY UPDATE
+        // (INSERT-then-UPDATE), not the delete-then-reinsert REPLACE relies on.
         DB::statement(
             'REPLACE INTO stats (date, groupid, type, count) VALUES (?, ?, ?, ?)',
             [$date, $groupId, $type, $val]
@@ -803,6 +895,8 @@ class StatsGenerationService
             return 1;
         }
 
+        // keep-raw: REPLACE INTO - upsert() emits ON DUPLICATE KEY UPDATE
+        // (INSERT-then-UPDATE), not the delete-then-reinsert REPLACE relies on.
         DB::statement(
             'REPLACE INTO stats (date, groupid, type, breakdown) VALUES (?, ?, ?, ?)',
             [$date, $groupId, $type, json_encode($map, JSON_UNESCAPED_UNICODE)]

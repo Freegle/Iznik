@@ -84,13 +84,17 @@ class SendAIImageReviewDigestCommand extends Command
     {
         return DB::table('microactions')
             ->select('userid')
+            // keep-raw: aggregate with an alias in a multi-row SELECT list under GROUP BY;
+            // no builder method projects a named aggregate column.
             ->selectRaw('COUNT(*) as total_votes')
             ->selectRaw("SUM(result = 'Approve') as approve_count")
             ->selectRaw("SUM(result = 'Reject') as reject_count")
             ->where('actiontype', 'AIImageReview')
             ->groupBy('userid')
-            ->havingRaw('total_votes >= 10')
-            ->havingRaw("(approve_count / total_votes > 0.9 OR reject_count / total_votes > 0.9)")
+            ->having('total_votes', '>=', 10)
+            // keep-raw: compares two arithmetic expressions (division of aggregate aliases)
+            // across an OR; the builder has no method for arithmetic on columns.
+            ->havingRaw('(approve_count / total_votes > 0.9 OR reject_count / total_votes > 0.9)')
             ->pluck('userid')
             ->toArray();
     }
@@ -108,6 +112,9 @@ class SendAIImageReviewDigestCommand extends Command
             $query->whereNotIn('userid', $outlierUserIds);
         }
 
+        // keep-raw: COUNT(*) is only used in HAVING, never selected/aliased, so there is no
+        // builder-projected column to filter on with having(); the builder has no
+        // "having aggregate" method that doesn't itself require a raw expression.
         return $query->groupBy('aiimageid')
             ->havingRaw('COUNT(*) >= 5')
             ->get()
@@ -127,6 +134,8 @@ class SendAIImageReviewDigestCommand extends Command
                 'ai_images.name',
                 'ai_images.usage_count',
             )
+            // keep-raw: aggregates with aliases in a multi-row SELECT list under GROUP BY;
+            // no builder method projects a named aggregate column.
             ->selectRaw("SUM(microactions.result = 'Approve') as approve_count")
             ->selectRaw("SUM(microactions.result = 'Reject') as reject_count")
             ->selectRaw('SUM(microactions.containspeople = 1) as people_count')
@@ -136,6 +145,9 @@ class SendAIImageReviewDigestCommand extends Command
             $query->whereNotIn('microactions.userid', $outlierUserIds);
         }
 
+        // keep-raw: COUNT(*) is not selected/aliased, so having() has no column to reference.
+        // keep-raw: compares two re-computed SUM(...) expressions directly; the builder has
+        // no method for comparing two aggregate expressions against each other in HAVING.
         return $query->groupBy('ai_images.id', 'ai_images.name', 'ai_images.usage_count')
             ->havingRaw('COUNT(*) >= 5')
             ->havingRaw("SUM(microactions.result = 'Reject') > SUM(microactions.result = 'Approve')")

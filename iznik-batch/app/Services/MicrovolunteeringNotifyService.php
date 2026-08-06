@@ -66,6 +66,11 @@ class MicrovolunteeringNotifyService
             'stale_notifications_cleared' => $staleNotificationsCleared,
         ];
 
+        // keep-raw: the LEFT JOIN condition matches users_notifications.url against
+        // CONCAT('/microvolunteering/message/', messages.id) - a per-row correlated
+        // string built from a joined column. The query builder's join closure supports
+        // ->on()/->where() for column/value comparisons but has no method that projects
+        // CONCAT() over a column, so the match condition itself must stay raw SQL.
         $msgs = DB::select("
             SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection
             FROM messages
@@ -118,15 +123,16 @@ class MicrovolunteeringNotifyService
                     continue;
                 }
 
-                $existing = DB::selectOne("
-                    SELECT COUNT(*) AS count
-                    FROM users_notifications
-                    WHERE touser = ?
-                      AND (url LIKE ? OR timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY))
-                      AND type = ?
-                ", [$uid, $url, self::NOTIFICATION_TYPE]);
+                $existingCount = DB::table('users_notifications')
+                    ->where('touser', $uid)
+                    ->where(function ($q) use ($url) {
+                        $q->where('url', 'like', $url)
+                          ->orWhere('timestamp', '>=', now()->subDay());
+                    })
+                    ->where('type', self::NOTIFICATION_TYPE)
+                    ->count();
 
-                if ($existing->count >= self::MAX_PER_USER) {
+                if ($existingCount >= self::MAX_PER_USER) {
                     $stats['users_skipped']++;
                     continue;
                 }
@@ -249,25 +255,21 @@ class MicrovolunteeringNotifyService
             return $this->eligibleCache[$key];
         }
 
+        $query = DB::table('memberships')
+            ->join('users', 'memberships.userid', '=', 'users.id')
+            ->where('memberships.groupid', $groupid)
+            ->where('users.lastaccess', '>=', now()->subDays(31))
+            ->distinct()
+            ->select('memberships.userid');
+
         if ($collection === 'Pending') {
-            $sql = "SELECT DISTINCT memberships.userid
-                    FROM memberships
-                    INNER JOIN users ON memberships.userid = users.id
-                    WHERE memberships.groupid = ?
-                      AND users.lastaccess >= DATE_SUB(NOW(), INTERVAL 31 DAY)
-                      AND users.trustlevel IN ('Moderate', 'Advanced')";
+            $query->whereIn('users.trustlevel', ['Moderate', 'Advanced']);
         } else {
-            $sql = "SELECT DISTINCT memberships.userid
-                    FROM memberships
-                    INNER JOIN users ON memberships.userid = users.id
-                    WHERE memberships.groupid = ?
-                      AND memberships.role = 'Member'
-                      AND users.lastaccess >= DATE_SUB(NOW(), INTERVAL 31 DAY)
-                      AND users.trustlevel IN ('Basic', 'Moderate', 'Advanced')";
+            $query->where('memberships.role', 'Member')
+                  ->whereIn('users.trustlevel', ['Basic', 'Moderate', 'Advanced']);
         }
 
-        $rows = DB::select($sql, [$groupid]);
-        $this->eligibleCache[$key] = array_map(fn ($r) => (int) $r->userid, $rows);
+        $this->eligibleCache[$key] = $query->pluck('userid')->map(fn ($v) => (int) $v)->all();
 
         return $this->eligibleCache[$key];
     }
@@ -287,14 +289,11 @@ class MicrovolunteeringNotifyService
             return [];
         }
 
-        $placeholders = implode(',', array_fill(0, count($msgids), '?'));
-        $rows = DB::select(
-            "SELECT userid, msgid
-             FROM microactions
-             WHERE actiontype = 'CheckMessage'
-               AND msgid IN ($placeholders)",
-            $msgids
-        );
+        $rows = DB::table('microactions')
+            ->select('userid', 'msgid')
+            ->where('actiontype', 'CheckMessage')
+            ->whereIn('msgid', $msgids)
+            ->get();
 
         $map = [];
         foreach ($rows as $row) {
@@ -313,14 +312,13 @@ class MicrovolunteeringNotifyService
      */
     private function loadAlreadyNotifiedToday(): array
     {
-        $rows = DB::select(
-            "SELECT DISTINCT touser
-             FROM users_notifications
-             WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-               AND url LIKE '/microvolunteering/message/%'
-               AND type = ?",
-            [self::NOTIFICATION_TYPE]
-        );
+        $rows = DB::table('users_notifications')
+            ->select('touser')
+            ->distinct()
+            ->where('timestamp', '>=', now()->subDay())
+            ->where('url', 'like', '/microvolunteering/message/%')
+            ->where('type', self::NOTIFICATION_TYPE)
+            ->get();
 
         $set = [];
         foreach ($rows as $row) {
@@ -344,6 +342,13 @@ class MicrovolunteeringNotifyService
      */
     private function markStaleReviewedNotificationsSeen(bool $dryRun): int
     {
+        // keep-raw: both statements below join on
+        // un.url = CONCAT('/microvolunteering/message/', ma.msgid) - a per-row
+        // correlated string built from the joined microactions.msgid column. There is
+        // no query-builder method that projects CONCAT() over a column, so the join
+        // condition (and therefore the surrounding UPDATE ... JOIN / COUNT ... JOIN)
+        // has to stay raw SQL. The UPDATE also needs its own raw statement rather than
+        // update() with a join, since the query builder has no join-update construct.
         if ($dryRun) {
             $row = DB::selectOne(
                 "SELECT COUNT(*) AS count

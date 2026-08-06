@@ -312,11 +312,25 @@ class PushNotificationService
             ->join('chat_rooms as crm', 'crm.id', '=', 'cr.chatid')
             ->whereIn('crm.chattype', [ChatRoom::TYPE_USER2USER, ChatRoom::TYPE_USER2MOD])
             ->where('cr.userid', $userId)
-            ->whereRaw('(cr.lastmsgseen IS NULL OR cr.lastmsgseen < (
-                SELECT MAX(cm.id) FROM chat_messages cm
-                WHERE cm.chatid = cr.chatid AND cm.userid <> ?
-                  AND ' . RippleReplyService::deliveryGateSql('cm.id') . '
-            ))', [$userId])
+            ->where(function ($q) use ($userId) {
+                $q->whereNull('cr.lastmsgseen')
+                    ->orWhere('cr.lastmsgseen', '<', function ($sub) use ($userId) {
+                        // Inlined equivalent of RippleReplyService::deliveryGateSql('cm.id'):
+                        // a rippling-held reply hasn't reached the poster yet, so it doesn't
+                        // count as an unseen message until released.
+                        $sub->from('chat_messages as cm')
+                            ->whereColumn('cm.chatid', 'cr.chatid')
+                            ->where('cm.userid', '<>', $userId)
+                            ->whereNotExists(function ($q2) {
+                                $q2->from('rippling_held_replies as cmr')
+                                    ->whereColumn('cmr.chatmsgid', 'cm.id')
+                                    ->where('cmr.status', '<>', 'released');
+                            });
+                        // Correlated MAX(cm.id) as the subquery's single output column,
+                        // without a selectRaw escape hatch.
+                        $sub->aggregate = ['function' => 'max', 'columns' => ['cm.id']];
+                    });
+            })
             ->count();
 
         return [$chatcount, $notifcount];
@@ -489,56 +503,55 @@ class PushNotificationService
             return $zero;
         }
 
-        $placeholders = implode(',', array_fill(0, count($activeGroupIds), '?'));
-
         // Unheld pending messages in active groups.
-        $pendingParams = array_merge([$userId], $activeGroupIds);
-        $pending = DB::selectOne(
-            "SELECT COUNT(*) as cnt FROM messages_groups mg
-             INNER JOIN messages m ON m.id = mg.msgid
-             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
-             INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
-             WHERE mem.role IN ('Owner', 'Moderator')
-             AND mem.collection = 'Approved'
-             AND mg.collection = 'Pending'
-             AND mg.groupid IN ({$placeholders})
-             AND mg.deleted = 0
-             -- Per-group hold: mg.heldby, not the message-wide messages.heldby mirror,
-             -- which suppressed the push for groups that had never held anything just
-             -- because another group the post rippled to had (Discourse 9970/2).
-             AND mg.heldby IS NULL",
-            $pendingParams
-        );
+        $pendingCnt = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', function ($join) {
+                $join->on('u.id', '=', 'm.fromuser')->whereNull('u.deleted');
+            })
+            ->join('memberships as mem', function ($join) use ($userId) {
+                $join->on('mem.groupid', '=', 'mg.groupid')->where('mem.userid', '=', $userId);
+            })
+            ->whereIn('mem.role', ['Owner', 'Moderator'])
+            ->where('mem.collection', 'Approved')
+            ->where('mg.collection', 'Pending')
+            ->whereIn('mg.groupid', $activeGroupIds)
+            ->where('mg.deleted', 0)
+            // Per-group hold: mg.heldby, not the message-wide messages.heldby mirror,
+            // which suppressed the push for groups that had never held anything just
+            // because another group the post rippled to had (Discourse 9970/2).
+            ->whereNull('mg.heldby')
+            ->count();
 
         // Spam collection messages in active groups.
-        $spamParams = array_merge([$userId], $activeGroupIds);
-        $spam = DB::selectOne(
-            "SELECT COUNT(*) as cnt FROM messages_groups mg
-             INNER JOIN messages m ON m.id = mg.msgid
-             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
-             INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
-             WHERE mem.role IN ('Owner', 'Moderator')
-             AND mem.collection = 'Approved'
-             AND mg.collection = 'Spam'
-             AND mg.groupid IN ({$placeholders})
-             AND mg.deleted = 0",
-            $spamParams
-        );
+        $spamCnt = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', function ($join) {
+                $join->on('u.id', '=', 'm.fromuser')->whereNull('u.deleted');
+            })
+            ->join('memberships as mem', function ($join) use ($userId) {
+                $join->on('mem.groupid', '=', 'mg.groupid')->where('mem.userid', '=', $userId);
+            })
+            ->whereIn('mem.role', ['Owner', 'Moderator'])
+            ->where('mem.collection', 'Approved')
+            ->where('mg.collection', 'Spam')
+            ->whereIn('mg.groupid', $activeGroupIds)
+            ->where('mg.deleted', 0)
+            ->count();
 
         // Pending volunteering ops in active groups (mirrors session.go pendingvolunteering query).
-        $volunteering = DB::selectOne(
-            "SELECT COUNT(DISTINCT v.id) AS cnt FROM volunteering v
-             INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id
-             LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id
-             WHERE vg.groupid IN ({$placeholders})
-             AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0
-             AND (vd.end IS NULL OR vd.end >= NOW())",
-            $activeGroupIds
-        );
-
-        $pendingCnt = (int) ($pending->cnt ?? 0);
-        $spamCnt = (int) ($spam->cnt ?? 0);
-        $volunteeringCnt = (int) ($volunteering->cnt ?? 0);
+        $volunteeringCnt = DB::table('volunteering as v')
+            ->join('volunteering_groups as vg', 'vg.volunteeringid', '=', 'v.id')
+            ->leftJoin('volunteering_dates as vd', 'vd.volunteeringid', '=', 'v.id')
+            ->whereIn('vg.groupid', $activeGroupIds)
+            ->where('v.pending', 1)
+            ->where('v.deleted', 0)
+            ->where('v.expired', 0)
+            ->where(function ($q) {
+                $q->whereNull('vd.end')->orWhere('vd.end', '>=', now());
+            })
+            ->distinct()
+            ->count('v.id');
 
         return [
             'pending' => $pendingCnt,

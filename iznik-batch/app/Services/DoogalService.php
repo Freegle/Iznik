@@ -195,6 +195,10 @@ class DoogalService
     {
         $point = "POINT($lng $lat)";
 
+        // keep-raw: ST_GeomFromText()/GetMaxDimension() are spatial functions the
+        // query builder has no method for. Also needs LAST_INSERT_ID() readback
+        // via DB::getPdo() immediately after, which insertGetId() would duplicate
+        // as a second query.
         DB::insert(
             'INSERT INTO locations (osm_id, name, type, geometry, canon, osm_place, maxdimension) '
             .'VALUES (NULL, ?, ?, ST_GeomFromText(?, ?), ?, 0, GetMaxDimension(ST_GeomFromText(?, ?)))',
@@ -205,12 +209,14 @@ class DoogalService
             return null;
         }
 
+        // keep-raw: ST_GeomFromText() is a spatial function the query builder has no method for.
         DB::insert(
             'INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ?))',
             [$id, $point, $this->srid]
         );
 
         // Cache lat/lng from the geometry centroid (speeds up later queries).
+        // keep-raw: ST_X()/ST_Y()/ST_Centroid() are spatial functions the query builder has no method for.
         DB::update(
             'UPDATE locations SET lng = ST_X(ST_Centroid(geometry)), lat = ST_Y(ST_Centroid(geometry)) WHERE id = ?',
             [$id]
@@ -241,11 +247,15 @@ class DoogalService
     {
         $point = "POINT($lng $lat)";
 
+        // keep-raw: ST_GeomFromText() is a spatial function the query builder has no method for.
         DB::update(
             'UPDATE locations SET lat = ?, lng = ?, type = ?, geometry = ST_GeomFromText(?, ?), ourgeometry = NULL WHERE id = ?',
             [$lat, $lng, 'Postcode', $point, $this->srid, $id]
         );
 
+        // keep-raw: REPLACE INTO has no query-builder equivalent (upsert() only
+        // emits ON DUPLICATE KEY UPDATE, which does not delete+reinsert), and
+        // ST_GeomFromText() is a spatial function the builder has no method for.
         DB::statement(
             'REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ?))',
             [$id, $point, $this->srid]
@@ -274,6 +284,7 @@ class DoogalService
     {
         // Pass 1: relabel wrong-SRID source geometry (coordinates unchanged).
         DB::table('locations')
+            // keep-raw: ST_SRID() is a spatial function the query builder has no method for.
             ->whereRaw('ST_SRID(geometry) <> ?', [$this->srid])
             ->select('id')
             ->orderBy('id')
@@ -285,6 +296,7 @@ class DoogalService
 
         DB::table('locations')
             ->whereNotNull('ourgeometry')
+            // keep-raw: ST_SRID() is a spatial function the query builder has no method for.
             ->whereRaw('ST_SRID(ourgeometry) <> ?', [$this->srid])
             ->select('id')
             ->orderBy('id')
@@ -297,14 +309,29 @@ class DoogalService
         // Pass 2: re-sync locations_spatial wherever the canonical geometry
         // genuinely differs. With SRIDs now consistent, `!=` only fires on real
         // positional drift.
+        //
+        // The original CASE-expression predicate is equivalent to "ourgeometry
+        // differs from spatial.geometry when set, else geometry differs from
+        // it" - expressed below as two whereColumn() branches OR'd together, so
+        // there is no CASE and no whereRaw(). The whole OR is wrapped in one
+        // ->where(closure) group: chunkById() appends its own `AND id > ?` after
+        // each page, and SQL's AND binds tighter than OR, so an unwrapped OR at
+        // the top level would let that pagination bound apply only to the
+        // second branch instead of the query as a whole.
         DB::table('locations')
             ->join('locations_spatial', 'locations_spatial.locationid', '=', 'locations.id')
-            ->whereRaw(
-                '(CASE WHEN locations.ourgeometry IS NOT NULL THEN locations.ourgeometry ELSE locations.geometry END) '
-                .'<> locations_spatial.geometry'
-            )
+            ->where(function ($query) {
+                $query->where(function ($query) {
+                    $query->whereNotNull('locations.ourgeometry')
+                        ->whereColumn('locations.ourgeometry', '<>', 'locations_spatial.geometry');
+                })->orWhere(function ($query) {
+                    $query->whereNull('locations.ourgeometry')
+                        ->whereColumn('locations.geometry', '<>', 'locations_spatial.geometry');
+                });
+            })
             ->select(
                 'locations.id',
+                // keep-raw: ST_AsText() is a spatial function the query builder has no method for.
                 DB::raw('ST_AsText(CASE WHEN locations.ourgeometry IS NOT NULL THEN locations.ourgeometry ELSE locations.geometry END) AS g')
             )
             ->orderBy('locations.id')

@@ -110,8 +110,8 @@ class ReengageService
             // ...and the "Encouragement emails" setting, which is what the `engagement`
             // unsubscribe category turns off. Absent means on.
             ->where(function ($q) {
-                $q->whereRaw("JSON_EXTRACT(users.settings, '$.engagement') IS NULL")
-                    ->orWhereRaw("JSON_EXTRACT(users.settings, '$.engagement') != CAST('false' AS JSON)");
+                $q->whereJsonDoesntContainKey('users.settings->engagement')
+                    ->orWhere('users.settings->engagement', '!=', false);
             })
             // New members only: keyed off account creation date.
             ->whereBetween('added', [$oldest, $newest])
@@ -126,7 +126,7 @@ class ReengageService
             })
             ->where(function ($q) {
                 $q->whereJsonDoesntContainKey('users.settings->simplemail')
-                    ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [User::SIMPLE_MAIL_NONE]);
+                    ->orWhere('users.settings->simplemail', '!=', User::SIMPLE_MAIL_NONE);
             })
             ->select('id')
             ->orderBy('id')
@@ -190,6 +190,10 @@ class ReengageService
             ->where('memberships.userid', $userId)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->where('groups.type', Group::TYPE_FREEGLE)
+            // keep-raw: MAX() of an expression, not a bare column - the builder's
+            // aggregate helpers only take a column name, and the expression itself
+            // combines COALESCE() and JSON_UNQUOTE(), neither of which the builder
+            // has a fluent method for.
             ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
             ->value('enabled');
 

@@ -315,12 +315,17 @@ class ExpandService
                 $row->msgid,
             ];
             try {
+                // keep-raw: UPDATE SET polygon = ST_GeomFromText(...) plus the derived
+                // outer_bound/inner_bound spatial expressions, and a self-assigned
+                // `updated_at = updated_at` to suppress the ON UPDATE auto-bump - the
+                // builder has no method for the spatial functions or the self-assignment.
                 DB::statement($shrinkSql($boundsSet), array_merge([$storeWkt], $boundsParams, $shrinkTail));
             } catch (\Throwable $e) {
                 if ($boundsSet === '') {
                     throw $e;
                 }
                 [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
+                // keep-raw: envelope-fallback variant of the same spatial UPDATE
                 DB::statement($shrinkSql($envSet), array_merge([$storeWkt], $envParams, $shrinkTail));
             }
             // Preserve any secondary-group "out of area" rejection clips (the clip
@@ -383,24 +388,17 @@ class ExpandService
     private function removeStaleAndRetract(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
         try {
-            $scopeSql = '';
-            $params = [];
-            if ($onlyMsgid !== null) {
-                $scopeSql = ' AND mr.msgid = ?';
-                $params[] = $onlyMsgid;
-            }
-
-            $stale = DB::select(
-                'SELECT mr.msgid AS msgid
-                 FROM rippling_reach mr
-                 LEFT JOIN messages_spatial ms ON ms.msgid = mr.msgid
-                 WHERE ms.msgid IS NULL AND mr.status <> \'held\'' . $scopeSql,
-                $params
-            );
-            if (empty($stale)) {
+            $stale = DB::table('rippling_reach as mr')
+                ->select('mr.msgid as msgid')
+                ->leftJoin('messages_spatial as ms', 'ms.msgid', '=', 'mr.msgid')
+                ->whereNull('ms.msgid')
+                ->where('mr.status', '!=', 'held')
+                ->when($onlyMsgid !== null, fn ($q) => $q->where('mr.msgid', $onlyMsgid))
+                ->get();
+            if ($stale->isEmpty()) {
                 return;
             }
-            $msgids = array_map(static fn ($r) => (int) $r->msgid, $stale);
+            $msgids = $stale->map(static fn ($r) => (int) $r->msgid)->all();
 
             if ($dryRun) {
                 $stats['removed'] += count($msgids);
@@ -513,29 +511,28 @@ class ExpandService
     private function retractCopiesOrphanedByOriginRemoval(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
         try {
-            $scopeSql = '';
-            $params = ['Approved'];
-            if ($onlyMsgid !== null) {
-                $scopeSql = ' AND mr.msgid = ?';
-                $params[] = $onlyMsgid;
-            }
-
-            $orphaned = DB::select(
-                'SELECT DISTINCT mr.msgid AS msgid
-                   FROM rippling_reach mr
-                   JOIN messages_groups mg
-                     ON mg.msgid = mr.msgid AND mg.rippled_in = 1 AND mg.deleted = 0
-                  WHERE mr.status <> \'held\' AND NOT EXISTS (
-                          SELECT 1 FROM messages_groups o
-                           WHERE o.msgid = mr.msgid AND o.rippled_in = 0
-                             AND o.deleted = 0 AND o.collection = ?
-                        )' . $scopeSql,
-                $params
-            );
-            if (empty($orphaned)) {
+            $orphaned = DB::table('rippling_reach as mr')
+                ->select('mr.msgid as msgid')
+                ->distinct()
+                ->join('messages_groups as mg', function ($j) {
+                    $j->on('mg.msgid', '=', 'mr.msgid')
+                      ->where('mg.rippled_in', 1)
+                      ->where('mg.deleted', 0);
+                })
+                ->where('mr.status', '!=', 'held')
+                ->whereNotExists(function ($q) {
+                    $q->from('messages_groups as o')
+                      ->whereColumn('o.msgid', 'mr.msgid')
+                      ->where('o.rippled_in', 0)
+                      ->where('o.deleted', 0)
+                      ->where('o.collection', 'Approved');
+                })
+                ->when($onlyMsgid !== null, fn ($q) => $q->where('mr.msgid', $onlyMsgid))
+                ->get();
+            if ($orphaned->isEmpty()) {
                 return;
             }
-            $msgids = array_map(static fn ($r) => (int) $r->msgid, $orphaned);
+            $msgids = $orphaned->map(static fn ($r) => (int) $r->msgid)->all();
 
             if ($dryRun) {
                 $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
@@ -637,6 +634,12 @@ class ExpandService
                         AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
             : "AND NOT ST_Intersects(g.polyindex, rr.polygon)";
 
+        // keep-raw: the JOINs and the leading equality/status filters are plain
+        // builder fare, but $reachClause is an OR of ST_Intersects (spatial, no
+        // builder method) against JSON_VALID/JSON_LENGTH/JSON_CONTAINS(..., CAST(g.id
+        // AS JSON)) (JSON functions with no builder equivalent) - that clause can only
+        // be expressed as a raw fragment, so the statement as a whole cannot become a
+        // pure builder chain.
         $rows = DB::select(
             "SELECT g.id
                FROM messages_groups mg
@@ -683,11 +686,12 @@ class ExpandService
      */
     private function retractRippledCopyInGroup(int $msgid, int $groupid, $posterId, string $reason, string $statKey, array &$stats): void
     {
-        $n = DB::affectingStatement(
-            'UPDATE messages_groups SET deleted = 1
-             WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-            [$msgid, $groupid]
-        );
+        $n = DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('groupid', $groupid)
+            ->where('rippled_in', 1)
+            ->where('deleted', 0)
+            ->update(['deleted' => 1]);
         if ($n < 1) {
             return;
         }
@@ -1156,6 +1160,8 @@ class ExpandService
             ->whereNotNull('next_expansion_at')
             ->where('next_expansion_at', '<=', now())
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
+            // keep-raw: ST_Contains/ST_GeomFromText/ST_SRID/POINT are spatial
+            // constructors and predicates with no builder method.
             ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
                 'ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(lng, lat), ' . self::SRID . '))',
                 [$withinPolyWkt]
@@ -1482,12 +1488,16 @@ class ExpandService
 
             $n = 0;
             foreach ($targetGroups as $g) {
-                $inserted = DB::affectingStatement(
-                    "INSERT IGNORE INTO messages_groups
-                        (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
-                     VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
-                    [$msgid, $g->id, $msg->type]
-                );
+                $inserted = DB::table('messages_groups')->insertOrIgnore([[
+                    'msgid' => $msgid,
+                    'groupid' => $g->id,
+                    'collection' => $collection,
+                    'approvedat' => $immediateApprove ? now() : null,
+                    'arrival' => now(),
+                    'autoreposts' => 0,
+                    'msgtype' => $msg->type,
+                    'rippled_in' => 1,
+                ]]);
                 $n += $inserted;
             }
             if ($n > 0) {
@@ -1628,12 +1638,17 @@ class ExpandService
 
             $addedThisCall = 0;
             foreach ($targets as $t) {
-                $added = DB::affectingStatement(
-                    "INSERT IGNORE INTO memberships
-                        (userid, groupid, role, collection, emailfrequency, eventsallowed, volunteeringallowed, rippled, added)
-                     VALUES (?, ?, 'Member', 'Approved', ?, ?, ?, 1, NOW())",
-                    [$posterId, $t->groupid, $emailfrequency, $eventsallowed, $volunteeringallowed]
-                );
+                $added = DB::table('memberships')->insertOrIgnore([[
+                    'userid' => $posterId,
+                    'groupid' => $t->groupid,
+                    'role' => 'Member',
+                    'collection' => 'Approved',
+                    'emailfrequency' => $emailfrequency,
+                    'eventsallowed' => $eventsallowed,
+                    'volunteeringallowed' => $volunteeringallowed,
+                    'rippled' => 1,
+                    'added' => now(),
+                ]]);
                 if ($added > 0) {
                     $addedThisCall++;
                     $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
@@ -1686,10 +1701,10 @@ class ExpandService
     {
         // Atomic claim: only the run that flips 0 -> 1 gets to send. No row (e.g. backfill path)
         // => nothing to claim here => no send (the backfill command sends those).
-        $claimed = DB::affectingStatement(
-            'UPDATE rippling_reach SET ripple_intro_sent = 1 WHERE msgid = ? AND ripple_intro_sent = 0',
-            [$msgid]
-        );
+        $claimed = DB::table('rippling_reach')
+            ->where('msgid', $msgid)
+            ->where('ripple_intro_sent', 0)
+            ->update(['ripple_intro_sent' => 1]);
         if ($claimed < 1) {
             return;
         }
@@ -1706,6 +1721,13 @@ class ExpandService
             // per-group welcome email (which MembershipsProcessingService suppresses for rippled
             // joins). Limited to the rippled groups the poster is now a member of that have a
             // welcome configured and are live here.
+            // keep-raw: the JOINs, WHERE and ORDER BY are all plain builder fare, but the
+            // SELECT list needs COALESCE(g.namefull, g.nameshort) - a scalar function
+            // applied to a column that the builder has no method for. Pushing it into
+            // selectRaw would just move the raw site, not remove it, and the column is
+            // exactly the payload shape (name) the caller consumes, so it can't be
+            // recomputed in PHP after the fact either without a second query for
+            // g.namefull/g.nameshort.
             $welcomeGroups = array_map(
                 static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome],
                 DB::select(
@@ -1758,49 +1780,59 @@ class ExpandService
             // safety margin covering brief stalls while keeping the scan fast (~3s vs the
             // unbounded original's 80s+, which hung every tick). Idempotent — a copy
             // already pulled (deleted=1) is simply skipped.
-            $scopeSql = '';
-            $params = [now()->subDays(2)->toDateTimeString()];
-            if ($onlyMsgid !== null) {
-                $scopeSql = ' AND mg.msgid = ?';
-                $params[] = $onlyMsgid;
-            }
+            $cutoff = now()->subDays(2);
 
-            $rows = DB::select(
-                "SELECT DISTINCT mg.msgid, mg.groupid, m.fromuser
-                 FROM logs ll
-                 JOIN messages_groups mg ON mg.groupid = ll.groupid AND mg.rippled_in = 1 AND mg.deleted = 0
-                 JOIN messages m ON m.id = mg.msgid AND m.fromuser = ll.user
-                 WHERE ll.type = 'Group' AND ll.subtype = 'Left' AND ll.timestamp >= ?" . $scopeSql . "
-                   AND EXISTS (
-                       SELECT 1 FROM logs lj
-                       WHERE lj.user = ll.user AND lj.groupid = ll.groupid
-                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                         AND lj.id < ll.id
-                         AND NOT EXISTS (
-                             SELECT 1 FROM logs lj2
-                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                               AND lj2.id > lj.id
-                         )
-                   )",
-                $params
-            );
+            $rows = DB::table('logs as ll')
+                ->select(['mg.msgid', 'mg.groupid', 'm.fromuser'])
+                ->distinct()
+                ->join('messages_groups as mg', function ($j) {
+                    $j->on('mg.groupid', '=', 'll.groupid')
+                      ->where('mg.rippled_in', 1)
+                      ->where('mg.deleted', 0);
+                })
+                ->join('messages as m', function ($j) {
+                    $j->on('m.id', '=', 'mg.msgid')
+                      ->on('m.fromuser', '=', 'll.user');
+                })
+                ->where('ll.type', 'Group')
+                ->where('ll.subtype', 'Left')
+                ->where('ll.timestamp', '>=', $cutoff)
+                ->when($onlyMsgid !== null, fn ($q) => $q->where('mg.msgid', $onlyMsgid))
+                ->whereExists(function ($q) {
+                    $q->from('logs as lj')
+                      ->whereColumn('lj.user', 'll.user')
+                      ->whereColumn('lj.groupid', 'll.groupid')
+                      ->where('lj.type', 'Group')
+                      ->where('lj.subtype', 'Joined')
+                      ->where('lj.text', 'Rippled')
+                      ->whereColumn('lj.id', '<', 'll.id')
+                      ->whereNotExists(function ($q2) {
+                          $q2->from('logs as lj2')
+                             ->whereColumn('lj2.user', 'lj.user')
+                             ->whereColumn('lj2.groupid', 'lj.groupid')
+                             ->where('lj2.type', 'Group')
+                             ->where('lj2.subtype', 'Joined')
+                             ->whereColumn('lj2.id', '>', 'lj.id');
+                      });
+                })
+                ->get();
 
-            if (empty($rows)) {
+            if ($rows->isEmpty()) {
                 return;
             }
 
             if ($dryRun) {
-                $stats['pulled_on_leave'] += count($rows);
+                $stats['pulled_on_leave'] += $rows->count();
                 return;
             }
 
             foreach ($rows as $r) {
-                $n = DB::affectingStatement(
-                    'UPDATE messages_groups SET deleted = 1
-                     WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-                    [$r->msgid, $r->groupid]
-                );
+                $n = DB::table('messages_groups')
+                    ->where('msgid', $r->msgid)
+                    ->where('groupid', $r->groupid)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->update(['deleted' => 1]);
                 if ($n > 0) {
                     DB::table('logs')->insert([
                         'timestamp' => now(),
@@ -1836,6 +1868,8 @@ class ExpandService
     private function unionWithOriginGroupArea(int $msgid, string $wkt): string
     {
         try {
+            // keep-raw: ST_AsText (accessor) and ST_GeometryType (predicate) are
+            // spatial functions applied to a column, with no builder method.
             $groupRow = DB::selectOne(
                 'SELECT ST_AsText(g.polyindex) AS group_wkt
                  FROM messages_groups mg
@@ -1861,6 +1895,9 @@ class ExpandService
             // simply fails the >= 0.90 test below and the WKT passes through
             // unchanged - the same outcome the exception path produced, minus
             // the exception.
+            // keep-raw: ST_GeometryType/ST_Area/ST_AsText/ST_Union/ST_Intersection/
+            // ST_GeomFromText are all spatial functions with no builder method, wired
+            // through a derived-table subquery the builder has no equivalent for either.
             $result = DB::selectOne(
                 'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
                              THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
@@ -1880,6 +1917,7 @@ class ExpandService
         } catch (\Throwable $e) {
             // Retry once with ST_Buffer(geom, 0) geometry repair to handle invalid polygons.
             try {
+                // keep-raw: same ST_AsText/ST_GeometryType spatial functions as above.
                 $groupRow = DB::selectOne(
                     'SELECT ST_AsText(g.polyindex) AS group_wkt
                      FROM messages_groups mg
@@ -1898,6 +1936,8 @@ class ExpandService
 
                 $groupWkt = $groupRow->group_wkt;
 
+                // keep-raw: same spatial-function chain as the primary attempt, plus
+                // ST_Buffer(geom, 0) for geometry repair - no builder method for any of it.
                 $result = DB::selectOne(
                     'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
                                  THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
@@ -2130,6 +2170,8 @@ class ExpandService
             ->select(['msgid', 'lat', 'lng', 'tick', 'rejected_groups', 'status'])
             ->whereIn('status', ['expanding', 'stopped', 'done']) // held = frozen for moderation
             ->when(!$all, fn ($q) => $q->whereNull('reachable_group_ids'))
+            // keep-raw: msgid % ? is a MOD arithmetic operation on a column, which the
+            // builder has no method for.
             ->when($shardCount !== null && $shardCount > 1,
                 fn ($q) => $q->whereRaw('msgid % ? = ?', [$shardCount, (int) $shardIndex]))
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
@@ -2160,13 +2202,12 @@ class ExpandService
                     // Preview the retraction the new ids would drive (ids-based only;
                     // the tighter polygon can retract further copies on the live run).
                     if (!empty($ids)) {
-                        $ph = implode(',', array_fill(0, count($ids), '?'));
-                        $stats['would_retract_groups'] += (int) DB::selectOne(
-                            "SELECT COUNT(*) AS n FROM messages_groups
-                              WHERE msgid = ? AND rippled_in = 1 AND deleted = 0
-                                AND groupid NOT IN ({$ph})",
-                            array_merge([$row->msgid], $ids)
-                        )->n;
+                        $stats['would_retract_groups'] += DB::table('messages_groups')
+                            ->where('msgid', $row->msgid)
+                            ->where('rippled_in', 1)
+                            ->where('deleted', 0)
+                            ->whereNotIn('groupid', $ids)
+                            ->count();
                     }
                     $stats['updated']++;
                     continue;
@@ -2189,12 +2230,16 @@ class ExpandService
                     $row->msgid,
                 ];
                 try {
+                    // keep-raw: UPDATE SET polygon = ST_GeomFromText(...) plus the derived
+                    // outer_bound/inner_bound spatial expressions, and a self-assigned
+                    // `updated_at = updated_at` to suppress the ON UPDATE auto-bump.
                     DB::statement($backfillSql($boundsSet), array_merge([$storeWkt], $boundsParams, $backfillTail));
                 } catch (\Throwable $e) {
                     if ($boundsSet === '') {
                         throw $e;
                     }
                     [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
+                    // keep-raw: envelope-fallback variant of the same spatial UPDATE
                     DB::statement($backfillSql($envSet), array_merge([$storeWkt], $envParams, $backfillTail));
                 }
                 // Secondary "out of area" rejection clips must survive the rewrite
@@ -2305,6 +2350,11 @@ class ExpandService
         // the clipped-out area, so it is NULLed in the SAME statement. The outer bound
         // is left stale-loose (safe — the MBR/exact tests still decide correctly).
         $innerClear = $this->bounds->ready() ? ', mr.inner_bound = NULL' : '';
+        // keep-raw: an UPDATE ... JOIN whose SET assigns mr.polygon from
+        // ST_Difference(mr.polygon, g.polyindex) - a spatial function of two
+        // columns - and whose WHERE needs ST_GeometryType/ST_Intersects/ST_Within.
+        // None of these have a builder method; the join itself would convert, but
+        // the SET/WHERE spatial expressions cannot.
         foreach ($gids as $gid) {
             DB::statement(
                 'UPDATE rippling_reach mr JOIN `groups` g ON g.id = ?

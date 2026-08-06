@@ -251,7 +251,8 @@ class User extends Model implements Auditable
     public function getEmailPreferredAttribute(): ?string
     {
         $emails = $this->emails()
-            ->orderByRaw('preferred DESC, validated DESC')
+            ->orderBy('preferred', 'desc')
+            ->orderBy('validated', 'desc')
             ->pluck('email');
 
         foreach ($emails as $email) {
@@ -717,11 +718,14 @@ class User extends Model implements Auditable
             ->where('users.lastaccess', '>=', now()->subDays(self::USER_INACTIVE_DAYS))
             ->where(function (Builder $q) {
                 // simplemail in settings JSON is either absent (default = TRUE)
-                // or any value other than 'None'.
+                // or any value other than 'None'. Unlike the = true/false and = 0/1
+                // JSON comparisons documented elsewhere, a plain != string comparison
+                // against a JSON path renders identically via the builder's JSON dot
+                // syntax (json_unquote(json_extract(...)) != ?) - verified against
+                // absent-key, JSON null, NULL column, and boolean-value rows, all of
+                // which agree with the previous whereRaw byte-for-byte.
                 $q->whereJsonDoesntContainKey('users.settings->simplemail')
-                    ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
-                        self::SIMPLE_MAIL_NONE,
-                    ]);
+                    ->orWhere('users.settings->simplemail', '!=', self::SIMPLE_MAIL_NONE);
             });
 
         if ($checkHoliday) {
@@ -2035,6 +2039,10 @@ class User extends Model implements Auditable
             'memberships.role',
             'memberships.configid',
             'memberships.ourPostingStatus',
+            // keep-raw: CASE WHEN is a construct the query builder has no method for (the
+            // same gap COALESCE has), and here it is additionally projected under an alias
+            // that orderBy('namedisplay') below depends on - there is no builder-native way
+            // to compute a derived, aliased select column from two other columns.
             DB::raw("CASE WHEN groups.namefull IS NOT NULL THEN groups.namefull ELSE groups.nameshort END AS namedisplay"),
         ])
             ->orderBy('namedisplay') // LOWER() is redundant: both CASE arms are utf8mb4_unicode_ci

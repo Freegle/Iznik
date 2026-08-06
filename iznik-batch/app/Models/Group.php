@@ -89,6 +89,8 @@ class Group extends Model implements Auditable
         static::creating(function (Group $group) {
             if (!empty($group->lat) && !empty($group->lng) && empty($group->polyindex)) {
                 $srid = config('freegle.srid');
+                // keep-raw: ST_GeomFromText is a spatial function the query builder has no
+                // method for; the value must be a raw SQL expression in the INSERT.
                 $group->polyindex = \DB::raw("ST_GeomFromText('POINT({$group->lng} {$group->lat})', {$srid})");
             }
         });
@@ -300,8 +302,14 @@ class Group extends Model implements Auditable
         $pendingspamcounts = MessageGroup::query()
             ->select([
                 'messages_groups.groupid',
+                // keep-raw: an aliased aggregate in a multi-row SELECT list under GROUP BY -
+                // no builder method projects one alongside plain columns (see manifest reason
+                // recorded for this site).
                 DB::raw('COUNT(*) AS count'),
                 'messages_groups.collection',
+                // keep-raw: a boolean "IS NOT NULL" projected as its own aliased select
+                // column - there is no builder method for a boolean-expression projection,
+                // only whereNull/whereNotNull for filtering.
                 DB::raw('messages_groups.heldby IS NOT NULL AS held'),
             ])
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
@@ -325,7 +333,11 @@ class Group extends Model implements Auditable
         $spammembercounts = Membership::query()
             ->select([
                 'groupid',
+                // keep-raw: aliased aggregate in a multi-row SELECT list under GROUP BY -
+                // same as pendingspamcounts above.
                 DB::raw('COUNT(*) AS count'),
+                // keep-raw: boolean "IS NOT NULL" projected as an aliased select column -
+                // same as pendingspamcounts above.
                 DB::raw('heldby IS NOT NULL AS held'),
             ])
             ->whereNotNull('reviewrequestedat')
@@ -346,6 +358,8 @@ class Group extends Model implements Auditable
         $pendingeventcounts = DB::table('communityevents')
             ->select([
                 'communityevents_groups.groupid',
+                // keep-raw: aliased aggregate (COUNT DISTINCT) in a multi-row SELECT list
+                // under GROUP BY - no builder method projects one alongside plain columns.
                 DB::raw('COUNT(DISTINCT communityevents.id) AS count'),
             ])
             ->join('communityevents_dates', 'communityevents_dates.eventid', '=', 'communityevents.id')
@@ -367,6 +381,8 @@ class Group extends Model implements Auditable
         $pendingvolunteercounts = DB::table('volunteering')
             ->select([
                 'volunteering_groups.groupid',
+                // keep-raw: aliased aggregate (COUNT DISTINCT) in a multi-row SELECT list
+                // under GROUP BY - same reason as pendingeventcounts above.
                 DB::raw('COUNT(DISTINCT volunteering.id) AS count'),
             ])
             ->leftJoin('volunteering_dates', 'volunteering_dates.volunteeringid', '=', 'volunteering.id')
@@ -396,6 +412,8 @@ class Group extends Model implements Auditable
         $pendingadmins = DB::table('admins')
             ->select([
                 'groupid',
+                // keep-raw: aliased aggregate (COUNT DISTINCT) in a multi-row SELECT list
+                // under GROUP BY - same reason as pendingeventcounts above.
                 DB::raw('COUNT(DISTINCT admins.id) AS count'),
             ])
             ->whereIn('groupid', $groupids)
@@ -407,12 +425,22 @@ class Group extends Model implements Auditable
             ->get();
 
         // Related members (possible duplicate accounts, not yet notified).
+        //
+        // logincount is a correlated aggregate subquery projected as a select column;
+        // built via selectSub() with the sub-builder's ->aggregate set directly so it
+        // compiles to "(select count(*) as aggregate from ...)" without any raw SQL. The
+        // outer alias ("logincount") is what having() and callers key off; the sub-builder's
+        // own "as aggregate" label is unused. having('logincount', ...) then references that
+        // outer select-list alias directly, exactly as havingRaw('logincount > 0') did.
+        $sub1LoginCount = DB::table('users_logins')->whereColumn('userid', 'memberships.userid');
+        $sub1LoginCount->aggregate = ['function' => 'count', 'columns' => ['*']];
+
         $sub1 = DB::table('users_related')
             ->select([
                 'users_related.user1',
                 'memberships.groupid',
-                DB::raw('(SELECT COUNT(*) FROM users_logins WHERE userid = memberships.userid) AS logincount'),
             ])
+            ->selectSub($sub1LoginCount, 'logincount')
             ->join('memberships', 'users_related.user1', '=', 'memberships.userid')
             ->join('users as u1', function ($join) {
                 $join->on('users_related.user1', '=', 'u1.id')
@@ -427,14 +455,17 @@ class Group extends Model implements Auditable
             ->whereColumn('users_related.user1', '<', 'users_related.user2')
             ->where('users_related.notified', 0)
             ->whereIn('memberships.groupid', $groupids)
-            ->havingRaw('logincount > 0');
+            ->having('logincount', '>', 0);
+
+        $sub2LoginCount = DB::table('users_logins')->whereColumn('userid', 'memberships.userid');
+        $sub2LoginCount->aggregate = ['function' => 'count', 'columns' => ['*']];
 
         $sub2 = DB::table('users_related')
             ->select([
                 'users_related.user1',
                 'memberships.groupid',
-                DB::raw('(SELECT COUNT(*) FROM users_logins WHERE userid = memberships.userid) AS logincount'),
             ])
+            ->selectSub($sub2LoginCount, 'logincount')
             ->join('memberships', 'users_related.user2', '=', 'memberships.userid')
             ->join('users as u3', function ($join) {
                 $join->on('users_related.user2', '=', 'u3.id')
@@ -449,11 +480,14 @@ class Group extends Model implements Auditable
             ->whereColumn('users_related.user1', '<', 'users_related.user2')
             ->where('users_related.notified', 0)
             ->whereIn('memberships.groupid', $groupids)
-            ->havingRaw('logincount > 0');
+            ->having('logincount', '>', 0);
 
         $unionQuery = $sub1->union($sub2);
         $relatedmembers = DB::query()
             ->fromSub($unionQuery, 't')
+            // keep-raw: aliased aggregate (COUNT(*) AS count) combined with a plain column
+            // in the same multi-row SELECT list under GROUP BY - no builder method projects
+            // one alongside the other; see the manifest reason recorded for this construct.
             ->selectRaw('COUNT(*) AS count, groupid')
             ->groupBy('groupid')
             ->get();
@@ -463,6 +497,8 @@ class Group extends Model implements Auditable
         $editreviewcounts = DB::table('messages_edits')
             ->select([
                 'messages_groups.groupid',
+                // keep-raw: aliased aggregate (COUNT DISTINCT) in a multi-row SELECT list
+                // under GROUP BY - same reason as pendingeventcounts above.
                 DB::raw('COUNT(DISTINCT messages_edits.msgid) AS count'),
             ])
             ->join('messages_groups', 'messages_edits.msgid', '=', 'messages_groups.msgid')
@@ -480,6 +516,8 @@ class Group extends Model implements Auditable
         $happinesscounts = MessageOutcome::query()
             ->select([
                 'messages_groups.groupid',
+                // keep-raw: aliased aggregate (COUNT DISTINCT) in a multi-row SELECT list
+                // under GROUP BY - same reason as pendingeventcounts above.
                 DB::raw('COUNT(DISTINCT messages_groups.msgid) AS count'),
             ])
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_outcomes.msgid')
@@ -488,7 +526,8 @@ class Group extends Model implements Auditable
             ->where('messages_groups.arrival', '>', $earliestmsg)
             ->whereIn('messages_groups.groupid', $groupids)
             ->where('messages_outcomes.reviewed', 0)
-            ->whereRaw(self::getHappinessFilter())
+            ->whereNotNull('messages_outcomes.comments')
+            ->whereNotIn('messages_outcomes.comments', self::HAPPINESS_FILTER_EXCLUDED_COMMENTS)
             ->groupBy('messages_groups.groupid')
             ->get();
 
@@ -637,24 +676,24 @@ class Group extends Model implements Auditable
     }
 
     /**
-     * SQL fragment to filter out auto-generated/boilerplate happiness comments.
+     * Auto-generated/boilerplate happiness comments to exclude when counting comments
+     * that are actually worth a moderator's attention.
      *
-     * Ported from the legacy V1 PHP Group::getHappinessFilter().
-     * Note that this does NOT include a leading " AND" since it's intended for use inside a whereRaw() call.
+     * Ported from the legacy V1 PHP Group::getHappinessFilter(). Applied via whereNotNull()
+     * + whereNotIn() at the call site (a chain of "comments IS NOT NULL AND comments != x"
+     * is equivalent to NOT IN once NULLs are already excluded).
      */
-    private static function getHappinessFilter(): string
-    {
-        return "messages_outcomes.comments IS NOT NULL
-              AND messages_outcomes.comments != 'Sorry, this is no longer available.'
-              AND messages_outcomes.comments != 'Thanks, this has now been taken.'
-              AND messages_outcomes.comments != 'Thanks, I\\'m no longer looking for this.'
-              AND messages_outcomes.comments != 'Sorry, this has now been taken.'
-              AND messages_outcomes.comments != 'Thanks for the interest, but this has now been taken.'
-              AND messages_outcomes.comments != 'Thanks, these have now been taken.'
-              AND messages_outcomes.comments != 'Thanks, this has now been received.'
-              AND messages_outcomes.comments != 'Withdrawn on user unsubscribe'
-              AND messages_outcomes.comments != 'Auto-Expired'";
-    }
+    private const HAPPINESS_FILTER_EXCLUDED_COMMENTS = [
+        'Sorry, this is no longer available.',
+        'Thanks, this has now been taken.',
+        "Thanks, I'm no longer looking for this.",
+        'Sorry, this has now been taken.',
+        'Thanks for the interest, but this has now been taken.',
+        'Thanks, these have now been taken.',
+        'Thanks, this has now been received.',
+        'Withdrawn on user unsubscribe',
+        'Auto-Expired',
+    ];
 
     // Fields exposed by getPublic() - mirrors the legacy V1 PHP Group::$publicatts.
     private const PUBLIC_ATTS = [
