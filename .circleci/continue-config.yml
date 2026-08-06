@@ -24,10 +24,12 @@ parameters:
 
 orbs:
   # 1.1.373 drops the ORM migration inventory ratchet (Gate 1) and the Go/PHP
-  # toolchain provisioning it needed. The Go migration is done - raw is at 0 -
-  # so the gate was regenerating a 5,974-entry inventory on every build to
-  # answer one question, "did someone add raw SQL back", which
-  # .claude/check-raw-sql.sh now answers at the point it happens.
+  # toolchain provisioning it needed. The Go conversion work is done; raw SQL is
+  # NOT at zero (about 44 deliberate sites remain - the manifest's "raw: 0" was
+  # a count of untriaged sites, not of raw SQL), so the gate was regenerating a
+  # 5,974-entry inventory on every build to answer one question: did someone add
+  # raw SQL back? The check-raw-sql job above answers that directly, and does it
+  # in CI rather than only at authoring time.
   #
   # Publishing the orb is what makes a step take effect - CircleCI resolves
   # freegle/tests from the registry, not from the copy in this repo - but the
@@ -38,6 +40,26 @@ orbs:
   freegle: freegle/tests@1.1.373
 
 jobs:
+  # The CI half of the raw-SQL guard. The Claude Code PreToolUse hook only sees
+  # edits made through that one tool, so on its own it is an authoring-time
+  # nicety rather than the gate the ratchet was - anything typed in an ordinary
+  # editor never meets it. This job runs the SAME script in --diff mode over the
+  # branch, so it does not care how the SQL got there.
+  check-raw-sql:
+    docker:
+      - image: cimg/base:current
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the guard
+          command: .claude/check-raw-sql.test.sh
+      - run:
+          name: No new unjustified raw SQL
+          command: |
+            git fetch --no-tags --depth=100 origin master
+            .claude/check-raw-sql.sh --diff origin/master
+
   mark-ci-passed:
     docker:
       - image: cimg/base:current
@@ -74,6 +96,7 @@ workflows:
         - not: << pipeline.parameters.build_testflight >>
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
+      - check-raw-sql
       - freegle/build-and-test:
           use-executor:
             name: freegle/machine-executor-local
@@ -141,6 +164,7 @@ workflows:
         - not: << pipeline.parameters.build_testflight >>
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
+      - check-raw-sql
       - freegle/build-and-test:
           post-steps:
             - run:
@@ -301,6 +325,7 @@ workflows:
   build-test-katapult:
     when: << pipeline.parameters.use_katapult >>
     jobs:
+      - check-raw-sql
       - freegle/build-and-test:
           use-executor:
             name: freegle/machine-executor-katapult
