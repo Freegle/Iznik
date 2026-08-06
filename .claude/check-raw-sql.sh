@@ -14,23 +14,41 @@
 # inventory, an AST extractor and a golden-SQL parity harness. That machinery
 # existed to CARRY OUT a migration. Once the Go conversions landed it was
 # carrying ~8MB of inventory to answer one question: did someone add raw SQL
-# back? This hook answers that where it happens, earlier and far cheaper.
+# back?
+#
+# TWO MODES, AND BOTH ARE NEEDED - the editor mode alone is not a replacement
+# for a CI gate, and an earlier revision of this script shipped as if it were:
+#
+#   (no args)      Claude Code PreToolUse hook. Reads a Write/Edit tool call as
+#                  JSON on stdin and judges the text being written. Catches the
+#                  addition at the moment it is made, which is the cheapest
+#                  place to catch it - but ONLY for edits made through that one
+#                  tool. Anything typed in a normal editor sails past.
+#
+#   --diff [BASE]  CI gate. Scans the added lines of `git diff BASE...HEAD`
+#                  (BASE defaults to origin/master) and fails the build on any
+#                  new raw SQL without a justification. This is what actually
+#                  holds the line, because it does not care how the edit was
+#                  made. Run it from .circleci/ on every branch.
 #
 # Covers BOTH stacks:
 #   - iznik-server-go: converted, bar the deliberate remainder above.
-#   - iznik-batch (Laravel): 569 raw sites, 0 converted - that work has not
-#     started. The hook is not trying to fix those; it stops the pile GROWING
-#     silently, and makes each new one carry a written reason.
+#   - iznik-batch (Laravel): conversion in progress; the hook is not trying to
+#     fix the existing sites, it stops the pile GROWING silently and makes each
+#     new one carry a written reason.
 #
 # It WILL fire on an edit to one of the existing deliberate sites, because their
 # justifications lived in the inventory rather than inline. That is accepted:
-# the hook reads diffs, so it only ever interrupts someone actually editing one
-# of those queries, and an override is a sentence. Retro-fitting ~44 comments to
-# pre-empt it would be churn for a prompt nobody minds.
+# both modes read diffs, so it only ever interrupts someone actually editing one
+# of those queries, and an override is a sentence.
 #
-# It judges ONLY the text being written, never the whole file, so editing near
+# It judges ONLY the text being added, never the whole file, so editing near
 # existing raw SQL is unaffected. Exemptions:
 #   - *_test.go / iznik-batch/tests/  - fixtures legitimately use raw SQL
+#     (matched WITHOUT a leading slash: CI mode gets relative paths from git,
+#     editor mode gets absolute ones, and a `*/x/*` pattern only matches the
+#     latter - which silently disabled every exemption in CI until a test
+#     caught it)
 #   - iznik-batch/database/migrations/ - frozen DDL, already a blanket keep-raw
 #     rule in the retired inventory; blocking these would fire constantly
 #   - EeeSqliteService and friends - a separate local SQLite store, never in
@@ -44,10 +62,106 @@
 # active Laravel work, narrow RAW_PHP to the whole-statement calls rather than
 # switching the hook off.
 
-if [ -n "$CI" ]; then
+RAW_GO='\.(Raw|Exec)\(|RetryExec\(|ExecInsertGetID\('
+RAW_PHP='DB::(select|statement|insert|update|delete|unprepared)\(|->(whereRaw|selectRaw|orderByRaw|groupByRaw|havingRaw)\('
+KEEP_RAW='(//|#|\*)[[:space:]]*keep-raw:'
+
+# Which language's rules apply to a path, or "" if the path is out of scope or
+# exempt. Single source of truth for both modes.
+lang_for_path() {
+  case "$1" in
+    *_test.go|*iznik-server-go/test/*) return ;;
+    *iznik-server-go/*.go) echo go ;;
+    *iznik-batch/tests/*|*database/migrations/*|*EeeSqlite*) return ;;
+    *iznik-batch/*.php) echo php ;;
+  esac
+}
+
+pattern_for_lang() {
+  [ "$1" = go ] && echo "$RAW_GO" || echo "$RAW_PHP"
+}
+
+explain_go() {
+  cat >&2 <<'EOF'
+Use a GORM chain - db.Table(...).Select(...).Where(...) - as the 1,593 converted
+sites do. For a SQL fragment inside a chain (NOW(), a spatial predicate, an
+index hint) use gorm.Expr / clause.Expr; those are not blocked.
+
+If it genuinely cannot go through GORM - dynamic table or column name, an index
+hint that must survive, something GORM will not render - say why on the line
+above and this hook will allow it:
+
+    // keep-raw: <why this cannot be a GORM chain>
+    db.Raw("...")
+EOF
+}
+
+explain_php() {
+  cat >&2 <<'EOF'
+Use the query builder or Eloquent instead. If it genuinely cannot be expressed
+that way - a window function, a dialect-specific construct, a statement the
+builder will not render - say why on the line above and this hook will allow it:
+
+    // keep-raw: <why the builder cannot express this>
+    DB::select('...');
+
+Migrations, tests and the EeeSqlite store are already exempt, so if you are
+hitting this there, the path check needs fixing rather than a comment.
+EOF
+}
+
+# ---------------------------------------------------------------- CI mode ----
+if [ "${1:-}" = "--diff" ]; then
+  BASE="${2:-origin/master}"
+  git rev-parse --verify "$BASE" >/dev/null 2>&1 || {
+    echo "check-raw-sql: cannot resolve base ref '$BASE'" >&2
+    exit 2
+  }
+
+  FOUND=0
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    lang=$(lang_for_path "$file")
+    [ -n "$lang" ] || continue
+    [ -f "$file" ] || continue
+    pattern=$(pattern_for_lang "$lang")
+
+    # Added lines only, with their new-file line numbers, so the report points
+    # at something a reviewer can open.
+    git diff -U0 "$BASE...HEAD" -- "$file" | awk '
+      /^@@/ { if (match($0, /\+[0-9]+/)) { n = substr($0, RSTART+1, RLENGTH-1) + 0 }; next }
+      /^\+\+\+/ { next }
+      /^\+/ { print n ":" substr($0, 2); n++ }
+    ' | while IFS= read -r entry; do
+      lineno=${entry%%:*}
+      text=${entry#*:}
+      echo "$text" | grep -qE "$pattern" || continue
+      # A justification may be on the added line itself or on any of the few
+      # lines above it in the file as it now stands - the comment is usually
+      # pre-existing context, not part of the diff.
+      start=$((lineno > 8 ? lineno - 8 : 1))
+      if sed -n "${start},${lineno}p" "$file" | grep -qiE "$KEEP_RAW"; then
+        continue
+      fi
+      printf '%s:%s: %s\n' "$file" "$lineno" "$(echo "$text" | sed 's/^[[:space:]]*//')"
+    done
+  done < <(git diff --name-only --diff-filter=d "$BASE...HEAD") > /tmp/check-raw-sql.$$
+
+  if [ -s /tmp/check-raw-sql.$$ ]; then
+    echo "BLOCKED: this branch adds raw SQL without a justification." >&2
+    echo >&2
+    cat /tmp/check-raw-sql.$$ >&2
+    echo >&2
+    grep -q '\.go:' /tmp/check-raw-sql.$$ && explain_go
+    grep -q '\.php:' /tmp/check-raw-sql.$$ && explain_php
+    rm -f /tmp/check-raw-sql.$$
+    exit 1
+  fi
+  rm -f /tmp/check-raw-sql.$$
   exit 0
 fi
 
+# ------------------------------------------------------------ editor mode ----
 INPUT=$(cat 2>/dev/null)
 [ -z "$INPUT" ] && exit 0
 
@@ -59,69 +173,22 @@ ADDED=$(echo "$INPUT" | jq -r '(.tool_input.new_string // .tool_input.content //
 [ -z "$ADDED" ] && exit 0
 
 # Already justified - same rule in both languages.
-if echo "$ADDED" | grep -qiE '(//|#|\*)\s*keep-raw:'; then
+if echo "$ADDED" | grep -qiE "$KEEP_RAW"; then
   exit 0
 fi
 
-LANG=""
-case "$FILE" in
-  *iznik-server-go/*.go)
-    # *_test.go is obvious; iznik-server-go/test/ is the integration-test
-    # package, whose non-_test.go helpers (testUtils.go and friends) are
-    # fixture scaffolding and legitimately full of raw SQL.
-    case "$FILE" in
-      *_test.go) exit 0 ;;
-      */iznik-server-go/test/*) exit 0 ;;
-    esac
-    LANG=go
-    ;;
-  *iznik-batch/*.php)
-    case "$FILE" in
-      */iznik-batch/tests/*) exit 0 ;;
-      */database/migrations/*) exit 0 ;;
-      *EeeSqlite*) exit 0 ;;
-    esac
-    LANG=php
-    ;;
-  *) exit 0 ;;
-esac
+LANG=$(lang_for_path "$FILE")
+[ -n "$LANG" ] || exit 0
+
+echo "$ADDED" | grep -qE "$(pattern_for_lang "$LANG")" || exit 0
 
 if [ "$LANG" = go ]; then
-  # gorm.Expr / clause.Expr are SQL fragments inside a real GORM chain - how a
-  # converted site says NOW(), a spatial predicate or an index hint. Not raw
-  # statements, not blocked.
-  echo "$ADDED" | grep -qE '\.(Raw|Exec)\(|RetryExec\(|ExecInsertGetID\(' || exit 0
-  cat >&2 <<'EOF'
-BLOCKED: this adds raw SQL to iznik-server-go.
-
-Use a GORM chain - db.Table(...).Select(...).Where(...) - as the 1,593 converted
-sites do. For a SQL fragment inside a chain (NOW(), a spatial
-predicate, an index hint) use gorm.Expr / clause.Expr; those are not blocked.
-
-If it genuinely cannot go through GORM - dynamic table or column name, an index
-hint that must survive, something GORM will not render - say why on the line
-above and this hook will allow it:
-
-    // keep-raw: <why this cannot be a GORM chain>
-    db.Raw("...")
-EOF
+  echo "BLOCKED: this adds raw SQL to iznik-server-go." >&2
+  echo >&2
+  explain_go
 else
-  echo "$ADDED" | grep -qE 'DB::(select|statement|insert|update|delete|unprepared)\(|->(whereRaw|selectRaw|orderByRaw|groupByRaw|havingRaw)\(' || exit 0
-  cat >&2 <<'EOF'
-BLOCKED: this adds raw SQL to iznik-batch.
-
-The Laravel side has 569 raw sites and no conversions yet - this hook is not
-asking you to fix those, only to stop the pile growing without a reason.
-
-Use the query builder or Eloquent instead. If it genuinely cannot be expressed
-that way - a window function, a dialect-specific construct, a statement the
-builder will not render - say why on the line above and this hook will allow it:
-
-    // keep-raw: <why the builder cannot express this>
-    DB::select('...');
-
-Migrations, tests and the EeeSqlite store are already exempt, so if you are
-hitting this there, the path check needs fixing rather than a comment.
-EOF
+  echo "BLOCKED: this adds raw SQL to iznik-batch." >&2
+  echo >&2
+  explain_php
 fi
 exit 2
