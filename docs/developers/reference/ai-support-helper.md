@@ -98,6 +98,13 @@ a real bound, not a hint:
   inside the caller's timeout — so that member could not be investigated at all.
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
   rejects any `query_range` longer than `30d1h` outright.
+- **Loki collection runs in value order under a time budget** (`userdump/loki.go`):
+  indexed `user_id` label first, then the slim unlabelled sources and email passes
+  (each `|=`-prefiltered before any `| json`/regex, in 15-day halves), then two-leg
+  session lookups, and finally `api_headers` — the ~67GB/7d firehose — newest-first in
+  budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
+  `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
+  or `systemlogs` builds.
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
   empty table can mean *not collected*, not *did not happen*.

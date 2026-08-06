@@ -132,23 +132,48 @@ async function lokiQuery({ query, start = '1h', end, limit = 100, metric = false
   return out
 }
 
-// 3-pass user log search (user_id is a JSON body field, not a label).
+// The unlabelled sources that carry user_id only inside the JSON line, minus
+// api_headers — that source is ~67GB per 7 days on prod and dominates any scan
+// that includes it (it is what made the old whole-app passes always hit the
+// 20s abort and error out). user_id IS an indexed stream label on api,
+// chat_reply and client, so those are covered by cheap label selectors.
+const LOKI_SLIM_SOURCES = 'batch|batch_event|email|incoming_mail|similar_posts|vector_search'
+
+// 3-pass user log search. Every parse/regex stage sits behind a `|=` substring
+// prefilter — the JSON parser is the expensive part, and each of these values
+// appears verbatim in the raw line, so only candidate lines get parsed.
 async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200 }) {
   const passes = {}
+  // Labelled sources: an index lookup, ~0.5s over 30d.
   passes.byUserId = await lokiQuery({
-    query: `{app="freegle"} | json | user_id="${userid}"`,
+    query: `{app="freegle", user_id="${userid}"}`,
     start: window,
     limit,
   })
+  // Slim unlabelled sources: prefilter, then the exact JSON post-filter.
+  try {
+    const slim = await lokiQuery({
+      query: `{app="freegle", source=~"${LOKI_SLIM_SOURCES}"} |= "${userid}" | json | user_id="${userid}"`,
+      start: window,
+      limit,
+    })
+    passes.byUserId.push(...slim)
+  } catch (e) {
+    console.error('[lokiUserSearch] slim-source pass failed:', e.message)
+  }
   passes.byEmail = []
   for (const email of emails.slice(0, 5)) {
     const esc = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const hits = await lokiQuery({
-      query: `{app="freegle"} |~ "(?i)${esc}"`,
-      start: window,
-      limit: Math.floor(limit / 2),
-    })
-    passes.byEmail.push(...hits)
+    try {
+      const hits = await lokiQuery({
+        query: `{app="freegle", source=~"${LOKI_SLIM_SOURCES}"} |= "${email.toLowerCase()}" |~ "(?i)${esc}"`,
+        start: window,
+        limit: Math.floor(limit / 2),
+      })
+      passes.byEmail.push(...hits)
+    } catch (e) {
+      console.error('[lokiUserSearch] email pass failed:', e.message)
+    }
   }
   // Harvest session ids from api lines for the client-side pass.
   const sids = new Set()
@@ -158,12 +183,25 @@ async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200
   }
   passes.bySession = []
   for (const sid of Array.from(sids).slice(0, 25)) {
-    const hits = await lokiQuery({
-      query: `{app="freegle",source="client"} | json | session_id="${sid}"`,
-      start: window,
-      limit: 50,
-    })
-    passes.bySession.push(...hits)
+    try {
+      // Two legs: the indexed user_id label (cheap at any window), plus the
+      // anonymous pre-login streams — capped at 7d, the client source's
+      // retention, beyond which there is nothing to find.
+      const labelled = await lokiQuery({
+        query: `{app="freegle", source="client", user_id="${userid}"} |= "${sid}" | json | session_id="${sid}"`,
+        start: window,
+        limit: 50,
+      })
+      const anonWindow = /d$/.test(window) && parseInt(window, 10) > 7 ? '7d' : window
+      const anon = await lokiQuery({
+        query: `{app="freegle", source="client", user_id=""} |= "${sid}" | json | session_id="${sid}"`,
+        start: anonWindow,
+        limit: 50,
+      })
+      passes.bySession.push(...labelled, ...anon)
+    } catch (e) {
+      console.error('[lokiUserSearch] session pass failed:', e.message)
+    }
   }
   return passes
 }

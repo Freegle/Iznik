@@ -465,8 +465,34 @@ func buildLogQLQuery(sources, types, subtypes, levels, search, userID, groupID, 
 
 	query := "{" + strings.Join(labelParts, ", ") + "}"
 
-	// Add JSON parsing pipeline.
-	query += " | json"
+	// Line-filter prefilters BEFORE any `| json`: the parser is the expensive
+	// stage (it decompresses and parses every line the selector matches -
+	// minutes against a production day), and every one of these values appears
+	// verbatim in the raw line, so a cheap substring filter first means only
+	// candidate lines get parsed. The exact `| json | field = …` post-filters
+	// stay because a bare substring has false positives.
+	if msgID != "" {
+		query += fmt.Sprintf(` |= "%s"`, msgID)
+	}
+	if traceID != "" {
+		query += fmt.Sprintf(` |= "%s"`, traceID)
+	}
+	if sessionID != "" {
+		query += fmt.Sprintf(` |= "%s"`, sessionID)
+	}
+	if ipAddress != "" {
+		query += fmt.Sprintf(` |= "%s"`, ipAddress)
+	}
+	if email != "" {
+		// Case-sensitive prefilter on the lowercased address; the (?i) regex
+		// below keeps recall for any odd-cased line among the matches.
+		query += fmt.Sprintf(` |= "%s"`, strings.ToLower(email))
+	}
+
+	// Only pay for the JSON parse when a JSON-field post-filter needs it.
+	if msgID != "" || traceID != "" || sessionID != "" || ipAddress != "" {
+		query += " | json"
+	}
 
 	if msgID != "" {
 		query += fmt.Sprintf(` | msgid = %s or msg_id = %s`, msgID, msgID)
@@ -550,6 +576,14 @@ func parseTimeRange(start, end string) (int64, int64) {
 		} else {
 			startTs = now.Add(-1 * time.Minute).UnixNano()
 		}
+	}
+
+	// Production Loki enforces a 30d1h maximum query range and 400-rejects
+	// anything longer - a wider request is not "get less back", it is "get
+	// nothing back". Same clamp as userdump's clampLokiStart.
+	const maxLokiRange = 30 * 24 * time.Hour
+	if oldest := endTs - int64(maxLokiRange); startTs < oldest {
+		startTs = oldest
 	}
 
 	return startTs, endTs
