@@ -377,3 +377,71 @@ describe('PARALLEL_FIX_BUGS prompt — prior-attempts guard', () => {
     expect(prompt).toContain('Laravel batch jobs')
   })
 })
+
+describe('PARALLEL_ANALYZE_AND_FIX prompt — the PR fix delegate gets one turn', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // A delegate once did the whole diagnosis, kicked the Laravel and Go suites
+  // off in the background, then ended its turn to "wait for the notifications".
+  // A `claude -p` one-shot has no next turn, so it exited having pushed
+  // nothing — which cost the focus PR an attempt and, before the router fix,
+  // starved Discourse triage for the rest of the iteration.
+  it('tells the delegate it has exactly one turn', () => {
+    expect(prompt).toContain('YOU GET EXACTLY ONE TURN')
+  })
+
+  it('forbids ending the turn while background work is pending', () => {
+    expect(prompt).toContain('never end your turn while anything is pending')
+  })
+
+  it('requires blocking on background commands within the same turn', () => {
+    expect(prompt).toContain('block until it finishes inside this same turn')
+  })
+
+  it('makes pushing before finishing the explicit bar', () => {
+    expect(prompt).toContain('PUSH BEFORE YOU FINISH')
+  })
+
+  it('warns that a run without a push counts as a failed attempt', () => {
+    expect(prompt).toContain('counts as a failed attempt')
+  })
+})
+
+describe('driver.ts — red-CI invariant tracks the router skip rule', () => {
+  const driverTs = readFileSync(join(__dirname, '../driver.ts'), 'utf8')
+
+  // The hard invariant drags any red PR back to CHECK_CI. Its suppression set
+  // must match ci_router_decide's skip rule, or the two oscillate: the router
+  // skips a PR that pushed nothing, the instance goes past the gate, the
+  // invariant re-adds it, the router skips it again — until the step cap.
+  it('suppresses PRs whose attempt pushed nothing, not just terminal records', () => {
+    const idx = driverTs.indexOf('const attemptsRed')
+    expect(idx).toBeGreaterThan(-1)
+    const block = driverTs.slice(idx, idx + 700)
+    expect(block).toContain('a.terminal || a.pushed !== true')
+  })
+
+  it('feeds that skip set into the red-PR check', () => {
+    expect(driverTs).toContain('realRedPRCheck(skipSet)')
+  })
+})
+
+describe('actions.ts — ci_router_decide budget and skip rules', () => {
+  it('drops a PR from re-picking once its attempt pushed nothing', () => {
+    const idx = actionsTs.indexOf('const attemptedNums')
+    expect(idx).toBeGreaterThan(-1)
+    const block = actionsTs.slice(idx, idx + 300)
+    expect(block).toContain('a.terminal || a.pushed !== true')
+  })
+
+  it('charges the fix budget per dispatch rather than per router visit', () => {
+    expect(actionsTs).toContain('pr_fix_dispatched_')
+    expect(actionsTs).toContain('already dispatched this iteration')
+  })
+
+  it('clears the dispatch marker when a PR goes green', () => {
+    const idx = actionsTs.indexOf('is green — reset fix attempt counter')
+    expect(idx).toBeGreaterThan(-1)
+    expect(actionsTs.slice(idx - 400, idx)).toContain('pr_fix_dispatched_')
+  })
+})

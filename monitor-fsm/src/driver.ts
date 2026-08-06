@@ -170,12 +170,14 @@ interface RedPRCheck {
  * it force-transitions back to ROUTER whenever any redPR exists. The LLM cannot
  * escape this — there's no prompt to persuade.
  *
- * Pass `terminalPRNumbers` to exclude PRs the FSM has given up on (loop-breaker
- * terminal records). Without this, the hard-invariant ping-pongs with ROUTER:
- * ROUTER sees terminal PR and skips it → past the gate → hard-invariant re-adds it →
- * ROUTER skips it again → infinite oscillation.
+ * Pass `skipPRNumbers` to exclude PRs that CI_ROUTER will not pick this
+ * iteration: loop-breaker terminal records, and PRs whose fix attempt already
+ * ran without pushing anything. This set MUST track the router's own skip rule
+ * in ci_router_decide — if the driver drags back a PR the router then skips,
+ * the two oscillate: ROUTER skips it → past the gate → hard-invariant re-adds
+ * it → ROUTER skips it again, burning the step budget on nothing.
  */
-async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promise<RedPRCheck> {
+async function realRedPRCheck(skipPRNumbers: Set<number> = new Set()): Promise<RedPRCheck> {
   try {
     const { stdout: listOut } = await exec('gh', [
       'pr', 'list',
@@ -186,7 +188,7 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
       '--json', 'number,title,url',
     ], { maxBuffer: 10 * 1024 * 1024 })
     const rawPRs = JSON.parse(listOut) as Array<{ number: number; title: string; url: string }>
-    const prs = rawPRs.filter(p => !terminalPRNumbers.has(p.number))
+    const prs = rawPRs.filter(p => !skipPRNumbers.has(p.number))
     const redPRs: RedPRCheck['redPRs'] = []
     for (const pr of prs) {
       // `gh pr checks` uses exit code as a SIGNAL: 0=all green, 1=has failures,
@@ -803,9 +805,14 @@ async function main() {
       const postRed = await engine.getInstance(instance.id)
       if (STATES_PAST_GATE.has(postRed.currentState)) {
         const ctxRed: any = postRed.context ?? {}
-        const attemptsRed: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
-        const terminalSet = new Set(attemptsRed.filter(a => a.terminal).map(a => a.prNumber))
-        const red = await realRedPRCheck(terminalSet)
+        const attemptsRed: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
+        // Mirror ci_router_decide's skip rule exactly: a PR is out of play for
+        // this iteration once its attempt is terminal OR pushed nothing. Only
+        // suppressing terminal records here would oscillate against the router.
+        const skipSet = new Set(
+          attemptsRed.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
+        )
+        const red = await realRedPRCheck(skipSet)
         if (red.redPRs.length > 0) {
           const summary = red.redPRs.map(p => `#${p.number} (${p.failedChecks.length} red)`).join(', ')
           outWarn(`red tests on ${summary} — returning to check automated tests`)
