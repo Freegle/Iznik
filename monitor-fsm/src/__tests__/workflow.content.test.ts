@@ -445,3 +445,29 @@ describe('actions.ts — ci_router_decide budget and skip rules', () => {
     expect(actionsTs.slice(idx - 400, idx)).toContain('pr_fix_dispatched_')
   })
 })
+
+describe('PARALLEL_ANALYZE_AND_FIX prompt — triage must emit the post number', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // persist_classifications keys discourse_bug on (topic, post) and silently
+  // skips anything missing either. On 2026-08-06 the triage delegate returned
+  // Michael's ModTools report with no post field, so WORK_ROUTER dispatched
+  // "10010.undefined" and the bug was never recorded.
+  it('requires the post number as a classification field', () => {
+    const idx = prompt.indexOf('STEP 6. Classify each fetched post')
+    expect(idx).toBeGreaterThan(-1)
+    const block = prompt.slice(idx, idx + 700)
+    expect(block).toContain('- post:')
+    expect(block).toContain('post_stream.posts[].post_number')
+  })
+
+  it('requires the topic id too', () => {
+    const idx = prompt.indexOf('STEP 6. Classify each fetched post')
+    expect(prompt.slice(idx, idx + 700)).toContain('- topic:')
+  })
+
+  it('spells out that a classification without it is discarded', () => {
+    const idx = prompt.indexOf('STEP 6. Classify each fetched post')
+    expect(prompt.slice(idx, idx + 700)).toContain('DISCARDED')
+  })
+})
