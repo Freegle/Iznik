@@ -105,6 +105,64 @@ class EmbeddingService
         return $count;
     }
 
+    /**
+     * Embed saved search terms and upsert into users_searches_embeddings.
+     *
+     * Terms are embedded exactly as post subjects are - as DOCUMENTS - so the
+     * resulting cosines sit on the same scale as
+     * messages_embeddings.subject_embedding and the matched-posts threshold
+     * (0.85) means the same thing against both. A term is already the same kind
+     * of text as a preprocessed subject: "pine bookcase", not "OFFER: Pine
+     * bookcase (Tuvalu High Street)".
+     *
+     * Returns count written, or false on embedder failure.
+     *
+     * @param  iterable<object{id:int,term:string}>  $searches
+     */
+    public function processSearches(iterable $searches): int|false
+    {
+        $texts = [];
+
+        foreach ($searches as $search) {
+            $term = trim((string) ($search->term ?? ''));
+            if ($term === '') {
+                continue;
+            }
+
+            // preprocessSubject anyway: some saved searches are pasted straight
+            // from a post subject, complete with "WANTED:" and a location.
+            $texts[(string) (int) $search->id] = $this->preprocessSubject($term);
+        }
+
+        if (empty($texts)) {
+            return 0;
+        }
+
+        $vectors = $this->embedder->embed($texts);
+        if ($vectors === false) {
+            return false;
+        }
+
+        $count = 0;
+        foreach ($texts as $id => $_) {
+            if (! isset($vectors[$id])) {
+                continue;
+            }
+
+            DB::statement(
+                'INSERT INTO users_searches_embeddings (searchid, term_embedding, model_version)
+                 VALUES (?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                   term_embedding = VALUES(term_embedding),
+                   model_version  = VALUES(model_version)',
+                [(int) $id, $this->packVector($vectors[$id]), self::MODEL_VERSION]
+            );
+            $count++;
+        }
+
+        return $count;
+    }
+
     private function packVector(array $floats): string
     {
         if (count($floats) !== self::EMBEDDING_DIM) {

@@ -1,9 +1,10 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-06
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
   - iznik-server-go/firstreply/**
+  - iznik-server-go/message/searchmatches.go
   - iznik-server-go/chat/chatprompt.go
   - iznik-nuxt3/components/ChatMessagePrompt.vue
   - iznik-nuxt3/components/ChatPromptPost.vue
@@ -122,12 +123,44 @@ Three signals, in `iznik-batch/app/Services/FirstReply/ScoutService.php`:
 
 | Signal | Source | Weight |
 |---|---|---|
-| `wanted` | an open post of the **opposite** type whose subject matches | 5 |
-| `search` | a saved search (`users_searches`) that matches | 3 |
+| `wanted` | an open post of the **opposite** type that matches by vector | 5 |
+| `search` | a saved search (`users_searches`) that matches by vector | 3 |
 | `frequent` | distinct Interested replies in 90 days, on this post's own communities | 1 |
 
 `wanted` is type-aware on purpose: a WANTED matches an OFFER and vice versa. Somebody else
 wanting the same thing you want is competition, not a lead.
+
+### Matching is vector, at the bar for mail
+
+Both match signals go through apiv2 and are held to **`MinMatchedPostScore` (0.85)** - the same
+constant the matched-posts email uses, not the `MinSimilarScore` (0.80) of the on-site "similar
+posts" strip.
+
+Those are separate numbers because precision falls off a cliff. Hand-judged on live posts:
+0.85-0.90 scores 0.92, 0.80-0.85 scores **0.43**. A strip somebody chose to look at can carry a
+weak suggestion; an email cannot. `postmatches.go` puts it plainly - a missed match costs one
+email nobody sees, a junk match teaches somebody to ignore the next one.
+
+Both signals were previously SQL LIKE on keywords, which has no score at all: a saved search for
+"bed" fired on "bed lever", and nothing could say how badly it had matched.
+
+| Signal | Endpoint | Compares |
+|---|---|---|
+| `wanted` | `/message/{id}/matches` | this post's subject vector against opposite-type posts |
+| `search` | `/message/{id}/searchmatches` | this post's subject vector against saved search terms |
+
+**Saved search terms are embedded as DOCUMENTS, not as queries, and that is what makes one
+threshold legitimate for both.** A term ("pine bookcase") is the same kind of text as a post
+subject once `EmbeddingService::preprocessSubject` has stripped `OFFER:` and the trailing
+location, so the cosines land on the same document-vs-document scale as
+`messages_embeddings.subject_embedding`. Embedded as a query instead, they would sit on the
+search scale (`MinVectorScore`, 0.65), where reusing 0.85 would filter out nearly everything -
+the same class of error that left the matched-posts email at 0.60 with a precision of 0.49.
+
+`users_searches_embeddings` is populated by `embeddings:searches` (hourly), which also
+re-embeds anything written by an older model rather than silently mixing scales. **Until that
+has run the `search` signal matches nothing** - it fails closed, which is the right direction,
+but it is inert rather than obviously off.
 
 ### A scout is someone the ripple has NOT reached yet
 
@@ -362,6 +395,7 @@ them in a quiet channel would mean nobody ever answers them.
 |---|---|
 | `rippling_reach.max_polygon` | the reach the post ends up with. NULL = not computed yet, and every reader falls back to current-reach behaviour |
 | `rippling_reach.min_tick` | a floor the expander must not sit below, set when a scout replies. NULL = expand on elapsed time alone, exactly as before |
+| `users_searches_embeddings` | a saved search term as a vector, embedded as a DOCUMENT so it shares the post threshold |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
 | `firstreply_scouts` | who was scouted about what, why, and whether they then replied (`replied_at`). Doubles as the fatigue ledger |
 | `firstreply_prompts_sent` | which prompts a MEMBER has had, with `postcount`. Keyed on the member rather than the post, because one message covers everything they have outstanding - so "have they been asked this lately" is a question about them |
@@ -377,6 +411,7 @@ All three are registered in `iznik-batch/routes/console.php` inside
 |---|---|---|
 | `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
 | `firstreply:scout` | every minute | attributes replies to earlier scouts - pulling the post's reach out to cover any scout who replied - then picks and mails new ones |
+| `embeddings:searches` | hourly | embeds saved search terms so the `search` signal can match by vector. Also re-embeds after a model change |
 | `firstreply:engage` | every 5 min | sends the next due prompt |
 
 Each takes `--dry-run`.
@@ -393,12 +428,96 @@ in-app reply path is enforced there.
 Sensible order: turn on `FIRSTREPLY_ENABLED` alone first so `firstreply:maxreach` can drain,
 then the passthrough (which needs `max_polygon` to do anything), then scouts, then chat.
 
+### Two caps, because the two signals are not the same kind of thing
+
+A `wanted` or `search` hit is somebody who **asked** - an open post for this item, or a saved
+search that matches it. There is no good reason to tell the first ten and not the eleventh, so
+the small per-post cap does not apply to them. `frequent` is only propensity, which is a guess,
+and the guess is what gets rationed.
+
+| Setting | Applies to | Default |
+|---|---|---|
+| `max_per_post` | `frequent` only - propensity scouts | 10 |
+| `max_strong_per_post` | `wanted` + `search` - safety ceiling, not a target | 50 |
+
+**Strong is not unlimited, and the ceiling is not cosmetic.** In the most recent 200k rows of
+`users_searches` alone - 0.7% of a 27M-row table - **358 distinct members hold the term "Sofa"**,
+313 "Table", 285 "tv". If a common OFFER clears the threshold against a decent share of those,
+"no limit" is a mail-out to thousands from a lever whose entire premise is that these are the
+right *few* people.
+
+The true uncapped fan-out is **not currently known**. The only live evidence at this threshold is
+`messages_matched_notified`, and that table is itself capped by
+`freegle.matched.match_limit_per_post` (10), so it cannot show what the number would have been -
+its observed maximum of 9 per post is the cap talking, not the data. The ceiling is therefore set
+well above anything expected, and when it bites it logs and increments `scouts_strong_capped`, so
+the real distribution shows up in the dashboard rather than being guessed at a second time. Once
+there is a run's worth of that counter, set the number from it.
+
+### Changing the caps without a deploy
+
+Both are the mail bill, and the moment you want to move one is usually the moment it is mailing
+too many people - the worst time to be waiting for a release. So both are runtime-settable:
+
+```sql
+-- ration propensity scouts harder from the next cron tick
+INSERT INTO config (`key`, `value`) VALUES ('firstreply_scouts_max_per_post', '3')
+  ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
+
+-- pull the safety ceiling in if scouts_strong_capped starts firing
+INSERT INTO config (`key`, `value`) VALUES ('firstreply_scouts_max_strong_per_post', '20')
+  ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
+```
+
+Zero means different things for each: `max_per_post = 0` stops propensity scouts while people who
+actually asked still hear; `max_strong_per_post = 0` stops those too, which together is the whole
+lever off without touching the enabled flags.
+
+The env vars remain the defaults when the rows are absent, so an empty `config` table behaves
+exactly as before. Read by `ScoutService::scoutConfig()` on every run, so a change takes effect on
+the next tick with no restart. The other scout knobs stay env-only - they shape who is chosen
+rather than how much mail goes out, so they belong with a deploy and a think.
+
 ## Measuring it
 
 **ModTools → SysAdmin → First reply** (`/sysadmin?tab=firstreply`), served by
 `GET /api/firstreply/metrics` (Support/Admin only, `iznik-server-go/firstreply/metrics.go`).
 
-Each lever is shown against something, because a counter on its own says a number went up
+### The KPI
+
+**Does it get more items rehomed, and more posts replied to?** Everything else on the dashboard
+is a lever reporting on its own activity, and every one of those numbers can rise while this one
+does not. More mail sent is not more items rehomed.
+
+The `arms` section answers it directly: rippled posts in the window, split into the arm that got
+the treatment and the arm that did not, counted on **got a reply** and on **Taken**.
+
+| Field | Meaning |
+|---|---|
+| `posts` | rippled posts in the window on this side of the split |
+| `replied` | of those, how many got an `Interested` reply from somebody other than the poster |
+| `taken` | how many reached an outcome of `Taken` or `Received` |
+
+Split on `msgid % 100` against `FIRSTREPLY_ROLLOUT_PERCENT` - the same rule and the same
+percentage the levers bucket on, on both the Go and Laravel doors, so the arms really are the
+posts that did and did not get the treatment. The population is **rippled** posts, not all
+posts: that is what the levers act on, and where the 44%-no-reply figure comes from.
+
+Two limits, stated because the table looks equally authoritative either way:
+
+- **At 0% or 100% one arm is empty** and the comparison means nothing. The dashboard says so
+  rather than letting the remaining row read as an effect.
+- **The arms are not equal in size.** Read the percentages, not the counts.
+- `Taken` depends on the poster coming back to record an outcome, which is itself a behaviour
+  the trial may change.
+
+Note that the delivery and deadline questions go to **both** arms (see the prompt table above),
+so the comparison is "passthrough + scouts + photo/views prompts" against "neither" - not
+"chat versus nothing".
+
+### Per lever
+
+Each lever is also shown against something, because a counter on its own says a number went up
 without saying whether it was worth having:
 
 | Lever | Read it as |

@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Tick 1 is the reach the post has now; tick 3 is where it ends up. A point in
@@ -711,6 +712,96 @@ func TestFirstReplyMetrics_BareEndDateIncludesToday(t *testing.T) {
 	sized, _ := pt["sized"].(float64)
 	assert.GreaterOrEqual(t, sized, float64(1),
 		"a passthrough from earlier today must be inside a window whose end is today's date")
+}
+
+// The overall KPI: rippled posts split into the arm that got the treatment and
+// the arm that did not, counted on replies and on rehomes.
+//
+// Every other number on this dashboard can rise while this one does not - more
+// scouts mailed is not more items rehomed - so the split has to bucket on exactly
+// the rule the levers bucket on, and it has to be honest at the ends.
+//
+// Asserted at the boundaries rather than on absolute counts. Other tests leave
+// rippled posts inside the same window, so "trial has exactly N" would be a
+// promise about other people's fixtures; "at 100% nothing is a holdout" is a
+// promise about this code.
+func TestFirstReplyMetrics_SplitsRippledPostsIntoTrialAndHoldout(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frmetricsarms")
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: arm split", 51.5, -0.1)
+
+	// created_at is what the KPI windows on, and the column is NULL by default -
+	// a row without it would be silently invisible to the whole comparison.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, created_at) "+
+		"VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', 3857)), NOW())", msgID)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	// A reply from somebody other than the poster, and a rehome.
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date) "+
+		"VALUES (?, ?, 'interested', 'Interested', ?, NOW())", chatID, replierID, msgID)
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", msgID)
+	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+
+	armsFor := func(t *testing.T, percent string) map[string]map[string]interface{} {
+		t.Helper()
+		t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", percent)
+
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/firstreply/metrics?jwt=%s", token), nil), 60000)
+		require.Equal(t, 200, resp.StatusCode)
+
+		var result map[string]interface{}
+		require.NoError(t, json.Unmarshal(rsp(resp), &result))
+
+		out := map[string]map[string]interface{}{}
+		raw, _ := result["arms"].([]interface{})
+		for _, r := range raw {
+			row, _ := r.(map[string]interface{})
+			arm, _ := row["arm"].(string)
+			out[arm] = row
+		}
+		return out
+	}
+
+	t.Run("everything is in the trial at 100%", func(t *testing.T) {
+		arms := armsFor(t, "100")
+
+		trial, ok := arms["trial"]
+		require.True(t, ok, "at 100%% every rippled post is in the trial")
+		assert.GreaterOrEqual(t, trial["posts"].(float64), float64(1))
+		assert.GreaterOrEqual(t, trial["replied"].(float64), float64(1),
+			"a post with an Interested reply from someone else counts as replied")
+		assert.GreaterOrEqual(t, trial["taken"].(float64), float64(1),
+			"and a Taken outcome is the number the whole feature answers to")
+
+		if holdout, present := arms["holdout"]; present {
+			assert.Zero(t, holdout["posts"], "nothing can be a holdout at 100%")
+		}
+	})
+
+	t.Run("everything is a holdout at 0%", func(t *testing.T) {
+		arms := armsFor(t, "0")
+
+		holdout, ok := arms["holdout"]
+		require.True(t, ok, "at 0%% nothing has had the treatment")
+		assert.GreaterOrEqual(t, holdout["posts"].(float64), float64(1))
+
+		if trial, present := arms["trial"]; present {
+			assert.Zero(t, trial["posts"], "nothing can be in the trial at 0%")
+		}
+	})
 }
 
 // The endpoint is Support/Admin only - it reports on members and their posts.

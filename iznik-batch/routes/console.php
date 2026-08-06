@@ -1223,6 +1223,16 @@ Schedule::command('embeddings:generate')
     ->sendOutputTo(cronLog('embeddings:generate'))
     ->runInBackground();
 
+// The same for saved search terms, so the scout "search" signal can match them
+// by vector at the matched-posts threshold rather than by keyword. Hourly, not
+// every five minutes: a saved search is created far less often than a post, and
+// nothing downstream is time-critical to the minute.
+Schedule::command('embeddings:searches')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('embeddings:searches'))
+    ->runInBackground();
+
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off
 // Index unindexed messages for search.

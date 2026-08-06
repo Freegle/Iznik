@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\FirstReply;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
+use App\Services\FreegleApiClient;
 use App\Services\FirstReply\ScoutService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -27,6 +28,13 @@ class ScoutServiceTest extends TestCase
         DB::statement('DELETE FROM firstreply_scouts');
         DB::statement('DELETE FROM rippling_reach');
 
+        // Both match signals are vector now and go through apiv2. Default to
+        // "nothing matched" so a test that does not set up a match cannot be
+        // handed one by accident.
+        $this->apiMatchIds = [];
+        $this->apiSearchUserIds = [];
+        $this->refreshApiFake();
+
         config([
             'freegle.firstreply.enabled' => true,
             // Whole-network arm: the rollout percentage is exercised separately.
@@ -38,30 +46,54 @@ class ScoutServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Rebuild the apiv2 fake from everything seeded so far.
+     *
+     * Both match signals are vector and go through apiv2 now, so seeding a
+     * matching WANTED or saved search is only half the setup - the API has to
+     * report it. Accumulating here means the seeding helpers can do both, and a
+     * test cannot seed a match and forget to declare it.
+     *
+     * Scores are already above MinMatchedPostScore: the threshold lives in the
+     * endpoint, so a test cannot assert on a match the real thing would drop.
+     */
+    private function refreshApiFake(): void
+    {
+        $wanted = ['body' => array_map(
+            static fn ($id) => ['id' => $id, 'score' => 0.93],
+            $this->apiMatchIds
+        )];
+        $search = ['body' => array_map(
+            static fn ($uid) => ['userid' => $uid, 'searchid' => $uid, 'term' => 'bookcase', 'score' => 0.91],
+            $this->apiSearchUserIds
+        )];
+
+        // Consumed in order and exhausting to null, so repeat the pair rather
+        // than making every test count the service's API calls.
+        $responses = [];
+        for ($i = 0; $i < 20; $i++) {
+            $responses[] = $wanted;
+            $responses[] = $search;
+        }
+
+        FreegleApiClient::clearFake();
+        FreegleApiClient::fake($responses);
+    }
+
+    /** A saved search for this post's item, declared to the matcher. */
+    private function savedSearchFor(\App\Models\User $user, string $term = 'bookcase'): void
+    {
+        DB::table('users_searches')->insert([
+            'userid' => $user->id, 'term' => $term, 'deleted' => 0, 'date' => now(),
+        ]);
+
+        $this->apiSearchUserIds[] = (int) $user->id;
+        $this->refreshApiFake();
+    }
+
     private function service(): ScoutService
     {
         return app(ScoutService::class);
-    }
-
-    public function test_keywords_drop_the_words_that_would_match_everything(): void
-    {
-        $this->assertSame(
-            ['table'],
-            $this->service()->keywords('OFFER: Free small table (Edinburgh EH1)'),
-            '"free", "small" and the location suffix match half the site; only "table" says what it is'
-        );
-    }
-
-    public function test_keywords_survive_a_subject_with_no_prefix_or_location(): void
-    {
-        $this->assertContains('bookcase', $this->service()->keywords('Pine bookcase'));
-    }
-
-    public function test_keywords_are_capped_so_one_post_cannot_run_a_dozen_like_scans(): void
-    {
-        $subject = 'OFFER: bookcase wardrobe cabinet dresser sideboard cupboard shelving (Edinburgh)';
-
-        $this->assertLessThanOrEqual(5, count($this->service()->keywords($subject)));
     }
 
     /** A silent OFFER, rippling, with its eventual reach known. */
@@ -193,18 +225,8 @@ class ScoutServiceTest extends TestCase
         // Lives somewhere the post has NOT reached yet but eventually will -
         // exactly the person the current reach schedule makes wait days for.
         $wanter = $this->memberAt(51.9, 0.8);
-        $group = $this->createTestGroup();
-        $wanted = $this->createTestMessage($wanter, $group, [
-            'type' => Message::TYPE_WANTED,
-            'subject' => 'WANTED: Pine bookcase (TestLocation)',
-        ]);
-        DB::statement(
-            'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(0.8, 51.9), 3857), 0, 0, ?, ?, NOW())',
-            [$wanted->id, $group->id, Message::TYPE_WANTED]
-        );
+        $this->wantedAt($wanter, 51.9, 0.8);
 
-        $this->service()->run(true);
         $this->service()->run();
 
         $this->assertArrayHasKey($wanter->id, $this->scoutsFor((int) $message->id));
@@ -216,12 +238,7 @@ class ScoutServiceTest extends TestCase
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
 
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id,
-            'term' => 'bookcase',
-            'deleted' => 0,
-            'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
 
@@ -233,12 +250,7 @@ class ScoutServiceTest extends TestCase
         $message = $this->seedSilentOffer();
         $farAway = $this->memberAt(57.1, -2.1);
 
-        DB::table('users_searches')->insert([
-            'userid' => $farAway->id,
-            'term' => 'bookcase',
-            'deleted' => 0,
-            'date' => now(),
-        ]);
+        $this->savedSearchFor($farAway);
 
         $this->service()->run();
 
@@ -251,9 +263,7 @@ class ScoutServiceTest extends TestCase
 
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         // Already scouted about something else an hour ago.
         $other = $this->seedSilentOffer();
@@ -278,9 +288,7 @@ class ScoutServiceTest extends TestCase
     {
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
         $before = count($this->scoutsFor((int) $message->id));
@@ -293,9 +301,7 @@ class ScoutServiceTest extends TestCase
     {
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
 
@@ -317,6 +323,11 @@ class ScoutServiceTest extends TestCase
             'userid' => $message->fromuser, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
         ]);
 
+        // The matcher DOES return them - otherwise this would pass because
+        // nothing matched, rather than because the poster is excluded.
+        $this->apiSearchUserIds[] = (int) $message->fromuser;
+        $this->refreshApiFake();
+
         $this->service()->run();
 
         $this->assertArrayNotHasKey((int) $message->fromuser, $this->scoutsFor((int) $message->id));
@@ -327,9 +338,7 @@ class ScoutServiceTest extends TestCase
         config(['freegle.firstreply.scouts.enabled' => false]);
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->assertSame(0, $this->service()->run()['mailed']);
         $this->assertSame([], $this->scoutsFor((int) $message->id));
@@ -391,9 +400,7 @@ class ScoutServiceTest extends TestCase
         // allowed to be a mail they would not otherwise have had today.
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
         $this->digestSentAt((int) $searcher->id, $this->earlierToday());
 
         $this->service()->run();
@@ -408,9 +415,7 @@ class ScoutServiceTest extends TestCase
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
         DB::table('users')->where('id', $searcher->id)->update(['relevantallowed' => 0]);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
 
@@ -435,6 +440,133 @@ class ScoutServiceTest extends TestCase
         $this->assertArrayNotHasKey($alreadyMailed->id, $scouts);
         $this->assertArrayHasKey($available->id, $scouts);
         $this->assertCount(1, $scouts);
+    }
+
+    public function test_people_who_asked_for_the_item_are_not_limited_by_the_scout_cap(): void
+    {
+        // The small cap rations the GUESS ("you reply to a lot of things"). It has
+        // no business rationing people who have a saved search for this exact
+        // thing - they asked, and there is no sense telling the first one and not
+        // the second.
+        config(['freegle.firstreply.scouts.max_per_post' => 1]);
+
+        $message = $this->seedSilentOffer();
+        $a = $this->memberAt(51.9, 0.8);
+        $b = $this->memberAt(51.9, 0.8);
+        $c = $this->memberAt(51.9, 0.8);
+        $this->savedSearchFor($a);
+        $this->savedSearchFor($b);
+        $this->savedSearchFor($c);
+
+        $this->service()->run();
+
+        $scouts = $this->scoutsFor((int) $message->id);
+        $this->assertCount(3, $scouts, 'all three asked, so all three hear');
+    }
+
+    public function test_the_strong_ceiling_still_bounds_a_mailbomb(): void
+    {
+        // Uncapped is not safe either: a common term like "sofa" is held by
+        // hundreds of members on live, so there has to be SOME ceiling. It sits
+        // far above the normal case rather than at the propensity cap.
+        config([
+            'freegle.firstreply.scouts.max_per_post' => 10,
+            'freegle.firstreply.scouts.max_strong_per_post' => 2,
+        ]);
+
+        $message = $this->seedSilentOffer();
+        $this->savedSearchFor($this->memberAt(51.9, 0.8));
+        $this->savedSearchFor($this->memberAt(51.9, 0.8));
+        $this->savedSearchFor($this->memberAt(51.9, 0.8));
+
+        $this->service()->run();
+
+        $this->assertCount(2, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_propensity_scouts_do_not_eat_into_the_strong_allowance(): void
+    {
+        // Both kinds on one post: the frequent replier is capped at its own small
+        // number, the searchers are not, and neither cap consumes the other's
+        // budget.
+        config([
+            'freegle.firstreply.scouts.max_per_post' => 1,
+            'freegle.firstreply.scouts.max_strong_per_post' => 50,
+        ]);
+
+        $message = $this->seedSilentOffer();
+        $this->savedSearchFor($this->memberAt(51.9, 0.8));
+        $this->savedSearchFor($this->memberAt(51.9, 0.8));
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+
+        $this->service()->run();
+
+        // scoutsFor() is userid => reason, so the values are the reasons already.
+        $reasons = array_count_values($this->scoutsFor((int) $message->id));
+
+        $this->assertSame(2, $reasons['search'] ?? 0, 'both searchers hear');
+        $this->assertSame(1, $reasons['frequent'] ?? 0, 'the guess stays rationed');
+    }
+
+    public function test_the_number_of_scouts_can_be_changed_without_a_deploy(): void
+    {
+        // The cap is the whole mail bill of the feature, and the moment you want
+        // to move it is the moment it is mailing too many people - which is the
+        // worst possible time to be waiting for a release.
+        config(['freegle.firstreply.scouts.max_per_post' => 5]);
+        DB::table('config')->insert([
+            'key' => ScoutService::CONFIG_MAX_PER_POST,
+            'value' => '1',
+        ]);
+
+        $message = $this->seedSilentOffer();
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+
+        $this->service()->run();
+
+        $this->assertCount(
+            1,
+            $this->scoutsFor((int) $message->id),
+            'the runtime override should win over the deployed default'
+        );
+    }
+
+    public function test_without_an_override_the_deployed_default_stands(): void
+    {
+        // An empty config table has to behave exactly as it did before this
+        // existed, otherwise the override is a behaviour change in itself.
+        config(['freegle.firstreply.scouts.max_per_post' => 2]);
+
+        $message = $this->seedSilentOffer();
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+
+        $this->service()->run();
+
+        $this->assertCount(2, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_setting_the_number_to_zero_stops_the_mail(): void
+    {
+        // Zero is the stop button. scoutPost() used to floor the cap at 1, so
+        // without this the one setting you would reach for to halt the mail
+        // still mailed somebody on every post.
+        DB::table('config')->insert([
+            'key' => ScoutService::CONFIG_MAX_PER_POST,
+            'value' => '0',
+        ]);
+
+        $message = $this->seedSilentOffer();
+        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+
+        $stats = $this->service()->run();
+
+        $this->assertSame(0, $stats['mailed']);
+        $this->assertCount(0, $this->scoutsFor((int) $message->id));
     }
 
     public function test_a_frequent_scout_has_their_digest_recorded_as_brought_forward(): void
@@ -462,9 +594,7 @@ class ScoutServiceTest extends TestCase
         // the digest away as well would be a straight loss to them.
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
 
@@ -481,9 +611,7 @@ class ScoutServiceTest extends TestCase
         // Without this there is no way to tell whether scouting does anything.
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
         $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
@@ -507,9 +635,7 @@ class ScoutServiceTest extends TestCase
     {
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
         $this->service()->run();
 
         $poster = $this->createTestUser();
@@ -542,9 +668,7 @@ class ScoutServiceTest extends TestCase
         );
 
         $searcher = $this->memberAt(51.9, 0.8);
-        DB::table('users_searches')->insert([
-            'userid' => $searcher->id, 'term' => 'bookcase', 'deleted' => 0, 'date' => now(),
-        ]);
+        $this->savedSearchFor($searcher);
 
         $this->service()->run();
 
@@ -564,6 +688,9 @@ class ScoutServiceTest extends TestCase
              VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
             [$wanted->id, $lng, $lat, $group->id, Message::TYPE_WANTED]
         );
+
+        $this->apiMatchIds[] = (int) $wanted->id;
+        $this->refreshApiFake();
     }
 
     /**

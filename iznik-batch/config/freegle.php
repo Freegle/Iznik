@@ -639,10 +639,30 @@ return [
             // Give up after this: a day-old silent post is a job for reposting and
             // better post quality, not for more notifications.
             'max_age_hours' => (int) env('FIRSTREPLY_SCOUTS_MAX_AGE_HOURS', 24),
-            // Hard cap on how many people we mail per post. Small on purpose: the
-            // whole point is that these are the RIGHT people, and a big number
-            // would just be the digest with extra steps.
+            // Cap on PROPENSITY scouts per post - the "you reply to a lot of
+            // things" ones. Small on purpose: that signal is a guess, and a guess
+            // is what should be rationed. Does NOT apply to people who actually
+            // asked for the item; see max_strong_per_post.
+            //
+            // OVERRIDABLE AT RUNTIME: a `firstreply_scouts_max_per_post` row in
+            // the `config` table wins over this, so the mail bill can be turned
+            // down (or off, with 0) without waiting for a deploy. This env value
+            // is the default when that row is absent. See ScoutService::scoutConfig().
             'max_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_PER_POST', 10),
+            // Safety ceiling on wanted/search scouts - people with an open post
+            // for this item or a matching saved search. They asked, so there is
+            // no good reason to tell the first ten and not the eleventh, and the
+            // small cap above deliberately does not apply to them.
+            //
+            // Not unlimited, though. In the most recent 200k rows of
+            // users_searches alone (0.7% of a 27M-row table) 358 members hold the
+            // term "Sofa" and 313 "Table", so an unbounded common OFFER could mail
+            // thousands. The true fan-out is unmeasured - the one live source at
+            // this threshold, messages_matched_notified, is itself capped by
+            // matched.match_limit_per_post - so this is set well above anything
+            // expected, logged and counted when it bites, and tunable at runtime
+            // via `firstreply_scouts_max_strong_per_post`.
+            'max_strong_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_STRONG_PER_POST', 50),
             // Nobody should become Freegle's unpaid alerting service. A member is
             // not scouted again within this many hours...
             'user_cooldown_hours' => (int) env('FIRSTREPLY_SCOUTS_USER_COOLDOWN_HOURS', 24),

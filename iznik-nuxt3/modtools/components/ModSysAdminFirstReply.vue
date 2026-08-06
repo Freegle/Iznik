@@ -24,6 +24,45 @@
     </div>
 
     <template v-else-if="stats">
+      <!-- 0. The overall KPI ----------------------------------------------->
+      <h3 class="ms-2 mt-2">Did it work?</h3>
+      <p class="text-muted small ms-2">
+        Rippled posts that got the treatment, against the ones that did not.
+        Everything below this is a lever reporting on itself, and all of it can
+        go up without this moving - more mail sent is not more items rehomed.
+        <strong>Taken</strong> is the one that matters.
+      </p>
+      <b-table-simple hover responsive small class="mb-2">
+        <b-thead>
+          <b-tr>
+            <b-th>Arm</b-th>
+            <b-th>Posts</b-th>
+            <b-th>Got a reply</b-th>
+            <b-th>Taken</b-th>
+          </b-tr>
+        </b-thead>
+        <b-tbody>
+          <b-tr v-for="a in stats.arms" :key="a.arm">
+            <b-td class="text-capitalize">{{ a.arm }}</b-td>
+            <b-td>{{ a.posts }}</b-td>
+            <b-td>{{ a.replied }} ({{ rate(a.replied, a.posts) }})</b-td>
+            <b-td class="fw-bold">{{ a.taken }} ({{ rate(a.taken, a.posts) }})</b-td>
+          </b-tr>
+        </b-tbody>
+      </b-table-simple>
+      <NoticeMessage v-if="!comparable" variant="warning" class="mb-4 ms-2 me-2">
+        The rollout is at {{ stats.rolloutpercent }}%, so one side of the split is
+        empty and there is nothing to compare against. These numbers describe the
+        whole network, not the effect of the feature.
+      </NoticeMessage>
+      <p v-else class="text-muted small ms-2 mb-4">
+        Rollout is at {{ stats.rolloutpercent }}%. Posts are assigned by
+        <code>msgid % 100</code>, so the arms are comparable, but they are not
+        equal in size - read the percentages, not the counts. Taken also depends
+        on posters coming back to record an outcome, which is itself something
+        the feature may change.
+      </p>
+
       <!-- 1. Passthrough --------------------------------------------------->
       <h3 class="ms-2 mt-2">Passthrough</h3>
       <p class="text-muted small ms-2">
@@ -204,6 +243,14 @@ const apiInstance = api(runtimeConfig)
 const stats = ref(null)
 const loading = ref(false)
 const error = ref(null)
+
+// A comparison needs both sides. At 0% or 100% the split still returns a row,
+// and that row looks exactly as authoritative as a real result - so say plainly
+// that it is not one rather than letting it be read as the effect of the feature.
+const comparable = computed(() => {
+  const arms = stats.value?.arms ?? []
+  return arms.filter((a) => a.posts > 0).length === 2
+})
 
 const passthroughTotal = computed(() =>
   stats.value ? stats.value.passthrough.web + stats.value.passthrough.email : 0

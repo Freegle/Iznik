@@ -1004,6 +1004,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.SimilarResult
 		rg.Get("/message/:id/matches", message.PostMatches)
 
+		// Members whose SAVED SEARCH matches this post, at the same
+		// MinMatchedPostScore the matched-posts email uses - both compare stored
+		// document embeddings, so the number means the same thing on both.
+		rg.Get("/message/:id/searchmatches", message.SearchMatchesForPost)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen

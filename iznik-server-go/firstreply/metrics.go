@@ -74,6 +74,36 @@ type PromptKind struct {
 	Acted int64 `json:"acted"`
 }
 
+// ArmOutcome is one side of the trial split: did the posts we did this to end up
+// better off than the ones we did not?
+//
+// This is the KPI the whole feature answers to. Everything else on this dashboard
+// is a lever's own counter - passthroughs fired, scouts mailed, prompts answered -
+// and every one of them can go up while the thing that matters does not move. More
+// mail sent is not more items rehomed.
+//
+// The population is RIPPLED posts, not all posts, because that is the population
+// the levers act on and the one the 44%-no-reply figure comes from. Split by
+// msgid % 100 against the SAME percentage the levers bucket on, so the arms are the
+// posts that did and did not get the treatment, assigned identically on both doors.
+//
+// Two honest limits, stated because the numbers look authoritative either way:
+// at 0% or 100% one arm is empty and the comparison means nothing; and Taken
+// depends on the poster coming back to say so, which is itself a behaviour the
+// trial may change.
+type ArmOutcome struct {
+	// Arm is "trial" or "holdout".
+	Arm string `json:"arm"`
+	// Posts is rippled posts in the window on this side of the split.
+	Posts int64 `json:"posts"`
+	// Replied is how many of those got at least one Interested reply from
+	// somebody other than the poster.
+	Replied int64 `json:"replied"`
+	// Taken is how many reached an outcome of Taken or Received - the actual
+	// point of the exercise, and the one that is hard to move.
+	Taken int64 `json:"taken"`
+}
+
 // PassthroughSummary is the first-reply passthrough's effect.
 type PassthroughSummary struct {
 	// Web and Email are first replies delivered instead of held, by door.
@@ -234,13 +264,39 @@ func Metrics(c *fiber.Ctx) error {
 		Distinct("jt.msgid").
 		Count(&postsEngaged)
 
+	// The overall KPI: replies and rehomes, trial against holdout.
+	//
+	// Bounded to rippled posts by rr.created_at, which is indexed
+	// (rippling_reach_created_freeglers). The two EXISTS are per candidate post
+	// rather than joins with COUNT(DISTINCT), so neither chat_messages nor
+	// messages_outcomes is materialised - this dashboard has run into query
+	// deadlines before, and a KPI that times out is worse than no KPI because the
+	// panel just renders empty.
+	arms := []ArmOutcome{}
+	db.Table("rippling_reach rr").
+		Select("CASE WHEN rr.msgid % 100 < ? THEN 'trial' ELSE 'holdout' END AS arm, "+
+			"COUNT(*) AS posts, "+
+			"COALESCE(SUM(EXISTS(SELECT 1 FROM chat_messages cm "+
+			"    WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' "+
+			"      AND cm.userid <> m.fromuser)), 0) AS replied, "+
+			"COALESCE(SUM(EXISTS(SELECT 1 FROM messages_outcomes mo "+
+			"    WHERE mo.msgid = rr.msgid AND mo.outcome IN ('Taken', 'Received'))), 0) AS taken",
+			rolloutPercent()).
+		Joins("JOIN messages m ON m.id = rr.msgid").
+		Where("rr.created_at BETWEEN ? AND ?", start, end).
+		Where("m.deleted IS NULL").
+		Group("arm").
+		Scan(&arms)
+
 	return c.JSON(fiber.Map{
-		"start":        start,
-		"end":          end,
-		"daily":        daily,
-		"passthrough":  passthrough,
-		"scouts":       signals,
-		"prompts":      prompts,
-		"postsengaged": postsEngaged,
+		"start":          start,
+		"end":            end,
+		"daily":          daily,
+		"passthrough":    passthrough,
+		"scouts":         signals,
+		"prompts":        prompts,
+		"postsengaged":   postsEngaged,
+		"arms":           arms,
+		"rolloutpercent": rolloutPercent(),
 	})
 }

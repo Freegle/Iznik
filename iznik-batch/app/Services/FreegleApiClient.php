@@ -188,6 +188,24 @@ class FreegleApiClient
         return [];
     }
 
+    /**
+     * Members whose saved search matches this post, at the matched-posts
+     * threshold. Same shape and same bar as matchesForPost - both compare stored
+     * document embeddings, so a score means the same thing from either.
+     *
+     * @return array<int,array{userid:int,searchid:int,term:string,score:float}>
+     */
+    public function searchMatchesForPost(int $msgid, int $limit = 10): array
+    {
+        $response = $this->get('/message/'.$msgid.'/searchmatches', ['limit' => $limit]);
+
+        if (is_array($response) && ! isset($response['ret'])) {
+            return $response;
+        }
+
+        return [];
+    }
+
     private function get(string $path, array $query = []): mixed
     {
         if ($query) {

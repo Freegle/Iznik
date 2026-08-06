@@ -3,7 +3,6 @@
 namespace App\Services\FirstReply;
 
 use App\Models\Membership;
-use App\Models\Message;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -90,6 +89,12 @@ class ScoutService
 {
     private const SRID = 3857;
 
+    /** `config` key overriding how many propensity scouts a post may mail. See scoutConfig(). */
+    public const CONFIG_MAX_PER_POST = 'firstreply_scouts_max_per_post';
+
+    /** `config` key overriding the safety ceiling on wanted/search scouts. */
+    public const CONFIG_MAX_STRONG_PER_POST = 'firstreply_scouts_max_strong_per_post';
+
     /** Signal weights. Ordering matters more than the absolute numbers. */
     private const SCORE_WANTED = 5.0;
 
@@ -113,6 +118,7 @@ class ScoutService
         private MaxReachService $maxReach,
         private UnifiedDigestService $digest,
         private Metrics $metrics,
+        private \App\Services\FreegleApiClient $api,
     ) {
     }
 
@@ -129,7 +135,7 @@ class ScoutService
             return $stats;
         }
 
-        $cfg = config('freegle.firstreply.scouts');
+        $cfg = $this->scoutConfig();
 
         foreach ($this->silentPosts($cfg) as $post) {
             $stats['considered']++;
@@ -153,6 +159,43 @@ class ScoutService
         }
 
         return $stats;
+    }
+
+    /**
+     * Scout config, with both per-post caps overridable at runtime.
+     *
+     * The env vars set the defaults, but env only changes on a deploy, and these
+     * are the numbers worth turning down NOW - between them they are the entire
+     * mail bill of the feature, and the reason to move one is usually that it is
+     * mailing too many people, which is the worst time to be waiting for a
+     * release. `config` is the same key/value table the rest of the batch code
+     * uses for state that has to outlive a container.
+     *
+     * An absent key means "no opinion", so the env default stands and an empty
+     * table behaves exactly as it did before.
+     *
+     * Zero is meaningful for both, and means different things:
+     * - max_per_post = 0 stops propensity scouts, leaving people who actually
+     *   asked for the item still being told.
+     * - max_strong_per_post = 0 stops those too, which together is the whole
+     *   lever off without touching the enabled flags.
+     */
+    private function scoutConfig(): array
+    {
+        $cfg = config('freegle.firstreply.scouts');
+
+        foreach ([
+            self::CONFIG_MAX_PER_POST => 'max_per_post',
+            self::CONFIG_MAX_STRONG_PER_POST => 'max_strong_per_post',
+        ] as $key => $field) {
+            $override = DB::table('config')->where('key', $key)->value('value');
+
+            if ($override !== null && is_numeric($override)) {
+                $cfg[$field] = max(0, (int) $override);
+            }
+        }
+
+        return $cfg;
     }
 
     /**
@@ -302,7 +345,6 @@ class ScoutService
     public function scoutPost(object $post, array $cfg, bool $dryRun = false): int
     {
         $msgid = (int) $post->msgid;
-        $keywords = $this->keywords((string) ($post->subject ?? ''));
 
         // Scouting fires as soon as a post is seen, which can be a beat before the
         // background pass has worked out the post's eventual reach - and without
@@ -312,27 +354,81 @@ class ScoutService
         // background pass and simply get no scouts this time round.
         $this->maxReach->populateForPost($msgid);
 
-        $candidates = $this->candidates($post, $keywords, $cfg);
+        $candidates = $this->candidates($post, $cfg);
         if (empty($candidates)) {
             return 0;
         }
 
         $minScore = (float) ($cfg['min_score'] ?? 1.0);
-        $max = max(1, (int) ($cfg['max_per_post'] ?? 10));
+
+        // The two caps are separate because the two signals are not the same kind
+        // of thing.
+        //
+        // A `wanted` or `search` hit is somebody who ASKED for this - they have an
+        // open post for it, or a saved search that matches. There is no good
+        // reason to tell the first ten and not the eleventh, so the small cap
+        // does not apply to them. `frequent` is only propensity ("you reply to a
+        // lot of things"), which is a guess, and a guess is exactly what should
+        // be rationed.
+        //
+        // Strong still has a ceiling, and it is deliberately far above anything
+        // expected rather than absent. Live saved-search data says why: in the
+        // most recent 200k rows of users_searches ALONE - 0.7% of the 27M-row
+        // table - 358 distinct members hold the term "Sofa", 313 "Table", 285
+        // "tv". If a common OFFER clears the threshold against a decent share of
+        // those, "no limit" is a mail-out to thousands, from a lever whose whole
+        // premise is that these are the RIGHT few people.
+        //
+        // The true uncapped fan-out is NOT known: the only live evidence at this
+        // threshold is messages_matched_notified, and that is itself capped by
+        // freegle.matched.match_limit_per_post (10), so it cannot show what the
+        // number would have been. Hence a ceiling that is generous enough never
+        // to bite in the normal case, tunable at runtime, and counted when it
+        // does bite (below) so the real distribution becomes visible in the
+        // dashboard instead of being guessed at again.
+        $maxFrequent = max(0, (int) ($cfg['max_per_post'] ?? 10));
+        $maxStrong = max(0, (int) ($cfg['max_strong_per_post'] ?? 50));
 
         // Highest score first, so a post with three near-perfect matches mails
         // three people rather than padding the list out to the cap.
         uasort($candidates, static fn ($a, $b) => $b['score'] <=> $a['score']);
 
         $chosen = [];
+        $strong = 0;
+        $frequent = 0;
+        $strongFound = 0;
+
         foreach ($candidates as $userId => $candidate) {
             if ($candidate['score'] < $minScore) {
                 break;
             }
-            if (count($chosen) >= $max) {
-                break;
+
+            if ($candidate['reason'] === 'frequent') {
+                if ($frequent >= $maxFrequent) {
+                    continue;
+                }
+                $frequent++;
+            } else {
+                $strongFound++;
+                if ($strong >= $maxStrong) {
+                    continue;
+                }
+                $strong++;
             }
+
             $chosen[$userId] = $candidate;
+        }
+
+        // Only worth saying when the ceiling actually bit. This is the number that
+        // tells us whether 50 is right, and it is the one thing the live data
+        // could not answer up front.
+        if (!$dryRun && $strongFound > $maxStrong) {
+            Log::warning('firstreply: strong scout matches exceeded the ceiling', [
+                'msgid' => $msgid,
+                'found' => $strongFound,
+                'ceiling' => $maxStrong,
+            ]);
+            $this->metrics->record('scouts_strong_capped', 1);
         }
 
         if (empty($chosen)) {
@@ -476,10 +572,9 @@ class ScoutService
     /**
      * Score everyone worth considering for this post.
      *
-     * @param string[] $keywords
      * @return array<int,array{score:float, reason:string}>
      */
-    private function candidates(object $post, array $keywords, array $cfg): array
+    private function candidates(object $post, array $cfg): array
     {
         $msgid = (int) $post->msgid;
         $poster = (int) $post->fromuser;
@@ -487,15 +582,14 @@ class ScoutService
 
         $scores = [];
 
-        // A WANTED only matches an OFFER and vice versa: someone else wanting the
-        // same thing you want is not a lead, it is competition.
-        $opposite = $post->msgtype === Message::TYPE_OFFER ? Message::TYPE_WANTED : Message::TYPE_OFFER;
-
-        foreach ($this->matchingPosters($keywords, $opposite, $limit) as $userId) {
+        // The type rule - a WANTED matches an OFFER and vice versa, because
+        // someone else wanting what you want is competition rather than a lead -
+        // lives in the matcher rather than being reimplemented here.
+        foreach ($this->matchingPosters($msgid, $limit) as $userId) {
             $scores[$userId] = ['score' => self::SCORE_WANTED, 'reason' => 'wanted'];
         }
 
-        foreach ($this->savedSearchers($keywords, $limit) as $userId) {
+        foreach ($this->savedSearchers($msgid, $limit) as $userId) {
             if (isset($scores[$userId])) {
                 // Both signals firing is a stronger lead than either alone.
                 $scores[$userId]['score'] += self::SCORE_SEARCH;
@@ -537,62 +631,88 @@ class ScoutService
     }
 
     /**
-     * Users with an open post of the opposite type whose subject matches any of
-     * these keywords. The strongest signal there is: they have written down that
-     * they want this.
+     * People whose open post of the OPPOSITE type matches this one, by vector.
      *
-     * @param string[] $keywords
+     * /message/{id}/matches is the matcher the matched-posts email uses, and it
+     * applies MinMatchedPostScore (0.85) rather than the 0.80 the on-site
+     * "similar posts" strip uses. Those are separate numbers because precision
+     * falls off a cliff: hand-judged on live posts, 0.85-0.90 scores 0.92 and
+     * 0.80-0.85 scores 0.43. A strip you chose to look at can carry a weak
+     * suggestion; an email cannot.
+     *
+     * This used to be SQL LIKE on subject keywords, which has no score at all -
+     * "bed lever" matched "bed" and nothing could say how badly.
+     *
+     * Recall is traded away deliberately: a missed match costs one email nobody
+     * sees, a junk match teaches somebody to ignore the next one.
+     *
      * @return int[]
      */
-    private function matchingPosters(array $keywords, string $type, int $limit): array
+    private function matchingPosters(int $msgid, int $limit): array
     {
-        if (empty($keywords)) {
+        try {
+            $matches = $this->api->matchesForPost($msgid, $limit);
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: match lookup failed', [
+                'msgid' => $msgid, 'error' => $e->getMessage(),
+            ]);
+
             return [];
         }
 
-        [$sql, $params] = $this->keywordLike('m.subject', $keywords);
+        $ids = array_values(array_filter(array_map(
+            static fn ($m) => (int) ($m['id'] ?? 0),
+            is_array($matches) ? $matches : []
+        )));
+
+        if (empty($ids)) {
+            return [];
+        }
 
         return array_map('intval', DB::table('messages as m')
-            ->join('messages_spatial as ms', 'ms.msgid', '=', 'm.id')
+            ->whereIn('m.id', $ids)
             ->whereNull('m.deleted')
-            ->where('ms.msgtype', $type)
-            ->whereRaw("($sql)", $params)
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))->from('messages_outcomes as mo')->whereColumn('mo.msgid', 'm.id');
-            })
-            ->limit($limit)
+            ->whereNotExists(fn ($q) => $q->select('mo.id')
+                ->from('messages_outcomes as mo')
+                ->whereColumn('mo.msgid', 'm.id'))
             ->pluck('m.fromuser')
             ->unique()
             ->all());
     }
 
+
     /**
-     * Users whose saved search matches. They explicitly asked to be told about
-     * things like this, which is about as clear a signal of consent as exists.
+     * Members whose saved search matches this post, by vector, at the same bar.
      *
-     * @param string[] $keywords
+     * Terms are stored as DOCUMENT embeddings (EmbeddingService::processSearches),
+     * so a post-vs-term cosine is on the same scale as post-vs-post and the one
+     * threshold covers both signals rather than each needing its own.
+     *
+     * Previously SQL LIKE on the term: a saved search for "bed" fired on "bed
+     * lever". Somebody who asked to hear about a thing has given about as clear
+     * a consent signal as exists, which makes it worse, not better, to spend it
+     * on a poor match.
+     *
      * @return int[]
      */
-    private function savedSearchers(array $keywords, int $limit): array
+    private function savedSearchers(int $msgid, int $limit): array
     {
-        if (empty($keywords)) {
-            return [];
-        }
-
-        [$sql, $params] = $this->keywordLike('term', $keywords);
-
         try {
-            return array_map('intval', DB::table('users_searches')
-                ->where('deleted', 0)
-                ->whereRaw("($sql)", $params)
-                ->limit($limit)
-                ->pluck('userid')
-                ->unique()
-                ->all());
-        } catch (\Throwable) {
+            $matches = $this->api->searchMatchesForPost($msgid, $limit);
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: saved-search match lookup failed', [
+                'msgid' => $msgid, 'error' => $e->getMessage(),
+            ]);
+
             return [];
         }
+
+        return array_values(array_unique(array_filter(array_map(
+            static fn ($m) => (int) ($m['userid'] ?? 0),
+            is_array($matches) ? $matches : []
+        ))));
     }
+
 
     /**
      * Members of the communities this post is on who reply to a lot of things.
@@ -757,56 +877,4 @@ class ScoutService
         return array_map(static fn ($r) => (int) $r->id, $rows);
     }
 
-    /**
-     * Meaningful words from a post subject, for matching against other people's
-     * WANTEDs and saved searches.
-     *
-     * Four characters minimum plus a stopword list: "OFFER: Free small table" has
-     * to reduce to "table", not to a match on "free" that would pair every post
-     * with every other post on the site.
-     *
-     * @return string[]
-     */
-    public function keywords(string $subject): array
-    {
-        $s = preg_replace('/^\s*(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i', '', $subject) ?? $subject;
-        // Trailing "(Location POSTCODE)" is where the item is, not what it is.
-        $s = preg_replace('/\s*\([^)]*\)\s*$/', '', $s) ?? $s;
-        $s = mb_strtolower($s);
-
-        $words = preg_split('/[^\p{L}\p{N}]+/u', $s, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-
-        $keywords = [];
-        foreach ($words as $word) {
-            if (mb_strlen($word) < 4 || in_array($word, self::STOPWORDS, true)) {
-                continue;
-            }
-            $keywords[$word] = true;
-        }
-
-        // More than a handful stops narrowing anything and starts costing a LIKE
-        // scan per word, so keep the longest few - longer words are more specific.
-        $keywords = array_keys($keywords);
-        usort($keywords, static fn ($a, $b) => mb_strlen($b) <=> mb_strlen($a));
-
-        return array_slice($keywords, 0, 5);
-    }
-
-    /**
-     * OR of LIKE conditions for a column against a keyword list.
-     *
-     * @param string[] $keywords
-     * @return array{0:string, 1:array<int,string>}
-     */
-    private function keywordLike(string $column, array $keywords): array
-    {
-        $clauses = [];
-        $params = [];
-        foreach ($keywords as $word) {
-            $clauses[] = "$column LIKE ?";
-            $params[] = '%' . $word . '%';
-        }
-
-        return [implode(' OR ', $clauses), $params];
-    }
 }
