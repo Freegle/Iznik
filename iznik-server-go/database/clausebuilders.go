@@ -14,14 +14,17 @@ import (
 // the doc comments on each override below for why neither shape can be
 // expressed any other way.
 //
-// Call this once, immediately after gorm.Open, on every *gorm.DB the
-// converted call sites might run against: InitDatabase() does this for the
-// production connection, and ormharness's dry-run *gorm.DB (golden.go) does
-// the same, so Layer 1 tests render exactly what production would send -
-// proving the mechanism once here rather than in every test file that needs
-// it (see ormharness/updatejoin_replace_test.go and
-// ormharness/insertselect_test.go, which pinned both mechanisms in isolation
-// before this made them reusable).
+// Call this once, AFTER every plugin that initializes a dialector against
+// the same *gorm.DB has run - in particular after dbresolver.Register. The
+// mysql driver's Initialize re-installs its default ClauseBuilders entries
+// (mysql.go: `for k, v := range dialector.ClauseBuilders() {
+// db.ClauseBuilders[k] = v }`), so a "VALUES" override registered before
+// dbresolver sets up its replica dialectors is silently overwritten - that
+// ordering mistake shipped 2026-08-06 and broke every production
+// InsertSelect (Error 1054 placeholder inserts) while CI, which configures
+// no replica, stayed green. See TestCustomClauseBuildersSurviveReadReplica
+// in clausebuilders_resolver_test.go, which pins the production
+// construction order.
 func RegisterCustomClauseBuilders(db *gorm.DB) {
 	db.ClauseBuilders["INSERT"] = replaceIntoClauseBuilder
 
