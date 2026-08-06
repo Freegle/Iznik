@@ -1047,18 +1047,28 @@ class ExpandService
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
-                    $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail): void {
+                    $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $row): void {
                         [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
                         try {
-                            // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
-                            DB::statement($advanceSql($boundsSet), array_merge([$wkt], $boundsParams, $advanceTail));
-                        } catch (\Throwable $e) {
-                            if ($boundsSet === '') {
-                                throw $e; // same failure the legacy statement would have had
+                            try {
+                                // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
+                                DB::statement($advanceSql($boundsSet), array_merge([$wkt], $boundsParams, $advanceTail));
+                            } catch (\Throwable $e) {
+                                // 1713 depends only on the OLD values of the updated
+                                // columns, so the envelope variant (same columns) can
+                                // only fail the same way - skip straight to the split.
+                                if ($boundsSet === '' || $this->isUndoLogTooBig($e)) {
+                                    throw $e; // same failure the legacy statement would have had
+                                }
+                                [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
+                                // keep-raw: envelope-fallback variant of the same spatial UPDATE
+                                DB::statement($advanceSql($envSet), array_merge([$wkt], $envParams, $advanceTail));
                             }
-                            [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
-                            // keep-raw: envelope-fallback variant of the same spatial UPDATE
-                            DB::statement($advanceSql($envSet), array_merge([$wkt], $envParams, $advanceTail));
+                        } catch (\Throwable $e) {
+                            if (!$this->isUndoLogTooBig($e)) {
+                                throw $e;
+                            }
+                            $this->advanceSplitForUndoLog($wkt, $advanceSql, $advanceTail, (int) $row->msgid);
                         }
                     };
                     $storeWkt = $this->storeWithUndoLogShrink($advanceStore, $storeWkt, (int) $row->msgid);
@@ -1661,6 +1671,52 @@ class ExpandService
     }
 
     /**
+     * Advance a post where polygon and bounds cannot share one UPDATE. MySQL
+     * error 1713 is about the UNDO record, which holds the OLD values of every
+     * updated column - and polygon + outer_bound are both SPATIAL-indexed, so
+     * their old geometries are logged in full. Together they can exceed the
+     * 16KB undo page even when each alone fits (the posts stuck since late
+     * July: old polygon ~7KB + old outer_bound ~19KB; verified each column
+     * updates fine alone, and simplifying the NEW polygon - the first fix -
+     * cannot touch old-value size at all). Split so each statement carries
+     * only one spatial column. The bounds lag the polygon by one statement,
+     * which is acceptable for a post that otherwise never advances; if the
+     * bounds statement still fails, keep the fresh polygon with stale bounds
+     * rather than failing the whole advance.
+     */
+    private function advanceSplitForUndoLog(string $wkt, callable $advanceSql, array $advanceTail, int $msgid): void
+    {
+        // keep-raw: the advance UPDATE without the bounds SET - builder cannot render ST_GeomFromText
+        DB::statement($advanceSql(''), array_merge([$wkt], $advanceTail));
+
+        [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
+
+        if ($boundsSet === '') {
+            return;
+        }
+
+        try {
+            try {
+                // keep-raw: bounds-only spatial UPDATE, split from the advance
+                DB::statement('UPDATE rippling_reach SET updated_at = NOW()' . $boundsSet . ' WHERE msgid = ?', array_merge($boundsParams, [$msgid]));
+            } catch (\Throwable $e) {
+                [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
+                // keep-raw: envelope fallback of the bounds-only UPDATE
+                DB::statement('UPDATE rippling_reach SET updated_at = NOW()' . $envSet . ' WHERE msgid = ?', array_merge($envParams, [$msgid]));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('ripple: split advance stored polygon but bounds update failed', [
+                'msgid' => $msgid,
+                'error' => substr($e->getMessage(), 0, 200),
+            ]);
+
+            return;
+        }
+
+        Log::info('ripple: advance split to fit undo log', ['msgid' => $msgid]);
+    }
+
+    /**
      * True when the failure is MySQL error 1713, "Undo log record is too big" -
      * the row image for the polygon update cannot fit an undo record. Checked
      * via the driver's structured errorInfo where available; the message
@@ -1729,9 +1785,15 @@ class ExpandService
             }
         }
 
-        // SRID 3857 units are ~metres (stretched ~1.6x at UK latitudes), so
-        // this ladder coarsens from ~25m to ~600m real-world tolerance.
-        foreach ([40.0, 160.0, 1000.0] as $tolerance) {
+        // The geometry is tagged SRID 3857 but its coordinates are lon/lat
+        // DEGREES (a site-wide quirk - see the routing/spatial services, which
+        // carry the same mislabel). Tolerances must therefore be degree-scale:
+        // at UK latitudes 0.0003 is roughly 25m, 0.002 roughly 160m, 0.01
+        // roughly 800m. A metre-scale ladder (40/160/1000) exceeds the whole
+        // polygon's extent, and MySQL's ST_Simplify just returns NULL for
+        // every rung - which is how the first version of this fix silently
+        // never simplified anything.
+        foreach ([0.0003, 0.002, 0.01] as $tolerance) {
             $shrunk = $this->simplifyPolygonWkt($wkt, $tolerance);
 
             if ($shrunk === null) {
@@ -1755,6 +1817,14 @@ class ExpandService
                 }
             }
         }
+
+        // Every rung either failed to simplify or still would not fit. Say so
+        // before rethrowing - the first version of this ladder failed silently
+        // on every rung and looked identical to never having run.
+        Log::warning('ripple: undo-log shrink exhausted all tolerances', [
+            'msgid' => $msgid,
+            'bytes' => strlen($wkt),
+        ]);
 
         throw $e;
     }
