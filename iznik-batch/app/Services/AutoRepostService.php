@@ -363,7 +363,7 @@ class AutoRepostService
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 $q->whereNull('messages.deadline')
-                    ->orWhereRaw('messages.deadline > DATE(NOW())');
+                    ->orWhereDate('messages.deadline', '>', today());
             });
 
         if ($reposts !== null) {

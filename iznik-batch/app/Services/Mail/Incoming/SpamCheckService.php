@@ -860,7 +860,7 @@ class SpamCheckService
         $count = DB::table('chat_images')
             ->join('chat_messages', 'chat_images.id', '=', 'chat_messages.imageid')
             ->where('chat_images.hash', $hash)
-            ->whereRaw('TIMESTAMPDIFF(HOUR, chat_messages.date, NOW()) <= ?', [self::IMAGE_THRESHOLD_TIME])
+            ->where('chat_messages.date', '>', now()->subHours(self::IMAGE_THRESHOLD_TIME + 1))
             ->count();
 
         return $count > self::IMAGE_THRESHOLD;

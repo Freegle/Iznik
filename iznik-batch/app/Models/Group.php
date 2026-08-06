@@ -320,6 +320,8 @@ class Group extends Model implements Auditable
 
         # No need to check spam_users as those will be auto-removed by the check_spammers job (in earlier times
         # this wasn't the case for all groups).
+        $reviewCutoff = now()->subDays(31);
+
         $spammembercounts = Membership::query()
             ->select([
                 'groupid',
@@ -327,9 +329,14 @@ class Group extends Model implements Auditable
                 DB::raw('heldby IS NOT NULL AS held'),
             ])
             ->whereNotNull('reviewrequestedat')
-            ->where(function ($q) {
+            ->where(function ($q) use ($reviewCutoff) {
                 $q->whereNull('reviewedat')
-                    ->orWhereRaw('DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY)');
+                    // DATE(col) < DATE_SUB(NOW(), INTERVAL 31 DAY) compares a DATE against a
+                    // DATETIME, so MySQL widens the DATE to midnight: the predicate is
+                    // strict only when the cutoff itself lands exactly on midnight, and
+                    // inclusive-of-that-date otherwise. These run from cron, which really
+                    // can fire at 00:00:00, so the operator is chosen rather than assumed.
+                    ->orWhereDate('reviewedat', $reviewCutoff->format('H:i:s') === '00:00:00' ? '<' : '<=', $reviewCutoff->toDateString());
             })
             ->whereIn('groupid', $groupids)
             ->groupBy('groupid', 'held')

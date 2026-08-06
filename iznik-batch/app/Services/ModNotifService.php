@@ -248,12 +248,19 @@ class ModNotifService
             ->count('volunteering.id');
 
         // Members to review
+        $reviewCutoff = now()->subDays(31);
+
         $membersToReview = DB::table('memberships')
             ->where('groupid', $groupId)
             ->whereNotNull('reviewrequestedat')
             ->when($minageFilter, fn ($q) => $q->where('reviewrequestedat', '>=', $minageFilter))
             ->where(fn ($q) => $q->whereNull('reviewedat')
-                ->orWhereRaw('DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY)'))
+                // DATE(col) < DATE_SUB(NOW(), INTERVAL 31 DAY) compares a DATE against a
+                // DATETIME, so MySQL widens the DATE to midnight: the predicate is
+                // strict only when the cutoff itself lands exactly on midnight, and
+                // inclusive-of-that-date otherwise. These run from cron, which really
+                // can fire at 00:00:00, so the operator is chosen rather than assumed.
+                ->orWhereDate('reviewedat', $reviewCutoff->format('H:i:s') === '00:00:00' ? '<' : '<=', $reviewCutoff->toDateString()))
             ->count();
 
         // Pending admins

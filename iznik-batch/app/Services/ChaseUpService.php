@@ -122,8 +122,8 @@ class ChaseUpService
         $count = 0;
 
         $intendeds = DB::table('messages_outcomes_intended')
-            ->whereRaw('TIMESTAMPDIFF(MINUTE, timestamp, NOW()) > 30')
-            ->whereRaw('TIMESTAMPDIFF(DAY, timestamp, NOW()) <= 7')
+            ->where('timestamp', '<=', now()->subMinutes(31))
+            ->where('timestamp', '>', now()->subDays(8))
             ->get();
 
         foreach ($intendeds as $intended) {

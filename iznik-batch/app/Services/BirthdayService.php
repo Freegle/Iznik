@@ -24,7 +24,7 @@ class BirthdayService
             ->where('type', 'Freegle')
             ->where('publish', 1)
             ->where('onmap', 1)
-            ->whereRaw('YEAR(NOW()) - YEAR(founded) > 0')
+            ->whereYear('founded', '<', now()->year)
             ->select(['id', 'nameshort', 'namefull', 'contactmail', DB::raw('YEAR(NOW()) - YEAR(founded) AS age')]);
 
         if ($groupIds !== null) {

@@ -107,7 +107,7 @@ class AutoApproveService
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
                     $q2->where('messages_groups.rippled_in', 0)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS]);
+                        ->where('messages_groups.arrival', '<=', now()->subHours(self::PENDING_HOURS + 1));
                 })
                 // Rippling-out rows already Approved on their origin group: a short mod-veto
                 // window, then auto-approve (membership gate bypassed in shouldApproveOnGroup).
@@ -117,7 +117,7 @@ class AutoApproveService
                     // groups). >= so that 0 means "eligible as soon as it arrives".
                     $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
                     $q2->where('messages_groups.rippled_in', 1)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
+                        ->where('messages_groups.arrival', '<=', now()->subHours($rippledInHours))
                         ->whereExists(function ($q3) {
                             $q3->select(DB::raw(1))
                                 ->from('messages_groups as origin_mg')

@@ -545,7 +545,7 @@ class DonationThankPrepService
             ->where('groups.publish', 1)
             ->where('groups.onmap', 1)
             ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
-            ->whereRaw("YEAR(NOW()) - YEAR(groups.founded) > 0")
+            ->whereYear('groups.founded', '<', now()->year)
             ->count();
 
         return $count > 0;

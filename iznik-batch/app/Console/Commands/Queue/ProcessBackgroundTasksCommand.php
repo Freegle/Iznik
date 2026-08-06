@@ -996,7 +996,7 @@ class ProcessBackgroundTasksCommand extends Command
         // Generate a validation key. Check if one was recently set (< 600s) to avoid confusion.
         $recentKey = DB::table('users_emails')
             ->where('canon', $canon)
-            ->whereRaw('TIMESTAMPDIFF(SECOND, validatetime, NOW()) < 600')
+            ->where('validatetime', '>', now()->subSeconds(600))
             ->value('validatekey');
 
         $key = $recentKey;

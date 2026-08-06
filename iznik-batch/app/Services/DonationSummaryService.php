@@ -25,7 +25,7 @@ class DonationSummaryService
         $fundraisingAddr = config('freegle.mail.fundraising_addr');
 
         $donations = DB::table('users_donations')
-            ->whereRaw('DATE(users_donations.timestamp) = DATE(NOW())')
+            ->whereDate('users_donations.timestamp', today())
             ->orderByDesc('timestamp')
             ->get();
 
@@ -146,7 +146,7 @@ class DonationSummaryService
             ->where('groups.publish', 1)
             ->where('groups.onmap', 1)
             ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
-            ->whereRaw("YEAR(NOW()) - YEAR(groups.founded) > 0")
+            ->whereYear('groups.founded', '<', now()->year)
             ->count();
 
         return $count > 0;
