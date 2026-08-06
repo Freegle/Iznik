@@ -119,7 +119,7 @@ class GroupStatsService
             ->where('type', self::GROUP_TYPE_FREEGLE)
             ->where('publish', 1)
             ->where('onhere', 1)
-            ->orderByRaw('LOWER(nameshort) ASC')
+            ->orderBy('nameshort') // LOWER() is redundant: nameshort is utf8mb4_unicode_ci
             ->pluck('id');
 
         $count = 0;

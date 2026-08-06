@@ -966,7 +966,7 @@ class ProcessBackgroundTasksCommand extends Command
         $canon = strtolower(trim($email));
         $existingRow = DB::table('users_emails')
             ->where('userid', $userId)
-            ->whereRaw('LOWER(email) = ?', [$canon])
+            ->where('email', $canon) // LOWER() is redundant: email is utf8mb4_unicode_ci
             ->first(['validated']);
 
         // Only skip re-sending the verification when the address is already CONFIRMED. If it is on
@@ -978,12 +978,12 @@ class ProcessBackgroundTasksCommand extends Command
             // Already the user's CONFIRMED email — just make it primary.
             DB::table('users_emails')
                 ->where('userid', $userId)
-                ->whereRaw('LOWER(email) = ?', [$canon])
+                ->where('email', $canon) // LOWER() is redundant: email is utf8mb4_unicode_ci
                 ->update(['preferred' => 1]);
 
             DB::table('users_emails')
                 ->where('userid', $userId)
-                ->whereRaw('LOWER(email) != ?', [$canon])
+                ->where('email', '!=', $canon)
                 ->update(['preferred' => 0]);
 
             Log::info('Email already belongs to user, made primary', [

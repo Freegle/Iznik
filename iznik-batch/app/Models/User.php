@@ -2037,7 +2037,7 @@ class User extends Model implements Auditable
             'memberships.ourPostingStatus',
             DB::raw("CASE WHEN groups.namefull IS NOT NULL THEN groups.namefull ELSE groups.nameshort END AS namedisplay"),
         ])
-            ->orderByRaw('LOWER(namedisplay) ASC')
+            ->orderBy('namedisplay') // LOWER() is redundant: both CASE arms are utf8mb4_unicode_ci
             ->get();
 
         $ret = [];

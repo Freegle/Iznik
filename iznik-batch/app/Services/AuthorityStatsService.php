@@ -431,7 +431,7 @@ class AuthorityStatsService
     {
         return DB::table('shortlinks')
             ->where('groupid', $groupid)
-            ->orderByRaw('LOWER(name) ASC')
+            ->orderBy('name') // LOWER() is redundant: name is utf8mb4_unicode_ci
             ->get(['id', 'name'])
             ->map(static fn ($r) => ['id' => (int) $r->id, 'name' => $r->name])
             ->all();

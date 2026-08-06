@@ -41,7 +41,7 @@ class AlertNoMessagesCommand extends Command
                 ->where('publish', 1)
                 ->where('nameshort', 'NOT LIKE', '%playground%')
                 ->where('nameshort', 'NOT LIKE', '%fresher%')
-                ->orderByRaw('LOWER(nameshort)')
+                ->orderBy('nameshort') // LOWER() is redundant: nameshort is utf8mb4_unicode_ci
                 ->select(['id', 'nameshort'])
                 ->get();
 

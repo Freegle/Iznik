@@ -3724,7 +3724,7 @@ class IncomingMailService
 
         // Try case-insensitive search
         $location = DB::table('locations')
-            ->whereRaw('LOWER(name) = ?', [strtolower($locationName)])
+            ->where('name', strtolower($locationName)) // LOWER() is redundant: name is utf8mb4_unicode_ci
             ->whereNotNull('lat')
             ->whereNotNull('lng')
             ->first(['id', 'lat', 'lng']);
