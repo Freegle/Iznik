@@ -1947,7 +1947,7 @@ class IncomingMailService
                 ->where('email_type', 'ChatNotification')
                 ->where('userid', $userId)
                 ->where('replied_at', null)
-                ->whereRaw("JSON_EXTRACT(metadata, '$.chat_id') = ?", [$chatId])
+                ->whereJsonContains('metadata->chat_id', $chatId)
                 ->orderByDesc('sent_at')
                 ->limit(1)
                 ->update([

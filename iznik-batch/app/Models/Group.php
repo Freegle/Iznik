@@ -171,16 +171,16 @@ class Group extends Model implements Auditable
     public function scopeNotClosed(Builder $query): Builder
     {
         return $query->where(function ($q) {
-            // keep-raw: the integer arm only. Laravel renders ->where('settings->closed', 0)
-            // as json_unquote(json_extract(...)) = 0, and json_unquote turns JSON true into
-            // the string 'true', false into 'false' and JSON null into 'null' - each of which
-            // MySQL casts to 0 when compared against a number. That arm would therefore match
-            // true, false and null as well, i.e. report every closed group as open. The two
-            // arms above have exact builder equivalents and no longer need raw SQL.
+            // whereJsonContains, not ->where(..., 0): JSON_CONTAINS matches the value AND its
+            // type, so it distinguishes integer 0 from false, from "0" and from JSON null -
+            // exactly as the raw JSON_EXTRACT(...) = 0 did. ->where() would render
+            // json_unquote(json_extract(...)) = 0, and json_unquote turns true into the string
+            // 'true' and null into 'null', both of which MySQL casts to 0, so that form would
+            // report every CLOSED group as open.
             $q->whereNull('settings')
                 ->orWhereJsonDoesntContainKey('settings->closed')
                 ->orWhere('settings->closed', false)
-                ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = 0");
+                ->orWhereJsonContains('settings->closed', 0);
         });
     }
 
@@ -355,7 +355,7 @@ class Group extends Model implements Auditable
             ->where(function ($q) {
                 $q->whereNull('groups.settings')
                     ->orWhereJsonDoesntContainKey('groups.settings->communityevents')
-                    ->orWhereRaw("JSON_EXTRACT(groups.settings, '$.communityevents') = 1");
+                    ->orWhereJsonContains('groups.settings->communityevents', 1);
             })
             ->where('communityevents.pending', 1)
             ->where('communityevents.deleted', 0)
@@ -379,7 +379,7 @@ class Group extends Model implements Auditable
             ->where(function ($q) {
                 $q->whereNull('groups.settings')
                     ->orWhereJsonDoesntContainKey('groups.settings->volunteering')
-                    ->orWhereRaw("JSON_EXTRACT(groups.settings, '$.volunteering') = 1");
+                    ->orWhereJsonContains('groups.settings->volunteering', 1);
             })
             ->where(function ($q) use ($eventsqltime) {
                 $q->whereNull('volunteering.applyby')

@@ -309,13 +309,13 @@ class ModNotifService
             ->where(function ($q) {
                 $q->whereNull('memberships.settings')
                     ->orWhere('memberships.settings->active', true)
-                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.active') = 1")
+                    ->orWhereJsonContains('memberships.settings->active', 1)
                     ->orWhere(function ($q2) {
                         $q2->whereJsonDoesntContainKey('memberships.settings->active')
                             ->where(function ($q3) {
                                 $q3->whereJsonDoesntContainKey('memberships.settings->showmessages')
                                     ->orWhere('memberships.settings->showmessages', true)
-                                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') = 1");
+                                    ->orWhereJsonContains('memberships.settings->showmessages', 1);
                             });
                     });
             })

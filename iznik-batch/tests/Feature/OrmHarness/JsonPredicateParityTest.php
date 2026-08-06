@@ -101,8 +101,32 @@ class JsonPredicateParityTest extends TestCase
     }
 
     /**
-     * The negative control for the test above: converting the integer arm too
-     * is the obvious next step and is wrong.
+     * The integer arm DOES convert - but only via whereJsonContains, which
+     * compiles to JSON_CONTAINS and therefore compares value AND type. That is
+     * what the raw JSON_EXTRACT(...) = 0 did, so it keeps integer 0 apart from
+     * false, from the string "0" and from JSON null.
+     *
+     * The obvious ->where('settings->closed', 0) does NOT, and the next test
+     * holds that distinction open.
+     */
+    public function test_integer_comparison_converts_via_json_contains(): void
+    {
+        foreach ([0, 1] as $needle) {
+            $this->assertSame(
+                $this->ids(fn ($q) => $q->whereRaw("JSON_EXTRACT(settings, '$.closed') = ?", [$needle])),
+                $this->ids(fn ($q) => $q->whereJsonContains('settings->closed', $needle)),
+                "JSON_CONTAINS diverged from raw equality for $needle"
+            );
+        }
+
+        // Not vacuous: 0 must find the integer-0 row and nothing else.
+        $this->assertSame([6], $this->ids(fn ($q) => $q->whereJsonContains('settings->closed', 0)));
+        $this->assertSame([7], $this->ids(fn ($q) => $q->whereJsonContains('settings->closed', 1)));
+    }
+
+    /**
+     * The negative control: ->where() on a JSON path is NOT the same predicate,
+     * because Laravel renders it with a json_unquote wrapper.
      */
     public function test_converting_the_integer_arm_would_change_which_rows_match(): void
     {

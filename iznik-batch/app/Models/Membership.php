@@ -234,18 +234,20 @@ class Membership extends Model implements Auditable
                 // whereJsonDoesntContainKey expresses; whereNull() would be wrong
                 // here because Laravel renders it as a compound that also matches a
                 // stored JSON null. The boolean arms convert exactly - Laravel emits
-                // json_extract(...) = true unwrapped. Only the = 1 arms keep raw SQL:
-                // Laravel wraps a numeric comparison in json_unquote, and that also
-                // matches the string "1". See JsonPredicateParityTest.
+                // json_extract(...) = true unwrapped. The integer arms use
+                // whereJsonContains, which compares value AND type via JSON_CONTAINS
+                // and so keeps 1 apart from true and from the string "1"; plain
+                // ->where(..., 1) would not, because it renders a json_unquote
+                // wrapper. See JsonPredicateParityTest.
                 $q->whereNull('settings')
                     ->orWhere('settings->active', true)
-                    ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = 1")
+                    ->orWhereJsonContains('settings->active', 1)
                     ->orWhere(function ($q2) {
                         $q2->whereJsonDoesntContainKey('settings->active')
                             ->where(function ($q3) {
                                 $q3->whereJsonDoesntContainKey('settings->showmessages')
                                     ->orWhere('settings->showmessages', true)
-                                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = 1");
+                                    ->orWhereJsonContains('settings->showmessages', 1);
                             });
                     });
             });

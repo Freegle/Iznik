@@ -360,7 +360,7 @@ class ChatMessage extends Model implements Auditable
                 ->where('chat_messages.reviewrequired', 1)
                 ->where('chat_messages.reviewrejected', 0)
                 ->where('chat_messages.date', '>', $cutoff)
-                ->whereRaw("JSON_EXTRACT(groups.settings, '$.widerchatreview') = 1")
+                ->whereJsonContains('groups.settings->widerchatreview', 1)
                 ->whereNull('chat_messages_held.id')
                 ->where('chat_messages.reportreason', '!=', self::REVIEW_USER);
 
