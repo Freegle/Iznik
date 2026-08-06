@@ -319,11 +319,17 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 		if s < hdrOldest {
 			s = hdrOldest
 		}
-		if hs, err := q.query(
+		hs, err := q.query(
 			fmt.Sprintf(`{app="freegle", source="api_headers"} |= "%s" | json | user_id="%s"`, uidStr, uidStr),
-			s, e, perQuery); err == nil {
-			add(hs)
+			s, e, perQuery)
+		if err != nil {
+			// Slices get SLOWER going deeper (measured 21s, 18s, then 40s+
+			// timeouts walking back through a heavy user's headers), so after
+			// one failure the rest can only burn the budget for nothing.
+			bounds = append(bounds, fmt.Sprintf("api_headers: stopped after %d slices (query failed: %v)", slices, err))
+			break
 		}
+		add(hs)
 		e = s
 		slices++
 	}
