@@ -17,21 +17,22 @@ class BirthdayService
      */
     public function sendBirthdayEmails(?string $emailOverride = null, ?array $groupIds = null, bool $dryRun = false): int
     {
-        $today = now()->format('m-d');
-
         $query = DB::table('groups')
-            ->whereRaw("DATE_FORMAT(founded, '%m-%d') = ?", [$today])
+            ->whereMonth('founded', now()->month)
+            ->whereDay('founded', now()->day)
             ->where('type', 'Freegle')
             ->where('publish', 1)
             ->where('onmap', 1)
             ->whereYear('founded', '<', now()->year)
-            ->select(['id', 'nameshort', 'namefull', 'contactmail', DB::raw('YEAR(NOW()) - YEAR(founded) AS age')]);
+            ->select(['id', 'nameshort', 'namefull', 'contactmail', 'founded']);
 
         if ($groupIds !== null) {
             $query->whereIn('id', $groupIds);
         }
 
-        $groups = $query->orderBy('nameshort')->get();
+        $groups = $query->orderBy('nameshort')->get()->each(function ($group) {
+            $group->age = now()->year - \Illuminate\Support\Carbon::parse($group->founded)->year;
+        });
 
         $count = 0;
 
@@ -123,7 +124,10 @@ class BirthdayService
             ->whereIn('memberships.role', ['Moderator', 'Owner'])
             ->whereNull('users.deleted')
             ->where('users.lastaccess', '>=', $oneYearAgo)
-            ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->showmod')
+                    ->orWhere('users.settings->showmod', true);
+            })
             ->select(['users.id', 'users.fullname', 'users.firstname'])
             ->get();
 

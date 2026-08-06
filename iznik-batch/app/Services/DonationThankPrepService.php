@@ -544,7 +544,14 @@ class DonationThankPrepService
             ->where('groups.type', Group::TYPE_FREEGLE)
             ->where('groups.publish', 1)
             ->where('groups.onmap', 1)
-            ->whereRaw("DATE_FORMAT(groups.founded, '%m-%d') IN (?, ?, ?)", [$today, $yesterday, $twoDaysAgo])
+            ->where(function ($q) use ($today, $yesterday, $twoDaysAgo) {
+                foreach ([$today, $yesterday, $twoDaysAgo] as $md) {
+                    [$m, $d] = explode('-', $md);
+                    $q->orWhere(function ($q2) use ($m, $d) {
+                        $q2->whereMonth('groups.founded', (int) $m)->whereDay('groups.founded', (int) $d);
+                    });
+                }
+            })
             ->whereYear('groups.founded', '<', now()->year)
             ->count();
 

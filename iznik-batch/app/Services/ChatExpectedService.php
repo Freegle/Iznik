@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -206,7 +205,12 @@ class ChatExpectedService
                 ->where('userid', $other)
                 // A rippling-held reply hasn't reached the expecter yet, so it must not count as
                 // "reply received" (that would prematurely stop chase-up). Once released it counts.
-                ->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'))
+                // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id').
+                ->whereNotExists(function ($q) {
+                    $q->from('rippling_held_replies as cmr')
+                        ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                        ->where('cmr.status', '<>', 'released');
+                })
                 ->count();
 
             $value = $replyCount > 0 ? 1 : -1;

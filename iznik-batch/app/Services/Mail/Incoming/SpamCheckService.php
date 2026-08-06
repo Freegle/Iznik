@@ -712,6 +712,7 @@ class SpamCheckService
             // Get whitelisted domains (count >= 3, length > 5, excluding shorteners)
             $whitelistedDomains = DB::table('spam_whitelist_links')
                 ->where('count', '>=', 3)
+                // keep-raw: LENGTH() has no builder method.
                 ->whereRaw('LENGTH(domain) > 5')
                 ->where('domain', 'NOT LIKE', '%linkedin%')
                 ->where('domain', 'NOT LIKE', '%goo.gl%')

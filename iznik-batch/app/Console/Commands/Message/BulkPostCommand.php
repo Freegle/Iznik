@@ -430,6 +430,7 @@ class BulkPostCommand extends Command
             ->whereNotNull('lat')
             ->whereNotNull('lng')
             ->select('*')
+            // keep-raw: ST_Distance_Sphere() is a spatial function with no builder method.
             ->selectRaw(
                 'ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?)) AS distance',
                 [$location->lng, $location->lat]

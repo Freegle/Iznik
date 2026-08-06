@@ -33,35 +33,45 @@ class MergeDuplicateChatRoomsCommand extends Command
             $this->info('DRY RUN - no changes will be made');
         }
 
-        $query = "
-            SELECT cr1.id as old_id, cr2.id as new_id,
-                   cr1.user1 as old_user1, cr1.user2 as old_user2,
-                   cr2.user1 as new_user1, cr2.user2 as new_user2,
-                   cr1.created as old_created, cr2.created as new_created,
-                   (SELECT COUNT(*) FROM chat_messages WHERE chatid = cr1.id) as old_msgs,
-                   (SELECT COUNT(*) FROM chat_messages WHERE chatid = cr2.id) as new_msgs
-            FROM chat_rooms cr1
-            JOIN chat_rooms cr2 ON cr1.user1 = cr2.user2
-                AND cr1.user2 = cr2.user1
-                AND cr1.chattype = cr2.chattype
-            WHERE cr1.chattype = 'User2User'
-              AND cr1.id < cr2.id
-        ";
-
-        $params = [];
+        $query = DB::table('chat_rooms as cr1')
+            ->join('chat_rooms as cr2', function ($join) {
+                $join->on('cr1.user1', '=', 'cr2.user2')
+                    ->on('cr1.user2', '=', 'cr2.user1')
+                    ->on('cr1.chattype', '=', 'cr2.chattype');
+            })
+            ->where('cr1.chattype', 'User2User')
+            ->whereColumn('cr1.id', '<', 'cr2.id');
 
         if ($userId) {
-            $query .= " AND (cr1.user1 = ? OR cr1.user2 = ? OR cr2.user1 = ? OR cr2.user2 = ?)";
-            $params = [(int) $userId, (int) $userId, (int) $userId, (int) $userId];
+            $userId = (int) $userId;
+            $query->where(function ($q) use ($userId) {
+                $q->where('cr1.user1', $userId)
+                    ->orWhere('cr1.user2', $userId)
+                    ->orWhere('cr2.user1', $userId)
+                    ->orWhere('cr2.user2', $userId);
+            });
         }
 
-        $query .= " ORDER BY cr2.created DESC";
+        $oldMsgs = DB::table('chat_messages')->whereColumn('chatid', 'cr1.id');
+        $oldMsgs->aggregate = ['function' => 'count', 'columns' => ['*']];
+        $newMsgs = DB::table('chat_messages')->whereColumn('chatid', 'cr2.id');
+        $newMsgs->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        $query->select([
+            'cr1.id as old_id', 'cr2.id as new_id',
+            'cr1.user1 as old_user1', 'cr1.user2 as old_user2',
+            'cr2.user1 as new_user1', 'cr2.user2 as new_user2',
+            'cr1.created as old_created', 'cr2.created as new_created',
+        ])
+            ->selectSub($oldMsgs, 'old_msgs')
+            ->selectSub($newMsgs, 'new_msgs')
+            ->orderBy('cr2.created', 'desc');
 
         if ($limit > 0) {
-            $query .= " LIMIT $limit";
+            $query->limit($limit);
         }
 
-        $pairs = DB::select($query, $params);
+        $pairs = $query->get();
 
         $this->info("Found " . count($pairs) . " duplicate pair(s)");
 

@@ -48,12 +48,13 @@ class AlertNoMessagesCommand extends Command
             $stale = [];
 
             foreach ($groups as $group) {
-                $row = DB::table('messages_groups')
+                $maxArrival = DB::table('messages_groups')
                     ->where('groupid', $group->id)
-                    ->selectRaw('DATEDIFF(NOW(), MAX(arrival)) AS latest')
-                    ->first();
+                    ->max('arrival');
 
-                $daysSince = $row->latest ?? null;
+                $daysSince = $maxArrival === null
+                    ? null
+                    : (int) today()->diffInDays(\Illuminate\Support\Carbon::parse($maxArrival)->startOfDay(), true);
 
                 if ($daysSince === null || $daysSince > $days) {
                     $stale[] = "{$group->nameshort} — last message "

@@ -157,27 +157,27 @@ class MatchedPostsService
      */
     private function freshPosts(Carbon $since, ?Carbon $until = null): Collection
     {
-        $bindings = ['Approved', 'Offer', 'Wanted', $since->toDateTimeString()];
-        $upper = '';
+        $query = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('messages_spatial as ms', 'ms.msgid', '=', 'm.id')
+            ->join('messages_embeddings as me', 'me.msgid', '=', 'm.id')
+            ->where('mg.collection', 'Approved')
+            ->where('mg.deleted', 0)
+            ->where('mg.rippled_in', 0)
+            ->whereIn('m.type', ['Offer', 'Wanted'])
+            ->where('mg.arrival', '>', $since->toDateTimeString());
+
         if ($until !== null) {
-            $upper = ' AND mg.arrival <= ?';
-            $bindings[] = $until->toDateTimeString();
+            $query->where('mg.arrival', '<=', $until->toDateTimeString());
         }
 
-        return collect(DB::select(
-            'SELECT m.id AS msgid, m.fromuser, m.type
-               FROM messages_groups mg
-               INNER JOIN messages m ON m.id = mg.msgid
-               INNER JOIN messages_spatial ms ON ms.msgid = m.id
-               INNER JOIN messages_embeddings me ON me.msgid = m.id
-              WHERE mg.collection = ? AND mg.deleted = 0 AND mg.rippled_in = 0
-                AND m.type IN (?, ?)
-                AND mg.arrival > ?' . $upper . '
-                AND m.deleted IS NULL
-                AND ms.successful = 0 AND ms.promised = 0
-              GROUP BY m.id, m.fromuser, m.type',
-            $bindings
-        ));
+        return $query
+            ->whereNull('m.deleted')
+            ->where('ms.successful', 0)
+            ->where('ms.promised', 0)
+            ->select('m.id as msgid', 'm.fromuser', 'm.type')
+            ->groupBy('m.id', 'm.fromuser', 'm.type')
+            ->get();
     }
 
     /**
@@ -195,8 +195,7 @@ class MatchedPostsService
             ->approved()
             ->notDeleted()
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
+                $q->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages.id')
                     ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
             })
@@ -251,7 +250,7 @@ class MatchedPostsService
                 $pairs[] = [$uid, $mid];
             }
         }
-        $viewed = $this->pairSet('messages_likes', $pairs, "type = 'View' AND pageview = 1");
+        $viewed = $this->pairSet('messages_likes', $pairs, ['type' => 'View', 'pageview' => 1]);
         $mailed = $this->pairSet('messages_matched_notified', $pairs);
 
         $cap = (int) config('freegle.matched.max_items_per_email', 10);
@@ -333,8 +332,9 @@ class MatchedPostsService
      * that exist in $table (optionally further constrained by $extra).
      *
      * @param  array<int, array{0:int,1:int}>  $pairs
+     * @param  array<string, mixed>  $extra  Additional column => value equality filters.
      */
-    private function pairSet(string $table, array $pairs, string $extra = ''): array
+    private function pairSet(string $table, array $pairs, array $extra = []): array
     {
         if (! $pairs) {
             return [];
@@ -347,8 +347,8 @@ class MatchedPostsService
             ->select('userid', 'msgid')
             ->whereIn('userid', $userIds)
             ->whereIn('msgid', $msgIds);
-        if ($extra !== '') {
-            $q->whereRaw($extra);
+        foreach ($extra as $column => $value) {
+            $q->where($column, $value);
         }
 
         // Prune to the exact pairs we asked about (the IN×IN cross-product can

@@ -79,6 +79,8 @@ class GroupStatsService
         $groups = DB::table('groups')->select('id', 'nameshort')->get();
 
         foreach ($groups as $group) {
+            // keep-raw: ST_AsText/ST_GeomFromText/COALESCE are spatial and conditional
+            // functions with no query-builder equivalent.
             $row = DB::selectOne(
                 "SELECT ST_AsText(polyindex) AS current, ST_AsText(ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), ?)) AS geomtext FROM `groups` WHERE id = ?",
                 [self::SRID, $group->id]
@@ -86,6 +88,7 @@ class GroupStatsService
 
             if ($row && $row->current !== $row->geomtext) {
                 if (!$dryRun) {
+                    // keep-raw: ST_GeomFromText has no query-builder equivalent.
                     DB::statement(
                         "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
                         [$row->geomtext, self::SRID, $group->id]
@@ -266,6 +269,8 @@ class GroupStatsService
     {
         $cutoff = date('Y-m-01', strtotime(self::OUTCOMES_MONTHS . ' months ago'));
 
+        // keep-raw: CONCAT/YEAR/MONTH have no builder equivalent, and this is an aliased
+        // SUM() aggregate alongside non-aggregate columns (groupid, month_date) under GROUP BY.
         $stats = DB::table('stats')
             ->where('type', self::STATS_TYPE_OUTCOMES)
             ->where('date', '>', $cutoff)

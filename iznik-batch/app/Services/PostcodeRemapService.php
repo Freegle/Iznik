@@ -51,7 +51,9 @@ class PostcodeRemapService
         $pcQuery = DB::table('locations_spatial')
             ->join('locations', 'locations_spatial.locationid', '=', 'locations.id')
             ->where('locations.type', 'Postcode')
-            ->whereRaw("LOCATE(' ', locations.name) > 0")
+            // LOCATE(' ', name) > 0 is "name contains a space"; verified identical on
+            // edge cases (empty string, leading/trailing space) against LIKE '% %'.
+            ->where('locations.name', 'like', '% %')
             ->select(
                 'locations.id as locations_id',
                 'locations_spatial.locationid',
@@ -63,6 +65,8 @@ class PostcodeRemapService
 
         if ($polygon) {
             $srid = (int) config('freegle.srid', 3857);
+            // keep-raw: ST_Contains/ST_GeomFromText are spatial functions with no
+            // query-builder equivalent.
             if ($locationId) {
                 $pcQuery->where(function ($q) use ($polygon, $locationId, $srid) {
                     $q->whereRaw(
@@ -113,9 +117,11 @@ class PostcodeRemapService
      */
     private function seedArea(int $locationId): void
     {
+        // keep-raw: ST_AsText and COALESCE are functions with no query-builder equivalent.
         $row = DB::table('locations')
             ->where('id', $locationId)
-            ->selectRaw('name, `type`, ST_AsText(COALESCE(ourgeometry, geometry)) AS wkt')
+            ->select('name', 'type')
+            ->selectRaw('ST_AsText(COALESCE(ourgeometry, geometry)) AS wkt')
             ->first();
 
         if (!$row || empty($row->wkt)) {

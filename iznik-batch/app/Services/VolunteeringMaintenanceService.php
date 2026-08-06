@@ -227,6 +227,7 @@ class VolunteeringMaintenanceService
         $name = DB::table('volunteering_groups')
             ->join('groups', 'groups.id', '=', 'volunteering_groups.groupid')
             ->where('volunteering_groups.volunteeringid', $volId)
+            // keep-raw: COALESCE()/NULLIF() have no builder method.
             ->selectRaw("COALESCE(NULLIF(groups.namefull, ''), groups.nameshort) AS name")
             ->value('name');
 

@@ -661,6 +661,9 @@ class TestMailCommand extends Command
 
             $chatRoom = ChatRoom::where('chattype', $chatType)
                 ->whereHas('messages', function ($q) {
+                    // keep-raw: HAVING on a DISTINCT-counted aggregate - having()
+                    // can only compare an already-selected column/alias to a
+                    // value, it cannot express COUNT(DISTINCT ...) itself.
                     $q->select('chatid')
                         ->groupBy('chatid')
                         ->havingRaw('COUNT(DISTINCT userid) > 1');
@@ -1163,6 +1166,7 @@ class TestMailCommand extends Command
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $story->userid)
                 ->where('groups.type', Group::TYPE_FREEGLE)
+                // keep-raw: COALESCE() over two columns has no builder method.
                 ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
                 ->value('namedisplay');
 

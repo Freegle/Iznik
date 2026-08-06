@@ -269,9 +269,11 @@ class CommunityNewsEmailService
             // (settings.newsletter). For Community News this defaults OFF —
             // stricter than StoriesNewsletterService's default-on — so a group
             // is mailed only when its mods have newsletters explicitly enabled.
+            // keep-raw: COALESCE() over a JSON_EXTRACT() has no builder method.
             ->whereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 0) != 0")
             // Home group: this membership's group must actually cover where
             // the member lives.
+            // keep-raw: ST_Contains() is a spatial function with no builder method.
             ->whereRaw("ST_Contains(groups.polyindex, {$memberPoint})")
             ->distinct()
             ->select('users.id');

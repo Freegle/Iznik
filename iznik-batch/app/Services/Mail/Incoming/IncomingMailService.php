@@ -1732,6 +1732,11 @@ class IncomingMailService
                 'userid' => $messageOwner,
             ]);
 
+            // keep-raw: correlated scalar subquery as an UPDATE SET value. The query
+            // builder's update() only special-cases Expression values (col => raw SQL) -
+            // there is no subquery-as-value equivalent to selectSub() for update(), so
+            // this can't be expressed without either DB::raw or a second round-trip that
+            // would change the query from one atomic UPDATE into two.
             DB::table('chat_roster')
                 ->where('chatid', $chat->id)
                 ->where('userid', $messageOwner)
@@ -4151,6 +4156,10 @@ class IncomingMailService
         $msgType = $message->type;
 
         try {
+            // keep-raw: ST_GeomFromText() is a spatial function with no query builder
+            // method, and this is an atomic upsert (ON DUPLICATE KEY UPDATE) - upsert()
+            // only emits col = values(col) or col = ?, neither of which can express the
+            // ST_GeomFromText() recomputation needed on the update branch.
             $sql = "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
                     VALUES (?, ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?), ?, ?, ?)
                     ON DUPLICATE KEY UPDATE
@@ -4293,8 +4302,7 @@ class IncomingMailService
     {
         DB::table('messages')
             ->where('id', $messageId)
-            ->update([
-                'retrycount' => DB::raw('retrycount + 1'),
+            ->increment('retrycount', 1, [
                 'retrylastfailure' => now(),
             ]);
 

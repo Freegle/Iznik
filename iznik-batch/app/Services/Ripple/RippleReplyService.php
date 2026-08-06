@@ -615,6 +615,7 @@ class RippleReplyService
         // but the chat never appears in the list until the hourly recompute. Bump on
         // release, keyed off the message's own date via GREATEST so we never move
         // latestmessage backwards.
+        // keep-raw: GREATEST()/COALESCE() and a multi-table UPDATE...JOIN have no builder form.
         DB::update(
             'UPDATE chat_rooms cr ' .
             'JOIN rippling_held_replies rhr ON rhr.id = ? ' .

@@ -166,21 +166,16 @@ class ModNotifService
      */
     public function isModRecentlyActive(int $modId): bool
     {
-        $row = DB::table('messages_groups')
-            ->selectRaw('DATEDIFF(NOW(), MAX(arrival)) AS activeago')
+        $maxArrival = DB::table('messages_groups')
             ->where('approvedby', $modId)
-            ->first();
-
-        if (!$row) {
-            return false;
-        }
-
-        $activeago = $row->activeago;
+            ->max('arrival');
 
         // '0' or null means approved today; an integer <= 90 means recently active
-        if ($activeago === null) {
+        if ($maxArrival === null) {
             return false;
         }
+
+        $activeago = (int) today()->diffInDays(\Illuminate\Support\Carbon::parse($maxArrival)->startOfDay(), true);
 
         if ($activeago == '0' || ($activeago !== null && (int) $activeago <= self::MAX_INACTIVE_DAYS)) {
             return true;
@@ -329,32 +324,37 @@ class ModNotifService
         $minageFilter = $minage > 0 ? now()->subHours($minage)->format('Y-m-d H:i:s') : null;
         $earliest = now()->subDays(31)->startOfDay()->format('Y-m-d H:i:s');
 
-        $placeholders = implode(',', array_fill(0, count($modGroupIds), '?'));
-
-        $sql = "SELECT COUNT(DISTINCT chat_messages.id) AS count
-                FROM chat_messages
-                LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id
-                INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid
-                INNER JOIN memberships
-                  ON memberships.userid = (CASE WHEN chat_messages.userid = chat_rooms.user1 THEN chat_rooms.user2 ELSE chat_rooms.user1 END)
-                  AND memberships.groupid IN ($placeholders)
-                INNER JOIN `groups` ON memberships.groupid = groups.id AND groups.type = 'Freegle'
-                WHERE chat_messages.reviewrequired = 1
-                  AND chat_messages.reviewrejected = 0
-                  AND chat_messages_held.userid IS NULL
-                  AND chat_messages.date > ?";
-
-        $bindings = $modGroupIds;
-        $bindings[] = $earliest;
+        $query = DB::table('chat_messages')
+            ->leftJoin('chat_messages_held', 'chat_messages_held.msgid', '=', 'chat_messages.id')
+            ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
+            // "The other party": memberships.userid = CASE WHEN chat_messages.userid = chat_rooms.user1
+            // THEN chat_rooms.user2 ELSE chat_rooms.user1 END, decomposed into its two exhaustive,
+            // mutually-exclusive branches so no CASE WHEN is needed.
+            ->join('memberships', function ($join) use ($modGroupIds) {
+                $join->where(function ($j) {
+                    $j->where(function ($j2) {
+                        $j2->on('chat_messages.userid', '=', 'chat_rooms.user1')
+                            ->on('memberships.userid', '=', 'chat_rooms.user2');
+                    })->orWhere(function ($j2) {
+                        $j2->on('chat_messages.userid', '!=', 'chat_rooms.user1')
+                            ->on('memberships.userid', '=', 'chat_rooms.user1');
+                    });
+                })->whereIn('memberships.groupid', $modGroupIds);
+            })
+            ->join('groups', function ($join) {
+                $join->on('memberships.groupid', '=', 'groups.id')
+                    ->where('groups.type', 'Freegle');
+            })
+            ->where('chat_messages.reviewrequired', 1)
+            ->where('chat_messages.reviewrejected', 0)
+            ->whereNull('chat_messages_held.userid')
+            ->where('chat_messages.date', '>', $earliest);
 
         if ($minageFilter !== null) {
-            $sql .= ' AND chat_messages.date <= ?';
-            $bindings[] = $minageFilter;
+            $query->where('chat_messages.date', '<=', $minageFilter);
         }
 
-        $row = DB::selectOne($sql, $bindings);
-
-        return (int) ($row->count ?? 0);
+        return (int) $query->distinct('chat_messages.id')->count('chat_messages.id');
     }
 
     /**

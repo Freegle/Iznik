@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Console\Command;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -76,18 +77,19 @@ class MigrateReachBoundsSchemaCommand extends Command
         // 1) Shadow with the full target schema. LIKE copies columns/indexes but not the
         //    FK, so the columns, index and FK are added explicitly. All cheap: empty table.
         if (!Schema::hasTable('rippling_reach_shadow')) {
+            // keep-raw: CREATE TABLE ... LIKE has no Schema Blueprint equivalent - it
+            // clones another table's live column/index definitions, which Blueprint
+            // cannot express without first introspecting and re-declaring every column.
             DB::statement('CREATE TABLE rippling_reach_shadow LIKE rippling_reach');
-            DB::statement(
-                'ALTER TABLE rippling_reach_shadow
-                    ADD COLUMN outer_bound GEOMETRY NOT NULL SRID ' . self::SRID . ',
-                    ADD COLUMN inner_bound GEOMETRY SRID ' . self::SRID . ' NULL,
-                    ADD SPATIAL INDEX rippling_reach_outer (outer_bound)'
-            );
-            DB::statement(
-                'ALTER TABLE rippling_reach_shadow
-                    ADD CONSTRAINT rippling_reach_shadow_msgid_foreign
-                    FOREIGN KEY (msgid) REFERENCES messages (id) ON DELETE CASCADE'
-            );
+            Schema::table('rippling_reach_shadow', function (Blueprint $table) {
+                $table->geometry('outer_bound', null, self::SRID);
+                $table->geometry('inner_bound', null, self::SRID)->nullable();
+                $table->spatialIndex('outer_bound', 'rippling_reach_outer');
+            });
+            Schema::table('rippling_reach_shadow', function (Blueprint $table) {
+                $table->foreign('msgid', 'rippling_reach_shadow_msgid_foreign')
+                    ->references('id')->on('messages')->onDelete('cascade');
+            });
         }
         $this->info('Shadow table ready.');
 
@@ -137,17 +139,24 @@ class MigrateReachBoundsSchemaCommand extends Command
             }
             // Advance the watermark so a busy table converges instead of re-copying
             // the same rows forever.
+            // keep-raw: same write-connection-clock reasoning as the initial watermark
+            // read above - see the comment there.
             $copyStart = DB::selectOne('SELECT NOW() AS t', [], false)->t;
         } while (count($deltaIds) === $chunk);
         $this->info("Delta pass complete ({$delta} rows).");
 
         // 4) Atomic swap. No inbound FKs reference rippling_reach, so this is clean.
+        // keep-raw: a multi-table RENAME TABLE is a single atomic operation in MySQL;
+        // Schema::rename() only renames one table per call, so two calls would leave a
+        // window where neither name (or the wrong one) is live for concurrent readers.
         DB::statement('RENAME TABLE rippling_reach TO rippling_reach_old, rippling_reach_shadow TO rippling_reach');
         $this->info('Swapped. Old table kept as rippling_reach_old — DROP it manually once satisfied.');
 
         // 5) Verify: counts + a sample sandwich check.
         $oldN = (int) DB::table('rippling_reach_old')->useWritePdo()->count();
         $newN = (int) DB::table('rippling_reach')->useWritePdo()->count();
+        // keep-raw: ST_GeometryType() and ST_Contains() are geometry functions with no
+        // query builder method.
         $badSample = (int) DB::selectOne(
             'SELECT COUNT(*) AS n FROM (
                 SELECT msgid FROM rippling_reach
@@ -196,6 +205,12 @@ class MigrateReachBoundsSchemaCommand extends Command
      */
     private function insertRows(string $where, bool $single): int
     {
+        // keep-raw: this INSERT..SELECT selects rr.* (every column of rippling_reach,
+        // unknown to the ORM since the shadow table's shape comes from a runtime
+        // CREATE TABLE ... LIKE) alongside CASE WHEN EXISTS(...) expressions built from
+        // ST_SRID/POINT and ReachBoundsService's own ST_* fragments - CASE WHEN and ST_*
+        // both have no query builder equivalent, so the select list must stay raw
+        // regardless of how the INSERT/SELECT shell is expressed.
         $insert = function (string $outerExpr, string $innerExpr) use ($where): int {
             return DB::affectingStatement(
                 'INSERT INTO rippling_reach_shadow
@@ -227,6 +242,13 @@ class MigrateReachBoundsSchemaCommand extends Command
                 }
             }
             // Retry the chunk row-by-row so one bad polygon cannot poison it.
+            // keep-raw: $where is the same fragment embedded in the INSERT..SELECT above
+            // (msgid > cursor ORDER BY msgid LIMIT chunk, or msgid = id) and is only ever
+            // reached with the chunk form. It stays a plain string because the caller
+            // that supplies it also feeds the necessarily-raw INSERT; reusing one
+            // fragment for both keeps the retry's row set identical to what the failed
+            // insert attempted by construction, rather than by keeping two independent
+            // expressions of the same bounds in sync.
             $ids = array_map(
                 fn ($r) => (int) $r->msgid,
                 DB::select('SELECT rr.msgid FROM rippling_reach rr WHERE ' . $where, [], false)

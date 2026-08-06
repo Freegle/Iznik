@@ -18,6 +18,7 @@ trait ShardedExecution
     protected function applySharding(Builder $query, string $column = 'id'): Builder
     {
         if ($this->mod > 1) {
+            // keep-raw: MOD() has no builder method.
             return $query->whereRaw("MOD({$column}, ?) = ?", [$this->mod, $this->val]);
         }
 

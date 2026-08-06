@@ -150,6 +150,7 @@ class NewsfeedLinkPreviewService
 
             $data = $this->parseHtml($response->body());
 
+            // keep-raw: LAST_INSERT_ID(id) readback on an upsert - no builder form returns the existing row's id this way.
             DB::statement(
                 "INSERT INTO link_previews(url, title, description, image) VALUES (?,?,?,?)
                  ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), title=?, description=?, image=?, retrieved=NOW()",
@@ -172,6 +173,7 @@ class NewsfeedLinkPreviewService
 
     protected function upsertInvalid(string $url): int
     {
+        // keep-raw: LAST_INSERT_ID(id) readback on an upsert - no builder form returns the existing row's id this way.
         DB::statement(
             "INSERT INTO link_previews(url, invalid) VALUES (?,1)
              ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), retrieved=NOW()",

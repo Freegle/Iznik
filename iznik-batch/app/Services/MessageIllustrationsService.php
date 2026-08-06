@@ -30,17 +30,16 @@ class MessageIllustrationsService
      */
     private function cleanupDuplicates(bool $dryRun = false): int
     {
-        $duplicates = DB::select("
-            SELECT DISTINCT ma_ai.id, ma_ai.msgid
-            FROM messages_attachments ma_ai
-            INNER JOIN messages_attachments ma_real ON ma_real.msgid = ma_ai.msgid
-            WHERE JSON_EXTRACT(ma_ai.externalmods, '$.ai') = TRUE
-            AND (
-                ma_real.externalmods IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE
-            )
-        ");
+        $duplicates = DB::table('messages_attachments as ma_ai')
+            ->join('messages_attachments as ma_real', 'ma_real.msgid', '=', 'ma_ai.msgid')
+            ->where('ma_ai.externalmods->ai', true)
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('ma_real.externalmods->ai')
+                    ->orWhere('ma_real.externalmods->ai', false);
+            })
+            ->distinct()
+            ->select('ma_ai.id', 'ma_ai.msgid')
+            ->get();
 
         $count = 0;
         foreach ($duplicates as $dup) {

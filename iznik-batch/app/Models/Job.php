@@ -67,11 +67,13 @@ class Job extends Model
             // convert), so decay the score with the posting age: factor 1.0 when
             // fresh, floored at 0.5 by ~7 days. posted_at NULL -> treated as fresh.
             // Selected as `score` so the variety step below can weight by it.
+            // keep-raw: GREATEST()/COALESCE()/DATEDIFF() arithmetic score formula has no builder method.
             ->selectRaw('cpc * clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), posted_at), 0) * 0.07) AS score')
             ->whereIn('id', $ids)
-            ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
+            ->where('cpc', '>=', self::MINIMUM_CPC)
             ->where('visible', 1)
-            ->orderByRaw('score DESC, id ASC')
+            ->orderBy('score', 'desc')
+            ->orderBy('id')
             ->get();
 
         // Dedup of duplicate WhatJobs postings (one recruitment ad spammed to many

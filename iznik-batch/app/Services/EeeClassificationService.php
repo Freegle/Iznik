@@ -125,8 +125,7 @@ class EeeClassificationService
             $attachments = DB::table('messages_attachments as ma')
                 ->join('messages as m', 'm.id', '=', 'ma.msgid')
                 ->whereExists(function ($query) use ($itemName) {
-                    $query->select(DB::raw(1))
-                        ->from('messages_items as mi')
+                    $query->from('messages_items as mi')
                         ->join('items as i', 'i.id', '=', 'mi.itemid')
                         ->whereColumn('mi.msgid', 'm.id')
                         ->where('i.name', $itemName);
@@ -135,7 +134,7 @@ class EeeClassificationService
                 ->where('ma.archived', 0)
                 ->where('ma.primary', 1)
                 ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
-                ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
+                ->whereJsonDoesntContainKey('ma.externalmods->ai')
                 ->orderByDesc('m.arrival')
                 ->limit(self::SAMPLE_SIZE)
                 ->select(['ma.id as attid', 'ma.externaluid', 'm.id as messageid', 'm.subject', 'm.textbody'])
@@ -358,7 +357,7 @@ class EeeClassificationService
             ->whereNotNull('externaluid')
             ->where('archived', 0)
             ->where('primary', 1)
-            ->whereRaw("(externalmods IS NULL OR JSON_EXTRACT(externalmods, '$.ai') IS NULL)")
+            ->whereJsonDoesntContainKey('externalmods->ai')
             ->first(['id as attid', 'externaluid']);
 
         $context = [

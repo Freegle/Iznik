@@ -175,6 +175,7 @@ class PaypalDownloadService
                 $q->where('email', $email)->orWhere('canon', $canon);
             })
             ->whereNotNull('canon')
+            // keep-raw: LENGTH() has no builder method.
             ->whereRaw('LENGTH(canon) > 0')
             ->value('userid');
 

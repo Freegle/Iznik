@@ -201,8 +201,7 @@ class MembershipsProcessingService
             ->where('uc.userid', $userId)
             ->where('uc.flag', 1)
             ->whereNotExists(function ($q) use ($userId, $groupId) {
-                $q->select(DB::raw(1))
-                    ->from('memberships as m')
+                $q->from('memberships as m')
                     ->where('m.userid', $userId)
                     ->where('m.groupid', $groupId)
                     ->whereNotNull('m.reviewedat')

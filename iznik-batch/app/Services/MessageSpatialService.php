@@ -74,11 +74,12 @@ class MessageSpatialService
             })
             ->where(function ($q) {
                 $q->whereNull('messages_spatial.msgid')
+                    // keep-raw: ST_X/ST_Y are spatial functions with no query-builder equivalent.
                     ->orWhereRaw('ST_X(messages_spatial.point) != messages.lng')
                     ->orWhereRaw('ST_Y(messages_spatial.point) != messages.lat')
                     ->orWhereNull('messages_spatial.groupid')
-                    ->orWhereRaw('messages_spatial.groupid != messages_groups.groupid')
-                    ->orWhereRaw('messages_groups.arrival != messages_spatial.arrival');
+                    ->orWhereColumn('messages_spatial.groupid', '!=', 'messages_groups.groupid')
+                    ->orWhereColumn('messages_groups.arrival', '!=', 'messages_spatial.arrival');
             })
             ->select(
                 'messages.id',
@@ -98,6 +99,8 @@ class MessageSpatialService
                 $wkt = "POINT({$msg->lng} {$msg->lat})";
                 $srid = self::SRID;
 
+                // keep-raw: ST_GeomFromText is a spatial function with no query-builder
+                // equivalent, and this is an atomic INSERT ... ON DUPLICATE KEY UPDATE.
                 DB::statement(
                     "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
                      VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
@@ -292,7 +295,7 @@ class MessageSpatialService
                 'messages.id',
                 'messages.lat',
                 'messages.lng',
-                DB::raw('messages.type as msgtype'),
+                'messages.type as msgtype',
                 'messages_groups.groupid',
                 'messages_groups.arrival',
             )
@@ -306,6 +309,8 @@ class MessageSpatialService
         $wkt  = "POINT({$msg->lng} {$msg->lat})";
         $srid = self::SRID;
 
+        // keep-raw: ST_GeomFromText is a spatial function with no query-builder
+        // equivalent, and this is an atomic INSERT ... ON DUPLICATE KEY UPDATE.
         DB::statement(
             "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
              VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)

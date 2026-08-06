@@ -72,7 +72,17 @@ class UpdateAIImageUsageCountsCommand extends Command
         // keep-raw: CREATE TEMPORARY TABLE ... AS SELECT is DDL the query builder does
         // not render. Unchanged from the version that has run hourly for months, bar the
         // id ceiling that pairs the scan with the stored cursor.
+        //
+        // keep-raw: DROP TEMPORARY TABLE has no Schema-builder equivalent —
+        // Schema::dropIfExists() always compiles plain "drop table if exists"
+        // (see MySqlGrammar::compileDropIfExists), which would drop a
+        // permanent table of this name instead of just the session-local
+        // temp table if one ever existed.
         DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+        // keep-raw: CREATE TABLE ... AS SELECT with inline column DDL
+        // (explicit VARCHAR/CHARACTER SET/COLLATE/PRIMARY KEY) has no query-
+        // or schema-builder equivalent; also uses JSON_EXTRACT(), which has
+        // no builder method.
         DB::statement("
             CREATE TEMPORARY TABLE tmp_ai_usage_counts (
                 externaluid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PRIMARY KEY,
@@ -104,15 +114,13 @@ class UpdateAIImageUsageCountsCommand extends Command
                 ->lazyById(500);
 
             foreach ($rows as $row) {
-                // keep-raw: UPDATE ... LEFT JOIN against a temporary table, where the
-                // join miss must set the count to 0. Unchanged from the original.
-                $affected = DB::update("
-                    UPDATE ai_images ai
-                    LEFT JOIN tmp_ai_usage_counts t ON t.externaluid = ai.externaluid
-                    SET ai.usage_count = COALESCE(t.cnt, 0)
-                    WHERE ai.id = ?
-                      AND ai.usage_count != COALESCE(t.cnt, 0)
-                ", [$row->id]);
+                // COALESCE() has no builder method (kept as raw expression);
+                // the JOIN and WHERE are expressed via the query builder.
+                $affected = DB::table('ai_images as ai')
+                    ->leftJoin('tmp_ai_usage_counts as t', 't.externaluid', '=', 'ai.externaluid')
+                    ->where('ai.id', $row->id)
+                    ->where('ai.usage_count', '!=', DB::raw('COALESCE(t.cnt, 0)'))
+                    ->update(['ai.usage_count' => DB::raw('COALESCE(t.cnt, 0)')]);
 
                 if ($affected > 0) {
                     $totalUpdated++;

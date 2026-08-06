@@ -200,6 +200,8 @@ class MessageExpiryService
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
+        // keep-raw: GREATEST/COALESCE/CASE/TIMESTAMPDIFF/JSON_EXTRACT arithmetic
+        // computing a per-row threshold has no builder method.
         $sql = <<<'SQL'
 SELECT DISTINCT ms.msgid
 FROM messages_spatial ms

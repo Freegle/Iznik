@@ -122,6 +122,8 @@ class ChatSpamService
     {
         $start = now()->subDays(self::SPAM_LOOKBACK_DAYS)->toDateString();
 
+        // keep-raw: an aliased COUNT(*) alongside the grouped userid column in
+        // a multi-row SELECT list under GROUP BY has no builder form.
         $users = DB::select(
             "SELECT DISTINCT chat_messages.userid, COUNT(*) AS count
              FROM chat_messages

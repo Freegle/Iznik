@@ -205,12 +205,12 @@ class GiftAidClaimService
                     'This' => DB::table('users_donations')
                         ->where('userid', $giftaid->userid)->where('giftaidconsent', 0)
                         ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
-                        ->whereRaw('date(timestamp) = ?', [date('Y-m-d', strtotime($giftaid->timestamp))])
+                        ->whereDate('timestamp', '=', date('Y-m-d', strtotime($giftaid->timestamp)))
                         ->count(),
                     'Future' => DB::table('users_donations')
                         ->where('userid', $giftaid->userid)->where('giftaidconsent', 0)
                         ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
-                        ->whereRaw('date(timestamp) >= ?', [date('Y-m-d', strtotime($giftaid->timestamp))])
+                        ->whereDate('timestamp', '>=', date('Y-m-d', strtotime($giftaid->timestamp)))
                         ->count(),
                     default => 0,
                 };
@@ -265,32 +265,32 @@ class GiftAidClaimService
         $this->correctUserIdInDonations();
         $this->identifyGiftAidedDonations();
 
-        $sql = "
-            SELECT users_donations.*,
-                   giftaid.id AS giftaidid,
-                   giftaid.fullname,
-                   giftaid.firstname,
-                   giftaid.lastname,
-                   giftaid.postcode,
-                   giftaid.housenameornumber,
-                   giftaid.timestamp AS declarationdate
-            FROM users_donations
-            INNER JOIN giftaid ON users_donations.userid = giftaid.userid
-            WHERE giftaidconsent = 1
-              AND giftaidclaimed IS NULL
-              AND giftaid.deleted IS NULL
-              AND giftaid.reviewed IS NOT NULL
-              AND GrossAmount > 0
-              AND source IN ('DonateWithPayPal', 'Stripe')
-        ";
-        $bindings = [];
-        if ($endDate !== null) {
-            $sql .= ' AND users_donations.timestamp < ? ';
-            $bindings[] = date('Y-m-d', strtotime($endDate.' +1 day'));
-        }
-        $sql .= ' ORDER BY users_donations.timestamp ASC';
+        $query = DB::table('users_donations')
+            ->join('giftaid', 'users_donations.userid', '=', 'giftaid.userid')
+            ->where('giftaidconsent', 1)
+            ->whereNull('giftaidclaimed')
+            ->whereNull('giftaid.deleted')
+            ->whereNotNull('giftaid.reviewed')
+            ->where('GrossAmount', '>', 0)
+            ->whereIn('source', ['DonateWithPayPal', 'Stripe']);
 
-        $donations = DB::select($sql, $bindings);
+        if ($endDate !== null) {
+            $query->where('users_donations.timestamp', '<', date('Y-m-d', strtotime($endDate.' +1 day')));
+        }
+
+        $donations = $query
+            ->orderBy('users_donations.timestamp')
+            ->select([
+                'users_donations.*',
+                'giftaid.id as giftaidid',
+                'giftaid.fullname',
+                'giftaid.firstname',
+                'giftaid.lastname',
+                'giftaid.postcode',
+                'giftaid.housenameornumber',
+                'giftaid.timestamp as declarationdate',
+            ])
+            ->get();
 
         $handle = null;
         if ($outputPath !== null) {

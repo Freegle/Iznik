@@ -85,8 +85,7 @@ class AutoApproveService
             // queue (Discourse #9654) but must be actioned by a human, never
             // auto-sent after the 48h fallback.
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_groups as spam_mg')
+                $q->from('messages_groups as spam_mg')
                     ->whereColumn('spam_mg.msgid', 'messages_groups.msgid')
                     ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
                     ->where('spam_mg.deleted', 0);
@@ -97,8 +96,7 @@ class AutoApproveService
             // it would re-list a gone item in a new group and fire a "newly reached" mail, so skip
             // anything with a Taken/Received outcome.
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
+                $q->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
                     ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
             })
@@ -118,8 +116,7 @@ class AutoApproveService
                     $q2->where('messages_groups.rippled_in', 1)
                         ->where('messages_groups.arrival', '<=', now()->subHours($rippledInHours))
                         ->whereExists(function ($q3) {
-                            $q3->select(DB::raw(1))
-                                ->from('messages_groups as origin_mg')
+                            $q3->from('messages_groups as origin_mg')
                                 ->whereColumn('origin_mg.msgid', 'messages_groups.msgid')
                                 ->whereColumn('origin_mg.groupid', '!=', 'messages_groups.groupid')
                                 ->where('origin_mg.collection', MessageGroup::COLLECTION_APPROVED)

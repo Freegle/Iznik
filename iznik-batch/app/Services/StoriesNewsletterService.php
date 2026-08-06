@@ -49,6 +49,7 @@ class StoriesNewsletterService
             ->when($since, fn ($q) => $q->where('users_stories.updated', '>', $since))
             ->select(['users_stories.id'])
             ->addSelect('users_stories_images.id as photoid')
+            // keep-raw: aliased COUNT(*) aggregate alongside non-aggregate columns (id, photoid) under GROUP BY.
             ->selectRaw('COUNT(*) AS vote_count')
             ->groupBy('users_stories.id', 'users_stories_images.id')
             ->orderByDesc('vote_count')
@@ -78,6 +79,7 @@ class StoriesNewsletterService
                 ->where('memberships.userid', $story->userid)
                 ->where('groups.type', Group::TYPE_FREEGLE)
                 ->where('groups.onmap', 1)
+                // keep-raw: COALESCE has no builder equivalent.
                 ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
                 ->value('namedisplay');
 
@@ -167,6 +169,8 @@ class StoriesNewsletterService
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 // newsletter defaults to on (1) when not set; only excluded if explicitly set to 0.
+                // keep-raw: COALESCE(JSON_EXTRACT(...), 1) has no builder equivalent - the JSON
+                // where()/whereJsonContains() helpers don't support a default-value fallback.
                 $q->whereNull('groups.settings')
                     ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
             })

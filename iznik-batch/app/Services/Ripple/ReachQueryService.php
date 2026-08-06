@@ -50,6 +50,8 @@ class ReachQueryService
         try {
             if ($this->boundsAvailable()) {
                 $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
+                // keep-raw: ST_Contains/ST_GeometryType/ST_SRID/EXISTS-in-SELECT
+                // are spatial functions and predicate composition with no builder method.
                 $row = DB::selectOne(
                     "SELECT EXISTS(
                         SELECT 1 FROM rippling_reach rr

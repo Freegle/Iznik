@@ -337,8 +337,8 @@ class AutoRepostService
                 'messages.subject',
                 'messages.fromaddr',
                 'messages.fromuser',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hoursago'),
-                DB::raw('TIMESTAMPDIFF(HOUR, users.lastaccess, NOW()) AS activehoursago')
+                'messages_groups.arrival',
+                'users.lastaccess'
             )
             ->where('messages_groups.arrival', '>', $mindate)
             ->where('messages_groups.groupid', $groupid)
@@ -370,7 +370,14 @@ class AutoRepostService
             $query = $this->applyDueWindow($query, $reposts);
         }
 
-        return $query->get();
+        return $query->get()
+            ->each(function ($row) {
+                // TIMESTAMPDIFF(HOUR, ...) truncates toward zero, matching intdiv().
+                $row->hoursago = intdiv(now()->timestamp - \Illuminate\Support\Carbon::parse($row->arrival)->timestamp, 3600);
+                $row->activehoursago = $row->lastaccess !== null
+                    ? intdiv(now()->timestamp - \Illuminate\Support\Carbon::parse($row->lastaccess)->timestamp, 3600)
+                    : null;
+            });
     }
 
     /**
@@ -418,10 +425,7 @@ class AutoRepostService
         DB::table('messages_groups')
             ->where('msgid', $msg->msgid)
             ->where('groupid', $groupid)
-            ->update([
-                'arrival' => now(),
-                'autoreposts' => DB::raw('autoreposts + 1'),
-            ]);
+            ->increment('autoreposts', 1, ['arrival' => now()]);
 
         // V1: log per group.
         DB::table('logs')->insert([

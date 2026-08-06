@@ -34,7 +34,7 @@ class EngageEmailService
         // "At risk" — users who will become inactive in 7 days (send even if they've opted out of regular emails)
         $atRiskDate = now()->subSeconds(self::USER_INACTIVE_SECONDS)->addDays(self::AT_RISK_WARNING_DAYS)->toDateString();
         $atRiskUserIds = DB::table('users')
-            ->whereRaw('DATE(lastaccess) = ?', [$atRiskDate])
+            ->whereDate('lastaccess', '=', $atRiskDate)
             ->whereNull('deleted')
             ->pluck('id')
             ->toArray();
@@ -87,6 +87,9 @@ class EngageEmailService
             }
 
             // Respect group-level engagement setting
+            // keep-raw: COALESCE + JSON_UNQUOTE/JSON_EXTRACT under a MAX() aggregate
+            // have no query-builder equivalent - both are functions the builder
+            // cannot express, layered inside an aliased aggregate.
             $engagementEnabled = DB::table('memberships')
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $userId)
@@ -187,6 +190,8 @@ class EngageEmailService
             ->where('id', $mailId)
             ->increment('shown');
 
+        // keep-raw: COALESCE plus arithmetic (100 * action / shown) over two
+        // columns has no query-builder equivalent.
         DB::statement(
             'UPDATE engage_mails SET rate = COALESCE(100 * action / shown, 0) WHERE id = ?',
             [$mailId]

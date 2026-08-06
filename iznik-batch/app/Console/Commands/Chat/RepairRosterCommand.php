@@ -29,16 +29,20 @@ class RepairRosterCommand extends Command
         $dryRun = (bool) $this->option('dry-run');
 
         // Find User2Mod chats where user1 is missing from the roster.
-        $missingMember = DB::select("
-            SELECT cr.id AS chatid, cr.user1, cr.groupid, cr.latestmessage,
-                   (SELECT MAX(cm.id) FROM chat_messages cm WHERE cm.chatid = cr.id) AS max_msg_id
-            FROM chat_rooms cr
-            WHERE cr.chattype = 'User2Mod'
-              AND cr.latestmessage >= DATE_SUB(NOW(), INTERVAL ? DAY)
-              AND NOT EXISTS (
-                SELECT 1 FROM chat_roster ro WHERE ro.chatid = cr.id AND ro.userid = cr.user1
-              )
-        ", [$days]);
+        $maxMsg = DB::table('chat_messages as cm')->whereColumn('cm.chatid', 'cr.id');
+        $maxMsg->aggregate = ['function' => 'max', 'columns' => ['cm.id']];
+
+        $missingMember = DB::table('chat_rooms as cr')
+            ->where('cr.chattype', 'User2Mod')
+            ->where('cr.latestmessage', '>=', now()->subDays($days))
+            ->whereNotExists(function ($q) {
+                $q->from('chat_roster as ro')
+                    ->whereColumn('ro.chatid', 'cr.id')
+                    ->whereColumn('ro.userid', 'cr.user1');
+            })
+            ->select(['cr.id as chatid', 'cr.user1', 'cr.groupid', 'cr.latestmessage'])
+            ->selectSub($maxMsg, 'max_msg_id')
+            ->get();
 
         $notifyCutoff = now()->subDays($notifyDays);
         $repairedNotify = 0;
