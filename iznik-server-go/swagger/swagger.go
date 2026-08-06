@@ -71,7 +71,6 @@ import (
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/visualise"
-	"github.com/freegle/iznik-server-go/voicepost"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
 )
@@ -5165,58 +5164,6 @@ type housekeeperTasksResponse struct {
 // Responses:
 //
 //	200: successResponse
-
-// ============================================================================
-// VoicePost
-// ============================================================================
-
-// swagger:route POST /voicepost/chunk voicepost postVoicepostChunk
-// Stream a chunk of voice-post audio
-//
-// Streams a chunk of voice-post audio into the server-side buffer while the
-// user is still talking, so there is nothing left to upload once they stop.
-// No authentication: like image upload, this happens during the give/post
-// flow before the user has necessarily logged in.
-//
-// Parameters:
-//   + name: session
-//     in: query
-//     description: Session id (omit on first chunk)
-//     required: false
-//     type: string
-//
-// Responses:
-//
-//	200: successResponse
-//	503: errorResponse
-
-// swagger:route POST /voicepost/finish voicepost postVoicepostFinish
-// Finalise a voice post
-//
-// Transcribes the whole buffered recording once the user has stopped talking
-// and returns the transcript verbatim as the description, plus a short item
-// title extracted by the LLM from the transcript.
-//
-// Parameters:
-//   + name: session
-//     in: query
-//     description: Session id
-//     required: true
-//     type: string
-//
-// Responses:
-//
-//	200: voicepostFinishResponse
-//	400: errorResponse
-//	404: errorResponse
-//	503: errorResponse
-//
-// voicepostFinishResponse is the response for finalising a voice post
-// swagger:response voicepostFinishResponse
-type voicepostFinishResponse struct {
-	// in: body
-	Body voicepost.FinishResult `json:"body"`
-}
 
 // swagger:route GET /item/impact item getItemImpact
 // Estimate reuse impact for an item name
