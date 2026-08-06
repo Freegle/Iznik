@@ -72,9 +72,9 @@ func GetSpammers(c *fiber.Ctx) error {
 
 	// Four
 	// independent toggles - collection!="", contextID>0, userid>0, search!="" -
-	// give 2x2x2x2 = 16 possible rendered forms, all declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_d64650fb9560
-	// (iznik-server-go/test).
+	// give 2x2x2x2 = 16 possible rendered forms, all proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_d64650fb9560, removed in
+	// d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -335,8 +335,9 @@ func PatchSpammer(c *fiber.Ctx) error {
 		}
 
 		//
-		// The SET order here is not load-bearing, though an earlier version of
-		// check-set-order.sh said it was. The "?" inside the heldat CASE is a
+		// The SET order here is not load-bearing, though an earlier version
+		// of the retired check-set-order.sh (removed in d22ba1d6c) said it
+		// was. The "?" inside the heldat CASE is a
 		// bind fed from a Go variable that happens to be called heldby; it is
 		// not a reference to the heldby column, and the SQL names no assigned
 		// column at all. The checker was scanning gorm.Expr's bind arguments

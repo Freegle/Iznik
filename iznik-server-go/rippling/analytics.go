@@ -345,8 +345,9 @@ func fetchDriveSample(db *gorm.DB, start, end, stratumSQL string, sampleN int) [
 	//
 	// stratumSQL is
 	// one of StratumFilter's 4 fixed strings (all/rural/suburban/dense) - 4
-	// possible rendered forms, all declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_f382f9bfe80b (iznik-server-go/test). Uses the
+	// possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_f382f9bfe80b, removed in d22ba1d6c).
+	// Uses the
 	// derived-table trick (GORM's Table() passes its name argument through
 	// verbatim once it contains a space) already proven elsewhere in this
 	// codebase for a parenthesized subquery.
@@ -477,8 +478,9 @@ func Analytics(c *fiber.Ctx) error {
 		defer wg.Done()
 		// stratumSQL
 		// is one of StratumFilter's 4 fixed strings - 4 possible rendered
-		// forms, all declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_2def63211a50 (iznik-server-go/test). ReplyHorizonHours
+		// forms, all proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_2def63211a50, removed in d22ba1d6c).
+		// ReplyHorizonHours
 		// is a Go constant (36), inlined directly rather than via fmt.Sprintf.
 		innerCounts := fmt.Sprintf("(SELECT rr.total_freeglers AS freeglers, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested') AS nreplies, "+
@@ -502,8 +504,8 @@ func Analytics(c *fiber.Ctx) error {
 	//
 	// Same
 	// stratumSQL toggle as 2def63211a50 above - 4 possible rendered forms,
-	// all declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_62cea0b491c9 (iznik-server-go/test).
+	// all proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_62cea0b491c9, removed in d22ba1d6c).
 	var held int
 	go func() {
 		defer wg.Done()
@@ -716,8 +718,8 @@ type TrendRow struct {
 func trendSeries(db *gorm.DB, start, end, stratumSQL string) []TrendRow {
 	// stratumSQL is
 	// one of StratumFilter's 4 fixed strings - 4 possible rendered forms, all
-	// declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_1dee90c3c378 (iznik-server-go/test). ReplyHorizonHours/
+	// proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_1dee90c3c378, removed in d22ba1d6c). ReplyHorizonHours/
 	// TakenHorizonDays are Go constants (36, 14), inlined directly.
 	innerTrend := fmt.Sprintf("(SELECT rr.created_at AS created, rr.total_freeglers AS freeglers, "+
 		"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' "+

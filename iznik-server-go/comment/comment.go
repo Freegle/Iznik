@@ -83,8 +83,8 @@ func Get(c *fiber.Ctx) error {
 	//
 	// Three
 	// independent toggles - groupid>0, contextID>0, isAdmin - give 2x2x2 = 8
-	// possible rendered forms, all declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_f1e9e49a9c89 (iznik-server-go/test). The
+	// possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_f1e9e49a9c89, removed in d22ba1d6c). The
 	// WHERE is built as a single string and passed to ONE Where() call:
 	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an
 	// extra paren pair once there is more than one Where expression to

@@ -158,8 +158,9 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// buildExprs): once more than one Where expression is being combined, any
 	// fragment whose text contains "AND"/"OR" gets wrapped in its own extra
 	// paren pair - which both reachWhere and authorReachCapWhere do - so it
-	// would diverge from the golden. Proven (both reachWhere shapes) in
-	// ormharness/reachcap_test.go and test/orm_batchc_test.go.
+	// would diverge from the golden. Proven (both reachWhere shapes) by the
+	// retired ormharness's reachcap_test.go and test/orm_batchc_test.go (both
+	// removed in d22ba1d6c).
 	whereSQL := "ms.successful = 0 " +
 		unseenFilter +
 		// held = the reach was frozen because the origin copy was pulled back
@@ -722,8 +723,9 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		// string, one Where() call, for the same reason: splitting reachWhere
 		// or authorReachCapWhere into their own Where() calls would trip
 		// GORM's extra-paren wrapping once multiple Where expressions are
-		// combined (clause/where.go buildExprs). Proven (both shapes) in
-		// ormharness/reachcap_test.go and test/orm_batchc_test.go.
+		// combined (clause/where.go buildExprs). Proven (both shapes) by the
+		// retired ormharness's reachcap_test.go and test/orm_batchc_test.go
+		// (both removed in d22ba1d6c).
 		whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " + reachWhere + authorReachCapWhere
 		whereArgs := append([]interface{}{}, pointArgs...)
 		whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)

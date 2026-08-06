@@ -78,9 +78,9 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 
 	// extraWhere has
 	// exactly two callers: Load passes "" and Refresh passes
-	// " AND me.msgid IN (?)" - 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_15d5998c44f2
-	// (iznik-server-go/test).
+	// " AND me.msgid IN (?)" - 2 possible rendered forms, both proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_15d5998c44f2, removed
+	// in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine

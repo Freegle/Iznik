@@ -593,8 +593,8 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 	// Rollback) and its result is discarded - no id to read back, so the
 	// row-lock entanglement above does not apply to this statement.
 	// INSERT IGNORE -> clause.Insert{Modifier: "IGNORE"}, the wave 3
-	// convention (never clause.OnConflict{DoNothing}, see
-	// ormharness/upsert_test.go).
+	// convention (never clause.OnConflict{DoNothing}, proven by the retired
+	// ormharness's upsert_test.go, removed in d22ba1d6c).
 	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{"chatid": chatID, "userid": userID})
 
 	var modUserIDs []uint64
@@ -1459,7 +1459,8 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	now := time.Now()
 	// Table()+map Create
 	// reads the generated id back from the same sql.Result the INSERT
-	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"chatid":               chatid,
 		"userid":               myid,
@@ -1823,8 +1824,8 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 	// The backup-mod filter they carried is unchanged - a member with
 	// active:0 in their membership settings is still excluded unless a specific
 	// chat is being searched for, which is now expressed as a conditional
-	// .Where on each chain and declared as two shapes per site in
-	// ormharness/shapes.json.
+	// .Where on each chain and declared as two shapes per site in the retired
+	// ormharness's shapes.json (removed in d22ba1d6c).
 	for _, ct := range chattypes {
 		var ids []uint64
 
@@ -1832,8 +1833,9 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 		case utils.CHAT_TYPE_MOD2MOD:
 			// activeq
 			// is only appended when search=="", so this statement has exactly 2
-			// possible rendered forms, both declared in ormharness/shapes.json
-			// and proven by TestTier3Shapes_35023816be21 (iznik-server-go/test).
+			// possible rendered forms, both proven by the retired ormharness
+			// (shapes.json / TestTier3Shapes_35023816be21, removed in
+			// d22ba1d6c).
 			// The WHERE is built as a single string and passed to ONE Where()
 			// call: GORM's clause.Where wraps any fragment containing
 			// "AND"/"OR" in an extra paren pair once there is more than one
@@ -1860,9 +1862,9 @@ func getModeratorChatIDs(db *gorm.DB, myid uint64, chattypes []string, search st
 			//
 			// Same
 			// activeq toggle as the MOD2MOD branch above - 2 possible rendered
-			// forms, both declared in ormharness/shapes.json and proven by
-			// TestTier3Shapes_e99680f74b2e (iznik-server-go/test). The WHERE is
-			// built as a single string and passed to ONE Where() call: GORM's
+			// forms, both proven by the retired ormharness (shapes.json /
+			// TestTier3Shapes_e99680f74b2e, removed in d22ba1d6c). The WHERE
+			// is built as a single string and passed to ONE Where() call: GORM's
 			// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 			// paren pair once there is more than one Where expression to
 			// combine (clause/where.go buildExprs), which would diverge from

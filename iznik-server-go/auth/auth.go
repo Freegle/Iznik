@@ -312,7 +312,8 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	// Discourse 9832). db.DB() returns the source even with dbresolver registered.
 	// Table()+map Create
 	// reads the generated id back from the same sql.Result the INSERT
-	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"userid":     userID,
 		"series":     series,

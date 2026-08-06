@@ -261,9 +261,9 @@ func GetChallenge(c *fiber.Ctx) error {
 		// Check if user is in a group with word matching enabled.
 		//
 		// groupID>0
-		// is the only toggle - 2 possible rendered forms, both declared in
-		// ormharness/shapes.json and proven by TestTier3Shapes_80c36f2da91e
-		// (iznik-server-go/test).
+		// is the only toggle - 2 possible rendered forms, both proven by the
+		// retired ormharness (shapes.json / TestTier3Shapes_80c36f2da91e,
+		// removed in d22ba1d6c).
 		// WHERE built as a single string for ONE Where() call: GORM's
 		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 		// paren pair once there is more than one Where expression to
@@ -374,9 +374,8 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	// groupIDsStr
 	// was a hand-built comma-joined literal-int list; GORM's native "IN (?)"
 	// slice-bind is the direct replacement (proven pattern, see plan 7.5) and
-	// gives this exactly one rendered form, declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_309561e40e15
-	// (iznik-server-go/test).
+	// gives this exactly one rendered form, proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_309561e40e15, removed in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -418,8 +417,8 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 
 	// Same
 	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
-	// exactly one rendered form, declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_bde82a974f05 (iznik-server-go/test).
+	// exactly one rendered form, proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_bde82a974f05, removed in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -467,8 +466,8 @@ func getPhotoRotateChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Cha
 
 	// Same
 	// literal-int-list-to-native-bind replacement as 309561e40e15 above -
-	// exactly one rendered form, declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_ff5193d35cf8 (iznik-server-go/test).
+	// exactly one rendered form, proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_ff5193d35cf8, removed in d22ba1d6c).
 	err := db.Table("messages_groups").
 		Select("messages_attachments.id, "+
 			"(SELECT COUNT(*) AS count FROM microactions WHERE rotatedimage = messages_attachments.id) AS reviewcount").
@@ -1106,9 +1105,9 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	}
 
 	// context>0 is
-	// the only toggle - 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_3762cb36efcf
-	// (iznik-server-go/test).
+	// the only toggle - 2 possible rendered forms, both proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_3762cb36efcf, removed in
+	// d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine

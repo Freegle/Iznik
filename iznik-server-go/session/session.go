@@ -532,8 +532,9 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 	// Insert the login key. Use uid=userid as a unique identifier.
 	// Golden column order (userid,
 	// type, uid, credentials) is not alphabetical, but normaliseColumnOrder
-	// sorts both sides' columns together with their values before comparing
-	// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert), so the
+	// sorted both sides' columns together with their values before comparing
+	// (the retired ormharness's normalise_test.go
+	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c), so the
 	// map-Create reorder is harmless.
 	db.Table("users_logins").Create(map[string]interface{}{
 		"userid":      userID,
@@ -671,9 +672,11 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// V1 parity (User::delete with $log=TRUE): audit trail for the deletion.
 		// byuser is NULL because there is no acting Freegle user in the partner flow.
 		// Golden column order (timestamp,
-		// type, subtype, user, byuser) is not alphabetical, but normaliseColumnOrder
-		// sorts both sides' columns together with their values before comparing
-		// (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert), so the
+		// type, subtype, user, byuser) is not alphabetical, but
+		// normaliseColumnOrder sorted both sides' columns together with their
+		// values before comparing
+		// (the retired ormharness's normalise_test.go
+		// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c), so the
 		// map-Create reorder is harmless.
 		db.Table("logs").Create(map[string]interface{}{
 			"timestamp": gorm.Expr("NOW()"),
@@ -689,7 +692,8 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// None of these nine assignments
 		// reference another assigned column (all NULL/NOW() literals), so the SET
 		// order is not load-bearing and GORM's alphabetical Updates(map) order is
-		// safe; see check-set-order.sh / setOrderIsLoadBearing.
+		// safe; see the retired check-set-order.sh / setOrderIsLoadBearing
+		// (removed in d22ba1d6c).
 		db.Table("messages").Where("fromuser = ?", targetID).Updates(map[string]interface{}{
 			"fromip":       gorm.Expr("NULL"),
 			"message":      gorm.Expr("NULL"),
@@ -1323,8 +1327,8 @@ func GetSession(c *fiber.Ctx) error {
 			// equals the number of displayed messages.
 			//
 			// heldFilter is the only toggle - 2 possible rendered forms, both
-			// declared in ormharness/shapes.json and proven by
-			// TestTier3Shapes_f43d5f680ef9 (iznik-server-go/test).
+			// proven by the retired ormharness (shapes.json /
+			// TestTier3Shapes_f43d5f680ef9, removed in d22ba1d6c).
 			chatReviewSQL := func(groupIDs []uint64, heldFilter string) int64 {
 				if len(groupIDs) == 0 {
 					return 0
@@ -1402,16 +1406,17 @@ func GetSession(c *fiber.Ctx) error {
 					// counting the wider-group JOIN row, causing double-counting.
 					//
 					// This branch (allModGroupIDs>0) has exactly one rendered
-					// form, declared in ormharness/shapes.json and proven by
-					// TestTier3Shapes_3f3696f3bba4 (iznik-server-go/test).
+					// form, proven by the retired ormharness (shapes.json /
+					// TestTier3Shapes_3f3696f3bba4, removed in d22ba1d6c).
 					recipientExpr := "(CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)"
 					widerWhereSQL += " AND NOT EXISTS (SELECT 1 FROM memberships m2 WHERE m2.userid = " + recipientExpr + " AND m2.groupid IN (?))"
 					widerWhereArgs = append(widerWhereArgs, allModGroupIDs)
 				}
 				// else: ORM migration site 76555fe088e5 (Tier 3 keep-raw
 				// review). This branch (no mod groups) has exactly one
-				// rendered form, declared in ormharness/shapes.json and
-				// proven by TestTier3Shapes_76555fe088e5 (iznik-server-go/test).
+				// rendered form, proven by the retired ormharness
+				// (shapes.json / TestTier3Shapes_76555fe088e5, removed in
+				// d22ba1d6c).
 
 				db.Table("chat_messages cm").
 					Select("COUNT(DISTINCT cm.id)").
@@ -1815,7 +1820,8 @@ func GetSession(c *fiber.Ctx) error {
 // PRE-BUILT clause.Set slice varies at runtime, exactly the way the SQL
 // string used to. Proven against the identical fieldwise.json goldens
 // already recorded for the string version (session_fieldwise_tier9_test.go),
-// via ormharness.AssertGoldenFieldwise - same n+2 cases, same golden SQL per
+// via the retired ormharness's AssertGoldenFieldwise (all removed in
+// d22ba1d6c) - same n+2 cases, same golden SQL per
 // case, now rendered by GORM instead of by hand.
 func buildPatchSessionUpdateSet(displayname, firstname, lastname, settingsJSON *string, lastlocationID *uint64, onholidaytill *string, relevantallowed, newslettersallowed *int, source *string, deletedNull bool, marketingconsent *int) clause.Set {
 	var set clause.Set
@@ -1963,7 +1969,8 @@ func PatchSession(c *fiber.Ctx) error {
 			// None of these four
 			// assignments reference another assigned column, so the SET order
 			// is not load-bearing and GORM's alphabetical Updates(map) order is
-			// safe; see check-set-order.sh / setOrderIsLoadBearing.
+			// safe; see the retired check-set-order.sh /
+			// setOrderIsLoadBearing (removed in d22ba1d6c).
 			db.Table("users_emails").Where("id = ?", mail.ID).Updates(map[string]interface{}{
 				"userid":      myid,
 				"preferred":   gorm.Expr("1"),
@@ -2089,8 +2096,9 @@ func PatchSession(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 			// Golden column order not
-			// alphabetical, but normaliseColumnOrder handles the map-Create
-			// reorder; see TestNormaliseColumnOrder_Insert.
+			// alphabetical, but normaliseColumnOrder handled the map-Create
+			// reorder; see the retired ormharness's normalise_test.go
+			// TestNormaliseColumnOrder_Insert (removed in d22ba1d6c).
 			db.Table("users_aboutme").Create(map[string]interface{}{
 				"userid":    myid,
 				"text":      *req.Aboutme,

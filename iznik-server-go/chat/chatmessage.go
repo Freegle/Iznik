@@ -198,8 +198,8 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	// Four independent
 	// toggles - modAccess (which also drives the deleted-sender filter),
 	// excludeID>0, descending, and limit>0 - give 2x2x2x2 = 16 possible rendered
-	// forms, all declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_f557717fbfce (iznik-server-go/test). The WHERE is built
+	// forms, all proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_f557717fbfce, removed in d22ba1d6c). The WHERE is built
 	// as a single string and passed to ONE Where() call rather than chained:
 	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -403,7 +403,8 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// wasRippleJoin below.
 	// BuildClauses
 	// override: see amp.go's ValidateToken for the mechanism and
-	// ormharness/bareexists_test.go for the proof.
+	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c) for
+	// the proof.
 	var wasHome int
 	tx848af7d73bfe := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
@@ -591,8 +592,9 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// Allow user1, user2, or (for User2Mod chats) a moderator of the chat's group.
 	// Top-level
 	// UNION, nothing wrapping it - same BuildClauses={"SELECT"} mechanism as
-	// amp.go's bare-EXISTS conversions (see the comment there and
-	// ormharness/bareexists_test.go); the whole "SELECT ... UNION SELECT ..."
+	// amp.go's bare-EXISTS conversions (see the comment there and the retired
+	// ormharness's bareexists_test.go (removed in d22ba1d6c)); the whole
+	// "SELECT ... UNION SELECT ..."
 	// text goes to .Select() as one fragment.
 	tx33ad97a3417c := db.Table("chat_rooms").Select(
 		"id FROM chat_rooms WHERE id = ? AND user1 = ? "+
@@ -683,9 +685,9 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// ReachInReachExpr always returns the same expression text
 					// (only the bind args vary per call) - the extractor
 					// couldn't fold that across a function call, but there is
-					// exactly one rendered form. Declared (as a single shape)
-					// in ormharness/shapes.json and proven by
-					// TestTier3Shapes_67cd5e1cc4ec (iznik-server-go/test).
+					// exactly one rendered form. Proven (as a single shape)
+					// by the retired ormharness (shapes.json /
+					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
 					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
 					// Select takes ONLY the expression's own binds. Appending
 					// Refmsgid here as well - while Where binds it too - sent one
@@ -1222,9 +1224,9 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 
 	// isParticipant
 	// (which also drives the deleted-sender filter) and ctx>0 give 2x2 = 4
-	// possible rendered forms, all declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_07113a2db28b (iznik-server-go/test). The WHERE
-	// is built as a single string and passed to ONE Where() call: GORM's
+	// possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_07113a2db28b, removed in d22ba1d6c).
+	// The WHERE is built as a single string and passed to ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra paren
 	// pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
@@ -1339,9 +1341,10 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	// a mechanical rewrite: it changes the rendered statement text from
 	// "IN (1,2,3)" to native "IN (?,?,?)" placeholders (GORM's slice-bind
 	// expansion), same category as this file's own 62a2f6fa4bdb and
-	// isochrone/message.go's markPinned (site 032b7f1b9500) - each has an
-	// approved-diff entry in tools/orm-migration/approved-diffs.json
-	// recording exactly this kind of change; this site's two entries are
+	// isochrone/message.go's markPinned (site 032b7f1b9500) - each had an
+	// approved-diff entry in the retired
+	// tools/orm-migration/approved-diffs.json (removed in d22ba1d6c)
+	// recording exactly this kind of change; this site's two entries were
 	// 5da587b4234d (this branch) and 1ff296c8656c (the widerReview branch
 	// below, which shares this baseQuery). groupIDs here is always the
 	// calling moderator's own memberships (never external input), so this
@@ -1422,16 +1425,17 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		// truth for the query text, not two hand-maintained copies that
 		// could drift apart.
 		//
-		// The manifest's own extracted goldenSql for this site is
+		// The manifest's own extracted goldenSql for this site was
 		// "{{expr}}{{expr}}" (baseQuery/widerQuery are runtime-built Go
-		// variables, not extractor-foldable literals), so there is nothing
+		// variables, not extractor-foldable literals), so there was nothing
 		// for Layer 1 to compare against out of the box. Same fix as
 		// 62a2f6fa4bdb above (see that site's approved-diff entry): an
-		// approved-diff entry for 1ff296c8656c in
-		// tools/orm-migration/approved-diffs.json records the real
-		// post-conversion statement text, so Layer 1 (TestGolden_1ff296c8656c,
-		// test/orm_reviewqueue_test.go) proves this after all. It also has a
-		// Layer 2 result-parity test (TestLayer2_1ff296c8656c, same file) -
+		// approved-diff entry for 1ff296c8656c in the retired
+		// tools/orm-migration/approved-diffs.json recorded the real
+		// post-conversion statement text, so Layer 1
+		// (TestGolden_1ff296c8656c, test/orm_reviewqueue_test.go) proved this
+		// after all. It also had a Layer 2 result-parity test
+		// (TestLayer2_1ff296c8656c, same file; all removed in d22ba1d6c) -
 		// the manifest's own keep-raw reason asked for that extra scrutiny
 		// given the query's size, on top of the text match.
 		tx1ff296c8656c := db.Table("chat_messages").Select(
@@ -1451,13 +1455,14 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		// ORM migration site 5da587b4234d (Batch C keep-raw review,
 		// revisited). Non-wider twin of 1ff296c8656c above, sharing baseQuery
 		// - same BuildClauses={"SELECT"} mechanism, same reasoning: the
-		// manifest goldenSql for this site is "{{expr}} GROUP BY cm.id ORDER
-		// BY cm.id ASC LIMIT ?", so there is no fixed golden text to compare
+		// manifest goldenSql for this site was "{{expr}} GROUP BY cm.id ORDER
+		// BY cm.id ASC LIMIT ?", so there was no fixed golden text to compare
 		// against out of the box. An approved-diff entry for 5da587b4234d in
-		// tools/orm-migration/approved-diffs.json records the real
-		// post-conversion statement text, proved by Layer 1
+		// the retired tools/orm-migration/approved-diffs.json recorded the
+		// real post-conversion statement text, proved by Layer 1
 		// (TestGolden_5da587b4234d, test/orm_reviewqueue_test.go), plus a
-		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file).
+		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file; all
+		// removed in d22ba1d6c).
 		tx5da587b4234d := db.Table("chat_messages").Select(
 			strings.TrimPrefix(baseQuery, "SELECT ")+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
 			groupIDs, groupIDs,

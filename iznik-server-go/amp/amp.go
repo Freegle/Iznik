@@ -141,8 +141,8 @@ func ValidateToken(c *fiber.Ctx) (uint64, uint64, error) {
 	// called, but Statement.Build only renders the clause NAMES actually
 	// passed to it - restricting BuildClauses to {"SELECT"} renders the
 	// SELECT clause alone and drops the (still-registered but unwalked) FROM,
-	// matching a bare "SELECT EXISTS(...)" with no top-level FROM. Proven in
-	// ormharness/bareexists_test.go.
+	// matching a bare "SELECT EXISTS(...)" with no top-level FROM. Proven by
+	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c).
 	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
 	tx.Statement.BuildClauses = []string{"SELECT"}
 	tx.Scan(&exists)
@@ -630,7 +630,7 @@ func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 	var exists bool
 	// Same
 	// BuildClauses override as ValidateToken above; see the comment there and
-	// ormharness/bareexists_test.go.
+	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c).
 	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
 	tx.Statement.BuildClauses = []string{"SELECT"}
 	tx.Scan(&exists)

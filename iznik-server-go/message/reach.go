@@ -40,8 +40,8 @@ func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 	if rippling.ReachBoundsReady(db) {
 		// ReachInReachExpr always returns the same expression text (only the
 		// bind args vary per call), so this has exactly one rendered form,
-		// declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_ff9be67577e8 (iznik-server-go/test).
+		// proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_ff9be67577e8, removed in d22ba1d6c).
 		// WHERE built as a single string for ONE Where() call: GORM's
 		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 		// paren pair once there is more than one Where expression to

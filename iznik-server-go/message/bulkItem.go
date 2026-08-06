@@ -565,7 +565,7 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 			// Table()+map
 			// Create reads the generated id back from the same sql.Result
 			// the INSERT returned, under the map key "@id" - see
-			// test/orm_insertid_test.go.
+			// test/insertid_gorm_writeback_test.go.
 			row := map[string]interface{}{
 				"msgid":       msgid,
 				"position":    pos,

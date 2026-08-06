@@ -720,8 +720,9 @@ func validateGeometry(wkt string) bool {
 	var valid *int
 	// Bare scalar
 	// SELECT with no FROM at all - same BuildClauses={"SELECT"} mechanism as
-	// amp.go's bare-EXISTS conversions (see the comment there and
-	// ormharness/bareexists_test.go). .Table(...) is still required even
+	// amp.go's bare-EXISTS conversions (see the comment there and the retired
+	// ormharness's bareexists_test.go (removed in d22ba1d6c)). .Table(...) is
+	// still required even
 	// though it never renders: without it GORM's schema-parse-failure branch
 	// rejects the statement for having no table set. "groups" is used purely
 	// to satisfy that check - it never appears in the rendered SQL, since

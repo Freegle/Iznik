@@ -177,9 +177,11 @@ func PostMemberships(c *fiber.Ctx) error {
 		if req.Stdmsgid != nil {
 			stdmsgid = *req.Stdmsgid
 		}
-		// normaliseColumnOrder handles
+		// normaliseColumnOrder handled
 		// the map-Create column reorder (data, task_type) against a JSON_OBJECT
-		// value; see ormharness/normalise_test.go TestNormaliseColumnOrder_InsertWithNestedFunctionArgs.
+		// value; see the retired ormharness's normalise_test.go
+		// TestNormaliseColumnOrder_InsertWithNestedFunctionArgs (removed in
+		// d22ba1d6c).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_mod_stdmsg",
 			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
@@ -412,9 +414,9 @@ func GetMemberships(c *fiber.Ctx) error {
 	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
 	if filter == 5 {
 		// contextID>0
-		// is the only toggle - 2 possible rendered forms, both declared in
-		// ormharness/shapes.json and proven by TestTier3Shapes_2c3b155f346b
-		// (iznik-server-go/test).
+		// is the only toggle - 2 possible rendered forms, both proven by the
+		// retired ormharness (shapes.json / TestTier3Shapes_2c3b155f346b,
+		// removed in d22ba1d6c).
 		var members []GetMembershipsMember
 		bannedTx := db.Table("users_banned b").
 			Select("b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
@@ -531,8 +533,8 @@ func GetMemberships(c *fiber.Ctx) error {
 		if numErr == nil && searchID > 0 {
 			// groupid==0
 			// and the filter (0-3) give 2x4 = 8 possible rendered forms, all
-			// declared in ormharness/shapes.json and proven by
-			// TestTier3Shapes_836dc8807739 (iznik-server-go/test).
+			// proven by the retired ormharness (shapes.json /
+			// TestTier3Shapes_836dc8807739, removed in d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
 			baseTx().Where(whereSQL, whereArgs...).
@@ -546,8 +548,9 @@ func GetMemberships(c *fiber.Ctx) error {
 			//
 			// Same
 			// groupid==0 x filter toggles as 836dc8807739 above - 8 possible
-			// rendered forms, all declared in ormharness/shapes.json and proven
-			// by TestTier3Shapes_5f742c0fcf1f (iznik-server-go/test).
+			// rendered forms, all proven by the retired ormharness
+			// (shapes.json / TestTier3Shapes_5f742c0fcf1f, removed in
+			// d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
 				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
@@ -562,8 +565,8 @@ func GetMemberships(c *fiber.Ctx) error {
 		//
 		// groupid==0,
 		// the filter (0-3), and contextID>0 give 2x4x2 = 16 possible rendered
-		// forms, all declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_bbc55cf96110 (iznik-server-go/test).
+		// forms, all proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_bbc55cf96110, removed in d22ba1d6c).
 		groupWhere, groupArgs := groupFilterSQL()
 		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
 		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
@@ -593,8 +596,8 @@ func GetMemberships(c *fiber.Ctx) error {
 	//
 	// groupid==0 and
 	// the filter (0-3, though this block only ever runs for filter>0) give
-	// 2x4 = 8 possible rendered forms, all declared in ormharness/shapes.json
-	// and proven by TestTier3Shapes_5f6ca1b9022f (iznik-server-go/test).
+	// 2x4 = 8 possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_5f6ca1b9022f, removed in d22ba1d6c).
 	if filter > 0 {
 		var filterCount int64
 
@@ -687,9 +690,9 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	//
 	// GORM's native
 	// "IN ?" slice-bind already normalizes the group-id list regardless of
-	// length, so this has exactly one rendered form, declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_fdd14a1656c7
-	// (iznik-server-go/test).
+	// length, so this has exactly one rendered form, proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_fdd14a1656c7, removed in
+	// d22ba1d6c).
 	var members []GetMembershipsMember
 	result := db.Table("memberships m").
 		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
@@ -930,9 +933,9 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
 
 	// filter
-	// (none/Happy/Unhappy/Fine) gives 4 possible rendered forms, all declared
-	// in ormharness/shapes.json and proven by TestTier3Shapes_3119115f3abe
-	// (iznik-server-go/test).
+	// (none/Happy/Unhappy/Fine) gives 4 possible rendered forms, all proven
+	// by the retired ormharness (shapes.json / TestTier3Shapes_3119115f3abe,
+	// removed in d22ba1d6c).
 	//
 	// rippled_in = 0: only Feedback for posts that ORIGINATED on the
 	// group, not copies that rippled in from elsewhere (the badge count
@@ -1069,10 +1072,10 @@ func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
 	since := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 
 	// Both group-id
-	// lists are GORM's native "IN (?)" slice-bind, which the harness's
-	// collapseInLists normalizes regardless of length, so this has exactly one
-	// rendered form, declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_1a000d04649b (iznik-server-go/test).
+	// lists are GORM's native "IN (?)" slice-bind, which the retired
+	// harness's collapseInLists normalized regardless of length, so this
+	// has exactly one rendered form, proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_1a000d04649b, removed in d22ba1d6c).
 	var rows []ratingRow
 	db.Table("ratings").
 		Select("ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
@@ -1246,8 +1249,9 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 
 	// Insert membership. ORM migration site 759766c83c01 (wave 2). Golden column
 	// order (userid, groupid, role, collection) is not alphabetical, but
-	// normaliseColumnOrder sorts both sides' columns together with their values
-	// before comparing (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert),
+	// normaliseColumnOrder sorted both sides' columns together with their
+	// values before comparing (the retired ormharness's normalise_test.go
+	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c),
 	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
 	db.Table("memberships").Create(map[string]interface{}{
 		"userid":     userid,

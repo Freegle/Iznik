@@ -51,7 +51,8 @@ func PostExport(c *fiber.Ctx) error {
 	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback, which - like the
 	// raw sql.Result this replaces - reads the id back from the write connection
-	// that ran the INSERT (proven in test/orm_insertid_test.go). A SELECT here
+	// that ran the INSERT (proven in test/insertid_gorm_writeback_test.go). A
+	// SELECT here
 	// would be routed to a read replica by the read/write split and, under
 	// Galera's cross-node apply window, may not yet see the just-inserted row
 	// (returning id=0).

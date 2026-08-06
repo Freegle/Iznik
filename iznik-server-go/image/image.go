@@ -202,8 +202,8 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	// (Message, ChatMessage, CommunityEvent, Volunteering, Story, Newsfeed -
 	// "User" and the default branch return before reaching this query), so
 	// this statement has exactly 6 possible rendered forms. All 6 are
-	// declared in ormharness/shapes.json and proven by
-	// TestShapesPilot_bc2f944bfbb7 (iznik-server-go/test).
+	// proven by the retired ormharness (shapes.json /
+	// TestShapesPilot_bc2f944bfbb7, removed in d22ba1d6c).
 	db.Table("`"+table+"`").Select("`"+ownerCol+"`").Where("id = ?", parentID).Scan(&owner)
 	return owner != 0 && owner == myid
 }
@@ -290,9 +290,9 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	// entries (previously split 9/1 against site b0445c89f59e, which omitted
 	// contenttype for Message - a bug, not a schema difference; see
 	// imageTypeConfig.TrustStoredContentType). cfg.Table/cfg.IDColumn are
-	// runtime-varying but bounded to exactly 10 combinations; see
-	// ormharness/shapes.json and TestTier3Shapes_1571f00a4ce8
-	// (iznik-server-go/test). Table()+map-Create reads the generated id
+	// runtime-varying but bounded to exactly 10 combinations; proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_1571f00a4ce8, removed
+	// in d22ba1d6c). Table()+map-Create reads the generated id
 	// back from the same sql.Result the INSERT returned, under the map key
 	// "@id" - no separate connection-scoped SELECT LAST_INSERT_ID() query.
 	// This is a plain INSERT (no ON DUPLICATE KEY UPDATE), so RowsAffected
@@ -342,9 +342,9 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	var rotateParentID uint64
 	// cfg.IDColumn/
 	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
-	// reachable here - one rendered form per entry, declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_6f9c3996f035
-	// (iznik-server-go/test).
+	// reachable here - one rendered form per entry, proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_6f9c3996f035, removed in
+	// d22ba1d6c).
 	db.Table("`"+cfg.Table+"`").Select("`"+cfg.IDColumn+"`").Where("id = ?", req.ID).Scan(&rotateParentID)
 	if !ownsImageParent(myid, imgType, rotateParentID) {
 		return fiber.NewError(fiber.StatusForbidden, "Cannot rotate an image you do not own")
@@ -354,8 +354,8 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 
 	// Same
 	// typeConfigs-driven table name as 6f9c3996f035 above - 10 possible
-	// rendered forms, declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_2ad46344c8b2 (iznik-server-go/test).
+	// rendered forms, proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_2ad46344c8b2, removed in d22ba1d6c).
 	result := db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Update("externalmods", modsJSON)
 
 	if result.Error != nil {
@@ -483,9 +483,8 @@ func Get(c *fiber.Ctx) error {
 	// default imgType "Message" plus the 9 getFlagTypes flags); cols is
 	// determined by imgType too (only Message adds externalurl), so there is
 	// exactly one rendered form per typeConfigs entry, not a cross product -
-	// 10 possible shapes total. All 10 are declared in
-	// ormharness/shapes.json and proven by TestShapesPilot_1be407fe0a15
-	// (iznik-server-go/test).
+	// 10 possible shapes total. All 10 are proven by the retired ormharness
+	// (shapes.json / TestShapesPilot_1be407fe0a15, removed in d22ba1d6c).
 	db.Table("`"+cfg.Table+"`").Select(cols).Where("id = ?", id).Scan(&rows)
 
 	if len(rows) == 0 {
@@ -532,8 +531,8 @@ func Get(c *fiber.Ctx) error {
 	// 1be407fe0a15 above: blobCols is determined by cfg.TrustStoredContentType,
 	// which is itself a function of imgType (false only for Message), so this
 	// is again exactly one rendered form per typeConfigs entry - 10 shapes, all
-	// declared in ormharness/shapes.json and proven by
-	// TestShapesPilot_1606033fd8f7 (iznik-server-go/test).
+	// proven by the retired ormharness (shapes.json /
+	// TestShapesPilot_1606033fd8f7, removed in d22ba1d6c).
 	db.Table("`"+cfg.Table+"`").Select(blobCols).Where("id = ?", id).Scan(&blob)
 	if len(blob.Data) > 0 {
 		ct := blob.Contenttype

@@ -272,7 +272,8 @@ func PostTeam(c *fiber.Ctx) error {
 
 	// Plain, isolated, literal single-row
 	// INSERT; the generated id is read back via GORM's map-Create "@id" writeback
-	// (proven in test/orm_insertid_test.go), same pattern already shipped for over
+	// (proven in test/insertid_gorm_writeback_test.go), same pattern already
+	// shipped for over
 	// a dozen sibling sites.
 	row := map[string]interface{}{
 		"name":        req.Name,

@@ -175,7 +175,8 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 // 568a5645fba7): the attribution-channel CASE expression lives in exactly
 // this one place either way, so pulling the outer aggregation out into a
 // real .Table()/.Select()/.Group()/.Order() chain does not duplicate it -
-// see ormharness/bareexists_test.go's distinction between a legitimate
+// see the distinction drawn by the retired ormharness's bareexists_test.go
+// (removed in d22ba1d6c) between a legitimate
 // .Table() subquery (this) and relocating a whole statement into .Select()
 // (not this). Master's ripple_join derivation lives here for the same reason.
 func ReplySourceInnerFrom(wide bool, srcGroup string) string {
@@ -498,7 +499,8 @@ func Metrics(c *fiber.Ctx) error {
 	// names) into real Select/Group/Order clauses. .Table() holds only the
 	// derived-table subquery, a documented legitimate use of Table() for a
 	// FROM-clause subquery - not the whole statement relocated into
-	// .Select() (see ormharness/bareexists_test.go).
+	// .Select() (proven by the retired ormharness's bareexists_test.go,
+	// removed in d22ba1d6c).
 	section("reply_source_split", func() error {
 		return db.Table(ReplySourceInnerFrom(attributionWide, srcGroup), gargs()...).
 			Select("day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_join') AS ripple_join, SUM(bucket = 'ripple_reach') AS ripple_reach, SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown").
@@ -512,9 +514,9 @@ func Metrics(c *fiber.Ctx) error {
 	//
 	// srcGroup is
 	// the only toggle reachable here (this section only runs when
-	// attributionWide is true) - 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_10ee37c98574
-	// (iznik-server-go/test).
+	// attributionWide is true) - 2 possible rendered forms, both proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_10ee37c98574,
+	// removed in d22ba1d6c).
 	section("client_source_summary", func() error {
 		if !attributionWide {
 			return nil

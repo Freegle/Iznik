@@ -180,9 +180,9 @@ func ListMessages(c *fiber.Ctx) error {
 		// Standard listing with optional pagination and fromuser filter.
 		//
 		// fromuser>0
-		// and ctx pagination give 2x2 = 4 possible rendered forms, all declared
-		// in ormharness/shapes.json and proven by TestTier3Shapes_bfe25b4914e8
-		// (iznik-server-go/test).
+		// and ctx pagination give 2x2 = 4 possible rendered forms, all proven
+		// by the retired ormharness (shapes.json /
+		// TestTier3Shapes_bfe25b4914e8, removed in d22ba1d6c).
 		// WHERE built as a single string for ONE Where() call: GORM's
 		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 		// paren pair once there is more than one Where expression to combine

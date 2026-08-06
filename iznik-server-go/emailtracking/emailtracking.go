@@ -470,9 +470,9 @@ type BouncesEmailsStats struct {
 // getBouncesEmailsStats queries the bounces_emails table for actual bounce counts
 // The date-range
 // clause is only appended when both startDate and endDate are supplied, so
-// this statement has exactly 2 possible rendered forms, both declared in
-// ormharness/shapes.json and proven by TestTier3Shapes_e1daa6fea45a
-// (iznik-server-go/test).
+// this statement has exactly 2 possible rendered forms, both proven by the
+// retired ormharness (shapes.json / TestTier3Shapes_e1daa6fea45a, removed in
+// d22ba1d6c).
 func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmailsStats {
 	var stats BouncesEmailsStats
 
@@ -558,8 +558,8 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	//
 	// The
 	// emailType/date-range toggles give 4 possible rendered forms, all
-	// declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_52ecf7eb71ac (iznik-server-go/test).
+	// proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_52ecf7eb71ac, removed in d22ba1d6c).
 	var ampCounts struct {
 		Total           int64
 		Opened          int64
@@ -586,9 +586,9 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	// Query for non-AMP emails.
 	//
 	// Same toggles
-	// as the AMP query above - 4 possible rendered forms, all declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_c8a4c6cbcae8
-	// (iznik-server-go/test).
+	// as the AMP query above - 4 possible rendered forms, all proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_c8a4c6cbcae8, removed
+	// in d22ba1d6c).
 	var nonAMPCounts struct {
 		Total         int64
 		Opened        int64
@@ -627,8 +627,8 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	//
 	// Same toggles,
 	// applied via the e./u. aliases this query uses - 4 possible rendered
-	// forms, all declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_ef321afa5b7a (iznik-server-go/test).
+	// forms, all proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_ef321afa5b7a, removed in d22ba1d6c).
 	var ampClickBreakdown struct {
 		ReplyClicks int64
 		OtherClicks int64
@@ -642,9 +642,9 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 		Where(ampClickWhereSQL, ampClickWhereArgs...).Scan(&ampClickBreakdown)
 
 	// Non-AMP twin
-	// of ef321afa5b7a above - 4 possible rendered forms, all declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_b37a229bfb0b
-	// (iznik-server-go/test).
+	// of ef321afa5b7a above - 4 possible rendered forms, all proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_b37a229bfb0b, removed
+	// in d22ba1d6c).
 	var nonAMPClickBreakdown struct {
 		ReplyClicks int64
 		OtherClicks int64
@@ -962,9 +962,9 @@ func TimeSeries(c *fiber.Ctx) error {
 	//
 	// The email_type
 	// filter is only appended when one was supplied, so this statement has
-	// exactly 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_69f6acdc5a6b
-	// (iznik-server-go/test).
+	// exactly 2 possible rendered forms, both proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_69f6acdc5a6b, removed in
+	// d22ba1d6c).
 	//
 	// If endDate doesn't include time, add end of day
 	endDateTime := endDate
@@ -1006,9 +1006,9 @@ func TimeSeries(c *fiber.Ctx) error {
 	//
 	// This text is
 	// entirely fixed - the extractor just could not fold the local
-	// `bounceQuery` variable to a static golden. Declared (as a single shape)
-	// in ormharness/shapes.json and proven by TestTier3Shapes_9d115fb3ebcd
-	// (iznik-server-go/test).
+	// `bounceQuery` variable to a static golden. Proven (as a single shape)
+	// by the retired ormharness (shapes.json / TestTier3Shapes_9d115fb3ebcd,
+	// removed in d22ba1d6c).
 	var dailyBounces []struct {
 		Date             string `gorm:"column:date"`
 		TotalBounces     int64  `gorm:"column:total_bounces"`
@@ -1106,9 +1106,9 @@ func StatsByType(c *fiber.Ctx) error {
 	//
 	// The date-range
 	// clause is only appended when both startDate and endDate are supplied, so
-	// this statement has exactly 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_ecbedcafc048
-	// (iznik-server-go/test).
+	// this statement has exactly 2 possible rendered forms, both proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_ecbedcafc048,
+	// removed in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -1257,9 +1257,9 @@ func TopClickedLinks(c *fiber.Ctx) error {
 	//
 	// The date-range
 	// clause is only appended when both startDate and endDate are supplied, so
-	// this statement has exactly 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_f6e4a52a0fb6
-	// (iznik-server-go/test).
+	// this statement has exactly 2 possible rendered forms, both proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_f6e4a52a0fb6,
+	// removed in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine

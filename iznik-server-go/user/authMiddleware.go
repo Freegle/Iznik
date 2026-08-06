@@ -47,10 +47,10 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 				// ORM migration sites 4853849663f1 and e04bf70e7bee (Tier 3
 				// keep-raw review). Both call sites render the same fixed
 				// text - the extractor just could not fold it across the two
-				// call sites - so each has exactly one rendered form, declared
-				// in ormharness/shapes.json and proven by
-				// TestTier3Shapes_4853849663f1 / TestTier3Shapes_e04bf70e7bee
-				// (iznik-server-go/test).
+				// call sites - so each has exactly one rendered form, proven
+				// by the retired ormharness (shapes.json /
+				// TestTier3Shapes_4853849663f1 /
+				// TestTier3Shapes_e04bf70e7bee, removed in d22ba1d6c).
 				sessionQuery := func(tx *gorm.DB) *gorm.DB {
 					return tx.Table("sessions").
 						Select("users.id, users.lastaccess, users.systemrole").

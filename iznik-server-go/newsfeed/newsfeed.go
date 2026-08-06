@@ -227,8 +227,8 @@ func RecentNonAlertNewsfeedIDs(ids []int64, excludeUserid uint64) map[int64]stru
 	// ids was a
 	// hand-built comma-joined literal-int list; GORM's native "IN (?)"
 	// slice-bind is the direct replacement, giving exactly one rendered
-	// form, declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_d80ab5badcb6 (iznik-server-go/test).
+	// form, proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_d80ab5badcb6, removed in d22ba1d6c).
 	var found []int64
 	database.DBConn.Table("newsfeed").
 		Select("id").
@@ -1332,7 +1332,8 @@ func Post(c *fiber.Ctx) error {
 
 			// Create a story from this newsfeed entry. Table()+map Create reads
 			// the new id back from the same sql.Result the INSERT returned,
-			// under the map key "@id" - see test/orm_insertid_test.go. Still
+			// under the map key "@id" - see
+			// test/insertid_gorm_writeback_test.go. Still
 			// the write connection, so still immune to the read/write split's
 			// Discourse-9832-class staleness.
 			row := map[string]interface{}{

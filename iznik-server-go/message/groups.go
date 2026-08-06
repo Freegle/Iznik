@@ -63,8 +63,9 @@ func Groups(c *fiber.Ctx) error {
 	//
 	// gid>0 is the
 	// only toggle (it drives spatialGroupFilter and spatialArgs together) - 2
-	// possible rendered forms, both declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_bc6d923b540d (iznik-server-go/test). Uses the
+	// possible rendered forms, both proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_bc6d923b540d, removed in d22ba1d6c).
+	// Uses the
 	// derived-table trick (GORM's Table() passes its name argument through
 	// verbatim once it contains a space) already proven elsewhere in this
 	// codebase for a parenthesized UNION subquery.

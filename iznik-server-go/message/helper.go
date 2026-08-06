@@ -386,7 +386,8 @@ func ensureBatchRow(db *gorm.DB, msgid, offerer uint64) uint64 {
 	// reads the id from the same sql.Result the write returned, which - unlike
 	// GORM's own "@id" map writeback - is not skipped when RowsAffected is 0
 	// (guaranteed on every duplicate-key hit): see
-	// test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap.
+	// test/insertid_gorm_writeback_test.go's
+	// WithResultBeatsTheRowsAffectedZeroTrap.
 	res := gorm.WithResult()
 	tx := db.Table("helper_batches").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{
@@ -490,9 +491,9 @@ func helperUpsertReplier(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReque
 	// caller-controlled, so this is GORM's ordinary per-field Update(col, val)
 	// pattern - already proven a few lines up in this same file
 	// (helper_batches "automode", line 461) - not a SQL-injection-shaped
-	// dynamic column. Every column this closure can be called with is
-	// declared as its own shape in ormharness/shapes.json and proven by
-	// TestTier2_7ba4875e8aec (iznik-server-go/test).
+	// dynamic column. Every column this closure can be called with was proven
+	// (as its own shape) by the retired ormharness (shapes.json /
+	// TestTier2_7ba4875e8aec, removed in d22ba1d6c).
 	set := func(col string, val interface{}) {
 		db.Table("helper_repliers").Where("id = ?", replierid).Update(col, val)
 	}
@@ -578,8 +579,8 @@ func helperSetItemState(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReques
 	// Same reasoning
 	// as helperUpsertReplier's "set" above: col is a per-call constant from a
 	// fixed set of literal call sites below. Every column this closure can be
-	// called with is declared as its own shape in ormharness/shapes.json and
-	// proven by TestTier2_b48b319835d0 (iznik-server-go/test).
+	// called with was proven (as its own shape) by the retired ormharness
+	// (shapes.json / TestTier2_b48b319835d0, removed in d22ba1d6c).
 	set := func(col string, val interface{}) {
 		db.Table("helper_item_states").Where("id = ?", stateid).Update(col, val)
 	}
@@ -620,7 +621,7 @@ func helperCreateProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequ
 	// reads the generated id back from the same sql.Result the INSERT
 	// returned (gorm.io/gorm/callbacks/create.go), writing it into the map
 	// under "@id" - proven against the real database in
-	// test/orm_insertid_test.go, not merely reasoned about.
+	// test/insertid_gorm_writeback_test.go, not merely reasoned about.
 	row := map[string]interface{}{
 		"batchid":       batchid,
 		"type":          *req.Type,

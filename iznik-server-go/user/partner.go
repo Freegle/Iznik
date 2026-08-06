@@ -108,7 +108,8 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 
 	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback (proven in
-	// test/orm_insertid_test.go, same pattern shipped for over a dozen sibling
+	// test/insertid_gorm_writeback_test.go, same pattern shipped for over a
+	// dozen sibling
 	// sites - the "undocumented and untested" concern this site's keep-raw rule
 	// used to cite no longer applies).
 	row := map[string]interface{}{

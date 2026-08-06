@@ -411,8 +411,8 @@ func SearchLocations(c *fiber.Ctx) error {
 
 		// pcq is only
 		// appended when pconly is set, so this statement has exactly 2
-		// possible rendered forms, both declared in ormharness/shapes.json and
-		// proven by TestTier3Shapes_b262bf75df3c (iznik-server-go/test).
+		// possible rendered forms, both proven by the retired ormharness
+		// (shapes.json / TestTier3Shapes_b262bf75df3c, removed in d22ba1d6c).
 		var locs []locationWithArea
 		txb262bf75df3c := db.Table("locations l1").
 			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
@@ -563,8 +563,8 @@ func Typeahead(c *fiber.Ctx) error {
 		// Shares
 		// SearchLocations's pattern: pcq is only appended when pconly is set,
 		// so this statement has exactly 2 possible rendered forms, both
-		// declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_71f1772f4a99 (iznik-server-go/test).
+		// proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_71f1772f4a99, removed in d22ba1d6c).
 		var locs []locationWithArea
 		tx71f1772f4a99 := db.Table("locations l1").
 			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").

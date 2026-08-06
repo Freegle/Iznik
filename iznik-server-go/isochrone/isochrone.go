@@ -173,7 +173,8 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		// fallback below only runs if INSERT IGNORE skipped a pre-existing row (9832 class).
 		// Table()+map Create
 		// reads the id back from the same sql.Result the INSERT returned,
-		// under the map key "@id" (see test/orm_insertid_test.go) - same as
+		// under the map key "@id" (see test/insertid_gorm_writeback_test.go)
+		// - same as
 		// ExecInsertGetID it's a no-op (0) precisely when INSERT IGNORE
 		// skipped a duplicate, matching the existing isoID==0 fallback below.
 		row := map[string]interface{}{
@@ -357,7 +358,8 @@ func CreateIsochrone(c *fiber.Ctx) error {
 	// EVERY re-link of an already-linked isochrone (the common case here,
 	// since a user re-opening the same isochrone hits the duplicate-key
 	// branch every time) - so Clauses(gorm.WithResult()) is needed, not
-	// "@id" (see test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap).
+	// "@id" (see test/insertid_gorm_writeback_test.go's
+	// WithResultBeatsTheRowsAffectedZeroTrap).
 	linkRes := gorm.WithResult()
 	result := db.Table("isochrones_users").Clauses(linkRes, clause.OnConflict{
 		DoUpdates: clause.Set{

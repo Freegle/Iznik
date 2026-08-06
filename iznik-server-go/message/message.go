@@ -481,8 +481,8 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// isMod
 				// is the only toggle (it drives the deleted-sender filter and
 				// the raw message field together) - 2 possible rendered forms,
-				// both declared in ormharness/shapes.json and proven by
-				// TestTier3Shapes_08bb471351a0 (iznik-server-go/test).
+				// both proven by the retired ormharness (shapes.json /
+				// TestTier3Shapes_08bb471351a0, removed in d22ba1d6c).
 				selectCols := "messages.id, messages.arrival, messages.date, messages.fromuser, " +
 					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, " +
 					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "
@@ -1020,8 +1020,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// top-level FROM - one scalar expression. GORM's query callback always
 		// registers a FROM clause, but Statement.Build only renders the clause
 		// NAMES it is given, so restricting BuildClauses to {"SELECT"} emits the
-		// SELECT alone and leaves the registered-but-unwalked FROM out. Proven in
-		// ormharness/bareexists_test.go and used by the other sites in this
+		// SELECT alone and leaves the registered-but-unwalked FROM out.
+		// Proven by the retired ormharness's bareexists_test.go (removed in
+		// d22ba1d6c) and used by the other sites in this
 		// category (amp.go, chatmessage.go's rippled-in probes).
 		//
 		// An earlier version of this conversion selected from a one-row derived
@@ -1287,8 +1288,8 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				// Own messages are always treated as seen.
 				//
 				// `active` is the only toggle - 2 possible rendered forms, both
-				// declared in ormharness/shapes.json and proven by
-				// TestTier3Shapes_2de07c2af78b (iznik-server-go/test).
+				// proven by the retired ormharness (shapes.json /
+				// TestTier3Shapes_2de07c2af78b, removed in d22ba1d6c).
 				tx := db.Table("messages").
 					Select(selectCols+"0 AS unseen", utils.TAKEN, utils.RECEIVED).
 					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
@@ -1308,9 +1309,9 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				//
 				// Same
 				// `active` toggle as 2de07c2af78b above (the other-user twin) -
-				// 2 possible rendered forms, both declared in
-				// ormharness/shapes.json and proven by
-				// TestTier3Shapes_bca1186d1ea4 (iznik-server-go/test).
+				// 2 possible rendered forms, both proven by the retired
+				// ormharness (shapes.json / TestTier3Shapes_bca1186d1ea4,
+				// removed in d22ba1d6c).
 				tx := db.Table("messages").
 					Select(selectCols+"NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen",
 						utils.TAKEN, utils.RECEIVED, myid, utils.MESSAGE_LIKES_VIEW).
@@ -2561,7 +2562,8 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	// review). The optional ", mr.inner_bound = NULL" SET fragment gives this
 	// statement exactly 2 real rendered forms - "NoInnerBound" and
 	// "WithInnerBound" below, both proved in TestOrmWave5_7653c7a2e4ed
-	// (AssertGoldenShapes; declared shapes live in ormharness/shapes.json). An
+	// (AssertGoldenShapes; declared shapes lived in the retired ormharness's
+	// shapes.json; removed in d22ba1d6c). An
 	// explicit ordered clause.Set (not a map) keeps mr.polygon ahead of
 	// mr.inner_bound the same way the source text did, even though the two
 	// assignments are independent and the order is not actually load-bearing.
@@ -2929,11 +2931,12 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		// The guard
 		// above means at least one of Oldsubject/Oldtext is set, so this is a
 		// genuine 3-shape site (SubjectOnly, TextbodyOnly, Both), not an
-		// N-independent-fields one - small enough for shapes.json, unlike
+		// N-independent-fields one - small enough for the retired harness's
+		// shapes.json, unlike
 		// applyPatchMessageCore's 8-field SET a few hundred lines down (site
-		// e9f2c662be69), which stays raw. All 3 shapes are declared in
-		// ormharness/shapes.json and covered by
-		// TestTier1BatchShapes_99713f48c505.
+		// e9f2c662be69), which stays raw. All 3 shapes were proven by the
+		// retired ormharness (shapes.json /
+		// TestTier1BatchShapes_99713f48c505, removed in d22ba1d6c).
 		assignments := clause.Set{
 			{Column: clause.Column{Name: "editedby"}, Value: gorm.Expr("NULL")},
 		}
@@ -3104,9 +3107,10 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// set keep their live posting.
 	// Identical golden to 3a50dbee0fa0
 	// (handleDeleteMessage); converted together per gate (h). Runs on tx (a
-	// *gorm.DB transaction), which the dry-run build function renders identically
-	// to the plain connection - same reasoning as orm_wave2_pilot_test.go's
-	// handleMerge note.
+	// *gorm.DB transaction), which the retired harness's dry-run build
+	// function rendered identically to the plain connection - same reasoning
+	// as the retired orm_wave2_pilot_test.go's handleMerge note (removed in
+	// d22ba1d6c).
 	if err := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, groupids).
 		Delete(nil).Error; err != nil {
 		tx.Rollback()
@@ -3485,8 +3489,8 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 // whatever the caller resolved, it does not decide whether that lookup
 // happens. Locationid/Lat/Lng's cluster of 3 booleans (each present or not
 // in the final SET list) has 8 combinations; the 7 non-empty ones are all
-// reachable and are exactly what message_fieldwise_tier9_test.go declares
-// as the group's forms:
+// reachable and are exactly what the retired message_fieldwise_tier9_test.go
+// (removed in d22ba1d6c) declared as the group's forms:
 //
 //	LocationidOnly, LatOnly, LngOnly, LocationidLat, LocationidLng, LatLng,
 //	LocationidLatLng
@@ -3512,7 +3516,8 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 // PRE-BUILT clause.Set slice varies at runtime, exactly the way the SQL
 // string used to. Proven against the identical fieldwise.json goldens
 // already recorded for the string version (message_fieldwise_tier9_test.go),
-// via ormharness.AssertGoldenFieldwise - same n+2 cases, same golden SQL per
+// via the retired ormharness's AssertGoldenFieldwise (all removed in
+// d22ba1d6c) - same n+2 cases, same golden SQL per
 // case, now rendered by GORM instead of by hand.
 func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *string, availablenow *int, locationid *uint64, effLat, effLng *float64) clause.Set {
 	var set clause.Set
@@ -4295,7 +4300,7 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback, which reads the
 	// id back from the very connection that ran the INSERT (proven in
-	// test/orm_insertid_test.go).
+	// test/insertid_gorm_writeback_test.go).
 	userRow := map[string]interface{}{"added": gorm.Expr("NOW()")}
 	if err := db.Table("users").Create(userRow).Error; err != nil {
 		return 0, "", nil, fmt.Errorf("failed to create user: %w", err)
@@ -4327,7 +4332,8 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback, which reads the
 	// id back from the write connection that ran the INSERT (proven in
-	// test/orm_insertid_test.go), same guarantee ExecInsertGetID gave. A
+	// test/insertid_gorm_writeback_test.go), same guarantee ExecInsertGetID
+	// gave. A
 	// "SELECT id ... ORDER BY id DESC" here would be routed to a read replica
 	// under the read/write split and could return a stale/0 id (Discourse 9832
 	// class), embedding a wrong sessionid in the JWT below - which is why this
@@ -4641,7 +4647,8 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	// back from the write connection via LastInsertId, as CreateGroup does.
 	// Table()+map Create
 	// reads the generated id back from the same sql.Result the INSERT
-	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"fromuser":           myid,
 		"type":               req.Type,
@@ -4716,7 +4723,8 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 		// reports on a no-op duplicate hit - exactly the common case here.
 		// Clauses(gorm.WithResult()) hands back the raw sql.Result instead,
 		// which has no such condition (proven in
-		// test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap).
+		// test/insertid_gorm_writeback_test.go's
+		// WithResultBeatsTheRowsAffectedZeroTrap).
 		itemRes := gorm.WithResult()
 		db.Table("items").Clauses(itemRes, clause.OnConflict{
 			DoUpdates: clause.Set{
@@ -4786,8 +4794,9 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	// Table()'s argument
 	// passes through unquoted once it contains a space, so the verbatim JOIN
 	// text travels with it; the column-to-column assignments go through an
-	// explicit clause.Set, the same shape pinned by
-	// ormharness/updatejoin_replace_test.go's TestUpdateJoin_TwoJoinsWithColumnValues.
+	// explicit clause.Set, the same shape pinned by the retired ormharness's
+	// updatejoin_replace_test.go TestUpdateJoin_TwoJoinsWithColumnValues
+	// (removed in d22ba1d6c).
 	db.Table("messages m JOIN users u ON u.id = ? JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation)", myid).
 		Clauses(clause.Set{
 			{Column: clause.Column{Table: "m", Name: "locationid"}, Value: clause.Column{Table: "l", Name: "id"}},
@@ -5636,9 +5645,10 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Without this, a failure after DELETE would orphan the message.
 	err := db.Transaction(func(tx *gorm.DB) error {
 		// Runs on tx (a *gorm.DB
-		// transaction), which the dry-run build function renders identically to
-		// the plain connection - same reasoning as orm_wave2_pilot_test.go's
-		// handleMerge note.
+		// transaction), which the retired harness's dry-run build function
+		// rendered identically to the plain connection - same reasoning as
+		// the retired orm_wave2_pilot_test.go's handleMerge note (removed in
+		// d22ba1d6c).
 		result := tx.Table("messages_groups").Where("msgid = ?", req.ID).Delete(nil)
 		if result.Error != nil {
 			return result.Error

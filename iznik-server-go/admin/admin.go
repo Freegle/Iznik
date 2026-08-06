@@ -91,9 +91,9 @@ func ListAdmins(c *fiber.Ctx) error {
 	// assembled from two fixed toggles: which groupid scope applies (admin/
 	// support with an explicit groupid vs the caller's own active mod groups,
 	// optionally further narrowed to one groupid), and the pending filter
-	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_3d5506803f0c
-	// (iznik-server-go/test).
+	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_3d5506803f0c,
+	// removed in d22ba1d6c).
 	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, " +
 		"a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected")
 
@@ -249,7 +249,7 @@ func PostAdmin(c *fiber.Ctx) error {
 
 		// Table()+map Create reads the generated id back from the same
 		// sql.Result the INSERT returned, under the map key "@id" - see
-		// test/orm_insertid_test.go.
+		// test/insertid_gorm_writeback_test.go.
 		row := map[string]interface{}{
 			"createdby":     myid,
 			"groupid":       utils.NilIfZero(req.GroupID),

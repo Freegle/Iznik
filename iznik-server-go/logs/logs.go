@@ -18,7 +18,8 @@ import (
 // convention this follows. Extracted from GetLogs (a pure
 // behaviour-preserving refactor - the actual SQL and db.Raw call are
 // unchanged) so its independently-optional WHERE factors can be proven via
-// ormharness.AssertGoldenWhereFieldwise (logs_wherefieldwise_tier9_test.go)
+// the retired ormharness's AssertGoldenWhereFieldwise
+// (logs_wherefieldwise_tier9_test.go, removed in d22ba1d6c)
 // rather than left as an unproven "352 reachable combinations" policy
 // decision - see keep-raw site 6cf1b5aded22. isAdmin and modGroupIDs are
 // the caller's already-resolved permission check (site 5dc370f37ed3,

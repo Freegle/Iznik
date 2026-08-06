@@ -422,7 +422,7 @@ func PostModConfig(c *fiber.Ctx) error {
 
 	// Simple create. Table()+map Create reads the generated id back from the
 	// same sql.Result the INSERT returned, under the map key "@id" - see
-	// test/orm_insertid_test.go.
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"name":           req.Name,
 		"createdby":      myid,
@@ -521,14 +521,15 @@ func PatchModConfig(c *fiber.Ctx) error {
 	// ORM migration site a7b00c5503b7 (fieldwise coverage, not exhaustive
 	// shapes). 17 independently-optional fields, each contributing its own
 	// fixed "col = ?" fragment(s) with no fragment's value referencing
-	// another assigned column - verified via
-	// ormharness.AssertGoldenFieldwise's precondition check, which reuses
-	// setOrderIsLoadBearing (the same rule check-set-order.sh enforces
-	// elsewhere) and refuses the site outright if that ever stops being
-	// true. That independence is what makes n+2 cases (each field alone,
-	// empty, all together) a real proof rather than exhaustive 2^17 shape
+	// another assigned column - verified via the retired ormharness's
+	// AssertGoldenFieldwise precondition check, which reused
+	// setOrderIsLoadBearing (the same rule the retired check-set-order.sh
+	// enforced elsewhere) and refused the site outright if that ever stopped
+	// being true. That independence is what makes n+2 cases (each field
+	// alone, empty, all together) a real proof rather than exhaustive 2^17 shape
 	// coverage, which AssertGoldenShapes could never practically declare.
-	// See test/orm_fieldwise_modconfig_test.go and ormharness/fieldwise.json
+	// See the retired test/orm_fieldwise_modconfig_test.go and
+	// ormharness/fieldwise.json (removed in d22ba1d6c)
 	// - and Protected below, which is the one field that contributes two
 	// fragments (protected, createdby) rather than one; fieldwise coverage
 	// only requires that ITS OWN two fragments don't reference any OTHER

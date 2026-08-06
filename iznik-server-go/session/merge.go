@@ -105,9 +105,9 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 		// quotes it, and its own bind arg travels through Table()'s
 		// variadic args), and the column-to-column SET assignment is an
 		// explicit clause.Set - Updates(map) can't express "SET a = b" for
-		// two real columns, only "SET a = ?" for a bound value. Proven in
-		// ormharness/updatejoin_replace_test.go
-		// (TestUpdateJoin_SelfJoinSimpleAssignment).
+		// two real columns, only "SET a = ?" for a bound value. Proven by the
+		// retired ormharness's updatejoin_replace_test.go
+		// TestUpdateJoin_SelfJoinSimpleAssignment (removed in d22ba1d6c).
 		if err := tx.Table("chat_rooms surv JOIN chat_rooms lose ON lose.id = ?", p.LoserID).
 			Clauses(clause.Set{
 				{Column: clause.Column{Table: "surv", Name: "latestmessage"},

@@ -109,8 +109,8 @@ func List(c *fiber.Ctx) error {
 	// mutually-exclusive branches (authority / review-with-groups / plain)
 	// times an optional newsletterreviewed filter (not reachable on the
 	// authority branch) give 1 + 2 + 2 = 5 possible rendered forms, all
-	// declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_0ca4810292dc (iznik-server-go/test).
+	// proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_0ca4810292dc, removed in d22ba1d6c).
 	// Each branch's WHERE is built as a single string and passed to ONE
 	// Where() call: GORM's clause.Where wraps any fragment containing
 	// "AND"/"OR" in an extra paren pair once there is more than one Where

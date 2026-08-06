@@ -105,7 +105,8 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 	// Read the new donation id from the write result, not a read-split-routable SELECT
 	// (9832 class). Here it only feeds the log line below, but keep it correct anyway.
 	// Table()+map Create reads it back from the same sql.Result the INSERT
-	// returned, under the map key "@id" - see test/orm_insertid_test.go.
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"userid":           userIDPtr,
 		"Payer":            userEmail,

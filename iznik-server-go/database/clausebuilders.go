@@ -63,13 +63,14 @@ func RegisterCustomClauseBuilders(db *gorm.DB) {
 // has to happen once, here, not per conversion.
 //
 // Every ordinary Create() - a plain INSERT, or the existing INSERT IGNORE
-// convention (clause.Insert{Modifier: "IGNORE"}, see ormharness/upsert_test.go)
+// convention (clause.Insert{Modifier: "IGNORE"}, proven by the retired
+// ormharness's upsert_test.go, removed in d22ba1d6c)
 // - falls through to the default builder unchanged, since only
 // Modifier == "REPLACE" is handled specially.
 //
 // Proven, with the negative case ("INSERT REPLACE INTO" from Modifier alone
-// is NOT valid SQL), in ormharness/updatejoin_replace_test.go and
-// test/orm_tier4_test.go.
+// is NOT valid SQL), in the retired ormharness's updatejoin_replace_test.go
+// and test/orm_tier4_test.go (both removed in d22ba1d6c).
 func replaceIntoClauseBuilder(c clause.Clause, builder clause.Builder) {
 	insert, ok := c.Expression.(clause.Insert)
 	if !ok || insert.Modifier != "REPLACE" {
@@ -94,7 +95,7 @@ func replaceIntoClauseBuilder(c clause.Clause, builder clause.Builder) {
 // anything pre-set via a chained .Clauses(...) call is simply overwritten
 // before insertSelectClauseBuilder ever sees it. Statement.Settings (the
 // same escape hatch documented on gorm.WithResult - see
-// test/orm_insertid_test.go's note that it must be reached via .Clauses(),
+// test/insertid_gorm_writeback_test.go's note that it must be reached via .Clauses(),
 // not .Set(), for THAT mechanism) is, for THIS mechanism, exactly the right
 // channel: db.Set stores into Statement.Settings directly, and it survives
 // untouched because ConvertToCreateValues never looks at it.
@@ -108,7 +109,7 @@ const insertSelectSettingKey = "orm:insert-select"
 // so ConvertMapToValuesForCreate's ordinary path runs rather than
 // ConvertSliceOfMapToValuesForCreate's `len(mapValues) == 0` guard, which
 // calls stmt.AddError(gorm.ErrEmptySlice) and returns before any SQL is
-// built at all - the exact way ormharness/insertselect_test.go's first
+// built at all - the exact way the retired ormharness's insertselect_test.go's first
 // attempt at this proof failed to reach the comparison it was written to
 // make.
 const insertSelectPlaceholderColumn = "__insert_select_placeholder__"
