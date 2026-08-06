@@ -3482,6 +3482,10 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	if len(candidates) == 0 {
 		return 0, nil, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 	}
+	// Two candidates = the member's identity has diverged across two accounts.
+	// The sync's job is to STOP divergence, not tolerate it: merge the twins
+	// (falls back to the split candidates if the merge fails).
+	candidates = user.HealTNDivergence(db, candidates)
 	return candidates[0], candidates, nil
 }
 
@@ -4968,6 +4972,10 @@ func PostMessage(c *fiber.Ctx) error {
 			if len(partnerCandidates) == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 			}
+			// Two candidates = diverged twin accounts; the sync's job is to
+			// STOP divergence - merge them (falls back to the split
+			// candidates for per-message arbitration if the merge fails).
+			partnerCandidates = user.HealTNDivergence(db, partnerCandidates)
 			myid = partnerCandidates[0]
 		}
 	}

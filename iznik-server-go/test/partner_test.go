@@ -135,9 +135,10 @@ func TestFindTNCandidatesTwinAccounts(t *testing.T) {
 // The live failure: TN promised an item on behalf of its member, supplying
 // both tnuserid and email; the message belonged to the email twin, but
 // tnuserid-first resolution acted as the other account and the promise 403'd
-// "Not your message". The action must act as whichever identity owns the
-// message.
-func TestPartnerPromiseActsAsOwningTwin(t *testing.T) {
+// "Not your message". The sync's job is to STOP the divergence: the partner
+// call must heal the split by merging the email twin into the tnuserid
+// account, and the promise must land.
+func TestPartnerPromiseHealsTwinAccounts(t *testing.T) {
 	prefix := uniquePrefix("partner_promise")
 	db := database.DBConn
 
@@ -165,9 +166,51 @@ func TestPartnerPromiseActsAsOwningTwin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	require.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode, "the owning twin's promise must succeed")
+	assert.Equal(t, 200, resp.StatusCode, "the member's promise must succeed")
 
 	var count int64
-	db.Table("messages_promises").Where("msgid = ?", msgID).Count(&count)
-	assert.Equal(t, int64(1), count, "the promise must be recorded")
+	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgID, tnTwin).Count(&count)
+	assert.Equal(t, int64(1), count, "the promise must be recorded against the surviving account")
+
+	// The divergence must be healed, not tolerated: the email twin is merged
+	// into the tnuserid account and deleted, its message and email move.
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+	assert.Equal(t, tnTwin, fromuser, "the message must belong to the surviving account")
+
+	var emailOwner uint64
+	db.Table("users_emails").Select("userid").Where("email = ?", email).Scan(&emailOwner)
+	assert.Equal(t, tnTwin, emailOwner, "the TN alias must move to the surviving account")
+
+	var gone int64
+	db.Table("users").Where("id = ?", emailTwin).Count(&gone)
+	assert.Equal(t, int64(0), gone, "the email twin must be gone after the merge")
+}
+
+// The prevention half: when the sync presents a known tnuserid with a NEW
+// email alias (a TN username rename) before any mail has arrived from it,
+// the alias must be attached to the account so the mail ingest never mints a
+// twin.
+func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
+	prefix := uniquePrefix("partner_ensure")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66668)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66668, userID)
+
+	newAlias := prefix + "-renamed-g9@test.com"
+	user.EnsurePartnerIdentifiers(db, userID, 66668, newAlias)
+
+	var owner uint64
+	db.Table("users_emails").Select("userid").Where("email = ?", newAlias).Scan(&owner)
+	assert.Equal(t, userID, owner, "the new alias must be attached to the resolved account")
+
+	// And the symmetric case: an email-resolved account with no stamp gets it.
+	other := CreateTestUser(t, prefix+"_other", "User")
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66669)
+	user.EnsurePartnerIdentifiers(db, other, 66669, "")
+	var stamped uint64
+	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", other).Scan(&stamped)
+	assert.Equal(t, uint64(66669), stamped, "an unstamped account must gain the tnuserid")
 }

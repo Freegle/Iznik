@@ -2,10 +2,12 @@ package user
 
 import (
 	"errors"
+	"log"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ValidatePartnerKey validates a partner API key and returns the partner's details.
@@ -56,7 +58,7 @@ func FindTNCandidates(db *gorm.DB, tnuserid uint64, email string) []uint64 {
 
 	if tnuserid > 0 {
 		var userid uint64
-		db.Table("users").Select("id").Where("tnuserid = ?", tnuserid).Scan(&userid)
+		db.Table("users").Select("id").Where("tnuserid = ? AND deleted IS NULL", tnuserid).Scan(&userid)
 		if userid > 0 {
 			out = append(out, userid)
 		}
@@ -64,13 +66,45 @@ func FindTNCandidates(db *gorm.DB, tnuserid uint64, email string) []uint64 {
 
 	if email != "" {
 		var userid uint64
-		db.Table("users_emails").Select("userid").Where("email = ?", email).Scan(&userid)
+		db.Table("users_emails").Select("users_emails.userid").
+			Joins("INNER JOIN users ON users.id = users_emails.userid").
+			Where("users_emails.email = ? AND users.deleted IS NULL", email).
+			Scan(&userid)
 		if userid > 0 && (len(out) == 0 || out[0] != userid) {
 			out = append(out, userid)
 		}
 	}
 
 	return out
+}
+
+// HealTNDivergence merges a TN member's twin accounts when the partner's
+// identifiers resolved to two different users. TN is asserting both belong to
+// the same member (and the caller has verified the email is in the partner's
+// own domain), so the divergence is a data fault, not ambiguity - typically
+// minted when a TN username rename changed the member's per-group email alias
+// and the mail ingest created a fresh account for it. The email twin is
+// merged INTO the tnuserid twin via the same transaction the moderator merge
+// uses: the stamp stays put, the alias and every message move across, and
+// future mail routes to the merged account - the sync stops the divergence
+// instead of tolerating it forever.
+//
+// Returns the updated candidate set: the single surviving id on success, or
+// the original candidates if the merge fails (per-message owner arbitration
+// still copes with the split).
+func HealTNDivergence(db *gorm.DB, candidates []uint64) []uint64 {
+	if len(candidates) < 2 {
+		return candidates
+	}
+
+	keep, discard := candidates[0], candidates[1]
+	if err := MergeUsersTx(db, discard, keep, keep); err != nil {
+		log.Printf("TN divergence heal: merging twin %d into %d failed: %v", discard, keep, err)
+		return candidates
+	}
+
+	log.Printf("TN divergence heal: merged twin account %d into %d", discard, keep)
+	return []uint64{keep}
 }
 
 // FindPartnerOwnerForMessage returns the fromuser of a message when its fromaddr
@@ -167,6 +201,45 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	})
 
 	return userid, nil
+}
+
+// EnsurePartnerIdentifiers back-fills whichever of the partner's identifiers
+// the resolved account is missing - the prevention half of stopping TN
+// divergence. After a TN username rename the sync presents the member's NEW
+// per-group email alias alongside the same tnuserid; attaching the alias here
+// means the next inbound mail routes to this account instead of the mail
+// ingest minting a twin. Symmetrically, an account found by email gets the
+// tnuserid stamp if it has none (the stamp is UNIQUE, so an already-claimed
+// stamp is left alone - that split is HealTNDivergence's job; the unique
+// index backstops the check-then-update race).
+func EnsurePartnerIdentifiers(db *gorm.DB, userid, tnuserid uint64, email string) {
+	if userid == 0 {
+		return
+	}
+
+	if tnuserid > 0 {
+		var claimed int64
+		db.Table("users").Where("tnuserid = ?", tnuserid).Count(&claimed)
+		if claimed == 0 {
+			db.Table("users").Where("id = ? AND tnuserid IS NULL", userid).Update("tnuserid", tnuserid)
+		}
+	}
+
+	if email != "" {
+		var count int64
+		db.Table("users_emails").Where("userid = ? AND email = ?", userid, email).Count(&count)
+		if count == 0 {
+			canon := CanonicalizeEmail(email)
+			db.Clauses(clause.Insert{Modifier: "IGNORE"}).Table("users_emails").Create(map[string]interface{}{
+				"userid":    userid,
+				"email":     email,
+				"preferred": gorm.Expr("0"),
+				"added":     gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": reverseString(canon),
+			})
+		}
+	}
 }
 
 // FindPartnerByName looks up a partner by name (case-insensitive LIKE match).

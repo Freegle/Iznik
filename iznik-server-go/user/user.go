@@ -2854,6 +2854,20 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
+	if err := MergeUsersTx(db, uint64(req.ID1), uint64(req.ID2), myid); err != nil {
+		return err
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// MergeUsersTx merges id1 (discarded) into id2 (kept): every table's rows
+// move from id1 to id2 inside one transaction, mirroring V1's User::merge,
+// then id1's users row is hard-deleted after commit. byuser is recorded in
+// the merge log entries. Extracted from handleMerge so the TN divergence
+// heal (see FindTNCandidates) can merge a member's twin accounts through
+// exactly the moderator-merge code path.
+func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// All merge operations run inside a single transaction (V1 parity).
 	// id1 = DISCARD (source), id2 = KEEP (destination). All data moves FROM id1 TO id2.
 	tx := db.Begin()
@@ -2873,13 +2887,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Email merge: move id1's emails to id2.
 	// If id2 already has a preferred email, demote id1's preferred before moving.
 	var id2HasPreferred int64
-	tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID2).Count(&id2HasPreferred)
+	tx.Table("users_emails").Where("userid = ? AND preferred = 1", id2).Count(&id2HasPreferred)
 	if id2HasPreferred > 0 {
-		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", req.ID1).Update("preferred", gorm.Expr("0")).Error; err != nil {
+		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", id1).Update("preferred", gorm.Expr("0")).Error; err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to demote id1 preferred email")
 		}
 	}
-	if err := tx.Table("users_emails").Where("userid = ?", req.ID1).Update("userid", req.ID2).Error; err != nil {
+	if err := tx.Table("users_emails").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge emails")
 	}
 
@@ -2898,16 +2912,16 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 
 	var id1Membs []MembershipRow
 	tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
-		Where("userid = ?", req.ID1).Scan(&id1Membs)
+		Where("userid = ?", id1).Scan(&id1Membs)
 
 	for _, m1 := range id1Membs {
 		var id2Memb MembershipRow
 		tx.Table("memberships").Select("id, groupid, role, added, configid, settings, heldby").
-			Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Scan(&id2Memb)
+			Where("userid = ? AND groupid = ?", id2, m1.Groupid).Scan(&id2Memb)
 
 		if id2Memb.ID == 0 {
 			// id2 not in this group — just reassign.
-			if err := tx.Table("memberships").Where("id = ?", m1.ID).Update("userid", req.ID2).Error; err != nil {
+			if err := tx.Table("memberships").Where("id = ?", m1.ID).Update("userid", id2).Error; err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to transfer membership")
 			}
 		} else {
@@ -2916,30 +2930,30 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			if roleWeight[m1.Role] > roleWeight[id2Memb.Role] {
 				newRole = m1.Role
 			}
-			tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).Update("role", newRole)
+			tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).Update("role", newRole)
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
 			// explicit clause.Set, same mechanism as session/merge.go's
 			// mergeChatRooms conversion. Proven by the retired ormharness's
 			// updatejoin_replace_test.go TestUpdateJoin_SelfJoinWithLeastExpr
 			// (removed in d22ba1d6c).
-			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", req.ID1).
+			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", id1).
 				Clauses(clause.Set{
 					{Column: clause.Column{Table: "m2", Name: "added"}, Value: gorm.Expr("LEAST(m2.added, m1.added)")},
 				}).
-				Where("m2.userid = ? AND m2.groupid = ?", req.ID2, m1.Groupid).
+				Where("m2.userid = ? AND m2.groupid = ?", id2, m1.Groupid).
 				Updates(map[string]interface{}{})
 			// Take non-null attrs from id1 if id2 doesn't have them.
 			if m1.Configid != nil {
-				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
 					Update("configid", gorm.Expr("COALESCE(configid, ?)", *m1.Configid))
 			}
 			if m1.Settings != nil {
-				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
 					Update("settings", gorm.Expr("COALESCE(settings, ?)", *m1.Settings))
 			}
 			if m1.Heldby != nil {
-				tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, m1.Groupid).
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
 					Update("heldby", gorm.Expr("COALESCE(heldby, ?)", *m1.Heldby))
 			}
 			// Delete the now-redundant id1 row.
@@ -2947,20 +2961,20 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		}
 	}
 	// Clean up any remaining id1 memberships.
-	tx.Table("memberships").Where("userid = ?", req.ID1).Delete(nil)
+	tx.Table("memberships").Where("userid = ?", id1).Delete(nil)
 
 	// ── SECTION B: messages, history, chat, sessions, logins ────────────────────
 
 	// Messages.
-	if err := tx.Table("messages").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2).Error; err != nil {
+	if err := tx.Table("messages").Where("fromuser = ?", id1).Update("fromuser", id2).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge messages")
 	}
 	// History tables.
-	tx.Table("messages_history").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
-	tx.Table("memberships_history").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("messages_history").Where("fromuser = ?", id1).Update("fromuser", id2)
+	tx.Table("memberships_history").Where("userid = ?", id1).Update("userid", id2)
 	// Log references.
-	tx.Table("logs").Where("user = ?", req.ID1).Update("user", req.ID2)
-	tx.Table("logs").Where("byuser = ?", req.ID1).Update("byuser", req.ID2)
+	tx.Table("logs").Where("user = ?", id1).Update("user", id2)
+	tx.Table("logs").Where("byuser = ?", id1).Update("byuser", id2)
 
 	// Chat room merge with deduplication (V1 parity).
 	type ChatRoomRow struct {
@@ -2973,15 +2987,15 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 	var id1Rooms []ChatRoomRow
 	tx.Table("chat_rooms").Select("id, chattype, user1, user2, groupid, latestmessage").
-		Where("(user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", req.ID1, req.ID1).Scan(&id1Rooms)
+		Where("(user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", id1, id1).Scan(&id1Rooms)
 	for _, room := range id1Rooms {
 		var existingID uint64
 		if room.Chattype == "User2Mod" {
 			tx.Table("chat_rooms").Select("id").
-				Where("user1 = ? AND groupid = ? AND chattype = 'User2Mod'", req.ID2, room.Groupid).Scan(&existingID)
+				Where("user1 = ? AND groupid = ? AND chattype = 'User2Mod'", id2, room.Groupid).Scan(&existingID)
 		} else {
 			var otherUserID uint64
-			if room.User1 == uint64(req.ID1) {
+			if room.User1 == id1 {
 				if room.User2 != nil {
 					otherUserID = *room.User2
 				}
@@ -2991,7 +3005,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			if otherUserID > 0 {
 				tx.Table("chat_rooms").Select("id").
 					Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-						req.ID2, otherUserID, otherUserID, req.ID2).Scan(&existingID)
+						id2, otherUserID, otherUserID, id2).Scan(&existingID)
 			}
 		}
 		if existingID > 0 {
@@ -3003,20 +3017,20 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			}
 			tx.Table("chat_rooms").Where("id = ?", room.ID).Delete(nil)
 		} else {
-			if room.User1 == uint64(req.ID1) {
-				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user1", req.ID2)
+			if room.User1 == id1 {
+				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user1", id2)
 			} else {
-				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user2", req.ID2)
+				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user2", id2)
 			}
 		}
 	}
-	tx.Table("chat_messages").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("chat_roster").Where("userid = ?", req.ID1).Update("userid", req.ID2)
+	tx.Table("chat_messages").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("chat_roster").Where("userid = ?", id1).Update("userid", id2)
 
 	// Sessions and logins.
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("sessions").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Table("users_logins").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_logins").Where("userid = ? AND type = 'Native'", req.ID2).Update("uid", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("sessions").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("users_logins").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_logins").Where("userid = ? AND type = 'Native'", id2).Update("uid", id2)
 
 	// ── SECTION C: user attributes, simple tables, bans, giftaid, log entries ───
 
@@ -3032,33 +3046,33 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 	var u1Attrs, u2Attrs UserAttrs
 	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
-		Where("id = ?", req.ID1).Scan(&u1Attrs)
+		Where("id = ?", id1).Scan(&u1Attrs)
 	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
-		Where("id = ?", req.ID2).Scan(&u2Attrs)
+		Where("id = ?", id2).Scan(&u2Attrs)
 
 	// fullname: take id1's if id2 is NULL, skip FBUser/-owner placeholder names.
 	if u1Attrs.Fullname != nil && u2Attrs.Fullname == nil {
 		fn := *u1Attrs.Fullname
 		isBad := strings.HasPrefix(strings.ToLower(fn), "fbuser") || strings.HasSuffix(fn, "-owner")
 		if !isBad {
-			tx.Table("users").Where("id = ?", req.ID2).Update("fullname", fn)
+			tx.Table("users").Where("id = ?", id2).Update("fullname", fn)
 		}
 	}
 	// firstname, lastname, yahooid: take id1's if id2 is NULL.
 	if u1Attrs.Firstname != nil && u2Attrs.Firstname == nil {
-		tx.Table("users").Where("id = ?", req.ID2).Update("firstname", *u1Attrs.Firstname)
+		tx.Table("users").Where("id = ?", id2).Update("firstname", *u1Attrs.Firstname)
 	}
 	if u1Attrs.Lastname != nil && u2Attrs.Lastname == nil {
-		tx.Table("users").Where("id = ?", req.ID2).Update("lastname", *u1Attrs.Lastname)
+		tx.Table("users").Where("id = ?", id2).Update("lastname", *u1Attrs.Lastname)
 	}
 	if u1Attrs.Yahooid != nil && u2Attrs.Yahooid == nil {
-		tx.Table("users").Where("id = ?", req.ID2).Update("yahooid", *u1Attrs.Yahooid)
+		tx.Table("users").Where("id = ?", id2).Update("yahooid", *u1Attrs.Yahooid)
 	}
 
 	// systemrole: take the max (User < Moderator < Support < Admin).
 	sysRoleOrder := map[string]int{"User": 0, "Moderator": 1, "Support": 2, "Admin": 3}
 	if sysRoleOrder[u1Attrs.Systemrole] > sysRoleOrder[u2Attrs.Systemrole] {
-		tx.Table("users").Where("id = ?", req.ID2).Update("systemrole", u1Attrs.Systemrole)
+		tx.Table("users").Where("id = ?", id2).Update("systemrole", u1Attrs.Systemrole)
 	}
 
 	// added: take the older date — read id1's added timestamp and pass it directly.
@@ -3067,20 +3081,20 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// mechanism as the memberships LEAST() conversion above; proven by the
 	// retired ormharness's updatejoin_replace_test.go
 	// TestUpdateJoin_SelfJoinWithLeastExpr (removed in d22ba1d6c).
-	tx.Table("users u2 JOIN users u1 ON u1.id = ?", req.ID1).
+	tx.Table("users u2 JOIN users u1 ON u1.id = ?", id1).
 		Clauses(clause.Set{
 			{Column: clause.Column{Table: "u2", Name: "added"}, Value: gorm.Expr("LEAST(u2.added, u1.added)")},
 		}).
-		Where("u2.id = ?", req.ID2).
+		Where("u2.id = ?", id2).
 		Updates(map[string]interface{}{})
 
 	// lastupdated.
-	tx.Table("users").Where("id = ?", req.ID2).Update("lastupdated", gorm.Expr("NOW()"))
+	tx.Table("users").Where("id = ?", id2).Update("lastupdated", gorm.Expr("NOW()"))
 
 	// tnuserid: transfer if id2 doesn't have one.
 	if u1Attrs.Tnuserid != nil && u2Attrs.Tnuserid == nil {
-		tx.Table("users").Where("id = ?", req.ID1).Update("tnuserid", gorm.Expr("NULL"))
-		tx.Table("users").Where("id = ?", req.ID2).Update("tnuserid", *u1Attrs.Tnuserid)
+		tx.Table("users").Where("id = ?", id1).Update("tnuserid", gorm.Expr("NULL"))
+		tx.Table("users").Where("id = ?", id2).Update("tnuserid", *u1Attrs.Tnuserid)
 	}
 
 	// Simple UPDATE IGNORE tables (V1 parity — ~25 reference tables).
@@ -3099,57 +3113,57 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// (users_banned, line ~3189). Every one of the 41 was proven (as its own
 	// shape for this one site id) by the retired ormharness (shapes.json /
 	// TestTier2_d5ecca066b1b, removed in d22ba1d6c).
-	tx.Table("locations_excluded").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("byuserid = ?", req.ID1).Update("byuserid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_addresses").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Table("users_comments").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Table("users_comments").Where("byuserid = ?", req.ID1).Update("byuserid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_donations").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_images").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_invitations").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nearby").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_notifications").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_notifications").Where("touser = ?", req.ID1).Update("touser", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nudges").Where("fromuser = ?", req.ID1).Update("fromuser", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nudges").Where("touser = ?", req.ID1).Update("touser", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_push_notifications").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_requests").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_requests").Where("completedby = ?", req.ID1).Update("completedby", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_searches").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("newsfeed").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_reneged").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories_likes").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories_requested").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_thanks").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("modnotifs").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("teams_members").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_aboutme").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ratings").Where("rater = ?", req.ID1).Update("rater", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ratings").Where("ratee = ?", req.ID1).Update("ratee", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_replytime").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_promises").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_by").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user1 = ?", req.ID1).Update("user1", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user2 = ?", req.ID1).Update("user2", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("isochrones_users").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("microactions").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Table("volunteering").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Table("volunteering").Where("deletedby = ?", req.ID1).Update("deletedby", req.ID2)
-	tx.Table("volunteering").Where("heldby = ?", req.ID1).Update("heldby", req.ID2)
-	tx.Table("communityevents").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Table("communityevents").Where("heldby = ?", req.ID1).Update("heldby", req.ID2)
+	tx.Table("locations_excluded").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("byuserid = ?", id1).Update("byuserid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_addresses").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("users_comments").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("users_comments").Where("byuserid = ?", id1).Update("byuserid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_donations").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_images").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_invitations").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nearby").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_notifications").Where("fromuser = ?", id1).Update("fromuser", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_notifications").Where("touser = ?", id1).Update("touser", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nudges").Where("fromuser = ?", id1).Update("fromuser", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nudges").Where("touser = ?", id1).Update("touser", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_push_notifications").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_requests").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_requests").Where("completedby = ?", id1).Update("completedby", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_searches").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("newsfeed").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_reneged").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories_likes").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_stories_requested").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_thanks").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("modnotifs").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("teams_members").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_aboutme").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ratings").Where("rater = ?", id1).Update("rater", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ratings").Where("ratee = ?", id1).Update("ratee", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_replytime").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_promises").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_by").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user1 = ?", id1).Update("user1", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user2 = ?", id1).Update("user2", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("isochrones_users").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("microactions").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("volunteering").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("volunteering").Where("deletedby = ?", id1).Update("deletedby", id2)
+	tx.Table("volunteering").Where("heldby = ?", id1).Update("heldby", id2)
+	tx.Table("communityevents").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("communityevents").Where("heldby = ?", id1).Update("heldby", id2)
 
 	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", req.ID1).Update("userid", req.ID2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", req.ID1).Update("byuser", req.ID2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", id1).Update("userid", id2)
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", id1).Update("byuser", id2)
 
 	type MergeBanRow struct{ Groupid uint64 }
 	var mergeBans []MergeBanRow
-	tx.Table("users_banned").Select("groupid").Where("userid = ?", req.ID2).Scan(&mergeBans)
+	tx.Table("users_banned").Select("groupid").Where("userid = ?", id2).Scan(&mergeBans)
 	for _, ban := range mergeBans {
-		tx.Table("memberships").Where("userid = ? AND groupid = ?", req.ID2, ban.Groupid).Delete(nil)
+		tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, ban.Groupid).Delete(nil)
 	}
 
 	// Giftaid: keep the most favourable declaration (V1 parity).
@@ -3165,7 +3179,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		Period string
 	}
 	var giftaids []MergeGiftaidRow
-	tx.Table("giftaid").Select("id, period").Where("userid IN (?, ?)", req.ID1, req.ID2).Scan(&giftaids)
+	tx.Table("giftaid").Select("id, period").Where("userid IN (?, ?)", id1, id2).Scan(&giftaids)
 	if len(giftaids) > 0 {
 		best := giftaids[0]
 		for _, g := range giftaids[1:] {
@@ -3186,22 +3200,22 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 				tx.Table("giftaid").Where("id = ?", g.ID).Delete(nil)
 			}
 		}
-		tx.Table("giftaid").Where("id = ?", best.ID).Update("userid", req.ID2)
+		tx.Table("giftaid").Where("id = ?", best.ID).Update("userid", id2)
 	}
 
 	// Merge log entries (two entries, one per user — V1 parity).
-	logText := fmt.Sprintf("Merged %d into %d", uint64(req.ID1), uint64(req.ID2))
+	logText := fmt.Sprintf("Merged %d into %d", id1, id2)
 	tx.Table("logs").Create(map[string]interface{}{
-		"user":      uint64(req.ID1),
-		"byuser":    myid,
+		"user":      id1,
+		"byuser":    byuser,
 		"type":      log2.LOG_TYPE_USER,
 		"subtype":   log2.LOG_SUBTYPE_MERGED,
 		"text":      logText,
 		"timestamp": gorm.Expr("NOW()"),
 	})
 	tx.Table("logs").Create(map[string]interface{}{
-		"user":      uint64(req.ID2),
-		"byuser":    myid,
+		"user":      id2,
+		"byuser":    byuser,
 		"type":      log2.LOG_TYPE_USER,
 		"subtype":   log2.LOG_SUBTYPE_MERGED,
 		"text":      logText,
@@ -3218,9 +3232,9 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Table()+Delete(nil) carries no
 	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
 	// turn this into a soft-delete UPDATE.
-	db.Table("users").Where("id = ?", req.ID1).Delete(nil)
+	db.Table("users").Where("id = ?", id1).Delete(nil)
 
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	return nil
 }
 
 // All endpoints in this file are mod-only: the caller must be a moderator of
