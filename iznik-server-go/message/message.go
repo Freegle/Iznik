@@ -4678,9 +4678,22 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 	// For Draft collection, store in messages_drafts.
 	// For other collections, add to messages_groups.
 	if req.Collection == "Draft" {
-		db.Table("messages_drafts").Create(map[string]interface{}{
-			"msgid": newMsgID, "groupid": req.Groupid, "userid": myid,
-		})
+		// A draft can legitimately have no group yet (compose starts before a
+		// group is chosen) and the schema says so: messages_drafts.groupid is
+		// nullable with ON DELETE SET NULL. Passing the client's 0 straight
+		// through failed the groups FK - and the error went unchecked, so the
+		// draft silently didn't exist while the messages row survived as an
+		// orphan, and the client's submit then 400'd and retried, minting
+		// another orphan each time.
+		var draftGroupid interface{}
+		if req.Groupid > 0 {
+			draftGroupid = req.Groupid
+		}
+		if err := db.Table("messages_drafts").Create(map[string]interface{}{
+			"msgid": newMsgID, "groupid": draftGroupid, "userid": myid,
+		}).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+		}
 	} else if req.Groupid > 0 && isMember {
 		// Determine collection based on user's posting status,
 		// ignoring whatever the client sent. This prevents moderated users from
