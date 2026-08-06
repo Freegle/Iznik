@@ -245,22 +245,29 @@ func collectLoki(b *Builder, q lokiQuerier, userID uint64, emails []string, star
 	// lowercased address prefilters for the case-insensitive regex (measured
 	// ~9-13s per half cold, vs 69s unprefiltered single-shot). Still pinned to
 	// the slim sources: emails verifiably never appear in api_headers lines.
+	// The deadline is checked per HALF, not just per email: a member can have
+	// many addresses, and a per-email gate lets the last one overshoot by two
+	// full queries (observed pushing the section to 149s against its 100s
+	// budget on prod).
 	for _, em := range emails {
 		em = strings.TrimSpace(em)
 		if em == "" {
 			continue
 		}
-		if time.Now().After(deadline) {
-			bounds = append(bounds, fmt.Sprintf("emails: section budget exhausted before %q", em))
-			break
-		}
 		for _, r := range splitRange(startNs, endNs, int64(halfSpan)) {
+			if time.Now().After(deadline) {
+				bounds = append(bounds, fmt.Sprintf("emails: section budget exhausted at %q", em))
+				break
+			}
 			if e2, err := q.query(
 				fmt.Sprintf(`{app="freegle", source=~"%s"} |= "%s" |~ "(?i)%s"`,
 					unlabelledSources, escapeLokiString(strings.ToLower(em)), escapeLokiRegex(em)),
 				r.start, r.end, perQuery); err == nil {
 				add(e2)
 			}
+		}
+		if time.Now().After(deadline) {
+			break
 		}
 	}
 
