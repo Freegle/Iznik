@@ -249,7 +249,11 @@ retracted, so re-approval restores the copy without re-rippling.
   their R-tree from the small `outer_bound` index rather than the polygon's, so completed
   posts are pruned by the index itself. Same-row storage means every polygon write sets
   the bounds in the SAME statement (`ExpandService`, all four write paths) — no timing
-  window can exist between polygon and bounds.
+  window can exist between polygon and bounds. If a polygon has grown so large the row
+  update exceeds InnoDB's undo-record limit (MySQL error 1713), the init/advance store
+  paths progressively `ST_Simplify` it (with a `ST_Buffer(…,0)` repair) and retry, so the
+  post stores a slightly coarser reach instead of being stuck re-failing every run
+  (`ExpandService::storeWithUndoLogShrink`).
 
   The `outer_bound` sentinel ladder every reader relies on: a real bound (cheap
   reject/accept work) > `ST_Envelope(polygon)` (derivation failed — the MBR still finds
