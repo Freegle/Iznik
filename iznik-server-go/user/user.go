@@ -660,8 +660,8 @@ func GetUserById(id uint64, myid uint64) User {
 		//
 		// Whether
 		// "settings, " is included is the only toggle - 2 possible rendered
-		// forms, both declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_e0558c2c039d (iznik-server-go/test).
+		// forms, both proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_e0558c2c039d, removed in d22ba1d6c).
 		selectCols := "users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, " +
 			"chatmodstatus, newsfeedmodstatus, tnuserid, ljuserid, "
 		if id == myid || isMod {
@@ -1551,7 +1551,11 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			// Admin can impersonate anyone, support can impersonate non-mods.
 			isAdmin := auth.IsAdmin(myid)
 			canImpersonate := isAdmin || !auth.IsSystemMod(id)
-			if canImpersonate {
+			// id 0 is a ghost reference (e.g. a purged user still linked from
+			// a chat): creating a Link credential for it fails the users FK
+			// (Error 1452, steadily since at least May) and the u=0 login
+			// link it would emit is dead anyway.
+			if canImpersonate && id > 0 {
 				var key string
 				db.Table("users_logins").Select("credentials").Where("userid = ? AND type = 'Link'", id).Limit(1).Scan(&key)
 				if key == "" {
@@ -1855,7 +1859,8 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		// None of these five
 		// assignments reference another assigned column, so the SET order is
 		// not load-bearing and GORM's alphabetical Updates(map) order is safe;
-		// see check-set-order.sh / setOrderIsLoadBearing.
+		// see the retired check-set-order.sh / setOrderIsLoadBearing (removed
+		// in d22ba1d6c).
 		db.Table("users_emails").Where("id = ?", existingID).Updates(map[string]interface{}{
 			"userid":    targetID,
 			"preferred": primaryVal,
@@ -1873,8 +1878,8 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 
 	// Email doesn't exist at all — insert new row. Table()+map Create reads the
 	// generated id back from the same sql.Result the INSERT returned, under
-	// the map key "@id" (see test/orm_insertid_test.go) - the write
-	// connection, same as ExecInsertGetID, so still immune to the read/write
+	// the map key "@id" (see test/insertid_gorm_writeback_test.go) - the
+	// write connection, same as ExecInsertGetID, so still immune to the read/write
 	// split's Discourse-9832-class staleness.
 	// Named newRow, not row:
 	// "row" is already declared above (line ~1809) as the *sql.Row from the
@@ -2060,7 +2065,8 @@ func PutUser(c *fiber.Ctx) error {
 	// same sql.Result the INSERT returned (gorm.io/gorm/callbacks/create.go),
 	// under the map key "@id" - no separate connection-scoped
 	// SELECT LAST_INSERT_ID() query, so no connection-pool race. See
-	// test/orm_insertid_test.go, which proves this against the real database.
+	// test/insertid_gorm_writeback_test.go, which proves this against the
+	// real database.
 	row := map[string]interface{}{
 		"fullname":  fullname,
 		"firstname": firstname,
@@ -2437,9 +2443,9 @@ func PatchUser(c *fiber.Ctx) error {
 			// ProcessSettingsUpdate appends at most ONE extra clause
 			// ("lastlocation = ?", on a postcode change) - a genuine 2-shape
 			// site, not the N-independent-fields kind PatchModConfig/
-			// PatchSession are. Both shapes are declared in
-			// ormharness/shapes.json and covered by
-			// TestTier1BatchShapes_941509171a6e. Left setClauses/setArgs
+			// PatchSession are. Both shapes were proven by the retired
+			// ormharness (shapes.json / TestTier1BatchShapes_941509171a6e,
+			// removed in d22ba1d6c). Left setClauses/setArgs
 			// untouched (session.go's PatchSession shares
 			// ProcessSettingsUpdate and stays raw/string-based on purpose -
 			// see f85b0b8ed693 - so its signature isn't changed here).
@@ -2908,9 +2914,9 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
 			// explicit clause.Set, same mechanism as session/merge.go's
-			// mergeChatRooms conversion. Proven in
-			// ormharness/updatejoin_replace_test.go
-			// (TestUpdateJoin_SelfJoinWithLeastExpr).
+			// mergeChatRooms conversion. Proven by the retired ormharness's
+			// updatejoin_replace_test.go TestUpdateJoin_SelfJoinWithLeastExpr
+			// (removed in d22ba1d6c).
 			tx.Table("memberships m2 JOIN memberships m1 ON m1.userid = ? AND m1.groupid = m2.groupid", req.ID1).
 				Clauses(clause.Set{
 					{Column: clause.Column{Table: "m2", Name: "added"}, Value: gorm.Expr("LEAST(m2.added, m1.added)")},
@@ -3052,9 +3058,9 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// added: take the older date — read id1's added timestamp and pass it directly.
 	// Use SQL DATE comparison within MySQL to avoid driver string-format issues.
 	// Same
-	// mechanism as the memberships LEAST() conversion above; proven in
-	// ormharness/updatejoin_replace_test.go
-	// (TestUpdateJoin_SelfJoinWithLeastExpr).
+	// mechanism as the memberships LEAST() conversion above; proven by the
+	// retired ormharness's updatejoin_replace_test.go
+	// TestUpdateJoin_SelfJoinWithLeastExpr (removed in d22ba1d6c).
 	tx.Table("users u2 JOIN users u1 ON u1.id = ?", req.ID1).
 		Clauses(clause.Set{
 			{Column: clause.Column{Table: "u2", Name: "added"}, Value: gorm.Expr("LEAST(u2.added, u1.added)")},
@@ -3084,9 +3090,9 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// extractor's static analysis couldn't trace u.sql through. Unrolled into
 	// 41 individual GORM calls, each a plain single-table UPDATE[ IGNORE],
 	// exactly the established wave 2 idiom already used a few lines below
-	// (users_banned, line ~3189). Every one of the 41 is declared as its own
-	// shape for this one site id in ormharness/shapes.json and proven by
-	// TestTier2_d5ecca066b1b (iznik-server-go/test).
+	// (users_banned, line ~3189). Every one of the 41 was proven (as its own
+	// shape for this one site id) by the retired ormharness (shapes.json /
+	// TestTier2_d5ecca066b1b, removed in d22ba1d6c).
 	tx.Table("locations_excluded").Where("userid = ?", req.ID1).Update("userid", req.ID2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("userid = ?", req.ID1).Update("userid", req.ID2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("spam_users").Where("byuserid = ?", req.ID1).Update("byuserid", req.ID2)
@@ -3431,9 +3437,9 @@ func GetUserReplies(c *fiber.Ctx) error {
 	}
 
 	// msgtype!="" is
-	// the only toggle - 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_395499023142
-	// (iznik-server-go/test).
+	// the only toggle - 2 possible rendered forms, both proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_395499023142, removed in
+	// d22ba1d6c).
 	whereSQL := "cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ?"
 	whereArgs := []interface{}{targetid, start, utils.CHAT_MESSAGE_INTERESTED}
 	if msgtype != "" {
