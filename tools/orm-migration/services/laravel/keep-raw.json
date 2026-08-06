@@ -72,13 +72,6 @@
       "category": "Spatial predicate"
     },
     {
-      "surface": "fragment",
-      "sqlMatches": "/\\bRAND\\s*\\(|\\bNOW\\s*\\(|\\bCURDATE\\s*\\(|DATE_SUB|DATE_ADD|DATEDIFF|\\bYEAR\\s*\\(/i",
-      "reason": "Functions the DATABASE must evaluate: RAND() for sampling, and the clock/date arithmetic family (NOW, DATE_SUB, DATEDIFF, YEAR). The builder equivalents would compute the value in PHP and bind it, which moves the clock from the database to the application and changes what the query means under clock skew, timezone differences, or a long-running batch. DATEDIFF is the sharpest case: it counts CALENDAR DAY boundaries, so rewriting DATEDIFF(NOW(), t) < 2 as t >= now()->subDays(2) silently changes which rows match. These stay raw on correctness grounds, not convenience.",
-      "porting": "PostgreSQL: NOW() and CURRENT_DATE carry over; RAND() becomes random(); DATE_SUB/DATE_ADD become interval arithmetic (t - interval '1 day'); DATEDIFF has no direct equivalent and becomes a date subtraction yielding an integer, which is the same calendar-day semantics. Each needs rewriting, none needs redesigning.",
-      "category": "Non-deterministic or clock function"
-    },
-    {
       "surface": "expression",
       "sqlMatches": "/JSON_EXTRACT|JSON_UNQUOTE|JSON_LENGTH|JSON_CONTAINS/i",
       "reason": "MySQL JSON accessors inside an otherwise-ORM chain. Laravel does have a JSON where syntax (->where('settings->key', 1)), but it does NOT emit the same SQL: it wraps the extraction in json_unquote() and casts, so a predicate written as JSON_EXTRACT(settings, '$.k') = 1 changes meaning at the edges - notably for JSON true/false versus 1/0, and for a key that is absent rather than null, both of which appear in these very predicates (several read `= true`, several test IS NULL). Converting them would be a behaviour change dressed as a refactor, on settings that gate who gets mailed. They stay raw until someone ports them deliberately, with data to check against. Recorded separately for the expression surface (DB::raw) because the extractor classifies the two differently, but the construct - and the reason it cannot leave SQL - is identical.",

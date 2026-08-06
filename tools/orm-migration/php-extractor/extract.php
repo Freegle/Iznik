@@ -12,9 +12,12 @@ declare(strict_types=1);
  * sites), so its extractor, manifest, parity harness and the ci-ratchet.sh gate
  * that enforced them have all been removed - new raw SQL is now kept out at
  * authoring time by .claude/check-raw-sql.sh, which covers both stacks. This
- * tool and the Laravel manifest survive because the Laravel half has NOT
- * started: 569 sites are still raw and nothing has been converted, so the
- * inventory is the record of what that work is.
+ * tool and the Laravel manifest survive because the Laravel half is still in
+ * progress. That work HAS started: sites have been converted and proven, and
+ * a large part of the original keep-raw triage turned out to be wrong - JSON,
+ * DDL, clock/date and redundant LOWER() calls all had builder equivalents the
+ * triage had ruled out without checking. The inventory is the record of what
+ * remains, not a claim that nothing has moved.
  *
  * WHY A SEPARATE STANDALONE TOOL, NOT A DEPENDENCY OF iznik-batch ITSELF
  * ------------------------------------------------------------------------
