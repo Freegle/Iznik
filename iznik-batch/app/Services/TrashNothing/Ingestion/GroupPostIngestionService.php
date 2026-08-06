@@ -124,6 +124,7 @@ class GroupPostIngestionService
             }
 
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $repostCandidate->msgid . ',groupid=' . $repostCandidate->groupid . ' set=arrival=now(),autoreposts+1 (tn-repost)');
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages op=update where=id=' . $repostCandidate->msgid . ' set=tnpostid=' . $postId . ' (tn-repost)');
             if (!$this->dryRun) {
                 // Bumped in the candidate's OWN group — which may differ from
                 // $group when this TN post_id is a crosspost rather than a same-
@@ -131,7 +132,7 @@ class GroupPostIngestionService
                 // poster, not this repost's resolved user. See
                 // findRepostCandidate()'s docblock for why the two can
                 // legitimately be different Freegle stub users for the same person.
-                $this->bumpAsRepost($repostCandidate->msgid, $repostCandidate->groupid, $repostCandidate->fromuser, $postDate);
+                $this->bumpAsRepost($repostCandidate->msgid, $repostCandidate->groupid, $repostCandidate->fromuser, $postDate, (string) $postId);
             }
             $this->loki->logEvent('tn-sync', 'post-repost-bump', ['tn_post_id' => $postId, 'msg_id' => $repostCandidate->msgid, 'group_id' => $repostCandidate->groupid]);
             return 'reposted';
@@ -608,8 +609,15 @@ class GroupPostIngestionService
      * but with subtype='Repost' (not 'Autoreposted') and repost=1/
      * autorepost=0, since this is triggered by the poster reposting on TN,
      * not Freegle's own inactivity timer.
+     *
+     * Also re-points `tnpostid` at $newTnPostId. TN's inbound
+     * `PATCH /message/tn/:tnpostid` API (iznik-server-go) looks messages up
+     * by tnpostid, and TN always sends edits using the post_id of the most
+     * recent repost/crosspost it delivered — not the original one. Leaving
+     * the original tnpostid in place would make that lookup silently miss
+     * once a message has been reposted.
      */
-    private function bumpAsRepost(int $msgId, int $groupId, int $fromUser, ?\Illuminate\Support\Carbon $postDate): void
+    private function bumpAsRepost(int $msgId, int $groupId, int $fromUser, ?\Illuminate\Support\Carbon $postDate, string $newTnPostId): void
     {
         DB::table('messages_groups')
             ->where('msgid', $msgId)
@@ -624,9 +632,11 @@ class GroupPostIngestionService
         // against this field) correctly recognizes this specific repost as
         // applied — see the comment at the call site for why `arrival` can't be
         // used for that comparison.
+        $updates = ['tnpostid' => $newTnPostId];
         if ($postDate !== null) {
-            DB::table('messages')->where('id', $msgId)->update(['date' => $postDate]);
+            $updates['date'] = $postDate;
         }
+        DB::table('messages')->where('id', $msgId)->update($updates);
 
         DB::table('logs')->insert([
             'timestamp' => now(),

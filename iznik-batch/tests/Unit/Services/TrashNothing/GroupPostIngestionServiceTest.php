@@ -431,8 +431,11 @@ class GroupPostIngestionServiceTest extends TestCase
 
         $this->assertSame('reposted', $result);
 
-        // No new messages row for this tnpostid.
-        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A repost must not create a new messages row');
+        // No new messages row for this tnpostid — it must be the existing
+        // message's row, re-pointed at the new tnpostid (see bumpAsRepost()),
+        // not a second row.
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'A repost must not create a new messages row');
+        $this->assertSame($original->id, Message::where('tnpostid', $postId)->first()->id, 'tnpostid must move to the existing bumped message, not a new one');
 
         $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
         $this->assertSame(1, $mg->autoreposts, 'autoreposts should be incremented on the bumped message');
@@ -546,7 +549,8 @@ class GroupPostIngestionServiceTest extends TestCase
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
         $this->assertSame('reposted', $result);
-        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A cross-user repost match must still bump, not create new');
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'A cross-user repost match must still bump, not create new');
+        $this->assertSame($original->id, Message::where('tnpostid', $postId)->first()->id);
 
         $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
         $this->assertSame(1, $mg->autoreposts);
@@ -596,7 +600,8 @@ class GroupPostIngestionServiceTest extends TestCase
         $result = $this->makeService(dryRun: false)->ingest($post, $group2);
 
         $this->assertSame('reposted', $result);
-        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A crosspost must not create a second message in the new group');
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'A crosspost must not create a second message in the new group');
+        $this->assertSame($original->id, Message::where('tnpostid', $postId)->first()->id);
 
         // group1's original message is bumped, not a new row in group2.
         $this->assertNull(MessageGroup::where('msgid', $original->id)->where('groupid', $group2->id)->first());
