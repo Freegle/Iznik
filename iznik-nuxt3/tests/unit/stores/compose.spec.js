@@ -333,6 +333,98 @@ describe('compose store', () => {
     })
   })
 
+  // A photo is pushed into the attachments with uploading:true BEFORE the
+  // upload finishes, and this store persists to localStorage - so an
+  // interrupted upload (reload, navigation, abort) leaves uploading:true on
+  // disk with nothing left running to clear it. On the mobile give flow that
+  // permanently disabled Next, hid the delete control and hid Skip, locking
+  // the member out of posting on that device until they cleared site data.
+  describe('sanitiseRestoredAttachments', () => {
+    let store
+
+    beforeEach(() => {
+      store = useComposeStore()
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      store.add()
+      logSpy.mockRestore()
+    })
+
+    it('drops an attachment left mid-upload with no server id', () => {
+      // Its preview is a blob: URL that died with the previous page, and it
+      // has no server id, so there is nothing recoverable to show.
+      store.messages[0].attachments = [
+        {
+          tempId: 'temp-1',
+          preview: 'blob:https://www.ilovefreegle.org/dead',
+          uploading: true,
+          progress: 100,
+          error: false,
+        },
+      ]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments).toEqual([])
+    })
+
+    it('clears uploading on an attachment that did reach the server', () => {
+      store.messages[0].attachments = [
+        {
+          id: 45447044,
+          path: 'https://x/img.jpg',
+          uploading: true,
+          progress: 100,
+        },
+      ]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments).toHaveLength(1)
+      expect(store.messages[0].attachments[0].uploading).toBe(false)
+      expect(store.messages[0].attachments[0].id).toBe(45447044)
+    })
+
+    it('leaves completed attachments untouched', () => {
+      const done = [
+        { id: 1, path: 'a.jpg' },
+        { id: 2, path: 'b.jpg' },
+      ]
+      store.messages[0].attachments = [...done]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments).toEqual(done)
+    })
+
+    it('keeps the good photos when only one was mid-upload', () => {
+      store.messages[0].attachments = [
+        { id: 1, path: 'a.jpg' },
+        { tempId: 'temp-9', preview: 'blob:dead', uploading: true },
+        { id: 2, path: 'b.jpg' },
+      ]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments.map((a) => a.id)).toEqual([1, 2])
+    })
+
+    it('bumps attachmentBump so the UI re-reads', () => {
+      const before = store.attachmentBump
+      store.messages[0].attachments = [{ tempId: 't', uploading: true }]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.attachmentBump).toBeGreaterThan(before)
+    })
+
+    it('copes with messages that have no attachments', () => {
+      store.messages[0].attachments = undefined
+      store.messages.push(null)
+
+      expect(() => store.sanitiseRestoredAttachments()).not.toThrow()
+    })
+  })
+
   describe('deleteMessage', () => {
     it('removes message by id', () => {
       const store = useComposeStore()

@@ -24,6 +24,9 @@ export const useComposeStore = defineStore({
   id: 'compose',
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
+    // Transient upload state must not survive a reload - see
+    // sanitiseRestoredAttachments() for what goes wrong when it does.
+    afterHydrate: (ctx) => ctx.store.sanitiseRestoredAttachments(),
   },
   // We allow composing of multiple posts for the same location/email, so messages and attachments are indexed by
   // id.  The id is a client-only index; it becomes a real id once the items are posted.
@@ -382,6 +385,45 @@ export const useComposeStore = defineStore({
       this.ensureMessage(id)
       this.messages[id].attachments = attachments
       this.attachmentBump++
+    },
+    // PhotoUploader puts a photo into attachments with uploading:true BEFORE
+    // the upload finishes, and this store persists to localStorage - so an
+    // upload interrupted by a reload or a navigation leaves uploading:true on
+    // disk with nothing left running to clear it.  Nothing else ever resets
+    // it, and the give flow hides Skip and the delete control and disables
+    // Next while a photo is uploading, so the member was locked out of posting
+    // on that device until they cleared site data (Discourse SR-B9W2Q).
+    //
+    // Reconcile on hydrate.  An attachment that never reached the server has
+    // only a preview blob: URL, which died with the page that made it, so
+    // there is nothing left to show and it goes.  One that did reach the
+    // server is simply no longer uploading.
+    sanitiseRestoredAttachments() {
+      let changed = false
+
+      for (const message of this.messages) {
+        if (!message?.attachments?.length) {
+          continue
+        }
+
+        const kept = message.attachments.filter((a) => !a?.uploading || a?.id)
+
+        if (kept.length !== message.attachments.length) {
+          message.attachments = kept
+          changed = true
+        }
+
+        for (const attachment of kept) {
+          if (attachment?.uploading) {
+            attachment.uploading = false
+            changed = true
+          }
+        }
+      }
+
+      if (changed) {
+        this.attachmentBump++
+      }
     },
     removeAttachment(params) {
       console.log('Remove attachment', JSON.stringify(params))
