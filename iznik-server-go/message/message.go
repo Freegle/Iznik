@@ -3451,13 +3451,15 @@ type patchMessageRequest struct {
 	Accessinstructions *string         `json:"accessinstructions"`
 }
 
-// resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
-// Returns the resolved user ID (0 on failure) and an error to return to the client.
-func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
+// resolvePartnerAuth reads a ?partner= query param and resolves the acting user
+// ID plus every candidate identity the partner's identifiers map to (a TN
+// member can own two Freegle accounts - see user.FindTNCandidates). Returns
+// (primary id, all candidates, error).
+func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	db := database.DBConn
 	_, _, domain, err := user.ValidatePartnerKey(db, c.Query("partner"))
 	if err != nil {
-		return 0, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+		return 0, nil, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
 	}
 
 	email := c.Query("email")
@@ -3472,15 +3474,33 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 	if email != "" {
 		parts := strings.SplitN(email, "@", 2)
 		if len(parts) != 2 || parts[1] != domain {
-			return 0, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+			return 0, nil, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
 		}
 	}
 
-	myid := user.FindByTNIdOrEmail(db, tnuserid, email)
-	if myid == 0 {
-		return 0, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+	candidates := user.FindTNCandidates(db, tnuserid, email)
+	if len(candidates) == 0 {
+		return 0, nil, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 	}
-	return myid, nil
+	return candidates[0], candidates, nil
+}
+
+// actAsOwnerCandidate returns the message owner's id when the owner is one of
+// the partner-resolved candidate identities, else the primary id. The
+// partner's action on a message is legitimately the member's under whichever
+// of their identities owns it.
+func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, msgID uint64) uint64 {
+	if len(candidates) < 2 {
+		return primary
+	}
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+	for _, cand := range candidates {
+		if cand == fromuser {
+			return fromuser
+		}
+	}
+	return primary
 }
 
 // effLat/effLng are the CALLER's already-resolved coordinates, i.e. after
@@ -4076,9 +4096,10 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 func PatchMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
+	var partnerCandidates []uint64
 	if c.Query("partner") != "" {
 		var err error
-		myid, err = resolvePartnerAuth(c)
+		myid, partnerCandidates, err = resolvePartnerAuth(c)
 		if err != nil {
 			return err
 		}
@@ -4104,6 +4125,8 @@ func PatchMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
+	myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, req.ID)
+
 	return applyPatchMessage(c, myid, req)
 }
 
@@ -4111,9 +4134,10 @@ func PatchMessage(c *fiber.Ctx) error {
 func PatchMessageByTN(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
+	var partnerCandidates []uint64
 	if c.Query("partner") != "" {
 		var err error
-		myid, err = resolvePartnerAuth(c)
+		myid, partnerCandidates, err = resolvePartnerAuth(c)
 		if err != nil {
 			return err
 		}
@@ -4175,6 +4199,10 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 
 	for _, msgID := range msgIDs {
 		req.ID = msgID
+		// A crossposted TN post's copies all belong to the same TN member, but
+		// that member may own two Freegle accounts - act as whichever owns
+		// this copy.
+		actingid := actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
 
 		// Attachments must reach their final state BEFORE the edit's change signal is
 		// written.  applyPatchMessageCore writes the messages_edits row that /api/changes
@@ -4194,7 +4222,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		// recordAIDeletions is called with an empty keep-list so any AI attachment is
 		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
-			recordAIDeletions(db, myid, msgID, []uint64{}, nil)
+			recordAIDeletions(db, actingid, msgID, []uint64{}, nil)
 			// Identical golden to
 			// 8ef16859487a (applyPatchMessageCore); converted together per gate (h).
 			db.Table("messages_attachments").Where("msgid = ?", msgID).Delete(nil)
@@ -4205,7 +4233,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 			TNPhotoScrapeRunner(db, msgID, picPageURLs)
 		}
 
-		if err := applyPatchMessageCore(c, myid, req, true); err != nil {
+		if err := applyPatchMessageCore(c, actingid, req, true); err != nil {
 			return err
 		}
 	}
@@ -4902,6 +4930,7 @@ func PostMessage(c *fiber.Ctx) error {
 	// instead of JWT. The partner acts on behalf of the identified user.
 	partnerKey := c.Query("partner")
 	var partnerDomain string
+	var partnerCandidates []uint64
 	partnerOwnerMode := false
 	if partnerKey != "" {
 		db := database.DBConn
@@ -4935,10 +4964,11 @@ func PostMessage(c *fiber.Ctx) error {
 			partnerDomain = domain
 			partnerOwnerMode = true
 		} else {
-			myid = user.FindByTNIdOrEmail(db, tnuserid, email)
-			if myid == 0 {
+			partnerCandidates = user.FindTNCandidates(db, tnuserid, email)
+			if len(partnerCandidates) == 0 {
 				return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 			}
+			myid = partnerCandidates[0]
 		}
 	}
 
@@ -4972,6 +5002,10 @@ func PostMessage(c *fiber.Ctx) error {
 					}
 					continue
 				}
+			} else {
+				// The member may own two Freegle accounts (see
+				// user.FindTNCandidates) - act as whichever owns this copy.
+				actingid = actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
 			}
 			if err := dispatchPostMessageAction(c, actingid, req); err != nil {
 				if i == 0 {
@@ -4994,6 +5028,8 @@ func PostMessage(c *fiber.Ctx) error {
 		if myid == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
 		}
+	} else if len(partnerCandidates) > 1 {
+		myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, req.ID)
 	}
 
 	return dispatchPostMessageAction(c, myid, req)

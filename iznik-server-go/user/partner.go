@@ -36,20 +36,41 @@ func ValidatePartnerKey(db *gorm.DB, key string) (uint64, string, string, error)
 // FindByTNIdOrEmail looks up a user by tnuserid first, then by email as a fallback.
 // Returns the user ID, or 0 if not found.
 func FindByTNIdOrEmail(db *gorm.DB, tnuserid uint64, email string) uint64 {
-	var userid uint64
+	candidates := FindTNCandidates(db, tnuserid, email)
+	if len(candidates) == 0 {
+		return 0
+	}
+	return candidates[0]
+}
+
+// FindTNCandidates returns every distinct user id the partner's identifiers
+// resolve to - the tnuserid mapping first, then the email. They are USUALLY
+// the same account, but a TN member can end up with two Freegle accounts:
+// one carrying the tnuserid stamp and another owning the TN email (seen live
+// 2026-08-06 - a Promise 403'd "Not your message" because the message
+// belonged to the email twin while tnuserid-first resolution picked the
+// other). Callers acting on a specific message should act as whichever
+// candidate owns it.
+func FindTNCandidates(db *gorm.DB, tnuserid uint64, email string) []uint64 {
+	var out []uint64
 
 	if tnuserid > 0 {
+		var userid uint64
 		db.Table("users").Select("id").Where("tnuserid = ?", tnuserid).Scan(&userid)
 		if userid > 0 {
-			return userid
+			out = append(out, userid)
 		}
 	}
 
 	if email != "" {
+		var userid uint64
 		db.Table("users_emails").Select("userid").Where("email = ?", email).Scan(&userid)
+		if userid > 0 && (len(out) == 0 || out[0] != userid) {
+			out = append(out, userid)
+		}
 	}
 
-	return userid
+	return out
 }
 
 // FindPartnerOwnerForMessage returns the fromuser of a message when its fromaddr
