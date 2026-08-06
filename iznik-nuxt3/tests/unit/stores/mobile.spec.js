@@ -71,7 +71,9 @@ const mockSessionStart = vi.fn()
 const mockSetAppVersion = vi.fn()
 vi.mock('~/composables/useClientLog', () => ({
   setAppVersion: (...args) => mockSetAppVersion(...args),
-  useClientLog: () => ({ sessionStart: (...args) => mockSessionStart(...args) }),
+  useClientLog: () => ({
+    sessionStart: (...args) => mockSessionStart(...args),
+  }),
 }))
 
 vi.mock('~/stores/debug', () => ({
@@ -1064,10 +1066,10 @@ describe('mobile store', () => {
       )
 
       // Member changes the OS setting while we're backgrounded.
-      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.5 })
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.15 })
       await app.fire('resume')
 
-      expect(mockTextZoomSet).toHaveBeenLastCalledWith({ value: 1.5 })
+      expect(mockTextZoomSet).toHaveBeenLastCalledWith({ value: 1.15 })
     })
 
     it('does not set a zoom when the preferred value is unusable', async () => {
@@ -1077,6 +1079,23 @@ describe('mobile store', () => {
       await store.initTextZoom(fakeApp())
 
       expect(mockTextZoomSet).not.toHaveBeenCalled()
+    })
+
+    // Samsung's "Accessibility > Font size and style" setting (distinct from the
+    // standard Display font-size slider, whose max is 1.3 - see the "applies the
+    // preferred zoom on startup" test above) can push Configuration.fontScale up
+    // to ~3.0. Applying that directly to the WebView blows up ModTools' fixed-width
+    // navbar/left-menu shell (min-width/px-based, not designed to reflow at 2-3x
+    // text size), which is what topic 10010/1 reported as the screen "narrower" /
+    // differently sized after upgrading the app. Clamp to the standard slider's
+    // max so extreme accessibility settings can't break the shell chrome.
+    it('clamps an extreme preferred zoom so the ModTools shell does not break', async () => {
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 2.6 })
+      const store = useMobileStore()
+
+      await store.initTextZoom(fakeApp())
+
+      expect(mockTextZoomSet).toHaveBeenCalledWith({ value: 1.3 })
     })
 
     it('survives the plugin being unavailable', async () => {
