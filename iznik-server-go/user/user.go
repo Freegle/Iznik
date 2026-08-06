@@ -1622,7 +1622,13 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 			membership.Eventsallowed = eventsallowed
 			membership.Volunteeringallowed = volunteeringallowed
 
-			db.Create(&membership)
+			// Two concurrent joins (double-click, retry) both pass the
+			// membership check above and race the insert; the loser used to
+			// 1062 on memberships.userid_groupid (a few times a day, logged as
+			// an error). DoNothing renders a no-op ON DUPLICATE KEY UPDATE, so
+			// the loser keeps ID == 0 and takes exactly the path it always
+			// took - just without the error.
+			db.Clauses(clause.OnConflict{DoNothing: true}).Create(&membership)
 
 			if membership.ID > 0 {
 				ret = true
