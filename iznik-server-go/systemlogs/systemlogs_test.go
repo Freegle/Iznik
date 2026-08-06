@@ -150,7 +150,32 @@ func TestParseTimeRange_StartBeforeEnd(t *testing.T) {
 func TestBuildLogQLQuery_BaseAlwaysHasFreegle(t *testing.T) {
 	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `app="freegle"`)
+	// No JSON-field filter means no `| json`: the parse decompresses and
+	// parses every line the selector matches (minutes against a production
+	// day) and a bare query gains nothing from it. parseLogEntry parses the
+	// raw line itself, so the response is unchanged.
+	assert.NotContains(t, q, "| json")
+}
+
+// When a JSON-field filter needs the parse, the `|=` substring prefilter must
+// come BEFORE `| json`, so only candidate lines pay for the parser.
+func TestBuildLogQLQuery_PrefilterComesBeforeParse(t *testing.T) {
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "trace-123", "", "", "")
 	assert.Contains(t, q, "| json")
+	assert.Contains(t, q, `| trace_id = "trace-123"`)
+	filterAt := strings.Index(q, `|= "trace-123"`)
+	jsonAt := strings.Index(q, "| json")
+	assert.True(t, filterAt >= 0, "the |= prefilter must be present")
+	assert.True(t, filterAt < jsonAt, "the |= prefilter must come before | json")
+}
+
+// The email filter is regex-only (no JSON-field stage), so it needs the
+// lowercased |= prefilter but no `| json`.
+func TestBuildLogQLQuery_EmailPrefiltersWithoutParse(t *testing.T) {
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "Upper@Example.COM")
+	assert.Contains(t, q, `|= "upper@example.com"`)
+	assert.Contains(t, q, `(?i)`)
+	assert.NotContains(t, q, "| json")
 }
 
 func TestBuildLogQLQuery_SingleSource(t *testing.T) {
