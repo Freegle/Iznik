@@ -207,6 +207,13 @@ class UserDataExportService
                 'memberships.groupid',
                 'memberships.collection',
                 'memberships.added',
+                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
+                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
+                // in this file because the rows go into the payload wholesale. Selecting
+                // namefull and nameshort separately and coalescing in PHP would add two
+                // columns to the export and drop groupname, unless a map() step rebuilds the
+                // exact same keys - more code, no functional gain, and a subject-access
+                // payload as the blast radius if it is got wrong.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('memberships.added', 'asc')
@@ -224,6 +231,13 @@ class UserDataExportService
                 'memberships_history.groupid',
                 'memberships_history.collection',
                 'memberships_history.added',
+                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
+                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
+                // in this file because the rows go into the payload wholesale. Selecting
+                // namefull and nameshort separately and coalescing in PHP would add two
+                // columns to the export and drop groupname, unless a map() step rebuilds the
+                // exact same keys - more code, no functional gain, and a subject-access
+                // payload as the blast radius if it is got wrong.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('memberships_history.added', 'asc')
@@ -290,6 +304,13 @@ class UserDataExportService
                 'users_banned.date',
                 'users_banned.userid',
                 'users_emails.email',
+                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
+                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
+                // in this file because the rows go into the payload wholesale. Selecting
+                // namefull and nameshort separately and coalescing in PHP would add two
+                // columns to the export and drop groupname, unless a map() step rebuilds the
+                // exact same keys - more code, no functional gain, and a subject-access
+                // payload as the blast radius if it is got wrong.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('users_banned.date', 'asc')
@@ -427,6 +448,13 @@ class UserDataExportService
             ->leftJoin('groups', 'locations_excluded.groupid', '=', 'groups.id')
             ->leftJoin('locations', 'locations_excluded.locationid', '=', 'locations.id')
             ->select(
+                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
+                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
+                // in this file because the rows go into the payload wholesale. Selecting
+                // namefull and nameshort separately and coalescing in PHP would add two
+                // columns to the export and drop groupname, unless a map() step rebuilds the
+                // exact same keys - more code, no functional gain, and a subject-access
+                // payload as the blast radius if it is got wrong.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname'),
                 'locations.name as location',
                 'locations_excluded.date'
@@ -454,6 +482,13 @@ class UserDataExportService
                 'messages.arrival',
                 'messages_groups.collection',
                 'messages_groups.groupid',
+                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
+                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
+                // in this file because the rows go into the payload wholesale. Selecting
+                // namefull and nameshort separately and coalescing in PHP would add two
+                // columns to the export and drop groupname, unless a map() step rebuilds the
+                // exact same keys - more code, no functional gain, and a subject-access
+                // payload as the blast radius if it is got wrong.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('messages.arrival', 'asc')
