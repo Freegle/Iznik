@@ -5,6 +5,7 @@ namespace App\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class WhatJobsService
 {
@@ -555,7 +556,7 @@ class WhatJobsService
                 'existing' => $existing,
                 'min_ratio' => self::MIN_SWAP_RATIO,
             ]);
-            DB::statement('DROP TABLE IF EXISTS jobs_new');
+            Schema::dropIfExists('jobs_new');
             return ['total' => $inserted, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
         }
 
@@ -1515,7 +1516,7 @@ class WhatJobsService
 
     public function prepareTempTable(): void
     {
-        DB::statement('DROP TABLE IF EXISTS jobs_new');
+        Schema::dropIfExists('jobs_new');
         DB::statement('CREATE TABLE jobs_new LIKE jobs');
     }
 
@@ -1609,9 +1610,9 @@ class WhatJobsService
 
     public function swapTables(): void
     {
-        DB::statement('DROP TABLE IF EXISTS jobs_old');
+        Schema::dropIfExists('jobs_old');
         DB::statement('RENAME TABLE jobs TO jobs_old, jobs_new TO jobs');
-        DB::statement('DROP TABLE IF EXISTS jobs_old');
+        Schema::dropIfExists('jobs_old');
     }
 
     public function analyseClickability(): void
@@ -1635,7 +1636,7 @@ class WhatJobsService
         }
 
         // Rebuild keyword frequency from clicked jobs
-        DB::statement('TRUNCATE TABLE jobs_keywords');
+        DB::table('jobs_keywords')->truncate();
         $clicked = DB::table('logs_jobs')
             ->distinct()
             ->select('jobs.title')

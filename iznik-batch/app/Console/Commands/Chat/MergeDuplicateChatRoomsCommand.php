@@ -118,6 +118,13 @@ class MergeDuplicateChatRoomsCommand extends Command
                 DB::table('chat_roster')->where('chatid', $duplicateId)->delete();
 
                 // 4. Update latestmessage on canonical room to be the most recent
+                // keep-raw: a correlated subquery as an UPDATE value. An audit proposed
+                // passing a sub-builder as the value, and a verifier confirmed it, but the
+                // rendered SQL is "set latestmessage = ?" - Grammar::isExpression() matches
+                // only Expression, never Builder, so the sub-builder is BOUND as a
+                // parameter rather than expanded. That would write a serialised object
+                // into the column. Checked against the rendered output and the vendor
+                // source; there is no non-raw form.
                 DB::update(
                     'UPDATE chat_rooms SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?) WHERE id = ?',
                     [$canonicalId, $canonicalId]

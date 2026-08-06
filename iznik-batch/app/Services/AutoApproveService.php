@@ -74,8 +74,7 @@ class AutoApproveService
                 'messages_groups.rippled_in',
                 'messages.fromuser',
                 'messages.spamtype',
-                'messages.subject',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hours_pending')
+                'messages.subject'
             )
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('messages_groups.heldby')

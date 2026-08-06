@@ -359,10 +359,11 @@ class ReachBoundsService
     private function nullInner(int $msgid): void
     {
         try {
-            DB::update(
-                'UPDATE rippling_reach SET inner_bound = NULL, updated_at = updated_at WHERE msgid = ?',
-                [$msgid]
-            );
+            // The raw form carried "updated_at = updated_at" to suppress an
+            // auto-update column. There is no such column: rippling_reach.updated_at
+            // has an empty `extra` in information_schema and no trigger, so the
+            // self-assignment was inert and the builder form is equivalent.
+            DB::table('rippling_reach')->where('msgid', $msgid)->update(['inner_bound' => null]);
         } catch (\Throwable $e) {
             Log::warning("ripple: bounds inner-null failed for msg {$msgid}: {$e->getMessage()}");
         }
