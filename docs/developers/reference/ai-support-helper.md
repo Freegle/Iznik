@@ -101,6 +101,12 @@ a real bound, not a hint:
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
   empty table can mean *not collected*, not *did not happen*.
+- The helper downloads the dump with **`format=framed`** (see
+  `iznik-server-go/userdump/frame.go`): the server flushes a progress frame per section
+  plus a 15s heartbeat during long sections, so the prod API LB's 50s idle timeout never
+  cuts a slow build the way the silent `format=raw` stream was cut. The client verifies
+  the end frame's byte count and SHA-256, and aborts only on 90s of *inactivity* rather
+  than a fixed overall deadline.
 
 ## Device summary panel
 

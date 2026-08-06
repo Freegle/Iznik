@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -326,6 +327,35 @@ func runFramedDump(w *bufio.Writer, targetID uint64, include map[string]bool, st
 	}
 	defer b.Remove()
 
+	// Frames only flush between sections, but a single slow section (Loki
+	// historically ran for minutes) leaves the connection silent long enough
+	// for an LB idle timeout (50s on prod HAProxy) to cut it mid-build. A
+	// heartbeat frame during the build keeps bytes flowing whatever one
+	// section costs. The mutex serialises the heartbeat goroutine against the
+	// per-section progress writes.
+	var wmu sync.Mutex
+	emit := func(p progressFrame) {
+		wmu.Lock()
+		_ = writeProgress(w, p)
+		wmu.Unlock()
+	}
+	heartbeatDone := make(chan struct{})
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-heartbeatDone:
+				return
+			case <-t.C:
+				emit(progressFrame{
+					Phase: "collect", Status: "running",
+					ElapsedMs: time.Since(start).Milliseconds(),
+				})
+			}
+		}
+	}()
+
 	warnings := buildDump(b, int64(targetID), include, startNs, endNs,
 		func(done, total, totalWeight, doneWeight int, sec section, rows int, secErr error) {
 			elapsed := time.Since(start).Milliseconds()
@@ -341,12 +371,13 @@ func runFramedDump(w *bufio.Writer, targetID uint64, include map[string]bool, st
 			if secErr != nil {
 				status, msg = "warning", secErr.Error()
 			}
-			_ = writeProgress(w, progressFrame{
+			emit(progressFrame{
 				Phase: "collect", Section: sec.name, Status: status,
 				Done: done, Total: total, Percent: pct,
 				ElapsedMs: elapsed, EtaMs: eta, Rows: rows, Message: msg,
 			})
 		})
+	close(heartbeatDone)
 
 	b.SetMeta("warnings", strconv.Itoa(len(warnings)))
 	if err := b.Finalize(); err != nil {

@@ -175,16 +175,87 @@ async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200
 // token/timeout win vs many separate queries.
 // ---------------------------------------------------------------------------
 const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
-async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry' }) {
-  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=raw&include=${encodeURIComponent(
+
+// The framed dump protocol (iznik-server-go/userdump/frame.go): each frame is
+// a 5-byte header (1 type byte + uint32 big-endian payload length) then the
+// payload. 0x01 progress (JSON), 0x02 raw SQLite bytes, 0x03 end (JSON with
+// bytes/sha256/warnings). We use framed rather than raw because the server
+// flushes a frame after every collection section, so bytes keep flowing and
+// the API LB's idle timeout (50s on prod HAProxy) never fires mid-build — the
+// raw format goes silent for the whole build, which is exactly how big dumps
+// died: HAProxy cut them at 50s, the model retried, and the retries piled
+// more concurrent builds onto the server.
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress }) {
+  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(
     include
   )}&since=${encodeURIComponent(since)}&jwt=${encodeURIComponent(jwt || '')}`
-  const res = await fetch(url, { signal: AbortSignal.timeout(120000) })
-  if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  const buf = Buffer.from(await res.arrayBuffer())
-  const file = path.join(os.tmpdir(), `dump-${userId}-${process.pid}-${buf.length}.sqlite`)
-  fs.writeFileSync(file, buf, { mode: 0o600 }) // member PII snapshot — owner-only
-  return file
+
+  // Inactivity-based abort, not a fixed overall deadline: a healthy framed
+  // dump is never silent for long, while total build time legitimately varies
+  // with the member's size.
+  const ctrl = new AbortController()
+  let idleTimer
+  const armIdle = () => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => ctrl.abort(new Error('dump stalled: no frame for 90s')), 90000)
+  }
+  armIdle()
+
+  try {
+    const res = await fetch(url, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
+
+    const crypto = require('crypto')
+    const hash = crypto.createHash('sha256')
+    const reader = res.body.getReader()
+    const dataChunks = []
+    let buf = Buffer.alloc(0)
+    let end = null
+
+    while (!end) {
+      const { done, value } = await reader.read()
+      if (done) break
+      armIdle()
+      buf = Buffer.concat([buf, Buffer.from(value)])
+      while (buf.length >= 5) {
+        const type = buf[0]
+        const len = buf.readUInt32BE(1)
+        if (buf.length < 5 + len) break
+        // Copy the payload out so the ever-growing parse buffer can be GC'd.
+        const payload = Buffer.from(buf.subarray(5, 5 + len))
+        buf = buf.subarray(5 + len)
+        if (type === 0x01) {
+          try {
+            onProgress && onProgress(JSON.parse(payload.toString()))
+          } catch {}
+        } else if (type === 0x02) {
+          hash.update(payload)
+          dataChunks.push(payload)
+        } else if (type === 0x03) {
+          end = JSON.parse(payload.toString())
+          break
+        }
+      }
+    }
+
+    if (!end) throw new Error('dump stream ended without an end frame')
+    const data = Buffer.concat(dataChunks)
+    if (!data.length) {
+      throw new Error('dump produced no data: ' + ((end.warnings || []).join('; ') || 'no warnings'))
+    }
+    if (end.bytes && Number(end.bytes) !== data.length) {
+      throw new Error(`dump truncated: got ${data.length} of ${end.bytes} bytes`)
+    }
+    if (end.sha256 && hash.digest('hex') !== end.sha256) {
+      throw new Error('dump checksum mismatch')
+    }
+
+    const file = path.join(os.tmpdir(), `dump-${userId}-${process.pid}-${data.length}.sqlite`)
+    fs.writeFileSync(file, data, { mode: 0o600 }) // member PII snapshot — owner-only
+    return file
+  } finally {
+    clearTimeout(idleTimer)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +360,18 @@ function buildTools(ctx) {
           p('tool', `Reusing snapshot for user ${id} (built ${ageS}s ago)…`)
         } else {
           p('tool', `Downloading full snapshot for user ${id}…`)
-          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since })
+          // Progress: the DB tables fly by, so only surface the coarse
+          // milestones and the slow sections (loki/sentry) by name.
+          let lastPct = 0
+          const onProgress = (pr) => {
+            const slow = pr.section === 'loki_logs' || pr.section === 'sentry_issues'
+            if (slow || pr.percent - lastPct >= 25) {
+              lastPct = pr.percent
+              const eta = pr.eta_ms > 1000 ? `, ~${Math.round(pr.eta_ms / 1000)}s left` : ''
+              p('tool', `Snapshot ${pr.percent}%: ${pr.section} ${pr.status}${eta}`)
+            }
+          }
+          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
           if (cached && cached.file !== file) {
             try {
               fs.unlinkSync(cached.file)
