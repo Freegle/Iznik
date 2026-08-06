@@ -410,11 +410,13 @@
           </div>
         </div>
 
-        <!-- Refer to geeks. Deliberately prominent and always visible once
-             there is something to refer: the point of the tool is that a
-             volunteer gets as far as they can and then hands over cleanly,
-             rather than retyping the story into an email. -->
+        <!-- Refer to geeks. Prominent once there is something to refer: the
+             point of the tool is that a volunteer gets as far as they can and
+             then hands over cleanly, rather than retyping the story into an
+             email. Hidden while the assistant is still working - "not solved?"
+             is premature (and distracting) mid-investigation. -->
         <div
+          v-if="!isProcessing"
           class="referral-bar p-3 d-flex flex-wrap align-items-center justify-content-between gap-2"
         >
           <div class="small">

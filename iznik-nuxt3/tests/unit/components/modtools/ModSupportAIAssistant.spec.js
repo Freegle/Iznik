@@ -971,6 +971,21 @@ describe('ModSupportAIAssistant', () => {
       expect(withChat.text()).toContain('Refer to geeks')
     })
 
+    it('hides the referral while the assistant is still working', async () => {
+      const wrapper = await withConversation()
+      expect(wrapper.find('.referral-bar').exists()).toBe(true)
+
+      // "Not solved, or found a bug?" is premature mid-investigation - the
+      // bar only belongs on screen when the assistant has finished.
+      wrapper.vm.isProcessing = true
+      await nextTick()
+      expect(wrapper.find('.referral-bar').exists()).toBe(false)
+
+      wrapper.vm.isProcessing = false
+      await nextTick()
+      expect(wrapper.find('.referral-bar').exists()).toBe(true)
+    })
+
     it('sends the whole investigation, the note and the member', async () => {
       const wrapper = await withConversation()
       mockFetch.mockReset()
