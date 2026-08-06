@@ -85,13 +85,9 @@ const showDesktopLayout = computed(
 )
 
 // Helper function to perform the mobile redirect.
-// Route through /give/mobile (the voice-posting experiment entry), not straight to
-// /give/mobile/photos: /give/mobile assigns the variant, records exposure, and then
-// forwards the voice cohort to /voicepost and everyone else on to /give/mobile/photos.
-// Redirecting directly to photos bypassed the experiment, so no user was ever enrolled.
 async function redirectToMobileIfNeeded() {
   if (breakpointReady.value && isMobile.value && process.client) {
-    await navigateTo('/give/mobile', { replace: true })
+    await navigateTo('/give/mobile/photos', { replace: true })
   }
 }
 
@@ -107,7 +103,7 @@ watch(
   () => ({ ready: breakpointReady.value, mobile: isMobile.value }),
   async ({ ready, mobile }) => {
     if (ready && mobile && process.client) {
-      await navigateTo('/give/mobile', { replace: true })
+      await navigateTo('/give/mobile/photos', { replace: true })
     }
   }
 )

@@ -44,26 +44,6 @@
           location, the description and any photos. No personal details are made
           public unless in this information.
         </p>
-        <h3>2.1 Voice descriptions</h3>
-        <p>
-          You can describe an item by speaking instead of typing. If you do, we
-          record the audio and stream it to
-          <!-- eslint-disable-next-line -->
-          <ExternalLink href="https://groq.com/">Groq</ExternalLink>, a
-          third-party speech-to-text service, which transcribes your words so we
-          can turn them into a post. A short automated tidy-up then turns the
-          transcript into a suggested title and description, which you get to
-          review and edit before anything is posted. We don't send Groq your
-          name, email address or any other personal details - only the audio you
-          record.
-        </p>
-        <p>
-          Your recording is only ever used to produce that transcript - we never
-          play it to other freeglers. We keep it no longer than is needed to
-          write your post, and in any event no more than
-          <strong>90 days</strong>, after which it is deleted automatically.
-          After that, only the text of your post remains.
-        </p>
         <h2>3. Cookies and Tracking</h2>
         <p>
           You'll have seen lots of irritating popups on websites about consent
@@ -251,6 +231,11 @@
         <h3>Change History</h3>
         <p>Here are the changes to this page.</p>
         <ul class>
+          <li>
+            06/08/2026: Remove section 2.1 on voice descriptions. You can no
+            longer describe an item by speaking, so we no longer record audio,
+            no longer send anything to Groq, and hold no voice recordings.
+          </li>
           <li>
             18/07/2026: Section 4.2: correct the description of what happens to
             inactive accounts. Automatic removal only applies to accounts which

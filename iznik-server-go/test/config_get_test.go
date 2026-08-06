@@ -19,10 +19,10 @@ import (
 func TestConfigGet_AllowlistedKey(t *testing.T) {
 	db := database.DBConn
 
-	// voicepost_rollout_pct is an allowlisted public key. Insert a distinctive value
+	// ads_enabled is an allowlisted public key. Insert a distinctive value
 	// and confirm it's returned without auth. Delete only the row we added so a
 	// pre-existing production-seeded value (if any) is left untouched.
-	key := "voicepost_rollout_pct"
+	key := "ads_enabled"
 	val := "cfgget_" + uniquePrefix("v")
 	db.Exec("INSERT INTO config (`key`, value) VALUES (?, ?)", key, val)
 	defer db.Exec("DELETE FROM config WHERE `key` = ? AND value = ?", key, val)
@@ -72,8 +72,8 @@ func TestConfigGet_AllowlistedNoAuth(t *testing.T) {
 }
 
 func TestConfigGet_PublicFeatureFlags(t *testing.T) {
-	// The exact-match public flags (ads_enabled regressed CI when it was missing).
-	for _, key := range []string{"ads_enabled", "voicepost_rollout_pct"} {
+	// The exact-match public flag (ads_enabled regressed CI when it was missing).
+	for _, key := range []string{"ads_enabled"} {
 		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/config/"+key, nil))
 		assert.Equal(t, 200, resp.StatusCode, "public flag %s should be readable", key)
 	}
