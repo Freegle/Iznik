@@ -1,11 +1,11 @@
 {
-    "generated": "2026-08-06T10:37:06Z",
+    "generated": "2026-08-06T10:44:41Z",
     "root": "iznik-batch",
     "counts": {
         "keep-raw": 481,
-        "converted": 105,
+        "converted": 118,
         "excluded": 70,
-        "raw": 153,
+        "raw": 140,
         "retired": 1,
         "test-fixture": 383
     },
@@ -11806,12 +11806,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE `type` = 'User' AND (`subtype` = 'Login' OR `subtype` = 'Logout') AND `timestamp` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where `type` = ? and (`subtype` = ? or `subtype` = ?) and `timestamp` < ? limit 500"
         },
         "ee112faa8fb6": {
             "id": "ee112faa8fb6",
@@ -11836,12 +11836,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE `type` = 'User' AND `subtype` = 'Deleted' AND `timestamp` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500"
         },
         "e8216202fee1": {
             "id": "e8216202fee1",
@@ -11866,12 +11866,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE `type` = 'User' AND `subtype` = 'Created' AND `timestamp` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500"
         },
         "bfd91e927d85": {
             "id": "bfd91e927d85",
@@ -11896,12 +11896,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE (`type` = 'User' OR `type` = 'Group') AND `subtype` = '' AND `timestamp` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where (`type` = ? or `type` = ?) and `subtype` = ? and `timestamp` < ? limit 500"
         },
         "06a0736afd38": {
             "id": "06a0736afd38",
@@ -11926,12 +11926,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE `type` = 'User' AND `subtype` = 'Bounce' AND `timestamp` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500"
         },
         "af5bd3f5ecb1": {
             "id": "af5bd3f5ecb1",
@@ -11956,12 +11956,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM bounces_emails WHERE `date` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `bounces_emails` where `date` < ? limit 500"
         },
         "0f525ed7d096": {
             "id": "0f525ed7d096",
@@ -11986,12 +11986,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs_emails WHERE `timestamp` < ? OR `timestamp` > ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs_emails` where `timestamp` < ? or `timestamp` > ? limit 500"
         },
         "f88d2c32b9f2": {
             "id": "f88d2c32b9f2",
@@ -12016,12 +12016,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE `timestamp` < ? AND groupid = ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where `timestamp` < ? and `groupid` = ? limit 500"
         },
         "7d7392116e11": {
             "id": "7d7392116e11",
@@ -12132,12 +12132,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs_src WHERE `date` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs_src` where `date` < ? limit 500"
         },
         "978d17107d12": {
             "id": "978d17107d12",
@@ -12162,12 +12162,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs_errors WHERE `date` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs_errors` where `date` < ? limit 500"
         },
         "a0abe6e079a4": {
             "id": "a0abe6e079a4",
@@ -12192,12 +12192,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs WHERE `timestamp` < ? AND `type` = 'Plugin' LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs` where `timestamp` < ? and `type` = ? limit 500"
         },
         "91a2a946f8f3": {
             "id": "91a2a946f8f3",
@@ -12222,12 +12222,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM logs_sql WHERE `date` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `logs_sql` where `date` < ? limit 500"
         },
         "6f40faa9e18c": {
             "id": "6f40faa9e18c",
@@ -12252,12 +12252,12 @@
             "args": 1,
             "goldenSql": "DELETE FROM users_active WHERE `timestamp` < ? LIMIT {{expr}}",
             "presentInCode": false,
-            "hasParityTest": false,
-            "status": "raw",
+            "hasParityTest": true,
+            "status": "converted",
             "reason": "",
             "porting": "",
             "category": "",
-            "approvedDiff": ""
+            "approvedDiff": "delete from `users_active` where `timestamp` < ? limit 500"
         },
         "b2839b61990c": {
             "id": "b2839b61990c",

@@ -212,6 +212,71 @@
       "id": "a2a0b695276b",
       "sql": "select distinct `chat_rooms`.`id` from `chat_rooms` inner join ((select distinct `chatid` from `chat_roster` where `userid` = ?) union (select distinct `chatid` from `chat_messages` where (`userid` = ? or `reviewedby` = ?))) as `t` on `t`.`chatid` = `chat_rooms`.`id` order by `chat_rooms`.`id` asc",
       "reason": "Parenthesisation and an explicit asc, nothing semantic. Laravel wraps each union arm and the derived table itself in parentheses, and MySQL parses that identically to the bare form. Everything that decides the result is unchanged: DISTINCT on the outer and both arms, UNION rather than UNION ALL - so a chat matching both arms appears once rather than duplicating in the export - and the grouped OR in the second arm, which flat would have bound against that arm's whole WHERE and pulled in every chat the user ever moderated."
+    },
+    {
+      "id": "b7fe22c9f927",
+      "sql": "delete from `logs` where `type` = ? and (`subtype` = ? or `subtype` = ?) and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "ee112faa8fb6",
+      "sql": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "e8216202fee1",
+      "sql": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "bfd91e927d85",
+      "sql": "delete from `logs` where (`type` = ? or `type` = ?) and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "06a0736afd38",
+      "sql": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "af5bd3f5ecb1",
+      "sql": "delete from `bounces_emails` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "0f525ed7d096",
+      "sql": "delete from `logs_emails` where `timestamp` < ? or `timestamp` > ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "f88d2c32b9f2",
+      "sql": "delete from `logs` where `timestamp` < ? and `groupid` = ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "d3c47e835355",
+      "sql": "delete from `logs_src` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "978d17107d12",
+      "sql": "delete from `logs_errors` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "a0abe6e079a4",
+      "sql": "delete from `logs` where `timestamp` < ? and `type` = ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "91a2a946f8f3",
+      "sql": "delete from `logs_sql` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "6f40faa9e18c",
+      "sql": "delete from `users_active` where `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
     }
   ]
 }
