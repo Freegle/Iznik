@@ -132,6 +132,13 @@ describe('ModSupportAIAssistant', () => {
             template: '<span class="spinner" />',
             props: ['small'],
           },
+          // The snapshot progress bar renders this; without a stub Vue warns
+          // that it cannot resolve the component, and setup.ts turns any Vue
+          // warning into a failure.
+          'b-progress': {
+            template: '<div class="progress" :data-value="value" />',
+            props: ['value', 'max', 'height', 'animated', 'striped', 'variant'],
+          },
           'b-row': {
             template: '<div class="row"><slot /></div>',
           },
@@ -971,9 +978,11 @@ describe('ModSupportAIAssistant', () => {
       expect(withChat.text()).toContain('Refer to geeks')
     })
 
+    // submitQuery() pushes the volunteer's question into messages before it
+    // sets isProcessing, so a snapshot only ever builds with a conversation
+    // already on screen - which is the branch the transcript lives in.
     it('shows a live progress bar while a snapshot is building', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.selectedUser = { id: 1 }
+      const wrapper = await withConversation()
       wrapper.vm.isProcessing = true
       wrapper.vm.toolProgress = {
         tool: 'get_user_dump',
