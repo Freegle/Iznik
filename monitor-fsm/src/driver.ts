@@ -835,7 +835,19 @@ async function main() {
       // straight to PARALLEL_ANALYZE_AND_FIX so Discourse parsing still runs.
       if (process.env.PARSE_ONLY === '1') {
         const parseOnlyNow = await engine.getInstance(instance.id)
-        if (parseOnlyNow.currentState === 'FIX_MASTER_CI') {
+        // Judge the state we are HEADED FOR, not only the one we are sitting
+        // in. A step's action returns its target as `_transition`, and reading
+        // currentState alone let a PARSE_ONLY run walk straight into
+        // PARALLEL_FIX_BUGS and dispatch real fix delegates: WORK_ROUTER
+        // returned _transition PARALLEL_FIX_BUGS, currentState still read as
+        // an analysis state, the stop never fired. Considering both is correct
+        // whenever the engine applies the transition.
+        const proposedNext: string[] = result.actionsExecuted
+          .map((a: any) => a?.result?._transition)
+          .filter((t: any): t is string => typeof t === 'string' && t.length > 0)
+        const candidateStates = [parseOnlyNow.currentState, ...proposedNext]
+
+        if (candidateStates.includes('FIX_MASTER_CI')) {
           out('PARSE_ONLY: master red but skipping fix — forcing straight to Discourse analysis')
           await engine.forceTransition(instance.id, 'PARALLEL_ANALYZE_AND_FIX', 'PARSE_ONLY: bypassing FIX_MASTER_CI')
           continue
@@ -844,8 +856,9 @@ async function main() {
           'LOAD_STATE', 'CHECK_CI', 'CI_ROUTER',
           'PARALLEL_ANALYZE_AND_FIX', 'COLLATE_RESULTS', 'WORK_ROUTER',
         ])
-        if (!ANALYSIS_STATES.has(parseOnlyNow.currentState)) {
-          out(`PARSE_ONLY: stopping before ${humanizeState(parseOnlyNow.currentState)}`)
+        const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))
+        if (offender) {
+          out(`PARSE_ONLY: stopping before ${humanizeState(offender)}`)
           break
         }
       }

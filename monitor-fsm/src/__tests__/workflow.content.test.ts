@@ -471,3 +471,47 @@ describe('PARALLEL_ANALYZE_AND_FIX prompt — triage must emit the post number',
     expect(prompt.slice(idx, idx + 700)).toContain('DISCARDED')
   })
 })
+
+describe('driver.ts — PARSE_ONLY stops before fixing states', () => {
+  const driverTs = readFileSync(join(__dirname, '../driver.ts'), 'utf8')
+
+  // PARSE_ONLY=1 is meant to end after WORK_ROUTER. On 2026-08-06 a PARSE_ONLY
+  // run went on to enter PARALLEL_FIX_BUGS and launch three real fix delegates,
+  // because the guard only inspected currentState while WORK_ROUTER's action
+  // had returned _transition PARALLEL_FIX_BUGS.
+  it('considers transitions the step proposed, not just currentState', () => {
+    const idx = driverTs.indexOf('const proposedNext')
+    expect(idx).toBeGreaterThan(-1)
+    const block = driverTs.slice(idx, idx + 500)
+    expect(block).toContain('_transition')
+    expect(block).toContain('candidateStates')
+  })
+
+  it('stops on any candidate state outside the analysis set', () => {
+    expect(driverTs).toContain('const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))')
+  })
+
+  it('still bypasses FIX_MASTER_CI rather than stopping on it', () => {
+    expect(driverTs).toContain("candidateStates.includes('FIX_MASTER_CI')")
+  })
+})
+
+describe('PARALLEL_ANALYZE_AND_FIX prompt — Discourse auth header', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // Verified live 2026-08-06: `Api-Key` alone returns 200, while
+  // `User-Api-Key` + `Api-Username` returns 403. Six of twenty-one triage
+  // delegates lost their topic entirely to that 403.
+  it('uses the Api-Key header for topic fetches', () => {
+    expect(prompt).toContain('curl -s -H "Api-Key: <key>"')
+  })
+
+  it('never tells a delegate to send the rejected User-Api-Key pair', () => {
+    expect(prompt).not.toContain('-H "User-Api-Key')
+    expect(prompt).not.toContain('Api-Username: Edward_Hibbert')
+  })
+
+  it('warns at the key-fetch step that the pair is rejected', () => {
+    expect(prompt).toContain('REJECTED with HTTP 403')
+  })
+})
