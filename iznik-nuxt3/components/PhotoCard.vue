@@ -41,11 +41,13 @@
       </div>
     </div>
 
-    <!-- Controls (when selected and not uploading) -->
-    <template v-if="selected && !uploading && !error">
-      <!-- Rotate button -->
+    <!-- Controls (when selected).  Delete stays available while uploading:
+         an upload that never settles otherwise leaves no way out at all,
+         because Skip and Next are both unavailable too. -->
+    <template v-if="selected && !error">
+      <!-- Rotate button - needs a photo that made it to the server -->
       <button
-        v-if="showRotate"
+        v-if="showRotate && !uploading"
         class="control-button control-rotate"
         title="Rotate"
         @click.stop="emit('rotate')"
