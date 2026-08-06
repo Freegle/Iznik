@@ -1494,6 +1494,13 @@ class ExpandService
                 $stats['rippled_in'] += $n;
                 // §15/§16 instrumentation: count groups a post was rippled into.
                 try {
+                    // keep-raw: ON DUPLICATE KEY UPDATE count = count + ? is an atomic
+                    // increment, and upsert() cannot emit it - it renders only
+                    // `count` = values(`count`) or `count` = ?, both of which REPLACE the
+                    // counter and would discard every accumulated metric. The CURDATE()
+                    // here IS bindable as today() (MySQL and PHP share one UTC clock in
+                    // this deployment), so the recorded "write storing the database
+                    // clock" reason is not what blocks this site - the increment is.
                     DB::statement(
                         'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
                         . 'ON DUPLICATE KEY UPDATE count = count + ?',
