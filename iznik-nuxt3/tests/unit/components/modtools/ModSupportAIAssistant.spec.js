@@ -998,15 +998,23 @@ describe('ModSupportAIAssistant', () => {
       const wrapper = await withConversation()
       expect(wrapper.find('.referral-bar').exists()).toBe(true)
 
+      // A past referral's "Sent to the geeks" notice must hide too - under a
+      // running investigation it reads as if the new question was referred.
+      wrapper.vm.referralResult = { ok: true, ref: 'SR-4F2QW' }
+      await nextTick()
+      expect(wrapper.text()).toContain('Sent to the geeks')
+
       // "Not solved, or found a bug?" is premature mid-investigation - the
       // bar only belongs on screen when the assistant has finished.
       wrapper.vm.isProcessing = true
       await nextTick()
       expect(wrapper.find('.referral-bar').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Sent to the geeks')
 
       wrapper.vm.isProcessing = false
       await nextTick()
       expect(wrapper.find('.referral-bar').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Sent to the geeks')
     })
 
     it('sends the whole investigation, the note and the member', async () => {

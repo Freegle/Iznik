@@ -448,8 +448,11 @@
           </b-button>
         </div>
 
+        <!-- Hidden while the assistant is busy, like the referral bar: a
+             stale "Sent to the geeks" notice sitting under a running
+             investigation reads as if the new question was referred too. -->
         <NoticeMessage
-          v-if="referralResult"
+          v-if="referralResult && !isProcessing"
           :variant="referralResult.ok ? 'success' : 'danger'"
           class="m-3"
         >
