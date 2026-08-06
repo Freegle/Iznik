@@ -156,6 +156,18 @@ const CHAT_MESSAGE_ADDRESS = "Address"
 const CHAT_MESSAGE_NUDGE = "Nudge"
 const CHAT_MESSAGE_REFER_TO_SUPPORT = "ReferToSupport"
 
+// CHAT_MESSAGE_PROMPT is a question from Freegle with tappable answers. The
+// question text is in chat_messages.message like any other message; the options
+// and the answer live in chat_prompts, keyed on the message id.
+const CHAT_MESSAGE_PROMPT = "Prompt"
+
+// Prompt kinds. Each says what ANSWERING does - see chat.applyPromptAnswer and
+// App\Services\FirstReply\PromptService.
+const PROMPT_KIND_DELIVERY = "delivery"
+const PROMPT_KIND_DEADLINE = "deadline"
+const PROMPT_KIND_VIEWS = "views"
+const PROMPT_KIND_PHOTO = "photo"
+
 const NEWSFEED_TYPE_ALERT = "Alert"
 const NEWSFEED_TYPE_COMMUNITY_EVENT = "CommunityEvent"
 const NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY = "VolunteerOpportunity"

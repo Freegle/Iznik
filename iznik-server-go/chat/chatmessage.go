@@ -63,9 +63,14 @@ type ChatMessage struct {
 	// message) and for a normal caller on their OWN held reply, so the sender can show a
 	// "waiting to send" indicator. It is NOT set on the poster's view (the delivery gate
 	// removes held replies from their fetch entirely).
-	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
-	Addressid      *uint64 `json:"addressid" gorm:"-"`
-	Modnote        bool    `json:"modnote" gorm:"-"`
+	HeldByRippling bool `json:"heldbyrippling,omitempty" gorm:"-"`
+	// Prompt is the answerable part of a type='Prompt' message - the tappable
+	// options, and the answer once one is chosen. Nil on every other message
+	// type, which is nearly all of them, so it costs an omitted field rather
+	// than a null on the wire.
+	Prompt    *ChatPrompt `json:"prompt,omitempty" gorm:"-"`
+	Addressid *uint64     `json:"addressid" gorm:"-"`
+	Modnote   bool        `json:"modnote" gorm:"-"`
 	// Replysource is the client-reported surface an Interested reply came from (browse,
 	// search, message_page, notification, ...). Advisory reply-provenance evidence for the
 	// rippling attribution capture - sanitised there, stored in rippling_reply_attribution,
@@ -269,6 +274,10 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 			}
 		}
 	}
+
+	// Fill in the tappable part of any Freegle prompt in this fetch. No-op (and no
+	// query) unless the fetch actually contains one, which is nearly never.
+	attachPrompts(db, messages)
 
 	// Process images and deleted messages
 	for ix, a := range messages {

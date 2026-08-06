@@ -331,6 +331,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} chat.ChatMessage
 		rg.Post("/chat/:id/message", chat.CreateChatMessage)
 
+		// Answer a Freegle prompt
+		// @Router /chat/{id}/message/{mid}/prompt [post]
+		// @Summary Answer a Freegle chat prompt
+		// @Description Records the member's answer to a type='Prompt' chat message and applies
+		// @Description it to the posts the prompt covers. Only the member the prompt was sent
+		// @Description to may answer, and only once.
+		// @Tags chat
+		// @Accept json
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Param mid path integer true "Chat message ID"
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/chat/:id/message/:mid/prompt", chat.AnswerChatPrompt)
+
 		// Patch Chat Message
 		// @Router /chatmessages [patch]
 		// @Summary Update chat message
