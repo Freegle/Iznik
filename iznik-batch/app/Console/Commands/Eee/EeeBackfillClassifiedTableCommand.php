@@ -66,15 +66,16 @@ class EeeBackfillClassifiedTableCommand extends Command
         $batches   = array_chunk($rows, $batchSize);
 
         foreach ($batches as $i => $batch) {
-            $placeholders = [];
-            $params       = [];
-            foreach ($batch as [$mid, $aid]) {
-                $placeholders[] = '(?, ?)';
-                $params[] = $mid;
-                $params[] = $aid;
-            }
-            $sql = 'INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES ' . implode(', ', $placeholders);
-            DB::statement($sql, $params);
+            // insertOrIgnore builds the multi-row VALUES list itself. The raw form
+            // hand-assembled '(?, ?)' placeholders, which is what put this site in the
+            // "SQL assembled at runtime" bucket - but the dynamic part was only the ROW
+            // COUNT, and a multi-row insert is exactly what the builder takes an array
+            // for. Column order in the emitted SQL may differ from the raw statement;
+            // that is immaterial because the columns are named and paired with their
+            // own values.
+            DB::table('eee_classified_attachments')->insertOrIgnore(
+                array_map(fn ($r) => ['messageid' => $r[0], 'attid' => $r[1]], $batch)
+            );
             $this->line('  batch ' . ($i + 1) . '/' . count($batches) . ': ' . count($batch) . ' upserted');
         }
 
