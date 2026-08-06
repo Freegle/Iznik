@@ -383,7 +383,11 @@ class GiftAidClaimService
             if (!$dryRun) {
                 DB::table('users_donations')
                     ->where('id', $donation->id)
-                    ->update(['giftaidclaimed' => DB::raw('NOW()')]);
+                    // now(), not DB::raw('NOW()'). An earlier revision kept this raw
+                    // arguing "NOW() has to be evaluated by MySQL" - that predates the
+                    // measurement showing MySQL and PHP share one UTC clock here, so
+                    // binding the application clock records the same instant.
+                    ->update(['giftaidclaimed' => now()]);
             }
         }
 

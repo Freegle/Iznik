@@ -223,7 +223,11 @@ class ChatRoom extends Model implements Auditable
             if ($chat) {
                 DB::table('chat_rooms')
                     ->where('id', $chat->id)
-                    ->update(['latestmessage' => DB::raw('NOW()')]);
+                    // now(), not DB::raw('NOW()'): MySQL and PHP share one UTC clock in
+                    // this deployment (app.timezone=UTC, php date.timezone=UTC, MySQL
+                    // SYSTEM - measured one second apart), so binding the application
+                    // clock is the same instant and removes the raw expression.
+                    ->update(['latestmessage' => now()]);
                 return self::find($chat->id);
             }
 

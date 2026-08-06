@@ -65,6 +65,12 @@ class MigrateReachBoundsSchemaCommand extends Command
             return Command::SUCCESS;
         }
 
+        // keep-raw: this reads the WRITE connection's clock deliberately (the third
+        // argument is $useReadPdo = false) to watermark rows written since the copy
+        // began. The clock itself is bindable - MySQL and PHP agree here - but the
+        // watermark is compared against updated_at values MySQL sets, and a watermark
+        // that runs even fractionally ahead of the server silently drops delta rows.
+        // The gain is one fewer raw site; the risk is a partial migration.
         $copyStart = DB::selectOne('SELECT NOW() AS t', [], false)->t;
 
         // 1) Shadow with the full target schema. LIKE copies columns/indexes but not the

@@ -122,18 +122,22 @@ class Wave1GiftAidTest extends TestCase
     }
 
     /**
-     * The only site in this file whose value stays a DB::raw: NOW() has to be
-     * evaluated by MySQL. Binding a PHP timestamp instead (->update(['...' =>
-     * now()])) would render without raw SQL, but it moves the clock from the
-     * database to the application - a real behaviour change on a claimed-at
-     * timestamp, for a cosmetic win in the inventory. The DB::raw('NOW()')
-     * that remains is recorded as keep-raw with that reason.
+     * This site USED to keep its DB::raw('NOW()'), on the argument that binding
+     * a PHP timestamp "moves the clock from the database to the application - a
+     * real behaviour change on a claimed-at timestamp". That argument was
+     * wrong, and the correction is worth leaving visible: MySQL and PHP share
+     * one UTC clock in this deployment (app.timezone=UTC, php
+     * date.timezone=UTC, MySQL SYSTEM resolving to the same wall clock,
+     * measured one second apart), so there is no second clock to move to.
+     *
+     * The golden now diverges - NOW() versus a bound timestamp - and carries an
+     * approved diff recording exactly that.
      */
     public function test_mark_donation_claimed(): void
     {
         GoldenSql::assertUpdate(self::SITE_MARK_CLAIMED, fn () => [
             DB::table('users_donations')->where('id', 1),
-            ['giftaidclaimed' => DB::raw('NOW()')],
+            ['giftaidclaimed' => now()],
         ]);
     }
 

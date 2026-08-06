@@ -292,6 +292,11 @@
       "id": "33219aae3e9a",
       "sql": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?",
       "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
+    },
+    {
+      "id": "029b3600e99d",
+      "sql": "update `users_donations` set `giftaidclaimed` = ? where `id` = ?",
+      "reason": "UPDATE users_donations SET giftaidclaimed = NOW(): the database clock becomes a bound application timestamp, so the bind count rises from one to two. Equivalent here because MySQL and PHP share one UTC clock in this deployment - app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM resolving to the same wall clock, measured one second apart. This site previously carried the opposite decision, kept raw on the argument that binding a PHP timestamp 'moves the clock from the database to the application'; that argument assumed a second clock that does not exist here."
     }
   ]
 }
