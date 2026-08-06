@@ -240,7 +240,12 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
   armIdle()
 
   try {
-    const res = await fetch(url, { signal: ctrl.signal })
+    // identity: undici advertises gzip by default, and any compression layer
+    // that buffers the response would hold the heartbeat frames off the wire
+    // until the build completes - exactly the LB-timeout failure the framed
+    // protocol exists to prevent. The SQLite payload is worth compressing one
+    // day, but only via a layer proven to flush per frame.
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'accept-encoding': 'identity' } })
     if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
 
     const crypto = require('crypto')
