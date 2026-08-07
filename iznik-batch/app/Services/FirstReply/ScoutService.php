@@ -857,6 +857,26 @@ class ScoutService
             }
         }
 
+        // A candidate must have an address the mailer can actually use, judged
+        // by the SAME rule User::email_preferred applies at spool time
+        // (non-internal, non-excluded). The previous check only required a
+        // preferred=1 row, which an internal @users.ilovefreegle.org address
+        // satisfies - those members claimed scout slots and cooldowns and then
+        // got nothing at the mail stage (ledger outran the mailed metric ~90
+        // in the first hours). The domain lists come from the same config the
+        // accessor reads, so the two cannot drift.
+        $unmailable = [];
+        $unmailableParams = [];
+        foreach (config('freegle.mail.internal_domains', []) as $domain) {
+            $unmailable[] = 'ue.email NOT LIKE ?';
+            $unmailableParams[] = '%@' . $domain;
+        }
+        foreach (config('freegle.mail.excluded_domain_patterns', []) as $pattern) {
+            $unmailable[] = 'ue.email NOT LIKE ?';
+            $unmailableParams[] = '%' . $pattern . '%';
+        }
+        $mailableSql = $unmailable ? (' AND ' . implode(' AND ', $unmailable)) : '';
+
         // The candidate's point, resolved the same "mylocation else lastlocation"
         // order the reach mailer uses, so a candidate is measured from the point
         // that decides their reach membership everywhere else. Built once and
@@ -892,7 +912,7 @@ class ScoutService
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
-               AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id AND ue.preferred = 1)
+               AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                AND rr.max_polygon IS NOT NULL
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
@@ -912,7 +932,7 @@ class ScoutService
                      WHERE rn.msgid = ? AND rn.userid = u.id
                    )
                $cadenceGate",
-            array_merge([self::SRID, $msgid], $userIds, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
+            array_merge([self::SRID, $msgid], $userIds, $unmailableParams, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
         );
 
         $out = [];
