@@ -540,3 +540,53 @@ describe('delegate boilerplate — never write into the human main checkout', ()
     expect(actionsTs).toContain('that is the intended outcome, not a problem to route around')
   })
 })
+
+describe('PARALLEL_ANALYZE_AND_FIX — questions are answered alongside the fixing', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // Answering a question opens no PR and puts nothing on the CI runner, so it
+  // competes with nothing. Routing it after bugs and Sentry (as WORK_ROUTER
+  // alone did) left someone waiting on a fix with no bearing on their question.
+  it('dispatches one task per unanswered question in the same batch', () => {
+    expect(prompt).toContain("(D) One task per unanswered question (id: 'question-<topic>-<post>')")
+    expect(prompt).toContain('_action_list_unanswered_questions.questions')
+  })
+
+  it('reads the unanswered questions in this state', () => {
+    expect(workflow.states.PARALLEL_ANALYZE_AND_FIX.readActions).toContain('list_unanswered_questions')
+  })
+
+  it('exempts question answers from the onlyFixPR gate', () => {
+    const idx = prompt.indexOf('CRITICAL GATE')
+    const gate = prompt.slice(idx, idx + 1200)
+    expect(gate).toContain('AND section (D)')
+    expect(gate).toContain('Section (D) is exempt')
+    // The gate must still skip triage and Sentry — those DO create PRs.
+    expect(gate).toContain('SKIP sections (B) and (C) entirely')
+  })
+
+  it('still tells the delegate not to write its own caveat', () => {
+    expect(prompt).toContain('Do NOT write a caveat or an apology — one is appended automatically')
+  })
+})
+
+describe('COLLATE_RESULTS — question answers become approval drafts', () => {
+  const prompt: string = workflow.states.COLLATE_RESULTS.prompt
+
+  it('handles question- results', () => {
+    expect(prompt).toContain("id starts with 'question-'")
+    expect(prompt).toContain('queue_question_reply_drafts')
+  })
+
+  it('can call the queueing action from this state', () => {
+    expect(workflow.states.COLLATE_RESULTS.writeActions).toContain('queue_question_reply_drafts')
+  })
+
+  it('insists each answer is mapped back to its own question', () => {
+    expect(prompt).toContain('never guess which answer belongs to which question')
+  })
+
+  it('keeps posting human-gated', () => {
+    expect(prompt).toContain('never post to Discourse yourself')
+  })
+})

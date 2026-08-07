@@ -3743,10 +3743,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (sentryIssues.length > 0 && !sentryFixAttempted) {
         return { _transition: 'FIX_SENTRY_ISSUE', reason: `${sentryIssues.length} unresolved Sentry issue(s)` }
       }
-      // Nothing to fix. Before advancing to the gate, answer anyone still
-      // waiting on a question — they are cheap to handle and were previously
-      // filed and forgotten, because a question never looks like work to a
-      // router that only counts bugs.
+      // Questions are normally answered in the parallel batch, alongside triage
+      // and the PR fix, because answering one opens no PR and puts nothing on
+      // the CI runner — there is nothing for it to compete with, so it should
+      // never queue behind fixing. This is the catch-up path for questions that
+      // this iteration's own triage has only just discovered: the parallel batch
+      // had already launched by the time they were classified, so without this
+      // they would wait a whole iteration. Anything already answered is excluded
+      // by the draft check inside listUnansweredQuestions.
       const questionsWaiting = listUnansweredQuestions(getDb(), 5)
       const questionsAnswered = ctx?.questionsAnswered === true
       if (questionsWaiting.length > 0 && !questionsAnswered) {
