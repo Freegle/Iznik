@@ -371,8 +371,8 @@ func TestSubmitMessageNonexistentGroup(t *testing.T) {
 
 // TestSubmitMessageLinksNewItem covers the item link for a brand-new item name. The
 // endpoint must resolve the freshly-inserted items.id from the WRITE connection
-// (database.ExecInsertGetID) and link it via messages_items - not via a separate
-// "SELECT id FROM items WHERE name = ?" that the read/write split can route to a
+// (gorm.WithResult()+LAST_INSERT_ID(id)) and link it via messages_items - not via a
+// separate "SELECT id FROM items WHERE name = ?" that the read/write split can route to a
 // lagging replica returning 0, which would silently drop the link and hide the post
 // from browse/search-by-item (the Discourse 9832 "mixed up offers" class of bug).
 func TestSubmitMessageLinksNewItem(t *testing.T) {
