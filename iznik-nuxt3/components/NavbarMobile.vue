@@ -27,7 +27,7 @@
           <v-icon icon="arrow-left" class="back-icon" />
         </nuxt-link>
         <NotificationOptions
-          v-if="online && !showBackButton && loggedIn"
+          v-if="online && loggedIn"
           v-model:unread-notification-count="unreadNotificationCount"
           v-model:shown="notificationsShown"
           :distance="distance"

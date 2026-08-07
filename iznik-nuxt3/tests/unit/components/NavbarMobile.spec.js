@@ -9,6 +9,7 @@ const mockLogout = vi.fn()
 const mockShowAboutMe = vi.fn()
 const mockMaybeReload = vi.fn()
 const mockBackButton = vi.fn()
+const mockShowBackButton = ref(false)
 
 vi.mock('~/composables/useNavbar', () => ({
   useNavbar: () => ({
@@ -20,7 +21,9 @@ vi.mock('~/composables/useNavbar', () => ({
     browseCount: ref(10),
     chatCount: ref(5),
     showAboutMeModal: ref(false),
-    showBackButton: ref(false),
+    get showBackButton() {
+      return mockShowBackButton.value
+    },
     backButtonCount: ref(0),
     requestLogin: mockRequestLogin,
     logout: mockLogout,
@@ -219,6 +222,7 @@ describe('NavbarMobile', () => {
     mockBreakpoint.value = 'md'
     mockStickyAdRendered.value = false
     mockRoute.path = '/browse'
+    mockShowBackButton.value = false
 
     // Mock window.scrollY
     Object.defineProperty(window, 'scrollY', { value: 0, writable: true })
@@ -370,6 +374,27 @@ describe('NavbarMobile', () => {
     it('hides back button by default', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.nav-back-btn').exists()).toBe(false)
+    })
+  })
+
+  describe('notification bell visibility', () => {
+    // Topic 10001 post 3: on "+ menu" sub-pages such as an individual My
+    // Posts item (/mypost/123) or the Events pages, the route isn't one of
+    // the "home" routes (/browse, /chitchat, /myposts, /explore/*, /), so
+    // useNavbar's showBackButton is true and a back arrow replaces the logo
+    // slot. The bell must still show alongside it - a sub-page is exactly
+    // when you're most likely to miss a reply.
+    it('still shows the notification bell when a back button is shown', () => {
+      mockShowBackButton.value = true
+      const wrapper = createWrapper()
+      expect(wrapper.find('.nav-back-btn').exists()).toBe(true)
+      expect(wrapper.find('.notification-options').exists()).toBe(true)
+    })
+
+    it('shows the notification bell on home routes too', () => {
+      mockShowBackButton.value = false
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notification-options').exists()).toBe(true)
     })
   })
 
