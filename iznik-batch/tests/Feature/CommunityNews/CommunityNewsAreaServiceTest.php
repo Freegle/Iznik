@@ -89,6 +89,23 @@ class CommunityNewsAreaServiceTest extends TestCase
         $this->assertNotNull(CommunityNewsArea::where('anchorgroupid', $b->id)->first());
     }
 
+    public function test_groups_are_in_by_default_and_can_opt_out(): void
+    {
+        // 2026-08-07: Community News flipped from opt-in to opt-OUT. A group
+        // that has never touched the setting takes part; only an explicit
+        // falsy flag opts out.
+        $this->town('London', 51.5074, -0.1278);
+        $g = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.12]);
+        $svc = $this->svc();
+
+        $svc->rebuildAreas();
+        $this->assertSame(1, CommunityNewsArea::count(), 'an unset flag means IN under opt-out');
+
+        $g->update(['settings' => ['communitynews' => 0]]);
+        $svc->rebuildAreas();
+        $this->assertSame(0, CommunityNewsArea::count(), 'an explicit 0 still opts out');
+    }
+
     public function test_rebuild_is_idempotent_and_prunes_disabled(): void
     {
         $this->town('London', 51.5074, -0.1278);
