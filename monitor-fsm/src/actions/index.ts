@@ -33,6 +33,59 @@ import { groundingActions } from '../grounding.js'
 
 const exec = promisify(execFile)
 
+export interface ParkedBug {
+  topic: number
+  post: number
+  reporter: string | null
+  state: string
+  lastSeenAt: string | null
+  requireReporter: boolean
+}
+
+/**
+ * How many attempts a revived bug gets back.
+ *
+ * work_router escalates at 2 rejected PRs and only ever dispatches bugs in
+ * 'open', so 'deferred' was a one-way trip: nothing brought a bug back even
+ * when its thread later carried the detail that would have changed the
+ * diagnosis. Reviving without touching the count would just re-escalate it on
+ * sight, and clearing the count entirely would throw away the knowledge that two
+ * approaches have already failed - which DIAGNOSE_BUG reads to make sure the
+ * next one differs. Leaving exactly one attempt is the middle: new evidence buys
+ * one more try, and a bug whose thread keeps moving cannot spend more than one
+ * attempt per new piece of information.
+ */
+export const REVIVED_BUG_REJECTIONS = 1
+
+/**
+ * Bugs still waiting on something, for the feedback scan to re-read.
+ *
+ * This used to look at 'open' and 'investigating' only (plus 'deferred' for the
+ * Edward-post pass), which stranded everything else: a bug parked as 'confirmed'
+ * or 'fix-queued' is precisely the kind its reporter comes back to. Derek wrote
+ * "It has gone as of yesterday" on 9481, Neville wrote "Perfect" on 9690, Jos
+ * wrote "It did work eventually" on 10008 - none were seen, and all three sat
+ * parked for weeks while their threads said they were done.
+ *
+ * requireReporter raises the bar for the states that already assume a fix
+ * exists. The confirmation regex matches a bare "thanks" from anyone, which on a
+ * 600-post catch-all thread is nearly free, and closing a bug whose PR is still
+ * open on that basis would be worse than leaving it parked. All three stranded
+ * cases above were confirmed by their own reporter, so the stricter rule loses
+ * none of them.
+ */
+export function selectParkedBugsForFeedback(db: ReturnType<typeof getDb>): ParkedBug[] {
+  const PARKED_STATES = "('open','investigating','deferred','confirmed','fix-queued')"
+  const STRICT_STATES = new Set(['confirmed', 'fix-queued', 'deferred'])
+
+  const rows = db.prepare(
+    `SELECT topic, post, reporter, state, last_seen_at AS lastSeenAt
+     FROM discourse_bug WHERE state IN ${PARKED_STATES}`
+  ).all() as Array<{ topic: number; post: number; reporter: string | null; state: string; lastSeenAt: string | null }>
+
+  return rows.map(r => ({ ...r, requireReporter: STRICT_STATES.has(r.state) }))
+}
+
 const STATE_PATH = '/tmp/freegle-monitor/state.json'
 const SUMMARY_PATH = '/tmp/freegle-monitor/summary.md'
 const DRAFTS_PATH = '/tmp/freegle-monitor/retest-drafts.md'
@@ -1021,15 +1074,8 @@ export const actions: ActionDefinition[] = [
     description: 'For each open/investigating/deferred bug in discourse_bug, fetch posts after the original report on that Discourse topic. (A) Detects reporter confirmation of a fix — marks confirmed bugs as fixed. (B) Detects Edward_Hibbert posts indicating fix-in-progress, off-topic/expected-behaviour, or applied fix — updates state accordingly. Returns {checked, markedFixed, markedInvestigating, markedOffTopic}.',
     handler: async () => {
       const db = getDb()
-      // Reporter-confirmation scan: open/investigating only
-      const bugs = db.prepare(
-        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating')"
-      ).all() as Array<{ topic: number; post: number; reporter: string | null }>
-
-      // Edward-post scan: also include deferred (Edward may post "fix on the way" on a deferred bug)
-      const allActiveBugs = db.prepare(
-        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred')"
-      ).all() as Array<{ topic: number; post: number; reporter: string | null }>
+      const bugs = selectParkedBugsForFeedback(db)
+      const allActiveBugs = bugs
 
       if (allActiveBugs.length === 0) return { checked: 0, markedFixed: [], markedInvestigating: [], markedOffTopic: [] }
 
@@ -1133,6 +1179,7 @@ def get_posts_after(topic_id, orig_post):
 
 results = []
 edward_updates = []
+revivals = []
 
 # Pass A: reporter confirmations (open/investigating only)
 for bug in bugs:
@@ -1141,6 +1188,28 @@ for bug in bugs:
     reporter = bug.get('reporter') or ''
 
     new_posts = get_posts_after(topic_id, orig_post)
+
+    # A bug escalated to a human never came back: work_router only dispatches
+    # 'open'. When the thread has moved on since we escalated, the detail we were
+    # missing is often sitting right there, so hand it back for another look.
+    # Our own posts do not count - a retest request we sent is not new evidence.
+    if bug.get('state') == 'deferred' and bug.get('lastSeenAt'):
+        seen = bug['lastSeenAt'].replace(' ', 'T')[:19]
+        fresh = [
+            p for p in new_posts
+            if p.get('username', '') not in ('AI_Edward',)
+            and (p.get('created_at') or '')[:19] > seen
+        ]
+        if fresh:
+            revivals.append({
+                'topic': topic_id,
+                'post': orig_post,
+                'since': seen,
+                'newPosts': len(fresh),
+                'latestBy': fresh[-1].get('username', ''),
+                'latestText': re.sub(r'\\s+', ' ', re.sub(r'<[^>]+>', ' ', fresh[-1].get('cooked', ''))).strip()[:200],
+            })
+
     # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
     # bug is still broken, do NOT confirm a fix — even if an earlier post said
     # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
@@ -1158,6 +1227,10 @@ for bug in bugs:
         for post in new_posts:
             username = post.get('username', '')
             if username == 'Edward_Hibbert':
+                continue
+            # States that already assume a fix need the reporter's own word for
+            # it, not a passing "thanks" from whoever else is on the thread.
+            if bug.get('requireReporter') and username != reporter:
                 continue
             text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
             text = re.sub(r'\\s+', ' ', text).strip()
@@ -1194,14 +1267,15 @@ for bug in all_bugs:
             edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
             break
 
-print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
+print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates, 'revivals': revivals}))
 `
 
       const { stdout } = await exec('python3', ['-c', script])
-      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any> }
-      try { parsed = JSON.parse(stdout.trim() || '{}') } catch { parsed = { confirmations: [], edwardUpdates: [] } }
+      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any>; revivals?: Array<any> }
+      try { parsed = JSON.parse(stdout.trim() || '{}') } catch { parsed = { confirmations: [], edwardUpdates: [], revivals: [] } }
       const confirmations = parsed.confirmations ?? []
       const edwardUpdates = parsed.edwardUpdates ?? []
+      const revivals = parsed.revivals ?? []
 
       for (const c of confirmations) {
         db.prepare(
@@ -1241,7 +1315,29 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         }
       }
 
-      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic }
+      // Hand escalated bugs back once their thread has moved on. Done after the
+      // confirmation and Edward passes so a bug those just settled is not
+      // dragged back out of 'fixed' or 'off-topic' by the same new posts.
+      const revived: Array<{ topic: number; post: number; newPosts: number; latestBy: string }> = []
+      for (const r of revivals) {
+        const current = db.prepare('SELECT state FROM discourse_bug WHERE topic=? AND post=?')
+          .get(r.topic, r.post) as { state: string } | undefined
+        if (current?.state !== 'deferred') continue
+
+        db.prepare(`
+          UPDATE discourse_bug
+          SET state='open', pr_rejections=MIN(pr_rejections, ?), reason=?, last_seen_at=datetime('now')
+          WHERE topic=? AND post=?
+        `).run(
+          REVIVED_BUG_REJECTIONS,
+          `Revived: ${r.newPosts} new post(s) since escalation, latest from ${r.latestBy}: "${String(r.latestText ?? '').slice(0, 120)}"`,
+          r.topic, r.post
+        )
+        revived.push({ topic: r.topic, post: r.post, newPosts: r.newPosts, latestBy: r.latestBy })
+        out(`check_bug_feedback: revived ${r.topic}/${r.post} — ${r.newPosts} new post(s) since it was escalated`)
+      }
+
+      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic, revived }
     },
   },
 
