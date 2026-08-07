@@ -25,6 +25,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 type Aboutme struct {
@@ -396,9 +397,38 @@ func GetExpectedReplies(id uint64) []uint64 {
 	return expectedReplies
 }
 
-func GetMemberships(id uint64) []Membership {
-	db := database.DBConn
+// dbForMemberships returns the db handle a memberships read should go
+// through. modtools=true is the ModTools single-member re-fetch that runs
+// right after a mod may have just changed the member's ourPostingStatus via
+// PatchMemberships (e.g. Can't Post -> Moderated) - ModMessage.vue's
+// membership computed reads exactly this value to gate the Approve button
+// on a pending message. Under the DB read/write split a plain SELECT here
+// can land on a replica that hasn't applied that write yet (Galera
+// apply-lag), so the button stays hidden until the replica catches up
+// (Discourse #10008 post 2). Pin that path to the writer, matching the same
+// read-your-writes fix already applied elsewhere (PR #905). Plain
+// GetMemberships(id) stays unpinned - it also backs "my groups" checks on
+// every page load (volunteering, community events, "who am I"), which are
+// high-frequency and not read-your-writes sensitive; pinning those to the
+// writer would defeat the point of the read/write split.
+func dbForMemberships(db *gorm.DB, modtools bool) *gorm.DB {
+	if modtools {
+		return db.Clauses(dbresolver.Write)
+	}
+	return db
+}
 
+func GetMemberships(id uint64) []Membership {
+	return getMemberships(dbForMemberships(database.DBConn, false), id)
+}
+
+// GetMembershipsForModtools is GetMemberships pinned to the writer - see
+// dbForMemberships.
+func GetMembershipsForModtools(id uint64) []Membership {
+	return getMemberships(dbForMemberships(database.DBConn, true), id)
+}
+
+func getMemberships(db *gorm.DB, id uint64) []Membership {
 	var memberships []Membership
 	db.Table("memberships").
 		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
@@ -1292,12 +1322,14 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	var modmails uint64
 	var wg sync.WaitGroup
 
-	// Fetch memberships for authenticated requests only.
+	// Fetch memberships for authenticated requests only. Pinned to the writer
+	// (see dbForMemberships) - this is the modtools re-fetch that runs right
+	// after a mod may have just changed the member's ourPostingStatus.
 	if myid > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			memberships = GetMemberships(id)
+			memberships = GetMembershipsForModtools(id)
 		}()
 	}
 
