@@ -24,24 +24,42 @@ class ScoutCommand extends Command
     {
         $dryRun = (bool) $this->option('dry-run');
 
-        $this->info(Rollout::describe());
+        // Same DB-backed lock pattern as ripple:expand, because the scheduler's
+        // withoutOverlapping demonstrably did not stop overlapping runs here:
+        // 40+ concurrent scouts piled up in the first hour live, each wedging
+        // on a MySQL connection the server had idle-closed under it. The lock
+        // is owned by this process and auto-expires, so a crashed run cannot
+        // wedge it forever. Dry runs are exempt - they do bounded read-only
+        // work and are how the config is sanity-checked.
+        $lock = $dryRun ? null : \Cache::lock('firstreply:scout:run', 600);
+        if ($lock !== null && !$lock->get()) {
+            $this->info('firstreply:scout skipped: another run already holds the lock');
 
-        // Attribute first, so a scout mailed on the previous run is credited
-        // before this run reports. Cheap, and the only thing that says whether
-        // any of this works.
-        $attributed = $dryRun ? 0 : $service->attributeReplies();
+            return Command::SUCCESS;
+        }
 
-        $stats = $service->run($dryRun);
+        try {
+            $this->info(Rollout::describe());
 
-        $this->info(sprintf(
-            '%sscouts: considered %d posts, scouted %d, mailed %d, newly replied %d',
-            $dryRun ? '[DRY RUN] ' : '',
-            $stats['considered'],
-            $stats['posts_scouted'],
-            $stats['mailed'],
-            $attributed
-        ));
+            // Attribute first, so a scout mailed on the previous run is credited
+            // before this run reports. Cheap, and the only thing that says whether
+            // any of this works.
+            $attributed = $dryRun ? 0 : $service->attributeReplies();
 
-        return Command::SUCCESS;
+            $stats = $service->run($dryRun);
+
+            $this->info(sprintf(
+                '%sscouts: considered %d posts, scouted %d, mailed %d, newly replied %d',
+                $dryRun ? '[DRY RUN] ' : '',
+                $stats['considered'],
+                $stats['posts_scouted'],
+                $stats['mailed'],
+                $attributed
+            ));
+
+            return Command::SUCCESS;
+        } finally {
+            $lock?->release();
+        }
     }
 }

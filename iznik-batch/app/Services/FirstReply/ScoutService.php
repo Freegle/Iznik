@@ -561,6 +561,16 @@ class ScoutService
         $quiet = max(0, (int) ($cfg['quiet_minutes'] ?? 45));
         $maxAge = max(1, (int) ($cfg['max_age_hours'] ?? 24));
 
+        // A SMALL batch, newest first. Each post costs seconds (two apiv2
+        // matcher calls, a spatial eligibility query, possibly mail), so 200
+        // per run meant runs of 10+ minutes - long enough for the WRITE
+        // connection to sit idle past the server's wait_timeout (600s), be
+        // closed under the run, and wedge the process polling a dead socket
+        // (the first live hour piled up 40+ such runs). At the every-minute
+        // cadence a small batch drains far faster than posts arrive; newest
+        // first because speed-to-first-reply is the whole point, and the
+        // once-per-post ledger walks the batch through the backlog anyway.
+
         return collect(DB::select(
             "SELECT ms.msgid AS msgid, ms.msgtype AS msgtype, ms.arrival AS arrival,
                     m.fromuser AS fromuser, m.subject AS subject
@@ -582,8 +592,8 @@ class ScoutService
                      SELECT 1 FROM firstreply_scouts fs WHERE fs.msgid = ms.msgid
                    )"
              . Rollout::sqlFilter('ms.msgid') . "
-             ORDER BY ms.arrival ASC
-             LIMIT 200",
+             ORDER BY ms.arrival DESC
+             LIMIT " . max(1, (int) ($cfg['posts_per_run'] ?? 25)),
             [$quiet, $maxAge]
         ));
     }
@@ -829,12 +839,19 @@ class ScoutService
         if ($strong) {
             $cadenceGate = 'AND u.relevantallowed = 1';
         } else {
+            // A frequent scout is a member's daily digest BROUGHT FORWARD -
+            // never an additional mail. That promise only holds for members
+            // who actually take a daily digest: the previous <> 0 test also
+            // admitted immediate-frequency members (16 of the first ~430
+            // scouted live), for whom the scout was a genuinely extra mail
+            // with nothing displaced. Require the daily cadence specifically.
             $cadenceGate = 'AND EXISTS (
                      SELECT 1 FROM memberships mem
                      WHERE mem.userid = u.id AND mem.collection = ?
-                       AND mem.emailfrequency <> 0
+                       AND mem.emailfrequency = ?
                    )';
             $extra[] = Membership::COLLECTION_APPROVED;
+            $extra[] = Membership::EMAIL_FREQUENCY_DAILY;
 
             // Degrade rather than throw where the table has not been created.
             if (Schema::hasTable('users_digests')) {
@@ -846,6 +863,26 @@ class ScoutService
                 $extra[] = $londonDayStartUtc;
             }
         }
+
+        // A candidate must have an address the mailer can actually use, judged
+        // by the SAME rule User::email_preferred applies at spool time
+        // (non-internal, non-excluded). The previous check only required a
+        // preferred=1 row, which an internal @users.ilovefreegle.org address
+        // satisfies - those members claimed scout slots and cooldowns and then
+        // got nothing at the mail stage (ledger outran the mailed metric ~90
+        // in the first hours). The domain lists come from the same config the
+        // accessor reads, so the two cannot drift.
+        $unmailable = [];
+        $unmailableParams = [];
+        foreach (config('freegle.mail.internal_domains', []) as $domain) {
+            $unmailable[] = 'ue.email NOT LIKE ?';
+            $unmailableParams[] = '%@' . $domain;
+        }
+        foreach (config('freegle.mail.excluded_domain_patterns', []) as $pattern) {
+            $unmailable[] = 'ue.email NOT LIKE ?';
+            $unmailableParams[] = '%' . $pattern . '%';
+        }
+        $mailableSql = $unmailable ? (' AND ' . implode(' AND ', $unmailable)) : '';
 
         // The candidate's point, resolved the same "mylocation else lastlocation"
         // order the reach mailer uses, so a candidate is measured from the point
@@ -882,7 +919,7 @@ class ScoutService
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
-               AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id AND ue.preferred = 1)
+               AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                AND rr.max_polygon IS NOT NULL
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
@@ -902,7 +939,7 @@ class ScoutService
                      WHERE rn.msgid = ? AND rn.userid = u.id
                    )
                $cadenceGate",
-            array_merge([self::SRID, $msgid], $userIds, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
+            array_merge([self::SRID, $msgid], $userIds, $unmailableParams, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
         );
 
         $out = [];

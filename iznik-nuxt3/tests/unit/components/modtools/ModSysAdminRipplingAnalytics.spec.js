@@ -68,6 +68,10 @@ const FULL = {
     mean_freeglers_reached: 3261,
     held_replies: 1344,
     held_replies_pct: 10.8,
+    held_replies_first: 96,
+    held_replies_first_pct: 0.8,
+    held_replies_additional: 1248,
+    held_replies_additional_pct: 10.0,
     reply_drive_min: {
       mean_min: 17.2,
       ci_half_min: 0.85,
@@ -257,6 +261,38 @@ describe('ModSysAdminRipplingAnalytics', () => {
     expect(html).toContain('17.2') // reply drive-time
     expect(html).toContain('10.8%') // held-reply friction KPI
     expect(html).toContain('of replies held')
+    wrapper.unmount()
+  })
+
+  // Holding the only reply a post has leaves the offerer looking at silence; holding a
+  // later one just defers a choice they can already make. Since first replies started
+  // going through, the split says whether any are still being held up.
+  it('splits held replies into additional and first-reply cases', async () => {
+    mockFetchAnalytics.mockResolvedValue(fastOf(FULL))
+    const wrapper = mountComponent()
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('1,248 additional')
+    expect(html).toContain('post already had a reply')
+    expect(html).toContain('96 first reply')
+    wrapper.unmount()
+  })
+
+  it('omits the split when nothing is being held', async () => {
+    mockFetchAnalytics.mockResolvedValue(
+      fastOf({
+        ...FULL,
+        section1: {
+          ...FULL.section1,
+          held_replies: 0,
+          held_replies_first: 0,
+          held_replies_additional: 0,
+        },
+      })
+    )
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.html()).not.toContain('post already had a reply')
     wrapper.unmount()
   })
 

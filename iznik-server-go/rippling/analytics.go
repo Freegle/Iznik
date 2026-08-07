@@ -419,6 +419,15 @@ type Section1KPI struct {
 	// had not yet rippled to the replier's location).
 	HeldReplies    int     `json:"held_replies"`
 	HeldRepliesPct float64 `json:"held_replies_pct"`
+	// Split of the above by whether the post ALREADY had a reply from someone else when this
+	// one was held. The two cost the offerer very different things: holding the only reply a
+	// post has leaves it looking ignored, while holding a later one just defers a choice the
+	// offerer already has. Since the first-reply-through change they should be almost entirely
+	// "additional" — a non-trivial "first" count means first replies are still being held.
+	HeldRepliesFirst         int     `json:"held_replies_first"`
+	HeldRepliesFirstPct      float64 `json:"held_replies_first_pct"`
+	HeldRepliesAdditional    int     `json:"held_replies_additional"`
+	HeldRepliesAdditionalPct float64 `json:"held_replies_additional_pct"`
 }
 
 // Analytics is the on-the-fly sysadmin rippling analytics endpoint. Support/Admin only.
@@ -506,20 +515,41 @@ func Analytics(c *fiber.Ctx) error {
 	// stratumSQL toggle as 2def63211a50 above - 4 possible rendered forms,
 	// all proven by the retired ormharness (shapes.json /
 	// TestTier3Shapes_62cea0b491c9, removed in d22ba1d6c).
-	var held int
+	var heldTotal, heldAdditional int
 	go func() {
 		defer wg.Done()
+		// "Additional" means another member had already replied to the post when
+		// this reply was held, so the offerer had something to act on regardless.
+		// Judged at the moment of holding (c2.date < hr.created_at) rather than by
+		// what the post has now: a reply that arrived later cannot have made this
+		// hold harmless at the time. The replier's own message is excluded by id,
+		// and their other messages by userid, so a member replying twice does not
+		// count as company for themselves.
+		//
 		// WHERE built as a single string for ONE Where() call: GORM's
 		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 		// paren pair once there is more than one Where expression to
 		// combine (clause/where.go buildExprs), which would diverge from
 		// the golden.
-		db.Table("rippling_held_replies hr").
-			Select("COUNT(*)").
+		row := db.Table("rippling_held_replies hr").
+			Select("COUNT(*) AS total, "+
+				"COALESCE(SUM(CASE WHEN EXISTS("+
+				"SELECT 1 FROM chat_messages c2 "+
+				"WHERE c2.refmsgid = hr.msgid AND c2.type = 'Interested' "+
+				"AND c2.id <> hr.chatmsgid AND c2.userid <> hr.replieruserid "+
+				"AND c2.date < hr.created_at"+
+				") THEN 1 ELSE 0 END), 0) AS additional").
 			Joins("JOIN rippling_reach rr ON rr.msgid = hr.msgid AND rr.total_freeglers > 0"+stratumSQL).
 			Joins("JOIN messages m ON m.id = hr.msgid AND m.type = 'Offer'").
 			Where("hr.created_at >= ? AND hr.created_at < ? AND EXISTS(SELECT 1 FROM messages_groups mgr WHERE mgr.msgid = hr.msgid AND mgr.rippled_in = 1 AND mgr.deleted = 0)", start, end).
-			Scan(&held)
+			Row()
+		// Read the two aggregates positionally. Scan() into a struct silently left
+		// both at zero here — the aggregates carry no model to map onto — and a
+		// zeroed KPI looks exactly like "nothing was held", so the failure would
+		// have been invisible on the dashboard.
+		if row != nil {
+			_ = row.Scan(&heldTotal, &heldAdditional)
+		}
 	}()
 
 	// The drive-time figures (the Section 1 overall mean, the Section 3 rippled-out mean, the
@@ -557,9 +587,16 @@ func Analytics(c *fiber.Ctx) error {
 		kpi.TakenPct = float64(agg.Taken) / float64(agg.Posts) * 100
 		kpi.MeanReplies = float64(agg.TotalReplies) / float64(agg.Posts)
 	}
-	kpi.HeldReplies = held
+	kpi.HeldReplies = heldTotal
+	// Whatever is not "additional" is a reply held while the post had nothing else
+	// on it. Derived by subtraction so the two always sum to the total shown above,
+	// rather than being counted separately and drifting apart.
+	kpi.HeldRepliesAdditional = heldAdditional
+	kpi.HeldRepliesFirst = heldTotal - heldAdditional
 	if agg.TotalReplies > 0 {
-		kpi.HeldRepliesPct = float64(held) / float64(agg.TotalReplies) * 100
+		kpi.HeldRepliesPct = float64(heldTotal) / float64(agg.TotalReplies) * 100
+		kpi.HeldRepliesFirstPct = float64(kpi.HeldRepliesFirst) / float64(agg.TotalReplies) * 100
+		kpi.HeldRepliesAdditionalPct = float64(kpi.HeldRepliesAdditional) / float64(agg.TotalReplies) * 100
 	}
 
 	trend := fiber.Map{
