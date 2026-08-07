@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -59,6 +59,32 @@ function applySchema(db: DB): void {
     })()
     if (!allowsFeatureRequest) {
       try { db.exec(MIGRATION_V5_SQL) } catch (e) { /* already rebuilt */ }
+    }
+  }
+  // Widen the state CHECK to allow 'question'. Deliberately NOT gated on
+  // schema_version: the version is stamped below whether or not the migrations
+  // above actually succeeded, so a rebuild that fails — a locked DB while the
+  // FSM is mid-iteration is enough — leaves a database recorded at the new
+  // version with the old constraint, and a version gate would never retry it.
+  // That is exactly how v4 left DBs unable to store 'feature-request' until v5
+  // was written to repair them. Asking the live table what it allows, every
+  // time, makes this self-healing instead: a failed run simply repairs on the
+  // next one. The check is cheap and the rebuild only runs when genuinely needed.
+  const allowsQuestion = (() => {
+    try {
+      const row = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+      ).get() as { sql?: string } | undefined
+      return !!row?.sql && row.sql.includes("'question'")
+    } catch { return false }
+  })()
+  if (!allowsQuestion) {
+    try {
+      db.exec(MIGRATION_V6_SQL)
+    } catch (e: any) {
+      // Surfaced rather than swallowed: silence here is what made the v4
+      // failure invisible for as long as it was.
+      console.error('[db] could not widen discourse_bug state CHECK — will retry next run:', e?.message ?? e)
     }
   }
   if (current < SCHEMA_VERSION) {
@@ -463,6 +489,39 @@ export function recordPostedReply(db: DB, draft: {
     draft.prUrl ?? null,
   )
   return Number(info.lastInsertRowid)
+}
+
+/**
+ * Questions still waiting on a reply.
+ *
+ * Excludes any that already have a draft queued or posted, so a question is
+ * only researched once however many iterations see it. Oldest first: someone
+ * who asked days ago has waited longest.
+ */
+export function listUnansweredQuestions(db: DB, limit = 5): Array<{
+  topic: number
+  post: number
+  topic_title: string | null
+  reporter: string | null
+  excerpt: string | null
+}> {
+  return db.prepare(`
+    SELECT b.topic, b.post, b.topic_title, b.reporter, b.excerpt
+    FROM discourse_bug b
+    WHERE b.state = 'question'
+      AND NOT EXISTS (
+        SELECT 1 FROM discourse_draft d
+        WHERE d.topic = b.topic AND d.post = b.post AND d.rejected_at IS NULL
+      )
+    ORDER BY b.first_seen_at ASC
+    LIMIT ?
+  `).all(limit) as Array<{
+    topic: number
+    post: number
+    topic_title: string | null
+    reporter: string | null
+    excerpt: string | null
+  }>
 }
 
 export function listPendingDrafts(db: DB): DiscourseDraftRow[] {

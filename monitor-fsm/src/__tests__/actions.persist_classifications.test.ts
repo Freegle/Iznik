@@ -144,11 +144,21 @@ describe('persist_classifications action', () => {
     expect(bug?.reason).toBe('Needs research')
   })
 
-  it('inserts question classification as deferred', async () => {
+  // Questions used to be filed as 'deferred', which made them indistinguishable
+  // from bugs genuinely put aside — so nothing could find them to answer and the
+  // person who asked never heard back. They get their own state.
+  it('inserts question classification as question, not deferred', async () => {
     await persistClassificationsHandler({}, {
       classifications: [{ topic: 131, post: 9, type: 'question', user: 'iris' }],
     })
-    expect(getDiscourseBug(db, 131, 9)?.state).toBe('deferred')
+    expect(getDiscourseBug(db, 131, 9)?.state).toBe('question')
+  })
+
+  it('still files an explicitly deferred classification as deferred', async () => {
+    await persistClassificationsHandler({}, {
+      classifications: [{ topic: 133, post: 11, type: 'deferred', user: 'iris' }],
+    })
+    expect(getDiscourseBug(db, 133, 11)?.state).toBe('deferred')
   })
 
   it('skips classifications without topic or post', async () => {

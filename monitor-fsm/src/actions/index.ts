@@ -6,8 +6,10 @@ import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
 import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
 import { partitionFailedChecks } from '../coverage-checks.js'
+import { composeQuestionReply } from '../question-reply.js'
 import {
   getDb,
+  listUnansweredQuestions,
   getTopicCursor,
   setTopicCursor,
   listTopicCursors,
@@ -1327,6 +1329,91 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
     },
     handler: async (params) => {
       return checkPrDeployed(params.prNumber as number)
+    },
+  },
+
+  {
+    name: 'list_unanswered_questions',
+    description: 'Returns Discourse posts triaged as questions (state=question) that have no reply drafted or posted yet, oldest first. A question is not a bug — there is nothing to fix — but the person asking still deserves an answer, and without this they were filed and forgotten. Feed each into ANSWER_QUESTIONS. Returns {questions: [{topic, post, title, reporter, excerpt}], count}.',
+    paramsSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: 'Maximum questions to return (default 5)' } },
+    },
+    handler: async (params) => {
+      const limit = typeof (params as any)?.limit === 'number' ? (params as any).limit : 5
+      const rows = listUnansweredQuestions(getDb(), limit)
+      return {
+        count: rows.length,
+        questions: rows.map(r => ({
+          topic: r.topic,
+          post: r.post,
+          title: r.topic_title,
+          reporter: r.reporter,
+          excerpt: r.excerpt,
+        })),
+      }
+    },
+  },
+
+  {
+    name: 'queue_question_reply_drafts',
+    description: 'Queues answers to triaged questions as Discourse drafts for HUMAN APPROVAL — never posts them. Pass answers: [{topic, post, answer, unsure?}]. Every reply gets the "I may have got the wrong end of the stick" caveat appended in code (not left to the prompt, so it cannot be dropped on the confident-sounding answers that most need it), and an unsure answer is additionally flagged as a starting point. An empty answer is skipped rather than queued as a caveat-only reply. Returns {queued, skipped}.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        answers: {
+          type: 'array',
+          description: 'One entry per question answered',
+          items: {
+            type: 'object',
+            properties: {
+              topic: { type: 'number' },
+              post: { type: 'number' },
+              answer: { type: 'string', description: 'The answer body, without any caveat' },
+              unsure: { type: 'boolean', description: 'True if not confident in the answer itself' },
+            },
+            required: ['topic', 'post', 'answer'],
+          },
+        },
+      },
+      required: ['answers'],
+    },
+    handler: async (params) => {
+      const answers: Array<any> = Array.isArray((params as any)?.answers) ? (params as any).answers : []
+      const db = getDb()
+      let queued = 0
+      let skipped = 0
+
+      for (const a of answers) {
+        const topic = Number(a?.topic)
+        const post = Number(a?.post)
+        if (!topic || !post) { skipped++; continue }
+
+        const body = composeQuestionReply({ answer: String(a?.answer ?? ''), unsure: a?.unsure === true })
+        if (!body) {
+          out(`queue_question_reply_drafts: ${topic}/${post} had no answer — not queuing a caveat-only reply`)
+          skipped++
+          continue
+        }
+
+        const bug = db.prepare(
+          'SELECT reporter, excerpt FROM discourse_bug WHERE topic = ? AND post = ?'
+        ).get(topic, post) as { reporter: string | null; excerpt: string | null } | undefined
+
+        queueDiscourseDraft(db, {
+          topic,
+          post,
+          username: bug?.reporter ?? '',
+          // The quote is what the reply visibly answers; posting refuses an
+          // empty one, so fall back to the summary we stored at triage.
+          quote: (bug?.excerpt ?? '').trim() || 'your question',
+          body,
+        })
+        out(`queue_question_reply_drafts: queued answer for ${topic}/${post} (awaiting approval)`)
+        queued++
+      }
+
+      return { queued, skipped }
     },
   },
 
@@ -3308,7 +3395,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           continue
         }
 
-        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
+        // Questions get their own state, not 'deferred'. Filed as deferred they
+        // were indistinguishable from bugs genuinely put aside, so nothing could
+        // find them and the asker simply never got a reply.
+        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'question' : 'open'
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
@@ -3516,7 +3606,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'work_router_decide',
-    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "DIAGNOSE_BUG" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
+    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. With no bugs or Sentry issues pending it checks for Discourse posts triaged as questions and routes to ANSWER_QUESTIONS, so someone who asked a question is not left waiting simply because a question is not a bug. Returns {_transition: "DIAGNOSE_BUG" | "FIX_SENTRY_ISSUE" | "ANSWER_QUESTIONS" | "COVERAGE_GATE"}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -3650,7 +3740,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (sentryIssues.length > 0 && !sentryFixAttempted) {
         return { _transition: 'FIX_SENTRY_ISSUE', reason: `${sentryIssues.length} unresolved Sentry issue(s)` }
       }
-      return { _transition: 'COVERAGE_GATE', reason: 'no pending bug / sentry — advance to gate' }
+      // Nothing to fix. Before advancing to the gate, answer anyone still
+      // waiting on a question — they are cheap to handle and were previously
+      // filed and forgotten, because a question never looks like work to a
+      // router that only counts bugs.
+      const questionsWaiting = listUnansweredQuestions(getDb(), 5)
+      const questionsAnswered = ctx?.questionsAnswered === true
+      if (questionsWaiting.length > 0 && !questionsAnswered) {
+        return {
+          _transition: 'ANSWER_QUESTIONS',
+          reason: `${questionsWaiting.length} question(s) awaiting an answer`,
+          questions: questionsWaiting.map(q => ({
+            topic: q.topic,
+            post: q.post,
+            title: q.topic_title,
+            reporter: q.reporter,
+            excerpt: q.excerpt,
+          })),
+        }
+      }
+      return { _transition: 'COVERAGE_GATE', reason: 'no pending bug / sentry / question — advance to gate' }
     },
   },
 

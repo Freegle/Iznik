@@ -27,20 +27,31 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# Load parent project env vars (DISCOURSE_URL, etc.) if not already set
+# Load parent project env vars (DISCOURSE_URL, credentials, etc.).
+#
+# Re-read before EVERY iteration, not once at startup. This loop runs for days,
+# and sourcing once meant an edit to ../.env never reached it: the value was
+# captured in this shell's environment at launch and every later iteration
+# inherited that stale copy, silently. Adding a Claude OAuth token to ../.env
+# mid-run changed nothing until the loop was restarted, with no log line to say
+# so. Re-sourcing costs nothing and makes ../.env the live source of truth.
 PARENT_ENV="$(dirname "$0")/../.env"
-if [ -f "$PARENT_ENV" ]; then
-  set -a; { source "$PARENT_ENV"; } 2>/dev/null || true; set +a
-fi
+load_env() {
+  if [ -f "$PARENT_ENV" ]; then
+    set -a; { source "$PARENT_ENV"; } 2>/dev/null || true; set +a
+  fi
 
-# The FSM brain + delegates run `claude`, which must use the Claude Code
-# SUBSCRIPTION session, NOT a standalone API key. ../.env defines
-# ANTHROPIC_API_KEY (for other tools) and the source above exports it; if it
-# reaches `claude` it bills that key, and once its balance is exhausted every
-# LLM call fails with "Credit balance is too low" and the FSM does nothing.
-# Drop it so claude falls back to the logged-in session. (driver.ts also deletes
-# it from process.env as the primary guard; this is belt-and-suspenders.)
-unset ANTHROPIC_API_KEY
+  # The FSM brain + delegates run `claude`, which must NOT use a standalone API
+  # key. ../.env defines ANTHROPIC_API_KEY (for other tools) and the source
+  # above exports it; if it reaches `claude` it bills that key, and once its
+  # balance is exhausted every LLM call fails with "Credit balance is too low"
+  # and the FSM does nothing. Drop it so claude uses the token or session
+  # instead. (driver.ts's applyClaudeAuth is the primary guard and also decides
+  # between MONITOR_FSM_CLAUDE_CODE_OAUTH_TOKEN and the logged-in session; this
+  # is belt-and-suspenders.)
+  unset ANTHROPIC_API_KEY
+}
+load_env
 
 # ── Single-instance guard ─────────────────────────────────────────────────────
 # Prevent two run-loop.sh processes from running concurrently (e.g. if the
@@ -133,6 +144,10 @@ iter=0
 while true; do
   iter=$((iter + 1))
   start=$(date +%s)
+  # Pick up any ../.env edits made since the loop started. The driver logs which
+  # Claude identity it resolved, so a credential change is visible from the next
+  # iteration onwards rather than needing a restart nobody knows to perform.
+  load_env
   echo "[$(stamp)] run-loop: iteration $iter starting"
   # Don't let a non-zero exit abort the loop — the driver already surfaces
   # errors and returns non-zero on fatals. We want the loop to keep going

@@ -128,6 +128,18 @@
     "delegate_parallel_tasks"
    ]
   },
+  "ANSWER_QUESTIONS": {
+   "description": "Answers Discourse posts triaged as questions rather than bug reports. One delegate per question researches an answer from the code and docs; queue_question_reply_drafts then stores each as a DRAFT for human approval — nothing is posted. Every reply gets a caveat admitting the question may have been misread, appended in code so it cannot be dropped on the confident-sounding answers that most need it.",
+   "nodeType": "agent",
+   "prompt": "Some Discourse posts are questions, not bug reports. There is nothing to fix, but the person asking still deserves an answer.\n\nINPUT: context._action_list_unanswered_questions.questions — each has topic, post, title, reporter, excerpt.\nIf that list is empty, call no actions and propose transition COVERAGE_GATE.\n\nBuild ONE task per question (id: 'question-<topic>-<post>') and pass them all to delegate_parallel_tasks:\n\n  Task: 'Answer a question asked on Discourse topic <topic>, post <post>. ANALYSIS ONLY — change no code, open no PR, and post NOTHING to Discourse.\n\n  The question: <excerpt>\n\n  STEP 1. API key: python3 -c \"import json; print(json.load(open(#/home/edward/profile.json#))[#auth_pairs#][0][#user_api_key#])\" (swap # for a single quote)\n  STEP 2. Read the thread for context: curl -s -H \"Api-Key: <key>\" https://discourse.ilovefreegle.org/t/<topic>.json\n  STEP 3. Answer from EVIDENCE, not memory: read the actual code under /home/edward/FreegleDockerWSL and the docs under docs/. Say what you looked at.\n  STEP 4. Freegle members and volunteers read these replies. Plain English, no jargon, no code unless they asked for code. Two or three short paragraphs at most.\n  STEP 5. Do NOT write a caveat or an apology — one is appended automatically. Just answer.\n  STEP 6. Output exactly one line: ANSWER=<answer on ONE line, using \\n for paragraph breaks>\n  Then one line: CONFIDENT=yes or CONFIDENT=no. Say no when you are unsure of the ANSWER ITSELF — the code was ambiguous, or you could not find the behaviour.\n  If you genuinely cannot answer, output ANSWER= with nothing after it. An empty answer is skipped, never sent.'\n\nWhen the delegates return, call queue_question_reply_drafts with answers: [{topic, post, answer, unsure}], where unsure is true when CONFIDENT was no. Map each result back to its own topic/post using the task id — never guess which answer belongs to which question.\n\nThe drafts wait for a human to approve them. Never post to Discourse yourself.\n\nThen propose transition COVERAGE_GATE.",
+   "readActions": [
+    "list_unanswered_questions"
+   ],
+   "writeActions": [
+    "delegate_parallel_tasks",
+    "queue_question_reply_drafts"
+   ]
+  },
   "PARALLEL_FIX_BUGS": {
    "description": "Full parallel bug pipeline. Dispatches one self-contained diagnose→test→fix→PR task per queued bug (up to 5) via delegate_parallel_tasks — each in its own isolated git worktree + branch + PR, run concurrently on Katapult cloud runners. Each task embeds the full V1-precheck + working-as-designed + AssertFlip TDD + adversarial-review + PR-template rigor so parallelism does not lower the quality bar. Routes to VERIFY_DISCOURSE_BATCH which loops over all results.",
    "nodeType": "agent",
@@ -435,6 +447,20 @@
    "to": "VERIFY_DISCOURSE_BATCH",
    "trigger": "llm_decision",
    "label": "parallel fixes dispatched"
+  },
+  {
+   "id": "t_work_router_to_answer_questions",
+   "from": "WORK_ROUTER",
+   "to": "ANSWER_QUESTIONS",
+   "trigger": "llm_decision",
+   "label": "questions awaiting an answer"
+  },
+  {
+   "id": "t_answer_questions_to_gate",
+   "from": "ANSWER_QUESTIONS",
+   "to": "COVERAGE_GATE",
+   "trigger": "llm_decision",
+   "label": "questions answered"
   }
  ]
 }
