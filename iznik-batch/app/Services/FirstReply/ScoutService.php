@@ -839,12 +839,19 @@ class ScoutService
         if ($strong) {
             $cadenceGate = 'AND u.relevantallowed = 1';
         } else {
+            // A frequent scout is a member's daily digest BROUGHT FORWARD -
+            // never an additional mail. That promise only holds for members
+            // who actually take a daily digest: the previous <> 0 test also
+            // admitted immediate-frequency members (16 of the first ~430
+            // scouted live), for whom the scout was a genuinely extra mail
+            // with nothing displaced. Require the daily cadence specifically.
             $cadenceGate = 'AND EXISTS (
                      SELECT 1 FROM memberships mem
                      WHERE mem.userid = u.id AND mem.collection = ?
-                       AND mem.emailfrequency <> 0
+                       AND mem.emailfrequency = ?
                    )';
             $extra[] = Membership::COLLECTION_APPROVED;
+            $extra[] = Membership::EMAIL_FREQUENCY_DAILY;
 
             // Degrade rather than throw where the table has not been created.
             if (Schema::hasTable('users_digests')) {
