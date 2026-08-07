@@ -41,9 +41,13 @@ class RolloutTest extends TestCase
             }
         }
 
-        // Message ids are a dense auto-increment, so mod 100 is exactly uniform
-        // over any whole number of hundreds - this is not a statistical estimate.
-        $this->assertSame(1000, $in);
+        // CRC32 bucketing is uniform but not arithmetic: over 10,000 sequential
+        // ids a 10% rollout selects close to 1,000, not exactly 1,000 the way
+        // msgid % 100 did. Allow generous statistical slack - what this test
+        // guards is the SHARE being right, not the exact draw. (For 10,000
+        // fair 10% trials, ±90 is over three standard deviations.)
+        $this->assertGreaterThan(910, $in);
+        $this->assertLessThan(1090, $in);
     }
 
     public function test_bucketing_is_the_shared_crc32_and_matches_the_database(): void

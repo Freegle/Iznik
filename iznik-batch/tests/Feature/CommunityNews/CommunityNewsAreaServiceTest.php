@@ -9,6 +9,21 @@ use Tests\TestCase;
 
 class CommunityNewsAreaServiceTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Community News flipped to opt-OUT (2026-08-07): any group without an
+        // explicit falsy flag takes part. These tests reason about the exact
+        // set of areas their own groups produce, so the base-seeded groups the
+        // suite ships with must be explicitly opted out or they flood every
+        // count (31 areas where a test built 2). Each test then opts its own
+        // groups in or out deliberately.
+        DB::statement(
+            "UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)"
+        );
+    }
+
     private function svc(): CommunityNewsAreaService
     {
         return app(CommunityNewsAreaService::class);
