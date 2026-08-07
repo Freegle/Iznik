@@ -14,6 +14,8 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SubmitMessage creates a complete, ready-to-go post in a SINGLE call.
@@ -218,14 +220,24 @@ func SubmitMessage(c *fiber.Ctx) error {
 	}
 
 	// Item + messages_items. Take the item id from the write connection via
-	// ExecInsertGetID: a separate "SELECT id FROM items WHERE name = ?" can be routed
-	// to a lagging read replica under the DB read/write split and return 0 rows,
-	// silently skipping the messages_items link so the post never shows in
+	// gorm.WithResult()+LAST_INSERT_ID(id): a separate "SELECT id FROM items WHERE name = ?"
+	// can be routed to a lagging read replica under the DB read/write split and return 0
+	// rows, silently skipping the messages_items link so the post never shows in
 	// browse/search-by-item (the Discourse 9832 "mixed up offers" class of bug). The
 	// message-row insert above already uses LastInsertId for exactly this reason, and
-	// message.go:3160/3915 use ExecInsertGetID for this identical items INSERT.
-	itemID, _ := database.ExecInsertGetID(db,
-		"INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
+	// message.go's item-insert (PutMessageAs) uses the identical idiom.
+	itemRes := gorm.WithResult()
+	db.Table("items").Clauses(itemRes, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+		},
+	}).Create(map[string]interface{}{"name": req.Item})
+	var itemID uint64
+	if itemRes.Result != nil {
+		if id, idErr := itemRes.Result.LastInsertId(); idErr == nil {
+			itemID = uint64(id)
+		}
+	}
 	if itemID > 0 {
 		db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", msgid, itemID)
 	}
