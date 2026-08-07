@@ -515,3 +515,28 @@ describe('PARALLEL_ANALYZE_AND_FIX prompt — Discourse auth header', () => {
     expect(prompt).toContain('REJECTED with HTTP 403')
   })
 })
+
+describe('delegate boilerplate — never write into the human main checkout', () => {
+  // A coverage delegate did its work correctly in its isolated worktree, read
+  // "the worktree is deleted when you return, so anything not pushed is lost",
+  // and preserved it by copying the file into /home/edward/FreegleDockerWSL —
+  // where it sat untracked on someone else's branch, failing their Laravel run
+  // (2026-08-07, PafServiceTest.php). A rational response to the warning, so
+  // the warning has to close it off explicitly.
+  it('forbids writing into the main checkout, in every worktree preamble', () => {
+    const preambles = actionsTs.split('ISOLATED git worktree').slice(1)
+    expect(preambles.length).toBeGreaterThan(0)
+    for (const p of preambles) {
+      const block = p.slice(0, 1400)
+      expect(block).toContain('NEVER write, copy or move anything into /home/edward/FreegleDockerWSL')
+    }
+  })
+
+  it('says pushing is the only way to keep work', () => {
+    expect(actionsTs).toContain('PUSHING is how you keep work, and it is the ONLY way')
+  })
+
+  it('makes losing unpushed work the intended outcome, not one to route around', () => {
+    expect(actionsTs).toContain('that is the intended outcome, not a problem to route around')
+  })
+})

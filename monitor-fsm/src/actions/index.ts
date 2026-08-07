@@ -317,6 +317,7 @@ export async function runFixExpansion(
 
 ==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
 ${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here.
+NEVER write, copy or move anything into /home/edward/FreegleDockerWSL. That is a human's live working tree, usually mid-task on another branch. PUSHING is how you keep work, and it is the ONLY way: a file left there is not saved, it is dropped in someone else's way — it breaks their test runs and they have to find out what it is and where it came from. If you cannot push, say so in your output and let the work be lost; that is the intended outcome, not a problem to route around.
 ` : ''}You are a HEADLESS, ONE-SHOT subprocess. Complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
 STAGING RULES: never \`git add -A\`. Always stage explicit paths.
 Before emitting the marker, verify the push landed: \`git log origin/${branch} -1 --format=%H\`.
@@ -2537,6 +2538,7 @@ print(urllib.request.urlopen(req).read().decode())
 
 ==== CRITICAL EXECUTION CONTRAINTS — READ FIRST ====
 ${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here: \`git checkout <branch>\` / \`git checkout -b <branch>\` are safe and will not affect the parent FSM driver's own checkout. Push your work to origin before emitting the output marker — the worktree is deleted when you return, so anything not pushed is lost.
+NEVER write, copy or move anything into /home/edward/FreegleDockerWSL. That is a human's live working tree, usually mid-task on another branch. PUSHING is how you keep work, and it is the ONLY way: a file left there is not saved, it is dropped in someone else's way — it breaks their test runs and they have to find out what it is and where it came from. If you cannot push, say so in your output and let the work be lost; that is the intended outcome, not a problem to route around.
 ` : ''}You are a HEADLESS, ONE-SHOT subprocess. When your response ends, your process exits. You have NO persistence, NO wakeups, NO /loop, NO ScheduleWakeup, NO Monitor, NO TaskCreate — those tools do not exist for you. A parent FSM (monitor-fsm) invoked you and is waiting on your stdout.
 
 You MUST do all the work in this single session:
@@ -2884,6 +2886,7 @@ If you omit the marker, your work is considered failed regardless of what actual
 
 ==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
 ${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here: \`git checkout <branch>\` / \`git checkout -b <branch>\` are safe. Push your work to origin before emitting the output marker — the worktree is deleted when you return.
+NEVER write, copy or move anything into /home/edward/FreegleDockerWSL. That is a human's live working tree, usually mid-task on another branch. PUSHING is how you keep work, and it is the ONLY way: a file left there is not saved, it is dropped in someone else's way — it breaks their test runs and they have to find out what it is and where it came from. If you cannot push, say so in your output and let the work be lost; that is the intended outcome, not a problem to route around.
 ` : ''}You are a HEADLESS, ONE-SHOT subprocess. You MUST complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
 
 BRANCH RULES: always \`git fetch origin && git checkout -b branch-name origin/master\` for new branches. For existing PR branches: \`gh pr checkout <n> -R Freegle/Iznik\`.
