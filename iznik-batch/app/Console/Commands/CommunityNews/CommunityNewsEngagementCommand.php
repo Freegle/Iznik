@@ -67,6 +67,8 @@ class CommunityNewsEngagementCommand extends Command
             ->selectRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.area')), '?') AS area")
             ->selectRaw('COUNT(*) AS sent')
             ->selectRaw('SUM(opened_at IS NOT NULL) AS opened')
+            // keep-raw: SUM(clicked_at IS NOT NULL) AS clicked is an aliased aggregate in a
+            // multi-row SELECT list under GROUP BY - no builder method projects one.
             ->selectRaw('SUM(clicked_at IS NOT NULL) AS clicked')
             ->groupBy('area')
             ->get();

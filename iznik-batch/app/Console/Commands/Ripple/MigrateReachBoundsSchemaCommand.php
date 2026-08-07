@@ -155,17 +155,22 @@ class MigrateReachBoundsSchemaCommand extends Command
         // 5) Verify: counts + a sample sandwich check.
         $oldN = (int) DB::table('rippling_reach_old')->useWritePdo()->count();
         $newN = (int) DB::table('rippling_reach')->useWritePdo()->count();
-        // keep-raw: ST_GeometryType() and ST_Contains() are geometry functions with no
-        // query builder method.
-        $badSample = (int) DB::selectOne(
-            'SELECT COUNT(*) AS n FROM (
-                SELECT msgid FROM rippling_reach
-                 WHERE ST_GeometryType(outer_bound) <> \'POINT\'
-                   AND NOT ST_Contains(outer_bound, polygon) LIMIT 100
-             ) x',
-            [],
-            false
-        )->n;
+        // keep-raw: ST_GeometryType()/ST_Contains() are geometry functions with no
+        // query builder method, so the predicate stays in whereRaw(). The outer
+        // COUNT()-of-a-capped-sample is now the query builder's job:
+        // ->limit(100)->get()->count() applies the cap BEFORE counting, same as the
+        // original subquery. (->limit(100)->count() would NOT do this - Laravel's
+        // aggregate() leaves the LIMIT on a query that already collapses to one row,
+        // so it would count every violation in the table instead of capping the
+        // sample at 100.)
+        $badSample = DB::table('rippling_reach')
+            ->useWritePdo()
+            ->select('msgid')
+            ->whereRaw("ST_GeometryType(outer_bound) <> 'POINT'")
+            ->whereRaw('NOT ST_Contains(outer_bound, polygon)')
+            ->limit(100)
+            ->get()
+            ->count();
         $this->info("Verify: old={$oldN} new={$newN} sandwich-violations(sample)={$badSample}.");
         if ($newN < $oldN || $badSample > 0) {
             $this->error('VERIFY FAILED — investigate before dropping rippling_reach_old '
@@ -249,10 +254,8 @@ class MigrateReachBoundsSchemaCommand extends Command
             // fragment for both keeps the retry's row set identical to what the failed
             // insert attempted by construction, rather than by keeping two independent
             // expressions of the same bounds in sync.
-            $ids = array_map(
-                fn ($r) => (int) $r->msgid,
-                DB::select('SELECT rr.msgid FROM rippling_reach rr WHERE ' . $where, [], false)
-            );
+            $rows = DB::select('SELECT rr.msgid FROM rippling_reach rr WHERE ' . $where, [], false);
+            $ids = array_map(fn ($r) => (int) $r->msgid, $rows);
             $n = 0;
             foreach ($ids as $msgid) {
                 $this->replaceRow($msgid);

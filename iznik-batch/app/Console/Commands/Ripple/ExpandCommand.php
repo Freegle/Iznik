@@ -228,6 +228,11 @@ class ExpandCommand extends Command
             foreach (array_reverse($validIds) as $id) {
                 $expr = 'ST_Union((SELECT polyindex FROM `groups` WHERE id = ' . $id . '), ' . $expr . ')';
             }
+            // keep-raw: ST_Union()/ST_AsText() are geometry functions with no query
+            // builder equivalent, and $expr is a dynamically right-nested chain of
+            // ST_Union() calls (one per --within-group id, built above by string
+            // concatenation since MySQL's ST_Union is binary, not an aggregate) - there
+            // is no fixed-arity builder call this could become regardless of nesting.
             $wkt = DB::selectOne('SELECT ST_AsText(' . $expr . ') AS u')?->u;
             if (!$wkt) {
                 $this->error("ST_Union of --within-group polygons [{$idList}] returned NULL.");

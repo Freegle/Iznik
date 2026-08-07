@@ -290,6 +290,7 @@ class DoogalService
             ->orderBy('id')
             ->chunkById(1000, function ($rows) {
                 foreach ($rows as $r) {
+                    // keep-raw: ST_SRID() is a spatial function the query builder has no method for.
                     DB::update('UPDATE locations SET geometry = ST_SRID(geometry, ?) WHERE id = ?', [$this->srid, $r->id]);
                 }
             });
@@ -302,6 +303,7 @@ class DoogalService
             ->orderBy('id')
             ->chunkById(1000, function ($rows) {
                 foreach ($rows as $r) {
+                    // keep-raw: ST_SRID() is a spatial function the query builder has no method for.
                     DB::update('UPDATE locations SET ourgeometry = ST_SRID(ourgeometry, ?) WHERE id = ?', [$this->srid, $r->id]);
                 }
             });
@@ -337,6 +339,7 @@ class DoogalService
             ->orderBy('locations.id')
             ->chunkById(1000, function ($badlocs) {
                 foreach ($badlocs as $bad) {
+                    // keep-raw: ST_GeomFromText() is a spatial function the query builder has no method for.
                     DB::update(
                         'UPDATE locations_spatial SET geometry = ST_GeomFromText(?, ?) WHERE locationid = ?',
                         [$bad->g, $this->srid, $bad->id]

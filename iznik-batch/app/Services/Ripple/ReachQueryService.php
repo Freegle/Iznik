@@ -68,6 +68,9 @@ class ReachQueryService
                     [$msgid, $lng, $lat, $lng, $lat, $lng, $lat, $lng, $lat]
                 );
             } else {
+                // keep-raw: ST_Contains/ST_SRID/EXISTS-in-SELECT are spatial functions
+                // and predicate composition with no builder method (same blocker as the
+                // bounds-available branch above).
                 $row = DB::selectOne(
                     'SELECT EXISTS(
                         SELECT 1 FROM rippling_reach

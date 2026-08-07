@@ -100,17 +100,19 @@ class MicroVolunteeringScoreService
     {
         $count = 0;
 
-        // keep-raw: 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative))
-        // is arithmetic combining two aggregates under GROUP BY, projected as an ALIAS
-        // ("score") that the HAVING clause then filters on. No query-builder method
-        // projects an aliased aggregate expression in a multi-row SELECT list, and
-        // havingRaw's "score >= ?" only works because that alias exists - both stay raw.
         $users = DB::table('microactions')
             ->join('users', 'users.id', '=', 'microactions.userid')
             ->where('users.trustlevel', self::TRUST_BASIC)
             ->groupBy('microactions.userid')
+            // keep-raw: 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative))
+            // is arithmetic combining two aggregates, projected as an ALIAS ("score") in a
+            // multi-row SELECT list under GROUP BY. No query-builder method projects an
+            // arithmetic expression over aggregates as a select column, so this stays raw.
             ->selectRaw('microactions.userid, 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative)) AS score')
-            ->havingRaw('score >= ?', [self::PROMOTE_THRESHOLD])
+            // HAVING on the "score" alias converts cleanly: MySQL resolves an unqualified
+            // HAVING identifier against the SELECT list alias, so the query builder's
+            // backtick-quoted `score` >= ? is identical to the raw "score >= ?" it replaces.
+            ->having('score', '>=', self::PROMOTE_THRESHOLD)
             ->pluck('microactions.userid');
 
         foreach ($users as $userId) {

@@ -610,6 +610,8 @@ class UserDataExportService
 
     private function getAboutMe(int $userId): array
     {
+        // keep-raw: LENGTH(text) is a SQL function applied to a column; the query
+        // builder has no method that emits a function call into a WHERE predicate.
         return DB::table('users_aboutme')
             ->where('userid', $userId)
             ->whereRaw('LENGTH(text) > 5')

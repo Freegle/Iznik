@@ -44,6 +44,10 @@ class GroupBoundaryService
                 );
 
                 if ($group->poly) {
+                    // keep-raw: ST_Intersection/ST_GeomFromText/COALESCE() are spatial
+                    // and conditional functions with no builder method; this is a
+                    // validity probe (result unused, an exception means the boundary
+                    // is invalid).
                     DB::select(
                         "SELECT ST_Intersection(ST_GeomFromText(poly, ?), COALESCE(simplified, polygon))
                          FROM `groups`

@@ -365,6 +365,10 @@ class MicrovolunteeringNotifyService
             return (int) $row->count;
         }
 
+        // keep-raw: the join condition un.url = CONCAT('/microvolunteering/message/', ma.msgid)
+        // applies CONCAT() to a column - no builder method projects that, and expressing it
+        // via join()->on()->whereRaw() would still leave a raw fragment (whereRaw is itself a
+        // raw call site), so the whole UPDATE ... JOIN stays as one raw statement.
         return DB::update(
             "UPDATE users_notifications un
              INNER JOIN microactions ma

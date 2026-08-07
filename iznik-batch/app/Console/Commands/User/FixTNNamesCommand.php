@@ -41,7 +41,7 @@ class FixTNNamesCommand extends Command
                 ->whereNull('users.lastname')
                 ->where(function ($q) {
                     $q->whereNull('users.fullname')
-                      ->orWhereRaw("users.fullname LIKE '%-%'");
+                      ->orWhere('users.fullname', 'LIKE', '%-%');
                 })
                 ->select('users.id', 'users.fullname', 'users_emails.email')
                 ->get();

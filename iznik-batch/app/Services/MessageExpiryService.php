@@ -248,6 +248,11 @@ WHERE ms.successful = 0
   )
 SQL;
 
+        // keep-raw: the per-row threshold above combines TIMESTAMPDIFF/GREATEST/COALESCE/
+        // CASE/JSON_EXTRACT arithmetic with EXISTS/NOT EXISTS predicates in one OR'd boolean
+        // expression - no builder method projects that arithmetic, and pulling just the
+        // EXISTS clauses out to whereExists() would still leave the arithmetic in a
+        // whereRaw(), which is itself a raw call site, so the query stays as one statement.
         return collect(DB::select($sql, [MessageOutcome::OUTCOME_EXPIRED]))
             ->pluck('msgid');
     }

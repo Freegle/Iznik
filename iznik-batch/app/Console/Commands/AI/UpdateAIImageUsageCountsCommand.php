@@ -3,7 +3,9 @@
 namespace App\Console\Commands\AI;
 
 use Illuminate\Console\Command;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Keep ai_images.usage_count in step with how many posts actually use each AI image.
@@ -79,23 +81,30 @@ class UpdateAIImageUsageCountsCommand extends Command
         // permanent table of this name instead of just the session-local
         // temp table if one ever existed.
         DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
-        // keep-raw: CREATE TABLE ... AS SELECT with inline column DDL
-        // (explicit VARCHAR/CHARACTER SET/COLLATE/PRIMARY KEY) has no query-
-        // or schema-builder equivalent; also uses JSON_EXTRACT(), which has
-        // no builder method.
-        DB::statement("
-            CREATE TEMPORARY TABLE tmp_ai_usage_counts (
-                externaluid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PRIMARY KEY,
-                cnt INT NOT NULL
-            ) AS
-            SELECT ma.externaluid, COUNT(*) AS cnt
-            FROM messages_attachments ma
-            WHERE ma.id <= ?
-              AND JSON_EXTRACT(ma.externalmods, '$.ai') = TRUE
-              AND ma.externaluid IS NOT NULL
-              AND ma.externaluid != ''
-            GROUP BY ma.externaluid
-        ", [$upTo]);
+
+        // Schema DDL is fully expressible via the schema builder (temporary table,
+        // explicit VARCHAR/CHARACTER SET/COLLATE, PRIMARY KEY) — verified by diffing
+        // SHOW CREATE TABLE against the original raw CREATE TABLE ... AS SELECT.
+        Schema::create('tmp_ai_usage_counts', function (Blueprint $table) {
+            $table->temporary();
+            $table->string('externaluid', 255)->charset('utf8mb4')->collation('utf8mb4_unicode_ci')->primary();
+            $table->integer('cnt');
+        });
+
+        // Population (was the "AS SELECT ..." half of the original single statement).
+        DB::table('tmp_ai_usage_counts')->insertUsing(
+            ['externaluid', 'cnt'],
+            DB::table('messages_attachments')
+                ->select('externaluid')
+                // keep-raw: aliased COUNT(*) aggregate in a multi-row SELECT list under
+                // GROUP BY; no builder method projects a named aggregate column.
+                ->selectRaw('COUNT(*) as cnt')
+                ->where('id', '<=', $upTo)
+                ->where('externalmods->ai', true)
+                ->whereNotNull('externaluid')
+                ->where('externaluid', '!=', '')
+                ->groupBy('externaluid')
+        );
 
         // Step 2: Update one row at a time via JOIN, skipping rows where
         // the count hasn't changed. Single-row updates lock for microseconds
@@ -114,12 +123,13 @@ class UpdateAIImageUsageCountsCommand extends Command
                 ->lazyById(500);
 
             foreach ($rows as $row) {
-                // COALESCE() has no builder method (kept as raw expression);
-                // the JOIN and WHERE are expressed via the query builder.
+                // The JOIN and WHERE ai.id predicate are expressed via the query builder.
                 $affected = DB::table('ai_images as ai')
                     ->leftJoin('tmp_ai_usage_counts as t', 't.externaluid', '=', 'ai.externaluid')
                     ->where('ai.id', $row->id)
+                    // keep-raw: COALESCE(t.cnt, 0) is a function over a column value; no builder method expresses COALESCE.
                     ->where('ai.usage_count', '!=', DB::raw('COALESCE(t.cnt, 0)'))
+                    // keep-raw: COALESCE(t.cnt, 0) is a function over a column value; no builder method expresses COALESCE.
                     ->update(['ai.usage_count' => DB::raw('COALESCE(t.cnt, 0)')]);
 
                 if ($affected > 0) {
@@ -129,6 +139,8 @@ class UpdateAIImageUsageCountsCommand extends Command
                 }
             }
         } finally {
+            // keep-raw: same DROP TEMPORARY TABLE blocker as above — Schema::dropIfExists()
+            // has no TEMPORARY-aware compile path (see comment on the earlier drop).
             DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
         }
 
